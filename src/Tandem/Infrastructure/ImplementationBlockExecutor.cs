@@ -7,7 +7,7 @@ using Tandem.Domain;
 
 namespace Tandem.Infrastructure;
 
-public class ImplementationBlockExecutor : Executor<RunContext, BlockResult>
+public sealed class ImplementationBlockExecutor : Executor<RunContext, BlockResult>
 {
     private const int TurnTimeoutMs = 600_000;
     private readonly Func<ResolvedProfile, IChatClient> _chatClientFactory;
@@ -15,9 +15,7 @@ public class ImplementationBlockExecutor : Executor<RunContext, BlockResult>
     public ImplementationBlockExecutor(string apiKey)
         : this(profile => new ChatClientBuilder().Build(profile, apiKey)) { }
 
-    protected internal ImplementationBlockExecutor(
-        Func<ResolvedProfile, IChatClient> chatClientFactory
-    )
+    internal ImplementationBlockExecutor(Func<ResolvedProfile, IChatClient> chatClientFactory)
         : base("implementation")
     {
         _chatClientFactory = chatClientFactory;

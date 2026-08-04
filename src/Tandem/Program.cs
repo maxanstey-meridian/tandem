@@ -15,13 +15,15 @@ var packetArgument = new Argument<string>("packet-path")
 
 var debugOption = new Option<bool>("--debug") { Description = "Show stack traces on failure." };
 
-var rootCommand = new RootCommand("Tandem — agentic pipeline runner")
+var runCommand = new Command("run", "Run a packet through the Tandem pipeline")
 {
     packetArgument,
     debugOption,
 };
 
-rootCommand.SetAction(
+var rootCommand = new RootCommand("Tandem — agentic pipeline runner") { runCommand };
+
+runCommand.SetAction(
     async (ParseResult parseResult, CancellationToken cancellationToken) =>
     {
         var packetPath = parseResult.GetRequiredValue(packetArgument);

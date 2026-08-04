@@ -44,7 +44,7 @@ public sealed class ImplementationBlockExecutorTests
             MakeTextResponse("I created greeting.txt with the requested content.")
         );
 
-        var executor = new TestableImplementationBlockExecutor(script);
+        var executor = new ImplementationBlockExecutor(_ => script);
         var binding = executor.BindExecutor();
         var workflow = new WorkflowBuilder(binding).WithOutputFrom(binding).Build();
 
@@ -132,7 +132,7 @@ public sealed class ImplementationBlockExecutorTests
             MakeTextResponse("I created greeting.txt.")
         );
 
-        var executor = new TestableImplementationBlockExecutor(script);
+        var executor = new ImplementationBlockExecutor(_ => script);
         var binding = executor.BindExecutor();
         var workflow = new WorkflowBuilder(binding).WithOutputFrom(binding).Build();
 
@@ -226,9 +226,6 @@ public sealed class ImplementationBlockExecutorTests
             FinishReason = ChatFinishReason.Stop,
             ModelId = "test-model",
         };
-
-    private sealed class TestableImplementationBlockExecutor(ScriptedChatClient chatClient)
-        : ImplementationBlockExecutor(_ => chatClient) { }
 
     private sealed class ScriptedChatClient(params ChatResponse[] responses) : IChatClient
     {
