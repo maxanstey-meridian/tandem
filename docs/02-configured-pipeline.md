@@ -103,6 +103,121 @@ tool turn. Keep these as integration tests. If a framework capability fails,
 resolve that fit before building `simple-v1`; do not compensate with a Tandem
 workflow engine.
 
+### Recon (MAF 1.16.0 + DurableTask 1.16.0-preview.260730.1, verified by reflection)
+
+MAF Workflows:
+
+- `WorkflowBuilder.BindExecutor(Executor)` → `ExecutorBinding`;
+  `AddEdge(source, target, Func<object, bool> condition)` for conditional edges;
+  `WithOutputFrom(ExecutorBinding[])`; `Build(validateOrphans)`.
+- `SwitchBuilder.AddCase(Func<object, bool> predicate, IEnumerable<ExecutorBinding> executors)`
+  + `WithDefault(IEnumerable<ExecutorBinding> executors)`. The predicate receives
+  the `PipelineMessage` flowing out of the source executor (per the composition
+  rule: "Conditions inspect only the `PipelineMessage` they receive"). The method
+  to create a `SwitchBuilder` from `WorkflowBuilder` is `AddSwitch` (per this
+  plan); verify the exact signature empirically in F-A.
+- `RequestPort<TReq, TResp>.Create(string id)` — typed suspend/resume port;
+  carries `Id`, `Request`, `Response`, `AllowWrapped`.
+
+MAF DurableTask:
+
+- `ServiceCollectionExtensions.ConfigureDurableWorkflows(services,
+  Action<DurableOptions> configure, Action<workerBuilder> workerBuilder,
+  Action<clientBuilder> clientBuilder)` — the registration entry point.
+- `DurableWorkflowOptions.AddWorkflow(Workflow)` — registers workflow definitions.
+- `IWorkflowClient.RunAsync<TInput>(Workflow, TInput, string runId, CancellationToken)`
+  → `IStreamingWorkflowRun`.
+- `IStreamingWorkflowRun.WatchStreamAsync(CancellationToken)` → `IAsyncEnumerable<WorkflowEvent>`.
+- `IStreamingWorkflowRun.SendResponseAsync<TResponse>(DurableWorkflowWaitingForInputEvent, TResponse, CancellationToken)`
+  — for `RequestPort` responses within a live stream session.
+- `IAwaitableWorkflowRun.WaitForCompletionAsync(CancellationToken)` → `ValueTask<string>`.
+- Events: `DurableWorkflowCompletedEvent`(.Result),
+  `DurableWorkflowFailedEvent`(.ErrorMessage, .FailureDetails),
+  `DurableWorkflowWaitingForInputEvent`(.Input, .RequestPort, .GetInputAs<T>()),
+  `DurableHaltRequestedEvent`(.ExecutorId).
+- The `IWorkflowClient` API does not provide a public attach-existing-stream
+  API in MAF 1.16 (confirmed by plan 03). After host restart, use the raw
+  `DurableTaskClient.GetInstanceAsync(durableRunId)` to refresh status and
+  `DurableTaskClient.RaiseEventAsync(durableRunId, "HumanInput",
+  serializedHumanAnswer)` to deliver a typed response to a suspended
+  `RequestPort`. The request-port ID provides framework correlation; Tandem
+  does not add another request protocol.
+
+Harness session serialization (on `AIAgent` in `Microsoft.Agents.AI.Abstractions`):
+
+- `AIAgent.SerializeSessionAsync(AgentSession, JsonSerializerOptions, CancellationToken)`
+  → `ValueTask<JsonElement>`.
+- `AIAgent.DeserializeSessionAsync(JsonElement, JsonSerializerOptions, CancellationToken)`
+  → `ValueTask<AgentSession>`.
+- `AgentSession.StateBag` (`AgentSessionStateBag`) — `SetValue<T>`/`GetValue<T>`/
+  `TryGetValue<T>`/`Serialize()` for lower-level per-key state.
+
+Durability model:
+
+- The DTS emulator container stays up between host process restarts; the
+  orchestration state persists in the emulator. The Tandem host process may
+  stop and restart — `DurableTaskClient` reconnects to the existing
+  orchestration, and completed blocks are not replayed.
+
+### Slices
+
+Build the fit gate in four slices. Stop for feedback after each.
+
+#### F-A — Packages, DTS emulator, trivial durable run
+
+Add the DurableTask packages, start the DTS emulator in Docker, create a test
+fixture that skips with a clear message when the emulator is unreachable, and
+prove a trivial one-executor durable workflow runs to completion via
+`IWorkflowClient.RunAsync` + `WatchStreamAsync`. Verify `ConfigureDurableWorkflows`
+registration, `IWorkflowClient` resolution, and the `IStreamingWorkflowRun` event
+stream. Confirm the `AddSwitch` method shape on `WorkflowBuilder`.
+
+#### F-B — Proofs 1-2: AddSwitch ordering and cycle
+
+Proof 1: Build a 3-executor workflow with a switch. Feed inputs where case A
+matches alone and where both A and B match. Assert only the first matching case
+runs.
+
+Proof 2: Build a workflow with a back-edge from a later executor to an earlier
+one. Assert the earlier executor runs twice and receives the updated message
+from the later executor on its second invocation.
+
+#### F-C — Proofs 3-5: Durability, no replay, custom events
+
+Proof 3: Start a run with a known `runId`. Stop the host after the first
+executor completes. Restart with the same workflow definition and stable
+executor IDs. Assert the run resumes.
+
+Proof 4: Combined with Proof 3 — assert the first executor did not run again
+after restart (use a file marker or invocation counter).
+
+Proof 5: An executor emits a custom `WorkflowEvent` via
+`IWorkflowContext.AddEventAsync`. Assert the event appears in
+`WatchStreamAsync` during durable execution.
+
+#### F-D — Proofs 6-7: RequestPort suspend/resume and Harness session
+
+Proof 6: An executor suspends via `RequestPort<Question, Answer>`.
+`WatchStreamAsync` yields `DurableWorkflowWaitingForInputEvent`. Stop the host.
+Restart. Resume via `DurableTaskClient.RaiseEventAsync(durableRunId, "HumanInput",
+serializedAnswer)`. Assert the executor receives the typed answer and the
+workflow completes.
+
+Proof 7: Build a `HarnessAgent` with a scripted `IChatClient`. Run one turn
+that produces a tool call. Call `SerializeSessionAsync`. Create a new
+`HarnessAgent`. Call `DeserializeSessionAsync`. Run a second turn. Assert the
+agent has the conversation history from the first turn (verify via scripted
+response that inspects message count or content).
+
+### Test infrastructure
+
+- DTS fixture: checks the emulator is reachable at `localhost:8080`; tests skip
+  with a clear message if not.
+- Deterministic executors: simple `Executor<string, string>` subclasses that
+  return canned outputs and track invocations. No model calls.
+- Scripted `IChatClient`: reuse the existing pattern from plan 01 tests for
+  Proof 7.
+
 ## Model Profiles
 
 Extend the plan 01 configuration with the profiles referenced by `simple-v1`:
