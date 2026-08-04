@@ -1,0 +1,31 @@
+version: "3"
+
+vars:
+  SOLUTION: "{{.ROOT_DIR}}/Tandem.slnx"
+
+tasks:
+  build:
+    cmds:
+      - dotnet build {{.SOLUTION}}
+
+  test:
+    cmds:
+      - dotnet test {{.SOLUTION}}
+
+  format:
+    cmds:
+      - dotnet tool restore
+      - dotnet csharpier format .
+      - dotnet format {{.SOLUTION}} analyzers --severity warn
+
+  format:check:
+    cmds:
+      - dotnet tool restore
+      - dotnet csharpier check .
+      - dotnet format {{.SOLUTION}} analyzers --severity warn --verify-no-changes --verbosity minimal
+
+  check:
+    cmds:
+      - task: format:check
+      - task: test
+      - task: build
