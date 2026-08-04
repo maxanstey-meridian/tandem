@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Text;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
@@ -132,11 +133,12 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
     Console.WriteLine($"Model:     {profile.ProviderName}/{profile.Model}");
     Console.WriteLine();
 
+    var renderer = new StreamRenderer();
     BlockResult? result = null;
     try
     {
         var runner = new WorkflowRunner();
-        result = await runner.RunAsync(runContext, apiKey, RenderEvent, cancellationToken);
+        result = await runner.RunAsync(runContext, apiKey, renderer.RenderEvent, cancellationToken);
     }
     catch (WorkflowRunException ex)
     {
@@ -148,6 +150,7 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
         return ex.InnerException is null ? 4 : 3;
     }
 
+    renderer.Flush();
     Console.WriteLine();
     Console.WriteLine($"Completed: {runPaths.RunId}");
     Console.WriteLine($"Workspace: {runPaths.WorkspacePath}");
@@ -156,41 +159,120 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
     return 0;
 }
 
-static Task RenderEvent(WorkflowEvent evt)
+file sealed class StreamRenderer
 {
-    if (evt is AgentResponseUpdateEvent updateEvent)
+    private readonly StringBuilder _agent = new();
+    private readonly StringBuilder _reasoning = new();
+    private readonly Dictionary<string, string> _toolNames = new();
+
+    public Task RenderEvent(WorkflowEvent evt)
     {
-        RenderUpdate(updateEvent.Update);
+        if (evt is AgentResponseUpdateEvent updateEvent)
+        {
+            RenderUpdate(updateEvent.Update);
+        }
+
+        return Task.CompletedTask;
     }
 
-    return Task.CompletedTask;
-}
-
-static void RenderUpdate(AgentResponseUpdate update)
-{
-    foreach (var content in update.Contents)
+    public void Flush()
     {
-        switch (content)
+        FlushAgent();
+        FlushReasoning();
+    }
+
+    private void RenderUpdate(AgentResponseUpdate update)
+    {
+        foreach (var content in update.Contents)
         {
-            case TextReasoningContent reasoning:
-                Console.WriteLine($"[reasoning] {reasoning.Text}");
-                break;
-            case TextContent text:
-                Console.WriteLine($"[agent] {text.Text}");
-                break;
-            case FunctionCallContent call:
-                Console.WriteLine($"[tool] {call.Name}");
-                break;
-            case FunctionResultContent result:
-                if (result.Exception is not null)
-                {
-                    Console.WriteLine($"[tool] {result.CallId} failed: {result.Exception.Message}");
-                }
-                else
-                {
-                    Console.WriteLine($"[tool] {result.CallId} done");
-                }
-                break;
+            switch (content)
+            {
+                case TextReasoningContent reasoning:
+                    _reasoning.Append(reasoning.Text);
+                    FlushReasoningOnNewline();
+                    break;
+                case TextContent text:
+                    _agent.Append(text.Text);
+                    FlushAgentOnNewline();
+                    break;
+                case FunctionCallContent call:
+                    FlushAgent();
+                    FlushReasoning();
+                    _toolNames[call.CallId] = call.Name;
+                    Console.WriteLine($"[tool] {call.Name}");
+                    break;
+                case FunctionResultContent result:
+                    FlushAgent();
+                    FlushReasoning();
+                    var name = _toolNames.GetValueOrDefault(result.CallId, result.CallId);
+                    if (result.Exception is not null)
+                    {
+                        Console.WriteLine($"[tool] {name} failed: {result.Exception.Message}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[tool] {name} done");
+                    }
+                    break;
+            }
+        }
+    }
+
+    private void FlushAgentOnNewline()
+    {
+        var text = _agent.ToString();
+        var nl = text.LastIndexOf('\n');
+        if (nl >= 0)
+        {
+            var line = text[..nl];
+            if (!string.IsNullOrWhiteSpace(line))
+            {
+                Console.WriteLine($"[agent] {line}");
+            }
+            _agent.Clear();
+            _agent.Append(text[(nl + 1)..]);
+        }
+    }
+
+    private void FlushReasoningOnNewline()
+    {
+        var text = _reasoning.ToString();
+        var nl = text.LastIndexOf('\n');
+        if (nl >= 0)
+        {
+            var line = text[..nl];
+            if (!string.IsNullOrWhiteSpace(line))
+            {
+                Console.WriteLine($"[reasoning] {line}");
+            }
+            _reasoning.Clear();
+            _reasoning.Append(text[(nl + 1)..]);
+        }
+    }
+
+    private void FlushAgent()
+    {
+        if (_agent.Length > 0)
+        {
+            var text = _agent.ToString().TrimEnd();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                Console.WriteLine($"[agent] {text}");
+            }
+            _agent.Clear();
+        }
+    }
+
+    private void FlushReasoning()
+    {
+        if (_reasoning.Length > 0)
+        {
+            var text = _reasoning.ToString().TrimEnd();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                Console.WriteLine($"[reasoning] {text}");
+            }
+            _reasoning.Clear();
         }
     }
 }

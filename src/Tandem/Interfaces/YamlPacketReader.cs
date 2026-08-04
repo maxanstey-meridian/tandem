@@ -44,7 +44,7 @@ public sealed class YamlPacketReader
         var repository = ValidateNonEmpty(dto.Repository ?? string.Empty, "repository", path);
         if (!Path.IsPathRooted(repository))
         {
-            throw new PacketException($"Packet repository must be an absolute path in {path}.");
+            repository = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, repository));
         }
 
         if (!Directory.Exists(repository))

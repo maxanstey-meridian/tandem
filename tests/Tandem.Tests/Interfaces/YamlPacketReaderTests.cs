@@ -154,25 +154,30 @@ public sealed class YamlPacketReaderTests
     }
 
     [Fact]
-    public void RelativeRepositoryFails()
+    public void RelativeRepositoryResolvesAgainstPacketDirectory()
     {
         using var temp = new TempDir();
-        var bad = """
+        Directory.CreateDirectory(Path.Combine(temp.Dir, "sub", "repo"));
+        var dir = Path.Combine(temp.Dir, "sub");
+        var packetPath = Path.Combine(dir, "packet.md");
+        File.WriteAllText(
+            packetPath,
+            """
             ---
             title: "t"
-            repository: "relative/path"
+            repository: "repo"
             base: "main"
             outcomes:
               - id: "a"
                 description: "d"
             ---
-            """;
-        var packetPath = Path.Combine(temp.Dir, "packet.md");
-        File.WriteAllText(packetPath, bad);
+            """
+        );
 
-        var act = () => new YamlPacketReader().Read(packetPath);
+        var reader = new YamlPacketReader();
+        var packet = reader.Read(packetPath);
 
-        act.Should().Throw<PacketException>().WithMessage("*absolute*");
+        packet.Repository.Should().Be(Path.Combine(dir, "repo"));
     }
 
     [Fact]
