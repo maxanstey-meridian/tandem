@@ -1,6 +1,8 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.AI;
 using Tandem.Domain;
 using Tandem.Infrastructure.Blocks;
 
@@ -26,7 +28,7 @@ public sealed class SimpleV1Composition
         _profileResolver = profileResolver;
     }
 
-    public Workflow Build(Action<AgentResponseUpdate>? onUpdate = null)
+    public Workflow Build(Action<Guid, AgentResponseUpdate>? onUpdate = null)
     {
         var prepare = new PrepareWorkspaceBlock();
         var executor = CreateAgentBlock(
@@ -34,8 +36,10 @@ public sealed class SimpleV1Composition
             "implementation",
             ExecutorInstructions,
             WorkspaceAccess.MutationGated,
-            ["ask_planner", "submit_report", "write_checkpoint"],
-            onUpdate
+            ["ask_planner", "submit_report"],
+            onUpdate,
+            toolInterceptor: CreateMutationGate(),
+            turnPolicy: CreateExecutorTurnPolicy()
         );
         var planner = CreateAgentBlock(
             BlockIds.Planner,
@@ -44,7 +48,8 @@ public sealed class SimpleV1Composition
             WorkspaceAccess.ReadOnly,
             [],
             onUpdate,
-            ParsePlannerDecision
+            ParsePlannerDecision,
+            configureChatOptions: ConfigurePlannerChatOptions
         );
         var captureCandidate = new CaptureCandidateBlock();
         var verify = new VerificationBlock();
@@ -55,7 +60,9 @@ public sealed class SimpleV1Composition
             WorkspaceAccess.ReadOnly,
             [],
             onUpdate,
-            ParseReviewDecision
+            ParseReviewDecision,
+            messageAugmentation: CreateDiffAugmentation(),
+            configureChatOptions: ConfigureReviewerChatOptions
         );
         var complete = new CompleteBlock();
         var waiting = new WaitingBlock();
@@ -101,17 +108,15 @@ public sealed class SimpleV1Composition
         );
         builder = builder.AddEdge(executorBinding, failedBinding, CatchAllExecutor());
 
-        builder = AddOutcomeEdge(
-            builder,
+        // Keep successful planner outcomes on one route. DurableTask batches
+        // same-target routes, which would otherwise deliver String[] instead
+        // of the PipelineMessage expected by the executor.
+        builder = builder.AddEdge<PipelineMessage>(
             plannerBinding,
             executorBinding,
-            OutcomeKinds.PlannerProceed
-        );
-        builder = AddOutcomeEdge(
-            builder,
-            plannerBinding,
-            executorBinding,
-            OutcomeKinds.PlannerProceedWithConstraints
+            msg =>
+                msg!.LatestOutcome?.Kind == OutcomeKinds.PlannerProceed
+                || msg.LatestOutcome?.Kind == OutcomeKinds.PlannerProceedWithConstraints
         );
         builder = AddOutcomeEdge(
             builder,
@@ -190,8 +195,12 @@ public sealed class SimpleV1Composition
         string instructions,
         WorkspaceAccess access,
         IReadOnlyList<string> lifecycleTools,
-        Action<AgentResponseUpdate>? onUpdate,
-        StructuredOutputParser? structuredOutput = null
+        Action<Guid, AgentResponseUpdate>? onUpdate,
+        StructuredOutputParser? structuredOutput = null,
+        ToolInterceptor? toolInterceptor = null,
+        MessageAugmentation? messageAugmentation = null,
+        AgentTurnPolicy? turnPolicy = null,
+        Action<ChatOptions>? configureChatOptions = null
     )
     {
         var profile = _profileResolver(profileName);
@@ -208,16 +217,112 @@ public sealed class SimpleV1Composition
             access,
             lifecycleTools,
             structuredOutput,
-            checkpoint
+            checkpoint,
+            messageAugmentation,
+            turnPolicy
         );
         return new AgentBlock(
             config,
             _chatClientFactory(profileName),
             _tandemHome,
             _tandemExePath,
-            onUpdate
+            onUpdate,
+            toolInterceptor,
+            configureChatOptions
         );
     }
+
+    private static void ConfigurePlannerChatOptions(ChatOptions options) =>
+        options.ResponseFormat = ChatResponseFormat.ForJsonSchema<PlannerDecision>();
+
+    private static void ConfigureReviewerChatOptions(ChatOptions options) =>
+        options.ResponseFormat = ChatResponseFormat.ForJsonSchema<ReviewDecision>();
+
+    private static ToolInterceptor CreateMutationGate() =>
+        (ctx, fic, ct) =>
+        {
+            if (ctx.MutationAuthorized)
+            {
+                return ValueTask.FromResult<ToolInterceptionResult?>(null);
+            }
+
+            var name = fic.Function.Name;
+            var isWrite =
+                name.StartsWith("file_access_write")
+                || name.StartsWith("file_access_replace")
+                || name.StartsWith("file_access_delete");
+
+            if (!isWrite)
+            {
+                return ValueTask.FromResult<ToolInterceptionResult?>(null);
+            }
+
+            return ValueTask.FromResult<ToolInterceptionResult?>(
+                new ToolInterceptionResult.Blocked(
+                    """
+                    MUTATION GATE CLOSED: Your edit was NOT applied — no file was changed.
+                    Mutation authority is not yet granted. Call ask_planner with your
+                    proposed approach and evidence. Reads remain available for gathering
+                    evidence. Continue only on proceed or proceed_with_constraints.
+                    """
+                )
+            );
+        };
+
+    private static AgentTurnPolicy CreateExecutorTurnPolicy() =>
+        new(
+            maxContinuationAttempts: 2,
+            (observation, _) =>
+                ValueTask.FromResult<AgentTurnDirective?>(
+                    !observation.Context.MutationAuthorized
+                        ? new AgentTurnDirective(
+                            """
+                            Your previous response was not a lifecycle route. Continue the
+                            executor turn by calling ask_planner now with the question you
+                            need answered, your proposed approach, and repository evidence.
+                            Do not answer with prose; the next action must be the ask_planner
+                            tool call.
+                            """,
+                            RequiredToolName: "ask_planner"
+                        )
+                        : new AgentTurnDirective(
+                            """
+                            Your previous response was not a lifecycle route. Continue the
+                            implementation and call submit_report when the packet outcomes are
+                            ready for verification. Do not treat prose as completion.
+                            """,
+                            RequiredToolName: "submit_report"
+                        )
+                )
+        );
+
+    private static MessageAugmentation CreateDiffAugmentation() =>
+        async (ctx, ct) =>
+        {
+            if (ctx.CandidateSha is null || string.IsNullOrEmpty(ctx.PinnedBaseSha))
+            {
+                return null;
+            }
+
+            var git = new GitProcess();
+            var range = $"{ctx.PinnedBaseSha}..{ctx.CandidateSha}";
+
+            var nameStatusResult = await git.RunAsync(
+                ctx.WorkspacePath,
+                ["diff", "--name-status", "-z", range],
+                ct
+            );
+            var diffResult = await git.RunAsync(ctx.WorkspacePath, ["diff", "--binary", range], ct);
+            var changedFiles = nameStatusResult.Stdout.Replace('\0', '\n');
+
+            return $"""
+                Changed files:
+                {changedFiles}
+
+                Diff:
+                {diffResult.Stdout}
+                """;
+        };
 
     private static StructuredOutcome ParsePlannerDecision(string assistantText, PipelineContext ctx)
     {
@@ -239,11 +344,16 @@ public sealed class SimpleV1Composition
             ),
         };
         var payload = JsonSerializer.SerializeToElement(decision, _plannerJsonOptions);
+        var authorizesMutation =
+            decision.Decision
+            is PlannerDecisionValue.Proceed
+                or PlannerDecisionValue.ProceedWithConstraints;
         var updatedCtx = ctx with
         {
             PlannerDecision = decision,
             PlannerConstraints =
                 decision.Constraints.Count > 0 ? decision.Constraints : ctx.PlannerConstraints,
+            MutationAuthorized = authorizesMutation || ctx.MutationAuthorized,
         };
         return new StructuredOutcome(kind, decision.Rationale, payload, updatedCtx);
     }
@@ -300,11 +410,13 @@ public sealed class SimpleV1Composition
     private static readonly JsonSerializerOptions _plannerJsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() },
     };
 
     private static readonly JsonSerializerOptions _reviewJsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() },
     };
 
     private static WorkflowBuilder AddOutcomeEdge(

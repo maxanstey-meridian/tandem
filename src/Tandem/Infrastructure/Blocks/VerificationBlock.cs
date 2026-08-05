@@ -18,6 +18,7 @@ public sealed class VerificationBlock : Executor<PipelineMessage, PipelineMessag
         CancellationToken cancellationToken
     )
     {
+        var blockSw = Stopwatch.StartNew();
         var ctx = message.Context;
         var commands = ctx.Packet.Verification;
 
@@ -25,13 +26,15 @@ public sealed class VerificationBlock : Executor<PipelineMessage, PipelineMessag
         {
             var allPassed = ctx.VerificationResults.All(r => r.ExitCode == 0);
             var finalKind = allPassed ? OutcomeKinds.CommandPassed : OutcomeKinds.CommandFailed;
+            blockSw.Stop();
             return new PipelineMessage(
                 ctx,
                 new BlockOutcome(
                     finalKind,
                     BlockIds.Verify,
                     "All verification commands complete",
-                    JsonSerializer.SerializeToElement(new { })
+                    JsonSerializer.SerializeToElement(new { }),
+                    blockSw.Elapsed
                 )
             );
         }
@@ -59,13 +62,15 @@ public sealed class VerificationBlock : Executor<PipelineMessage, PipelineMessag
             }
         );
 
+        blockSw.Stop();
         return new PipelineMessage(
             updatedContext,
             new BlockOutcome(
                 kind,
                 BlockIds.Verify,
                 passed ? "Command passed" : "Command failed",
-                payload
+                payload,
+                blockSw.Elapsed
             )
         );
     }

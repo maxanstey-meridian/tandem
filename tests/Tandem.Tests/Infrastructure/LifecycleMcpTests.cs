@@ -395,6 +395,230 @@ public sealed class LifecycleMcpTests
             .BeEmpty("no MCP child process should be left running after cancellation");
     }
 
+    [Fact]
+    public async Task ProseTurn_UsesComposedContinuation_AndReachesPlanner()
+    {
+        using var fixture = await LifecycleFixture.CreateAsync();
+        var packet = MakePacket();
+        var ctx = PipelineContext.Create(
+            fixture.RunId,
+            packet,
+            pinnedBaseSha: "abc123",
+            workspacePath: fixture.WorkspacePath
+        );
+        var continuationAttempts = new List<int>();
+        var script = new ScriptedChatClient(
+            MakeTextResponse("I inspected the repository and will continue."),
+            MakeToolCallResponse(
+                "call-1",
+                "ask_planner",
+                new Dictionary<string, object?>
+                {
+                    ["question"] = "Should I add the requested change?",
+                    ["proposedApproach"] = "Implement the packet outcome after approval.",
+                    ["evidence"] = new[] { "README.md" },
+                }
+            )
+        );
+
+        var policy = new AgentTurnPolicy(
+            1,
+            (observation, _) =>
+            {
+                continuationAttempts.Add(observation.ContinuationAttempt);
+                return ValueTask.FromResult<AgentTurnDirective?>(
+                    new AgentTurnDirective(
+                        "Call ask_planner now with your proposed approach and evidence.",
+                        "ask_planner"
+                    )
+                );
+            }
+        );
+        var block = new AgentBlock(
+            new AgentBlockConfig(
+                BlockIds.Executor,
+                "implementation",
+                "executor instructions",
+                WorkspaceAccess.MutationGated,
+                ["ask_planner", "submit_report", "write_checkpoint"],
+                TurnPolicy: policy
+            ),
+            script,
+            fixture.TandemHome,
+            fixture.TandemExePath
+        );
+
+        var output = await RunBlockAsync(block, ctx);
+
+        output.LatestOutcome!.Kind.Should().Be(OutcomeKinds.PlannerRequested);
+        continuationAttempts.Should().Equal(0);
+    }
+
+    [Fact]
+    public async Task BlockedMutation_ReturnsComposedWarning_ThenContinuesToPlanner()
+    {
+        using var fixture = await LifecycleFixture.CreateAsync();
+        var packet = MakePacket();
+        var ctx = PipelineContext.Create(
+            fixture.RunId,
+            packet,
+            pinnedBaseSha: "abc123",
+            workspacePath: fixture.WorkspacePath
+        );
+        var toolResults = new List<string>();
+        const string warning =
+            "COMPOSED GATE: mutation authority is closed; call ask_planner before editing.";
+        var script = new ScriptedChatClient(
+            MakeToolCallResponse(
+                "call-1",
+                "file_access_write",
+                new Dictionary<string, object?>
+                {
+                    ["fileName"] = "blocked.txt",
+                    ["content"] = "must not be written",
+                }
+            ),
+            MakeTextResponse("I received the tool result."),
+            MakeToolCallResponse(
+                "call-2",
+                "ask_planner",
+                new Dictionary<string, object?>
+                {
+                    ["question"] = "May I make the requested edit?",
+                    ["proposedApproach"] = "Apply the packet change after approval.",
+                    ["evidence"] = new[] { "README.md" },
+                }
+            )
+        );
+        ToolInterceptor interceptor = (context, invocation, _) =>
+        {
+            if (
+                context.MutationAuthorized
+                || !invocation.Function.Name.StartsWith("file_access_", StringComparison.Ordinal)
+                || invocation.Function.Name == "file_access_read"
+            )
+            {
+                return ValueTask.FromResult<ToolInterceptionResult?>(null);
+            }
+
+            return ValueTask.FromResult<ToolInterceptionResult?>(
+                new ToolInterceptionResult.Blocked(warning)
+            );
+        };
+        var policy = new AgentTurnPolicy(
+            1,
+            (_, _) =>
+                ValueTask.FromResult<AgentTurnDirective?>(
+                    new AgentTurnDirective("Call ask_planner now.", "ask_planner")
+                )
+        );
+        var block = new AgentBlock(
+            new AgentBlockConfig(
+                BlockIds.Executor,
+                "implementation",
+                "executor instructions",
+                WorkspaceAccess.MutationGated,
+                ["ask_planner", "submit_report", "write_checkpoint"],
+                TurnPolicy: policy
+            ),
+            script,
+            fixture.TandemHome,
+            fixture.TandemExePath,
+            onUpdate: (_, update) =>
+            {
+                foreach (var result in update.Contents.OfType<FunctionResultContent>())
+                {
+                    toolResults.Add(result.Result?.ToString() ?? "");
+                }
+            },
+            toolInterceptor: interceptor
+        );
+
+        var output = await RunBlockAsync(block, ctx);
+
+        output.LatestOutcome!.Kind.Should().Be(OutcomeKinds.PlannerRequested);
+        File.Exists(Path.Combine(fixture.WorkspacePath, "blocked.txt")).Should().BeFalse();
+        toolResults.Should().Contain(warning);
+    }
+
+    [Fact]
+    public async Task ProseOnlyTurns_FailAtConfiguredContinuationBound()
+    {
+        using var fixture = await LifecycleFixture.CreateAsync();
+        var packet = MakePacket();
+        var ctx = PipelineContext.Create(
+            fixture.RunId,
+            packet,
+            pinnedBaseSha: "abc123",
+            workspacePath: fixture.WorkspacePath
+        );
+        var script = new ScriptedChatClient(
+            MakeTextResponse("I inspected the repository."),
+            MakeTextResponse("I am still describing the repository.")
+        );
+        var policy = new AgentTurnPolicy(
+            1,
+            (_, _) =>
+                ValueTask.FromResult<AgentTurnDirective?>(
+                    new AgentTurnDirective("Continue, but do not finish in prose.")
+                )
+        );
+        var block = new AgentBlock(
+            new AgentBlockConfig(
+                BlockIds.Executor,
+                "implementation",
+                "executor instructions",
+                WorkspaceAccess.ReadOnly,
+                [],
+                TurnPolicy: policy
+            ),
+            script,
+            fixture.TandemHome,
+            fixture.TandemExePath
+        );
+
+        var output = await RunBlockAsync(block, ctx);
+
+        output.LatestOutcome!.Kind.Should().Be("agent.failed");
+        output.LatestOutcome.Summary.Should().Contain("2 model turn(s)");
+    }
+
+    private static async Task<PipelineMessage> RunBlockAsync(
+        AgentBlock block,
+        PipelineContext context
+    )
+    {
+        var binding = block.BindExecutor();
+        var workflow = new WorkflowBuilder(binding).WithOutputFrom(binding).Build();
+        await using var runHandle = await InProcessExecution.RunStreamingAsync(
+            workflow,
+            new PipelineMessage(context),
+            context.RunId.ToString("N"),
+            CancellationToken.None
+        );
+
+        PipelineMessage? output = null;
+        Exception? failure = null;
+        await foreach (var evt in runHandle.WatchStreamAsync(CancellationToken.None))
+        {
+            if (evt is WorkflowErrorEvent errorEvent)
+            {
+                failure = errorEvent.Exception;
+            }
+            else if (evt is ExecutorFailedEvent failedEvent)
+            {
+                failure = failedEvent.Data;
+            }
+            else if (evt is WorkflowOutputEvent outputEvent && outputEvent.Is<PipelineMessage>())
+            {
+                output = outputEvent.As<PipelineMessage>();
+            }
+        }
+
+        failure.Should().BeNull("the block workflow should not throw");
+        return output ?? throw new InvalidOperationException("The block produced no output.");
+    }
+
     private static Packet MakePacket() =>
         new(
             Title: "Test packet",

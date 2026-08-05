@@ -62,7 +62,7 @@ public sealed class ImplementationBlockExecutor : Executor<RunContext, BlockResu
                 DisableToolAutoApproval = true,
                 DisableOpenTelemetry = true,
                 DisableCompaction = true,
-                MaximumIterationsPerRequest = 100,
+                MaximumIterationsPerRequest = 999,
                 FileAccessStore = fileStore,
                 FileAccessProviderOptions = new FileAccessProviderOptions
                 {

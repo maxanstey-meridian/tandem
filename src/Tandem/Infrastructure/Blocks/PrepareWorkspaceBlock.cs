@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows;
 using Tandem.Domain;
@@ -20,6 +21,7 @@ public sealed class PrepareWorkspaceBlock : Executor<PipelineMessage, PipelineMe
         CancellationToken cancellationToken
     )
     {
+        var sw = Stopwatch.StartNew();
         var ctx = message.Context;
         var runDir = Path.GetDirectoryName(ctx.WorkspacePath)!;
 
@@ -40,13 +42,15 @@ public sealed class PrepareWorkspaceBlock : Executor<PipelineMessage, PipelineMe
             new { pinnedSha = prep.PinnedBaseSha, workspacePath = prep.WorkspacePath }
         );
 
+        sw.Stop();
         return new PipelineMessage(
             updatedContext,
             new BlockOutcome(
                 OutcomeKinds.WorkspacePrepared,
                 BlockIds.Prepare,
                 "Workspace prepared",
-                payload
+                payload,
+                sw.Elapsed
             )
         );
     }

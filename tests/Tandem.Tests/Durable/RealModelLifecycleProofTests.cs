@@ -1,4 +1,3 @@
-using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.DurableTask.Workflows;
@@ -113,10 +112,8 @@ public sealed class RealModelLifecycleProofTests
             PipelineContext.Create(Guid.CreateVersion7(), packet, "", workspacePath)
         );
 
-        const string connectionString =
-            "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None";
+        var connectionString = DtsFixture.ConnectionString;
 
-        var blockTransitions = new List<(string BlockId, string Kind)>();
         PipelineMessage? pipelineOutput = null;
 
         var host = Host.CreateDefaultBuilder()
@@ -144,7 +141,7 @@ public sealed class RealModelLifecycleProofTests
 
             try
             {
-                await run.WaitForCompletionAsync<PipelineMessage>();
+                pipelineOutput = await run.WaitForCompletionAsync<PipelineMessage>();
             }
             catch (Exception ex)
             {
@@ -153,14 +150,14 @@ public sealed class RealModelLifecycleProofTests
                     runId,
                     getInputsAndOutputs: true
                 );
-                var failureDetails = failedInstance?.FailureDetails?.ErrorMessage ?? "(no details)";
+                var failureDetails = failedInstance?.FailureDetails?.ToString() ?? "(no details)";
                 var failedOutput = failedInstance?.SerializedOutput ?? "(none)";
                 throw new InvalidOperationException(
                     $"Workflow failed. Failure={failureDetails}, Output={failedOutput}, Inner={ex.Message}"
                 );
             }
 
-            // Read the final output from the completed instance.
+            // Confirm the durable instance completed after returning the typed result.
             var instance = await durableTaskClient.GetInstanceAsync(
                 runId,
                 getInputsAndOutputs: true
@@ -169,28 +166,6 @@ public sealed class RealModelLifecycleProofTests
             instance!
                 .RuntimeStatus.Should()
                 .Be(Microsoft.DurableTask.Client.OrchestrationRuntimeStatus.Completed);
-
-            var outputJson = instance.SerializedOutput ?? "(none)";
-            var wrapper = JsonSerializer.Deserialize<WorkflowOutputWrapper>(
-                outputJson,
-                _jsonOptions
-            );
-            if (string.IsNullOrEmpty(wrapper?.Result))
-            {
-                throw new InvalidOperationException(
-                    $"Workflow produced no output. Status={instance.RuntimeStatus}, Output={outputJson}"
-                );
-            }
-
-            pipelineOutput = JsonSerializer.Deserialize<PipelineMessage>(
-                wrapper.Result,
-                _jsonOptions
-            );
-            pipelineOutput.Should().NotBeNull("the workflow must produce a PipelineMessage output");
-            if (pipelineOutput!.LatestOutcome is { } outcome)
-            {
-                blockTransitions.Add((outcome.BlockId, outcome.Kind));
-            }
         }
         finally
         {
@@ -198,27 +173,11 @@ public sealed class RealModelLifecycleProofTests
             host.Dispose();
         }
 
-        // The durable runtime completes the workflow. The specific model behavior
-        // (whether it calls ask_planner or returns text) is a model quality issue,
-        // not an infrastructure concern. This proof verifies the durable pipeline
-        // runs end-to-end with a real model against the real DTS emulator.
         pipelineOutput.Should().NotBeNull("the workflow must produce a terminal output");
-        pipelineOutput!
-            .Context.Status.Should()
-            .BeOneOf(
-                Domain.RunStatus.Ready,
-                Domain.RunStatus.Failed,
-                Domain.RunStatus.WaitingForHuman
-            );
+        pipelineOutput!.Context.Status.Should().Be(Domain.RunStatus.Ready);
         pipelineOutput.LatestOutcome.Should().NotBeNull("the terminal output must have an outcome");
+        pipelineOutput.LatestOutcome!.Kind.Should().Be(OutcomeKinds.RunReady);
     }
-
-    private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
-    };
-
-    private sealed record WorkflowOutputWrapper(string? Result);
 
     private static void EnsureApiKeyAvailable()
     {

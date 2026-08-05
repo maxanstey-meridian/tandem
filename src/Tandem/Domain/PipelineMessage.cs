@@ -112,7 +112,8 @@ public sealed record BlockOutcome(
     string Kind,
     string BlockId,
     string Summary,
-    JsonElement Payload = default
+    JsonElement Payload = default,
+    TimeSpan Duration = default
 );
 
 public sealed record AgentUsage(

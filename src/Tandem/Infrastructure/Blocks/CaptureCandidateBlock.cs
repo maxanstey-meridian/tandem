@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows;
 using Tandem.Domain;
@@ -20,6 +21,7 @@ public sealed class CaptureCandidateBlock : Executor<PipelineMessage, PipelineMe
         CancellationToken cancellationToken
     )
     {
+        var sw = Stopwatch.StartNew();
         var ctx = message.Context;
         var ws = ctx.WorkspacePath;
 
@@ -50,13 +52,15 @@ public sealed class CaptureCandidateBlock : Executor<PipelineMessage, PipelineMe
         };
 
         var payload = JsonSerializer.SerializeToElement(new { candidateSha });
+        sw.Stop();
         return new PipelineMessage(
             updatedContext,
             new BlockOutcome(
                 OutcomeKinds.CandidateCaptured,
                 BlockIds.CaptureCandidate,
                 "Candidate captured",
-                payload
+                payload,
+                sw.Elapsed
             )
         );
     }

@@ -14,13 +14,6 @@ namespace Tandem.Tests.Durable;
 /// </summary>
 internal sealed class DurableHost : IAsyncDisposable
 {
-    private const string ConnectionString =
-        "Endpoint="
-        + DtsFixture.EmulatorAddress
-        + ";TaskHub="
-        + DtsFixture.TaskHub
-        + ";Authentication=None";
-
     private readonly IHost _host;
 
     private DurableHost(IHost host)
@@ -45,8 +38,10 @@ internal sealed class DurableHost : IAsyncDisposable
             {
                 services.ConfigureDurableWorkflows(
                     options => configureWorkflows?.Invoke(options),
-                    workerBuilder => workerBuilder.UseDurableTaskScheduler(ConnectionString),
-                    clientBuilder => clientBuilder.UseDurableTaskScheduler(ConnectionString)
+                    workerBuilder =>
+                        workerBuilder.UseDurableTaskScheduler(DtsFixture.ConnectionString),
+                    clientBuilder =>
+                        clientBuilder.UseDurableTaskScheduler(DtsFixture.ConnectionString)
                 );
             })
             .Build();

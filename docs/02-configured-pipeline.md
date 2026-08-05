@@ -73,13 +73,14 @@ For local development run the Durable Task Scheduler emulator:
 docker run -d --name tandem-dts \
   -p 8080:8080 \
   -p 8082:8082 \
+  -e DTS_TASK_HUB_NAMES=tandem-cli,tandem-tests \
   mcr.microsoft.com/dts/dts-emulator:latest
 ```
 
 Use this connection string unless the environment supplies another one:
 
 ```text
-Endpoint=http://localhost:8080;TaskHub=default;Authentication=None
+Endpoint=http://localhost:8080;TaskHub=tandem-cli;Authentication=None
 ```
 
 The scheduler endpoint is port `8080`; its dashboard is
@@ -471,6 +472,58 @@ mutation-gated  -> ReadWrite while MutationAuthorized is true
 The configured profile and workspace policy belong to the block instance. There
 is no runtime `AgentRole` enum.
 
+### Composable Turn Policy
+
+An agent turn that ends in assistant prose without an accepted lifecycle or
+structured-output outcome is not a terminal block outcome for a configured
+policy. It is a no-progress observation that the configured composition must
+handle.
+
+The reusable `AgentBlock` owns the turn mechanics only. It may receive an
+optional turn policy through its block configuration. The policy receives a
+small observation containing the pipeline context, assistant text, tool names
+used during the turn, whether an accepted lifecycle outcome exists, and the
+continuation attempt number. It returns one of:
+
+```text
+complete
+continue with a prompt and optional required tool name
+fail with a bounded no-progress outcome
+```
+
+The turn policy has these invariants:
+
+1. `AgentBlock` never branches on a role name, block ID, planner name, or
+   composition-specific message.
+2. The composition owns continuation prompts, required tool names, and retry
+   bounds. A policy is absent for blocks whose structured output is their
+   completion contract.
+3. The first executor turn may inspect the workspace and may attempt a
+   mutation. The composition-supplied mutation interceptor remains the
+   authority for blocked writes and returns its composition-owned explanation.
+4. If that turn ends without an accepted lifecycle outcome, the policy starts a
+   bounded continuation on the same `AgentSession`; it never converts the
+   prose into `agent.completed`.
+5. A continuation may require one configured tool, such as `ask_planner`, by
+   setting the next request's tool mode. The required tool name comes from the
+   composition, not from `AgentBlock`.
+6. Every continuation update is streamed through the same update sink. Session
+   history and usage remain continuous across the continuation turns.
+7. An accepted lifecycle receipt remains authoritative and terminates the
+   current turn. A receipt is accepted at most once for the stable invocation
+   ID, including retries.
+8. A policy cannot loop indefinitely. Exhausting its bound produces an explicit
+   failed outcome with the last observation and attempt count.
+9. Planner and reviewer blocks do not inherit executor continuation behavior;
+   their configured structured-output contract decides completion.
+
+For `simple-v1`, the executor policy allows initial read-only inspection. When
+the mutation gate is closed and the first turn produces no lifecycle outcome,
+the continuation tells the executor that prose is not a route and requires
+`ask_planner`. When mutation authority is open, the composition supplies the
+corresponding continuation toward `submit_report` rather than allowing prose
+to terminate the executor.
+
 ### Planner Block
 
 Configure an agent block named `planner` using the profile `planning` and
@@ -805,10 +858,15 @@ outcome claims and repository evidence.
 
 An accepted lifecycle call ends the current turn. Do not represent planner,
 verification, or reviewer decisions yourself.
+
+Prose without an accepted lifecycle call is not a route. The composition may
+continue the same session with a required lifecycle tool; do not claim that the
+turn completed until the configured lifecycle outcome is accepted.
 ```
 
 Tool availability and middleware enforce mutation and termination mechanically;
-the prompt explains those boundaries to the model.
+the composition-owned turn policy handles a prose/no-progress turn. The prompt
+explains those boundaries to the model but is not the completion mechanism.
 
 When the outcome is `checkpoint.written`, retain the checkpoint payload in
 pipeline context and remove the executor's serialized session. The next executor
@@ -888,7 +946,7 @@ reviewer review.needs_human       -> waiting
 default                           -> failed
 ```
 
-Compose with direct `AddEdge` calls carrying mutually exclusive `Func<PipelineMessage, bool>` conditions. Do not use `AddSwitch`: the pinned durable preview (`1.16.0-preview.260730.1`) drops the switch target selector in `DurableEdgeMap`, so every matching branch executes instead of only the first. This is the accepted framework defect recorded in the Fit Gate Result section. Conditions inspect only the `PipelineMessage` they receive.
+Compose with direct `AddEdge` calls carrying mutually exclusive `Func<PipelineMessage, bool>` conditions. Do not use `AddSwitch`: the pinned durable preview (`1.16.0-preview.260730.1`) drops the switch target selector in `DurableEdgeMap`, so every matching branch executes instead of only the first. This is the accepted framework defect recorded in the Fit Gate Result section. Conditions inspect only the `PipelineMessage` they receive. When multiple known outcomes share a target, combine them into one predicate; separate same-target edges are delivered as a durable batch (`String[]`) rather than the declared message type.
 
 Each source block declares one edge per known outcome plus one catch-all edge to `failed` whose predicate is the negation of the union of all known outcomes for that source. The catch-all must be mutually exclusive with every named edge so exactly one edge fires per invocation.
 
@@ -963,8 +1021,16 @@ Prove:
    characters to a second agent block configured with another model profile.
 9. Usage below the configured threshold runs the normal executor invocation.
 10. Usage crossing the threshold runs checkpoint-only mode, accepts one typed
-    checkpoint, clears the old session, and starts the next executor invocation
-    with that checkpoint.
+     checkpoint, clears the old session, and starts the next executor invocation
+     with that checkpoint.
+11. An executor may inspect and end a turn in prose, but the composed no-progress
+     policy continues the same session and requires `ask_planner` without
+     treating the prose as `agent.completed`.
+12. A composed mutation interceptor blocks a write while authority is closed,
+     returns its explanation to the model, leaves the file unchanged, and the
+     continuation reaches `ask_planner`.
+13. A bounded sequence of prose-only turns produces one explicit failure and
+     does not loop indefinitely.
 
 The test block implementations may return prepared outcomes without invoking a
 model. They are substitutes for block operations, not a fake workflow runtime.
@@ -999,6 +1065,12 @@ with the cancellation reason and leaves no child process running.
 
 Repeat the same proof for `submit_report` routing to candidate capture.
 
+Also prove the composed no-progress policy with the real Harness path: allow a
+scripted model to inspect, return prose, then call `ask_planner` only after the
+continuation prompt. Separately script a blocked write followed by
+`ask_planner`; verify the composition-owned warning is returned, no file is
+changed, and the receipt is accepted once.
+
 ## Durable Proof
 
 Run against the real local Durable Task Scheduler emulator.
@@ -1024,6 +1096,10 @@ prepare
 -> reviewer accepts
 -> Ready
 ```
+
+The real-model proof must exercise the composed no-progress policy when the
+model ends an inspection turn in prose. It must not accept `Failed` or
+`WaitingForHuman` as substitutes for this happy path.
 
 Inspect the workspace and Durable Task dashboard to confirm the block order,
 candidate SHA, command result, and accepted review.

@@ -21,14 +21,18 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
     private readonly LifecycleReceiptStore _receiptStore;
     private readonly string _tandemHome;
     private readonly string _tandemExePath;
-    private readonly Action<AgentResponseUpdate>? _onUpdate;
+    private readonly Action<Guid, AgentResponseUpdate>? _onUpdate;
+    private readonly ToolInterceptor? _toolInterceptor;
+    private readonly Action<ChatOptions>? _configureChatOptions;
 
     public AgentBlock(
         AgentBlockConfig config,
         IChatClient chatClient,
         string tandemHome,
         string? tandemExePath = null,
-        Action<AgentResponseUpdate>? onUpdate = null
+        Action<Guid, AgentResponseUpdate>? onUpdate = null,
+        ToolInterceptor? toolInterceptor = null,
+        Action<ChatOptions>? configureChatOptions = null
     )
         : base(config.BlockId)
     {
@@ -41,6 +45,8 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
             ?? Environment.ProcessPath
             ?? throw new InvalidOperationException("Process path unavailable.");
         _onUpdate = onUpdate;
+        _toolInterceptor = toolInterceptor;
+        _configureChatOptions = configureChatOptions;
     }
 
     public override async ValueTask<PipelineMessage> HandleAsync(
@@ -49,6 +55,7 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
         CancellationToken cancellationToken
     )
     {
+        var blockSw = Stopwatch.StartNew();
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(_turnTimeout);
 
@@ -58,13 +65,15 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
         var existingReceipt = await _receiptStore.ReadAsync(ctx.RunId, invocationId, cts.Token);
         if (existingReceipt is not null)
         {
+            blockSw.Stop();
             return new PipelineMessage(
                 ctx.IncrementInvocations(_config.BlockId),
                 new BlockOutcome(
                     existingReceipt.Kind,
                     _config.BlockId,
                     existingReceipt.Summary,
-                    existingReceipt.Payload
+                    existingReceipt.Payload,
+                    blockSw.Elapsed
                 )
             );
         }
@@ -103,7 +112,6 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
         try
         {
             var collector = new LifecycleOutcomeCollector();
-            var invokingClient = WrapWithFunctionInvocation(_chatClient, collector);
 
             var fileStore = new GitExcludedFileStore(
                 new FileSystemAgentFileStore(ctx.WorkspacePath)
@@ -112,64 +120,119 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
             var instructions = isCheckpointOnly
                 ? CheckpointOnlyInstructions
                 : _config.SystemInstructions;
-
             var tools = lifecycleTools.ToList();
-
-            var agent = new HarnessAgent(
-                invokingClient,
-                new HarnessAgentOptions
-                {
-                    Id = _config.BlockId,
-                    Name = _config.BlockId,
-                    HarnessInstructions = "",
-                    ChatOptions = new ChatOptions { Instructions = instructions, Tools = tools },
-                    DisableFileMemory = true,
-                    DisableTodoProvider = true,
-                    DisableAgentModeProvider = true,
-                    DisableAgentSkillsProvider = true,
-                    DisableWebSearch = true,
-                    DisableToolAutoApproval = true,
-                    DisableOpenTelemetry = true,
-                    DisableCompaction = true,
-                    MaximumIterationsPerRequest = 100,
-                    FileAccessStore = fileStore,
-                    FileAccessProviderOptions = ResolveAccessOptions(ctx, isCheckpointOnly),
-                }
+            var agent = CreateAgent(
+                fileStore,
+                instructions,
+                tools,
+                ctx,
+                isCheckpointOnly,
+                requiredToolName: null,
+                collector: collector
             );
-
             var session = await RestoreOrCreateSessionAsync(agent, ctx, cts.Token);
-            var userMessage = isCheckpointOnly
+            var baseMessage = isCheckpointOnly
                 ? BuildCheckpointUserMessage(ctx)
                 : BuildUserMessage(message);
+
+            var augmentation = _config.MessageAugmentation is not null
+                ? await _config.MessageAugmentation(ctx, cts.Token)
+                : null;
+            var userMessage = augmentation is not null
+                ? $"{baseMessage}\n\n{augmentation}"
+                : baseMessage;
 
             var assistantText = new StringBuilder();
             long? inputTokens = null;
             long? outputTokens = null;
-            var modelCallSw = Stopwatch.StartNew();
+            var lastModelCallDuration = TimeSpan.Zero;
+            var continuationAttempt = 0;
+            var policyExhausted = false;
 
-            await foreach (
-                var update in agent.RunStreamingAsync(userMessage, session, null, cts.Token)
-            )
+            while (true)
             {
-                foreach (var content in update.Contents)
+                var turnText = new StringBuilder();
+                var turnToolNames = new List<string>();
+                var turnInputTokens = default(long?);
+                var turnOutputTokens = default(long?);
+                var turnSw = Stopwatch.StartNew();
+
+                await foreach (
+                    var update in agent.RunStreamingAsync(userMessage, session, null, cts.Token)
+                )
                 {
-                    if (content is TextContent text)
+                    foreach (var content in update.Contents)
                     {
-                        assistantText.Append(text.Text);
+                        if (content is TextContent text)
+                        {
+                            turnText.Append(text.Text);
+                            assistantText.Append(text.Text);
+                        }
+                        else if (content is FunctionCallContent functionCall)
+                        {
+                            turnToolNames.Add(functionCall.Name);
+                        }
+                        else if (content is UsageContent usageContent)
+                        {
+                            turnInputTokens = usageContent.Details.InputTokenCount;
+                            turnOutputTokens = usageContent.Details.OutputTokenCount;
+                        }
                     }
-                    else if (content is UsageContent usageContent)
-                    {
-                        inputTokens = usageContent.Details.InputTokenCount;
-                        outputTokens = usageContent.Details.OutputTokenCount;
-                    }
+
+                    _onUpdate?.Invoke(ctx.RunId, update);
                 }
 
-                _onUpdate?.Invoke(update);
+                turnSw.Stop();
+                inputTokens = turnInputTokens;
+                outputTokens = turnOutputTokens;
+                lastModelCallDuration = turnSw.Elapsed;
+
+                if (
+                    isCheckpointOnly
+                    || collector.HasLifecycleCall
+                    || _config.StructuredOutput is not null
+                    || _config.TurnPolicy is null
+                )
+                {
+                    break;
+                }
+
+                if (continuationAttempt >= _config.TurnPolicy.MaxContinuationAttempts)
+                {
+                    policyExhausted = true;
+                    break;
+                }
+
+                var directive = await _config.TurnPolicy.Continue(
+                    new AgentTurnObservation(
+                        ctx,
+                        turnText.ToString(),
+                        turnToolNames,
+                        collector.HasLifecycleCall,
+                        continuationAttempt
+                    ),
+                    cts.Token
+                );
+                if (directive is null)
+                {
+                    policyExhausted = true;
+                    break;
+                }
+
+                continuationAttempt++;
+                userMessage = directive.Prompt;
+                agent = CreateAgent(
+                    fileStore,
+                    instructions,
+                    tools,
+                    ctx,
+                    isCheckpointOnly,
+                    directive.RequiredToolName,
+                    collector
+                );
             }
 
-            modelCallSw.Stop();
-
-            var agentUsage = ResolveUsage(inputTokens, outputTokens, modelCallSw.Elapsed);
+            var agentUsage = ResolveUsage(inputTokens, outputTokens, lastModelCallDuration);
             var contextAfterUsage = ctx.WithUsage(_config.BlockId, agentUsage);
 
             var updatedContext = await PersistSessionAsync(
@@ -186,9 +249,17 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
                 invocationId,
                 updatedContext,
                 isCheckpointOnly,
+                policyExhausted,
+                continuationAttempt,
                 cts.Token
             );
-            return outcome;
+            blockSw.Stop();
+            if (outcome.LatestOutcome is null)
+            {
+                return outcome;
+            }
+            var timedOutcome = outcome.LatestOutcome with { Duration = blockSw.Elapsed };
+            return new PipelineMessage(outcome.Context, timedOutcome);
         }
         finally
         {
@@ -234,41 +305,45 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
         );
     }
 
-    private IChatClient WrapWithFunctionInvocation(
-        IChatClient inner,
-        LifecycleOutcomeCollector collector
+    private void ConfigureFunctionInvocation(
+        HarnessAgent agent,
+        LifecycleOutcomeCollector collector,
+        PipelineContext ctx
     )
     {
-        return inner
-            .AsBuilder()
-            .UseFunctionInvocation(
-                null,
-                fic =>
+        var invokingClient =
+            agent.GetService<FunctionInvokingChatClient>()
+            ?? throw new InvalidOperationException(
+                "HarnessAgent did not expose its FunctionInvokingChatClient."
+            );
+
+        invokingClient.FunctionInvoker = async (ficContext, ct) =>
+        {
+            var isLifecycle =
+                _config.LifecycleToolNames.Contains(ficContext.Function.Name)
+                || ficContext.Function.Name == "write_checkpoint";
+
+            if (!isLifecycle && _toolInterceptor is not null)
+            {
+                var interception = await _toolInterceptor(ctx, ficContext, ct);
+                if (interception is ToolInterceptionResult.Blocked blocked)
                 {
-                    fic.FunctionInvoker = async (ficContext, ct) =>
-                    {
-                        var isLifecycle =
-                            _config.LifecycleToolNames.Contains(ficContext.Function.Name)
-                            || ficContext.Function.Name == "write_checkpoint";
-
-                        if (!isLifecycle)
-                        {
-                            return await ficContext.Function.InvokeAsync(ficContext.Arguments, ct);
-                        }
-
-                        using var mcpCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                        mcpCts.CancelAfter(_mcpCallTimeout);
-                        var result = await ficContext.Function.InvokeAsync(
-                            ficContext.Arguments,
-                            mcpCts.Token
-                        );
-                        collector.RecordLifecycleCall(ficContext.Function.Name);
-                        ficContext.Terminate = true;
-                        return result;
-                    };
+                    return blocked.Message;
                 }
-            )
-            .Build();
+            }
+
+            if (!isLifecycle)
+            {
+                return await ficContext.Function.InvokeAsync(ficContext.Arguments, ct);
+            }
+
+            using var mcpCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            mcpCts.CancelAfter(_mcpCallTimeout);
+            var result = await ficContext.Function.InvokeAsync(ficContext.Arguments, mcpCts.Token);
+            collector.RecordLifecycleCall(ficContext.Function.Name);
+            ficContext.Terminate = true;
+            return result;
+        };
     }
 
     private Task<PipelineMessage> ResolveOutcomeAsync(
@@ -278,6 +353,8 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
         string invocationId,
         PipelineContext ctx,
         bool isCheckpointOnly,
+        bool policyExhausted,
+        int continuationAttempt,
         CancellationToken ct
     )
     {
@@ -305,15 +382,19 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
                 );
             }
 
+            var kind = policyExhausted ? "agent.failed" : "agent.completed";
+            var summary = policyExhausted
+                ? $"No lifecycle outcome after {continuationAttempt + 1} model turn(s)."
+                : "(no lifecycle call)";
+            var payload = policyExhausted
+                ? JsonSerializer.SerializeToElement(
+                    new { continuationAttempts = continuationAttempt }
+                )
+                : EmptyPayload();
             return Task.FromResult(
                 new PipelineMessage(
                     ctx.IncrementInvocations(_config.BlockId),
-                    new BlockOutcome(
-                        "agent.completed",
-                        _config.BlockId,
-                        "(no lifecycle call)",
-                        EmptyPayload()
-                    )
+                    new BlockOutcome(kind, _config.BlockId, summary, payload)
                 )
             );
         }
@@ -406,12 +487,67 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
         );
     }
 
+    private HarnessAgent CreateAgent(
+        AgentFileStore fileStore,
+        string instructions,
+        IReadOnlyList<AITool> tools,
+        PipelineContext ctx,
+        bool isCheckpointOnly,
+        string? requiredToolName,
+        LifecycleOutcomeCollector collector
+    )
+    {
+        var chatOptions = new ChatOptions { Instructions = instructions, Tools = tools.ToList() };
+        if (!string.IsNullOrWhiteSpace(requiredToolName))
+        {
+            chatOptions.ToolMode = ChatToolMode.RequireSpecific(requiredToolName);
+        }
+        _configureChatOptions?.Invoke(chatOptions);
+
+        var agent = new HarnessAgent(
+            _chatClient,
+            new HarnessAgentOptions
+            {
+                Id = _config.BlockId,
+                Name = _config.BlockId,
+                HarnessInstructions = "",
+                ChatOptions = chatOptions,
+                DisableFileMemory = true,
+                DisableTodoProvider = true,
+                DisableAgentModeProvider = true,
+                DisableAgentSkillsProvider = true,
+                DisableWebSearch = true,
+                DisableToolAutoApproval = true,
+                DisableOpenTelemetry = true,
+                DisableCompaction = true,
+                MaximumIterationsPerRequest = 999,
+                FileAccessStore = fileStore,
+                FileAccessProviderOptions = ResolveAccessOptions(ctx, isCheckpointOnly),
+            }
+        );
+
+        ConfigureFunctionInvocation(agent, collector, ctx);
+        return agent;
+    }
+
     private FileAccessProviderOptions ResolveAccessOptions(
         PipelineContext ctx,
         bool isCheckpointOnly
     )
     {
         if (isCheckpointOnly)
+        {
+            return new FileAccessProviderOptions
+            {
+                DisableWriteTools = false,
+                DisableReadOnlyToolApproval = true,
+                DisableWriteToolApproval = true,
+            };
+        }
+
+        // When a tool interceptor is configured, write tools stay visible —
+        // the interceptor enforces the gate by blocking and returning a message.
+        if (_toolInterceptor is not null)
         {
             return new FileAccessProviderOptions
             {
@@ -737,5 +873,16 @@ internal sealed class LifecycleOutcomeCollector
 
     public string? LifecycleToolName => _lifecycleToolName;
 }
+
+/// <summary>
+/// Inspects a tool call before execution. Return null to allow the call,
+/// or <see cref="ToolInterceptionResult.Blocked"/> to return the message
+/// to the model instead of executing the tool.
+/// </summary>
+public delegate ValueTask<ToolInterceptionResult?> ToolInterceptor(
+    PipelineContext context,
+    FunctionInvocationContext invocationContext,
+    CancellationToken cancellationToken
+);
 
 #pragma warning restore MAAI001

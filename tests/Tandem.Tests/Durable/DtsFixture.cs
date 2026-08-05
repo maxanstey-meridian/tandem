@@ -11,7 +11,9 @@ namespace Tandem.Tests.Durable;
 public static class DtsFixture
 {
     public const string EmulatorAddress = "http://localhost:8080";
-    public const string TaskHub = "default";
+    public const string TaskHub = "tandem-tests";
+    public static string ConnectionString =>
+        $"Endpoint={EmulatorAddress};TaskHub={TaskHub};Authentication=None";
 
     private static readonly Lazy<bool> _reachable = new(IsEmulatorReachable);
 
@@ -24,7 +26,7 @@ public static class DtsFixture
             throw SkipException.ForSkip(
                 "DTS emulator is not reachable at "
                     + EmulatorAddress
-                    + ". Start it with: docker run -d --name tandem-dts -p 8080:8080 -p 8082:8082 mcr.microsoft.com/dts/dts-emulator:latest"
+                    + ". Start it with: docker run -d --name tandem-dts -p 8080:8080 -p 8082:8082 -e DTS_TASK_HUB_NAMES=tandem-cli,tandem-tests mcr.microsoft.com/dts/dts-emulator:latest"
             );
         }
     }
