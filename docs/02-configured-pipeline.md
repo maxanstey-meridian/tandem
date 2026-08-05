@@ -56,8 +56,8 @@ worker packages:
 
 ```text
 Microsoft.Agents.AI.DurableTask 1.16.0-preview.260730.1
-Microsoft.DurableTask.Client.AzureManaged
-Microsoft.DurableTask.Worker.AzureManaged
+Microsoft.DurableTask.Client.AzureManaged 1.18.0
+Microsoft.DurableTask.Worker.AzureManaged 1.18.0
 Microsoft.Extensions.Hosting
 ModelContextProtocol            1.2.0
 ```
@@ -79,7 +79,7 @@ docker run -d --name tandem-dts \
 Use this connection string unless the environment supplies another one:
 
 ```text
-Endpoint=http://localhost:8080;TaskHub=tandem;Authentication=None
+Endpoint=http://localhost:8080;TaskHub=default;Authentication=None
 ```
 
 The scheduler endpoint is port `8080`; its dashboard is
@@ -108,25 +108,28 @@ workflow engine.
 MAF Workflows:
 
 - `WorkflowBuilder.BindExecutor(Executor)` → `ExecutorBinding`;
-  `AddEdge(source, target, Func<object, bool> condition)` for conditional edges;
+  `AddEdge(source, target, Func<T?, bool> condition)` for conditional edges;
   `WithOutputFrom(ExecutorBinding[])`; `Build(validateOrphans)`.
-- `SwitchBuilder.AddCase(Func<object, bool> predicate, IEnumerable<ExecutorBinding> executors)`
-  + `WithDefault(IEnumerable<ExecutorBinding> executors)`. The predicate receives
-  the `PipelineMessage` flowing out of the source executor (per the composition
-  rule: "Conditions inspect only the `PipelineMessage` they receive"). The method
-  to create a `SwitchBuilder` from `WorkflowBuilder` is `AddSwitch` (per this
-  plan); verify the exact signature empirically in F-A.
+- `WorkflowBuilderExtensions.AddSwitch(WorkflowBuilder, ExecutorBinding,
+  Action<SwitchBuilder>)` creates a switch. `SwitchBuilder.AddCase<T>(Func<T?,
+  bool> predicate, params IEnumerable<ExecutorBinding> executors)` evaluates
+  cases in declaration order and `WithDefault` handles no match. The predicate
+  receives the message flowing out of the source executor (per the composition
+  rule: "Conditions inspect only the `PipelineMessage` they receive").
 - `RequestPort<TReq, TResp>.Create(string id)` — typed suspend/resume port;
   carries `Id`, `Request`, `Response`, `AllowWrapped`.
 
 MAF DurableTask:
 
 - `ServiceCollectionExtensions.ConfigureDurableWorkflows(services,
-  Action<DurableOptions> configure, Action<workerBuilder> workerBuilder,
+  Action<DurableWorkflowOptions> configure, Action<workerBuilder> workerBuilder,
   Action<clientBuilder> clientBuilder)` — the registration entry point.
 - `DurableWorkflowOptions.AddWorkflow(Workflow)` — registers workflow definitions.
 - `IWorkflowClient.RunAsync<TInput>(Workflow, TInput, string runId, CancellationToken)`
-  → `IStreamingWorkflowRun`.
+  → `IWorkflowRun`; cast the result to `IAwaitableWorkflowRun` for
+  `WaitForCompletionAsync<TResult>`.
+- `IWorkflowClient.StreamAsync<TInput>(Workflow, TInput, string runId,
+  CancellationToken)` → `IStreamingWorkflowRun`.
 - `IStreamingWorkflowRun.WatchStreamAsync(CancellationToken)` → `IAsyncEnumerable<WorkflowEvent>`.
 - `IStreamingWorkflowRun.SendResponseAsync<TResponse>(DurableWorkflowWaitingForInputEvent, TResponse, CancellationToken)`
   — for `RequestPort` responses within a live stream session.
@@ -142,6 +145,10 @@ MAF DurableTask:
   serializedHumanAnswer)` to deliver a typed response to a suspended
   `RequestPort`. The request-port ID provides framework correlation; Tandem
   does not add another request protocol.
+- Self-hosted DTS wiring uses `UseDurableTaskScheduler(connectionString)` from
+  the AzureManaged client and worker packages. The emulator ships with the
+  `default` task hub; `tandem` is not present unless the emulator is configured
+  separately.
 
 Harness session serialization (on `AIAgent` in `Microsoft.Agents.AI.Abstractions`):
 
@@ -168,15 +175,18 @@ Build the fit gate in four slices. Stop for feedback after each.
 Add the DurableTask packages, start the DTS emulator in Docker, create a test
 fixture that skips with a clear message when the emulator is unreachable, and
 prove a trivial one-executor durable workflow runs to completion via
-`IWorkflowClient.RunAsync` + `WatchStreamAsync`. Verify `ConfigureDurableWorkflows`
-registration, `IWorkflowClient` resolution, and the `IStreamingWorkflowRun` event
-stream. Confirm the `AddSwitch` method shape on `WorkflowBuilder`.
+`IWorkflowClient.StreamAsync` + `WatchStreamAsync`. Verify
+`ConfigureDurableWorkflows` registration, `IWorkflowClient` resolution, and the
+`IStreamingWorkflowRun` event stream. Confirm the `AddSwitch` method shape on
+`WorkflowBuilder`.
 
 #### F-B — Proofs 1-2: AddSwitch ordering and cycle
 
-Proof 1: Build a 3-executor workflow with a switch. Feed inputs where case A
-matches alone and where both A and B match. Assert only the first matching case
-runs.
+Proof 1: Build a 3-executor workflow with a switch. Verify MAF's in-process
+workflow selects the first matching case. Characterize the pinned durable
+preview's selector-loss defect against the same graph. Production composition
+must use direct conditional edges with mutually exclusive conditions until an
+upstream durable fix is available.
 
 Proof 2: Build a workflow with a back-edge from a later executor to an earlier
 one. Assert the earlier executor runs twice and receives the updated message
@@ -197,11 +207,12 @@ Proof 5: An executor emits a custom `WorkflowEvent` via
 
 #### F-D — Proofs 6-7: RequestPort suspend/resume and Harness session
 
-Proof 6: An executor suspends via `RequestPort<Question, Answer>`.
-`WatchStreamAsync` yields `DurableWorkflowWaitingForInputEvent`. Stop the host.
-Restart. Resume via `DurableTaskClient.RaiseEventAsync(durableRunId, "HumanInput",
-serializedAnswer)`. Assert the executor receives the typed answer and the
-workflow completes.
+Proof 6: An executor suspends via `RequestPort<Question, Answer>`. Observe the
+pending request through durable live status, because the pinned preview cannot
+deserialize the internal routed event shape through `WatchStreamAsync`. Stop the
+host. Restart. Resume via `DurableTaskClient.RaiseEventAsync(durableRunId,
+"HumanInput", serializedAnswer)`. Assert the executor receives the typed answer
+and the workflow completes.
 
 Proof 7: Build a `HarnessAgent` with a scripted `IChatClient`. Run one turn
 that produces a tool call. Call `SerializeSessionAsync`. Create a new
@@ -217,6 +228,41 @@ response that inspects message count or content).
   return canned outputs and track invocations. No model calls.
 - Scripted `IChatClient`: reuse the existing pattern from plan 01 tests for
   Proof 7.
+
+### Fit Gate Result
+
+The integration tests are in `tests/Tandem.Tests/Durable/` and run against the
+real DTS emulator. The durable test collection is serialized because multiple
+workers connected to one task hub can claim each other's workflow registrations.
+
+- F-A passes: package restore, host registration, client resolution, a trivial
+  durable run, and `WorkflowBuilderExtensions.AddSwitch` reflection.
+- Proof 1 passes in-process, but the accepted durable-preview defect is recorded
+  by `AddSwitch_DurablePinnedPreviewRunsEveryMatchingCase`. MAF Workflows selects
+  only the first matching `AddSwitch` case in-process. The durable package
+  `1.16.0-preview.260730.1` drops the switch target selector in `DurableEdgeMap`,
+  so switch successors are treated as fan-out targets rather than priority
+  cases. This is accepted for plan 02; Tandem will not add a second routing
+  engine.
+- Proof 2 passes durably when expressed with mutually exclusive conditional
+  edges: the later executor routes back to the earlier executor and the updated
+  message is preserved.
+- Proofs 3-5 pass: host restart resumes the existing run, the completed executor
+  is not repeated, and a custom workflow event is visible from the durable stream.
+- Proof 6 passes for durable suspension, restart, raw durable event response, and
+  typed answer consumption. The pinned preview's streaming deserializer throws
+  when routed/request-port workflows emit its internal `WorkflowOutputEvent`
+  shape, so the test observes the pending request through durable custom status
+  and resumes it through the raw `DurableTaskClient` surface.
+- Proof 7 passes after a real Harness file-tool turn: session serialization,
+  restoration into a new agent, and continuation with the prior conversation.
+
+The fit gate is complete with the `AddSwitch` defect accepted. `simple-v1` may
+use durable linear edges, cycles, explicit fan-out, and direct conditional edges
+with mutually exclusive predicates. It must not use `AddSwitch` for priority or
+default routing, and it must not implement a Tandem-owned routing workaround.
+Revisit this accepted defect when upgrading the durable framework or applying an
+upstream fix.
 
 ## Model Profiles
 
@@ -842,8 +888,9 @@ reviewer review.needs_human       -> waiting
 default                           -> failed
 ```
 
-Use `WorkflowBuilder.AddSwitch` with ordered `AddCase` calls and `WithDefault`
-for these branches. Conditions inspect only the `PipelineMessage` they receive.
+Compose with direct `AddEdge` calls carrying mutually exclusive `Func<PipelineMessage, bool>` conditions. Do not use `AddSwitch`: the pinned durable preview (`1.16.0-preview.260730.1`) drops the switch target selector in `DurableEdgeMap`, so every matching branch executes instead of only the first. This is the accepted framework defect recorded in the Fit Gate Result section. Conditions inspect only the `PipelineMessage` they receive.
+
+Each source block declares one edge per known outcome plus one catch-all edge to `failed` whose predicate is the negation of the union of all known outcomes for that source. The catch-all must be mutually exclusive with every named edge so exactly one edge fires per invocation.
 
 Mark `complete`, `waiting`, and `failed` as workflow outputs.
 
