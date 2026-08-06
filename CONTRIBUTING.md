@@ -1,0 +1,92 @@
+# Contributing to Tandem
+
+## Architecture
+
+Tandem has six runtime concepts:
+
+- **Block**: one reusable operation.
+- **Context**: durable facts shared across the pipeline.
+- **Outcome**: the result emitted by a block.
+- **Condition**: a predicate over context and the latest outcome.
+- **Route**: an ordered condition and destination pair.
+- **Prompt**: instructions contributed to an agent block.
+
+The execution cycle is: run a block, persist its observations and outcome,
+evaluate its routes in order, then run the first matching destination, suspend,
+or complete.
+
+## Boundaries
+
+Keep these ownership boundaries explicit:
+
+- Pipeline composition owns block order, prompts, profiles, conditions, and
+  successors.
+- Blocks own operations, not orchestration.
+- Durable context records facts; it does not hide routing logic.
+- Microsoft Agent Framework owns workflow execution, durability, sessions,
+  model loops, tool dispatch, and workflow events.
+- Tandem owns product composition, blocks, conditions, policies, Git and
+  verification operations, event projection, and operator interfaces.
+- Planner and reviewer blocks have read-only workspace access.
+- Executor mutation is available only after the pipeline establishes mutation
+  authority.
+- Each run operates in an isolated clone pinned to the resolved base commit.
+- Review is grounded in the exact candidate captured and verified by the
+  pipeline.
+
+Do not introduce a second orchestration engine, imperative lifecycle coordinator,
+or application-level agent loop. A lifecycle change belongs in workflow
+composition unless it changes what a block operation itself does.
+
+## Machine Boundaries
+
+Treat all model-authored data as untrusted boundary input.
+
+- Lifecycle MCP tools compose their request contract, validator, schema, error
+  identity, and handler registration.
+- Invalid lifecycle calls return structured tool errors before handlers run or
+  receipts are persisted.
+- An accepted lifecycle call persists its outcome, terminates the active model
+  turn mechanically, and returns control to workflow routing.
+- Planner and reviewer structured output must pass syntax, shape, enum, and
+  cross-field validation before it can affect context or routing.
+- Structured-output recovery gets one corrective response in the same agent
+  session, then fails closed with the raw response and validation problems.
+- Runtime FluentValidation rules are authoritative where generated JSON Schema
+  cannot express semantic constraints.
+
+Generic boundary infrastructure must resolve behavior through registration. Do
+not add tool-name switches or duplicate semantic validation inside handlers.
+
+## Composition Test
+
+The design is healthy when composition changes alone can:
+
+- remove or insert planner and reviewer blocks;
+- reorder verification commands;
+- route a failed command to a configured remediation block;
+- contribute prompts to selected agents;
+- rotate sessions or promote models under configured conditions; and
+- preserve accepted side effects across process restart.
+
+The decisive rule is:
+
+```text
+The configured pipeline is the lifecycle.
+The runtime only executes it durably.
+```
+
+## Development
+
+Prefer the maintained framework or SDK for commodity behavior and add only the
+machinery required by Tandem's product boundary. Keep changes small and prove
+behavior through public interfaces and end-to-end execution paths.
+
+Run the repository checks before submitting changes:
+
+```sh
+dotnet tool restore
+task check
+```
+
+Durable tests use the scheduler emulator documented in [README.md](README.md).

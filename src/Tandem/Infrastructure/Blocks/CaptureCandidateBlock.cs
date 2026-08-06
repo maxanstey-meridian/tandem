@@ -5,15 +5,10 @@ using Tandem.Domain;
 
 namespace Tandem.Infrastructure.Blocks;
 
-public sealed class CaptureCandidateBlock : Executor<PipelineMessage, PipelineMessage>
+public sealed class CaptureCandidateBlock(GitProcess? git = null)
+    : Executor<PipelineMessage, PipelineMessage>(BlockIds.CaptureCandidate)
 {
-    private readonly GitProcess _git;
-
-    public CaptureCandidateBlock(GitProcess? git = null)
-        : base(BlockIds.CaptureCandidate)
-    {
-        _git = git ?? new GitProcess();
-    }
+    private readonly GitProcess _git = git ?? new GitProcess();
 
     public override async ValueTask<PipelineMessage> HandleAsync(
         PipelineMessage message,

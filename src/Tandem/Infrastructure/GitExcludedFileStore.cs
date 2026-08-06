@@ -4,15 +4,8 @@ using Microsoft.Agents.AI;
 
 namespace Tandem.Infrastructure;
 
-public sealed class GitExcludedFileStore : AgentFileStore
+public sealed class GitExcludedFileStore(AgentFileStore inner) : AgentFileStore
 {
-    private readonly AgentFileStore _inner;
-
-    public GitExcludedFileStore(AgentFileStore inner)
-    {
-        _inner = inner;
-    }
-
     public override Task WriteAsync(
         string path,
         string content,
@@ -20,19 +13,20 @@ public sealed class GitExcludedFileStore : AgentFileStore
     )
     {
         RejectGitPath(path);
-        return _inner.WriteAsync(path, content, cancellationToken);
+        var normalized = content.Length > 0 && content[0] == '\uFEFF' ? content[1..] : content;
+        return inner.WriteAsync(path, normalized, cancellationToken);
     }
 
     public override Task<string?> ReadAsync(string path, CancellationToken cancellationToken)
     {
         RejectGitPath(path);
-        return _inner.ReadAsync(path, cancellationToken);
+        return inner.ReadAsync(path, cancellationToken);
     }
 
     public override Task<bool> DeleteAsync(string path, CancellationToken cancellationToken)
     {
         RejectGitPath(path);
-        return _inner.DeleteAsync(path, cancellationToken);
+        return inner.DeleteAsync(path, cancellationToken);
     }
 
     public override async Task<IReadOnlyList<FileStoreEntry>> ListChildrenAsync(
@@ -40,14 +34,14 @@ public sealed class GitExcludedFileStore : AgentFileStore
         CancellationToken cancellationToken
     )
     {
-        var entries = await _inner.ListChildrenAsync(directory, cancellationToken);
+        var entries = await inner.ListChildrenAsync(directory, cancellationToken);
         return entries.Where(e => !IsGitSegment(e.Name)).ToList();
     }
 
     public override Task<bool> FileExistsAsync(string path, CancellationToken cancellationToken)
     {
         RejectGitPath(path);
-        return _inner.FileExistsAsync(path, cancellationToken);
+        return inner.FileExistsAsync(path, cancellationToken);
     }
 
     public override async Task<IReadOnlyList<FileSearchResult>> SearchAsync(
@@ -58,7 +52,7 @@ public sealed class GitExcludedFileStore : AgentFileStore
         CancellationToken cancellationToken
     )
     {
-        var results = await _inner.SearchAsync(
+        var results = await inner.SearchAsync(
             directory,
             regexPattern,
             globPattern,
@@ -71,7 +65,7 @@ public sealed class GitExcludedFileStore : AgentFileStore
     public override Task CreateDirectoryAsync(string path, CancellationToken cancellationToken)
     {
         RejectGitPath(path);
-        return _inner.CreateDirectoryAsync(path, cancellationToken);
+        return inner.CreateDirectoryAsync(path, cancellationToken);
     }
 
     private static void RejectGitPath(string path)

@@ -32,4 +32,6 @@ public static class BlockIds
     public const string Complete = "complete";
     public const string Waiting = "waiting";
     public const string Failed = "failed";
+    public const string HumanQuestion = "human-question";
+    public const string ApplyHumanAnswer = "apply-human-answer";
 }

@@ -21,7 +21,7 @@ public sealed class LifecycleMcpHost
             consoleLogOptions.LogToStandardErrorThreshold = LogLevel.Warning;
         });
 
-        builder.Services.AddMcpServer().WithStdioServerTransport().WithToolsFromAssembly();
+        builder.Services.AddLifecycleMcpTools().WithStdioServerTransport();
 
         builder.Services.AddSingleton(new LifecycleReceiptStore(tandemHome));
         builder.Services.AddSingleton(new LifecycleToolContext(runId, blockId, invocationId));

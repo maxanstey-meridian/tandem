@@ -14,18 +14,13 @@ public sealed class WorkspacePreparationException : Exception
         : base(message, inner) { }
 }
 
-public sealed class WorkspacePreparation
+public sealed class WorkspacePreparation(GitProcess? git = null)
 {
-    private readonly GitProcess _git;
+    private readonly GitProcess _git = git ?? new GitProcess();
     private static readonly Regex _shaRegex = new(
         "^[0-9a-f]{40}$|^[0-9a-f]{64}$",
         RegexOptions.Compiled
     );
-
-    public WorkspacePreparation(GitProcess? git = null)
-    {
-        _git = git ?? new GitProcess();
-    }
 
     public async Task<WorkspacePreparationResult> PrepareAsync(
         Packet packet,

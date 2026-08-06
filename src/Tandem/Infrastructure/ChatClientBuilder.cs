@@ -27,7 +27,10 @@ public sealed class ChatClientBuilder
     {
         var client = CreateOpenAIClient(apiKey, options);
         var chatClient = client.GetChatClient(profile.Model).AsIChatClient();
-        return ApplyReasoning(chatClient, profile.Reasoning);
+        var configured = ApplyReasoning(chatClient, profile.Reasoning);
+        return profile.BaseUrl.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase)
+            ? new OpenRouterReasoningChatClient(configured)
+            : configured;
     }
 
 #pragma warning disable OPENAI001

@@ -88,7 +88,7 @@ public sealed record CheckpointPolicy(
 /// Used by planner and reviewer blocks that return structured decisions
 /// instead of calling lifecycle MCP tools.
 /// </summary>
-public delegate StructuredOutcome StructuredOutputParser(
+public delegate StructuredOutputResult StructuredOutputParser(
     string assistantText,
     PipelineContext context
 );

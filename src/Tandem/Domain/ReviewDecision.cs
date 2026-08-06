@@ -14,4 +14,16 @@ public enum ReviewDecisionValue
     NeedsHuman,
 }
 
-public sealed record ReviewFinding(string Severity, string Description, string Evidence);
+public sealed record ReviewFinding(
+    ReviewFindingSeverity Severity,
+    string Description,
+    string Evidence
+);
+
+public enum ReviewFindingSeverity
+{
+    Critical,
+    High,
+    Medium,
+    Low,
+}

@@ -11,15 +11,8 @@ public sealed record LifecycleReceipt(
     DateTimeOffset AcceptedAt
 );
 
-public sealed class LifecycleReceiptStore
+public sealed class LifecycleReceiptStore(string tandemHome)
 {
-    private readonly string _tandemHome;
-
-    public LifecycleReceiptStore(string tandemHome)
-    {
-        _tandemHome = tandemHome;
-    }
-
     public async Task<LifecycleReceipt?> ReadAsync(
         Guid runId,
         string invocationId,
@@ -93,5 +86,5 @@ public sealed class LifecycleReceiptStore
     }
 
     private string ResolvePath(Guid runId, string invocationId) =>
-        Path.Combine(_tandemHome, "runs", runId.ToString("N"), "lifecycle", $"{invocationId}.json");
+        Path.Combine(tandemHome, "runs", runId.ToString("N"), "lifecycle", $"{invocationId}.json");
 }

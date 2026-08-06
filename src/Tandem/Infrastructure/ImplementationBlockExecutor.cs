@@ -31,7 +31,9 @@ public sealed class ImplementationBlockExecutor : Executor<RunContext, BlockResu
         cts.CancelAfter(TurnTimeoutMs);
 
         var chatClient = _chatClientFactory(input.Profile);
-        var fileStore = new GitExcludedFileStore(new FileSystemAgentFileStore(input.WorkspacePath));
+        var fileStore = new GitExcludedFileStore(
+            new BomlessFileSystemAgentFileStore(input.WorkspacePath)
+        );
 
         var agent = new HarnessAgent(
             chatClient,

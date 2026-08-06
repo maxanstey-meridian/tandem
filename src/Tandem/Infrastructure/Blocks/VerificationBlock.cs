@@ -2,16 +2,14 @@ using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows;
 using Tandem.Domain;
+using Tandem.Infrastructure.Projection;
 
 namespace Tandem.Infrastructure.Blocks;
 
-public sealed class VerificationBlock : Executor<PipelineMessage, PipelineMessage>
+public sealed class VerificationBlock(ICommandOutputObserver? outputObserver = null)
+    : Executor<PipelineMessage, PipelineMessage>(BlockIds.Verify)
 {
     private static readonly TimeSpan _commandTimeout = TimeSpan.FromMinutes(10);
-
-    public VerificationBlock()
-        : base(BlockIds.Verify) { }
-
     public override async ValueTask<PipelineMessage> HandleAsync(
         PipelineMessage message,
         IWorkflowContext context,
@@ -41,6 +39,20 @@ public sealed class VerificationBlock : Executor<PipelineMessage, PipelineMessag
 
         var command = commands[ctx.VerificationIndex];
         var result = await RunCommandAsync(command, ctx.WorkspacePath, cancellationToken);
+        if (outputObserver is not null)
+        {
+            var output = string.Join(
+                Environment.NewLine,
+                new[] { result.Stdout, result.Stderr }.Where(value => !string.IsNullOrEmpty(value))
+            );
+            await outputObserver.CommandOutputAsync(
+                BlockIds.Verify,
+                command,
+                output,
+                result.ExitCode,
+                cancellationToken
+            );
+        }
 
         var results = ctx.VerificationResults.Append(result).ToList();
         var passed = result.ExitCode == 0;

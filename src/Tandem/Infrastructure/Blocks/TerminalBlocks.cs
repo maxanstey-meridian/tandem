@@ -5,11 +5,8 @@ using Tandem.Domain;
 
 namespace Tandem.Infrastructure.Blocks;
 
-public sealed class CompleteBlock : Executor<PipelineMessage, PipelineMessage>
+public sealed class CompleteBlock() : Executor<PipelineMessage, PipelineMessage>(BlockIds.Complete)
 {
-    public CompleteBlock()
-        : base(BlockIds.Complete) { }
-
     public override ValueTask<PipelineMessage> HandleAsync(
         PipelineMessage message,
         IWorkflowContext context,
@@ -34,11 +31,8 @@ public sealed class CompleteBlock : Executor<PipelineMessage, PipelineMessage>
     }
 }
 
-public sealed class WaitingBlock : Executor<PipelineMessage, PipelineMessage>
+public sealed class WaitingBlock() : Executor<PipelineMessage, PipelineMessage>(BlockIds.Waiting)
 {
-    public WaitingBlock()
-        : base(BlockIds.Waiting) { }
-
     public override ValueTask<PipelineMessage> HandleAsync(
         PipelineMessage message,
         IWorkflowContext context,
@@ -63,11 +57,8 @@ public sealed class WaitingBlock : Executor<PipelineMessage, PipelineMessage>
     }
 }
 
-public sealed class FailedBlock : Executor<PipelineMessage, PipelineMessage>
+public sealed class FailedBlock() : Executor<PipelineMessage, PipelineMessage>(BlockIds.Failed)
 {
-    public FailedBlock()
-        : base(BlockIds.Failed) { }
-
     public override ValueTask<PipelineMessage> HandleAsync(
         PipelineMessage message,
         IWorkflowContext context,

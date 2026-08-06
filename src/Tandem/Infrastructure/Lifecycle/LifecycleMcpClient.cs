@@ -3,29 +3,16 @@ using ModelContextProtocol.Client;
 
 namespace Tandem.Infrastructure.Lifecycle;
 
-public sealed class LifecycleMcpClient : IAsyncDisposable
+public sealed class LifecycleMcpClient(
+    string tandemHome,
+    string tandemExePath,
+    Guid runId,
+    string blockId,
+    string invocationId
+) : IAsyncDisposable
 {
-    private readonly string _tandemHome;
-    private readonly string _tandemExePath;
-    private readonly string _runId;
-    private readonly string _blockId;
-    private readonly string _invocationId;
+    private readonly string _runId = runId.ToString("N");
     private McpClient? _client;
-
-    public LifecycleMcpClient(
-        string tandemHome,
-        string tandemExePath,
-        Guid runId,
-        string blockId,
-        string invocationId
-    )
-    {
-        _tandemHome = tandemHome;
-        _tandemExePath = tandemExePath;
-        _runId = runId.ToString("N");
-        _blockId = blockId;
-        _invocationId = invocationId;
-    }
 
     public async Task<IReadOnlyList<AITool>> ListToolsAsync(
         IReadOnlyList<string> enabledToolNames,
@@ -35,14 +22,14 @@ public sealed class LifecycleMcpClient : IAsyncDisposable
         var transport = new StdioClientTransport(
             new StdioClientTransportOptions
             {
-                Command = _tandemExePath,
+                Command = tandemExePath,
                 Arguments = ["mcp", "lifecycle"],
                 EnvironmentVariables = new Dictionary<string, string?>
                 {
-                    ["TANDEM_HOME"] = _tandemHome,
+                    ["TANDEM_HOME"] = tandemHome,
                     ["TANDEM_RUN_ID"] = _runId,
-                    ["TANDEM_BLOCK_ID"] = _blockId,
-                    ["TANDEM_INVOCATION_ID"] = _invocationId,
+                    ["TANDEM_BLOCK_ID"] = blockId,
+                    ["TANDEM_INVOCATION_ID"] = invocationId,
                     ["TANDEM_MCP_DIAG"] = "1",
                 },
             }

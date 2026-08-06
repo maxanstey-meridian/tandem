@@ -52,7 +52,14 @@ public sealed class RealModelLifecycleProofTests
             chatClientFactory.ResolveProfile,
             tandemExePath
         );
-        var workflow = composition.Build();
+        var reasoningUpdates = 0;
+        var workflow = composition.Build(
+            (_, _, update) =>
+                Interlocked.Add(
+                    ref reasoningUpdates,
+                    update.Contents.OfType<TextReasoningContent>().Count()
+                )
+        );
 
         var runId = "real-model-" + Guid.NewGuid().ToString("N");
 
@@ -177,6 +184,9 @@ public sealed class RealModelLifecycleProofTests
         pipelineOutput!.Context.Status.Should().Be(Domain.RunStatus.Ready);
         pipelineOutput.LatestOutcome.Should().NotBeNull("the terminal output must have an outcome");
         pipelineOutput.LatestOutcome!.Kind.Should().Be(OutcomeKinds.RunReady);
+        reasoningUpdates
+            .Should()
+            .BeGreaterThan(0, "the configured reasoning stream must reach operators");
     }
 
     private static void EnsureApiKeyAvailable()

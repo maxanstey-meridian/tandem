@@ -4,15 +4,10 @@ namespace Tandem.Infrastructure;
 
 public sealed record GitResult(int ExitCode, string Stdout, string Stderr, bool TimedOut);
 
-public sealed class GitProcess
+public sealed class GitProcess(string? gitPath = null)
 {
     private const int TimeoutMs = 120_000;
-    private readonly string _gitPath;
-
-    public GitProcess(string? gitPath = null)
-    {
-        _gitPath = gitPath ?? "git";
-    }
+    private readonly string _gitPath = gitPath ?? "git";
 
     public async Task<GitResult> RunAsync(
         string? workingDirectory,

@@ -1,37 +1,26 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using Tandem.Domain;
 using Tandem.Infrastructure.Blocks;
+using Tandem.Infrastructure.Projection;
 
 namespace Tandem.Infrastructure.Composition;
 
-public sealed class SimpleV1Composition
+public sealed class SimpleV1Composition(
+    string tandemHome,
+    Func<string, Microsoft.Extensions.AI.IChatClient> chatClientFactory,
+    Func<string, ResolvedProfile> profileResolver,
+    string? tandemExePath = null
+)
 {
-    private readonly string _tandemHome;
-    private readonly string? _tandemExePath;
-    private readonly Func<string, Microsoft.Extensions.AI.IChatClient> _chatClientFactory;
-    private readonly Func<string, ResolvedProfile> _profileResolver;
-
-    public SimpleV1Composition(
-        string tandemHome,
-        Func<string, Microsoft.Extensions.AI.IChatClient> chatClientFactory,
-        Func<string, ResolvedProfile> profileResolver,
-        string? tandemExePath = null
+    public Workflow Build(
+        Action<string, Guid, AgentResponseUpdate>? onUpdate = null,
+        IBlockExecutionObserver? blockObserver = null
     )
     {
-        _tandemHome = tandemHome;
-        _tandemExePath = tandemExePath;
-        _chatClientFactory = chatClientFactory;
-        _profileResolver = profileResolver;
-    }
-
-    public Workflow Build(Action<Guid, AgentResponseUpdate>? onUpdate = null)
-    {
-        var prepare = new PrepareWorkspaceBlock();
-        var executor = CreateAgentBlock(
+        Executor<PipelineMessage, PipelineMessage> prepare = new PrepareWorkspaceBlock();
+        Executor<PipelineMessage, PipelineMessage> executor = CreateAgentBlock(
             BlockIds.Executor,
             "implementation",
             ExecutorInstructions,
@@ -41,32 +30,52 @@ public sealed class SimpleV1Composition
             toolInterceptor: CreateMutationGate(),
             turnPolicy: CreateExecutorTurnPolicy()
         );
-        var planner = CreateAgentBlock(
+        Executor<PipelineMessage, PipelineMessage> planner = CreateAgentBlock(
             BlockIds.Planner,
             "planning",
             PlannerInstructions,
             WorkspaceAccess.ReadOnly,
             [],
             onUpdate,
-            ParsePlannerDecision,
+            PlannerDecisionPolicy.Parse,
             configureChatOptions: ConfigurePlannerChatOptions
         );
-        var captureCandidate = new CaptureCandidateBlock();
-        var verify = new VerificationBlock();
-        var reviewer = CreateAgentBlock(
+        Executor<PipelineMessage, PipelineMessage> captureCandidate = new CaptureCandidateBlock();
+        Executor<PipelineMessage, PipelineMessage> verify = new VerificationBlock(
+            blockObserver as ICommandOutputObserver
+        );
+        Executor<PipelineMessage, PipelineMessage> reviewer = CreateAgentBlock(
             BlockIds.Reviewer,
             "review",
             ReviewerInstructions,
             WorkspaceAccess.ReadOnly,
             [],
             onUpdate,
-            ParseReviewDecision,
+            ReviewDecisionPolicy.Parse,
             messageAugmentation: CreateDiffAugmentation(),
             configureChatOptions: ConfigureReviewerChatOptions
         );
-        var complete = new CompleteBlock();
-        var waiting = new WaitingBlock();
-        var failed = new FailedBlock();
+        Executor<PipelineMessage, PipelineMessage> complete = new CompleteBlock();
+        Executor<PipelineMessage, PipelineMessage> failed = new FailedBlock();
+
+        // Human-input blocks replace the terminal waiting block.
+        Executor<PipelineMessage, HumanQuestion> humanQuestion = new HumanQuestionBlock();
+        Executor<HumanAnswer, PipelineMessage> applyHumanAnswer = new ApplyHumanAnswerBlock();
+        var humanInputPort = RequestPort.Create<HumanQuestion, HumanAnswer>("HumanInput");
+
+        if (blockObserver is not null)
+        {
+            prepare = Observe(BlockIds.Prepare, prepare, blockObserver);
+            executor = Observe(BlockIds.Executor, executor, blockObserver);
+            planner = Observe(BlockIds.Planner, planner, blockObserver);
+            captureCandidate = Observe(BlockIds.CaptureCandidate, captureCandidate, blockObserver);
+            verify = Observe(BlockIds.Verify, verify, blockObserver);
+            reviewer = Observe(BlockIds.Reviewer, reviewer, blockObserver);
+            complete = Observe(BlockIds.Complete, complete, blockObserver);
+            failed = Observe(BlockIds.Failed, failed, blockObserver);
+            humanQuestion = Observe(BlockIds.HumanQuestion, humanQuestion, blockObserver);
+            applyHumanAnswer = Observe(BlockIds.ApplyHumanAnswer, applyHumanAnswer, blockObserver);
+        }
 
         var prepareBinding = prepare.BindExecutor();
         var executorBinding = executor.BindExecutor();
@@ -75,8 +84,10 @@ public sealed class SimpleV1Composition
         var verifyBinding = verify.BindExecutor();
         var reviewerBinding = reviewer.BindExecutor();
         var completeBinding = complete.BindExecutor();
-        var waitingBinding = waiting.BindExecutor();
         var failedBinding = failed.BindExecutor();
+        var humanQuestionBinding = humanQuestion.BindExecutor();
+        var humanInputBinding = (ExecutorBinding)humanInputPort;
+        var applyHumanAnswerBinding = applyHumanAnswer.BindExecutor();
 
         var builder = new WorkflowBuilder(prepareBinding).WithName("simple-v1");
 
@@ -121,7 +132,7 @@ public sealed class SimpleV1Composition
         builder = AddOutcomeEdge(
             builder,
             plannerBinding,
-            waitingBinding,
+            humanQuestionBinding,
             OutcomeKinds.PlannerNeedsHuman
         );
         builder = AddOutcomeEdge(builder, plannerBinding, failedBinding, OutcomeKinds.PlannerStop);
@@ -180,14 +191,47 @@ public sealed class SimpleV1Composition
         builder = AddOutcomeEdge(
             builder,
             reviewerBinding,
-            waitingBinding,
+            humanQuestionBinding,
             OutcomeKinds.ReviewNeedsHuman
         );
         builder = builder.AddEdge(reviewerBinding, failedBinding, CatchAllReviewer());
 
-        builder = builder.WithOutputFrom(completeBinding, waitingBinding, failedBinding);
+        // Human input: question → request port (suspends) → apply answer →
+        // route back to the source decision block.
+        builder = builder.AddEdge(humanQuestionBinding, humanInputBinding);
+        builder = builder.AddEdge(humanInputBinding, applyHumanAnswerBinding);
+
+        // Route the answer back to the originating decision block. The
+        // apply-human-answer block's outcome payload carries the source
+        // block ID. Combine same-target routes into one predicate to avoid
+        // durable batching delivering String[] instead of PipelineMessage.
+        builder = builder.AddEdge<PipelineMessage>(
+            applyHumanAnswerBinding,
+            plannerBinding,
+            msg =>
+                msg!.LatestOutcome?.Payload.TryGetProperty("sourceBlockId", out var sb) == true
+                && sb.ValueKind == System.Text.Json.JsonValueKind.String
+                && sb.GetString() == BlockIds.Planner
+        );
+        builder = builder.AddEdge<PipelineMessage>(
+            applyHumanAnswerBinding,
+            reviewerBinding,
+            msg =>
+                msg!.LatestOutcome?.Payload.TryGetProperty("sourceBlockId", out var sb) == true
+                && sb.ValueKind == System.Text.Json.JsonValueKind.String
+                && sb.GetString() == BlockIds.Reviewer
+        );
+        builder = builder.AddEdge(applyHumanAnswerBinding, failedBinding, CatchAllApplyAnswer());
+
+        builder = builder.WithOutputFrom(completeBinding, failedBinding);
         return builder.Build();
     }
+
+    private static Executor<TInput, TOutput> Observe<TInput, TOutput>(
+        string blockId,
+        Executor<TInput, TOutput> executor,
+        IBlockExecutionObserver observer
+    ) => new ObservedExecutor<TInput, TOutput>(blockId, executor, observer);
 
     private AgentBlock CreateAgentBlock(
         string blockId,
@@ -195,7 +239,7 @@ public sealed class SimpleV1Composition
         string instructions,
         WorkspaceAccess access,
         IReadOnlyList<string> lifecycleTools,
-        Action<Guid, AgentResponseUpdate>? onUpdate,
+        Action<string, Guid, AgentResponseUpdate>? onUpdate,
         StructuredOutputParser? structuredOutput = null,
         ToolInterceptor? toolInterceptor = null,
         MessageAugmentation? messageAugmentation = null,
@@ -203,7 +247,7 @@ public sealed class SimpleV1Composition
         Action<ChatOptions>? configureChatOptions = null
     )
     {
-        var profile = _profileResolver(profileName);
+        var profile = profileResolver(profileName);
         var checkpoint = new CheckpointPolicy(
             profile.ContextWindowTokens,
             profile.MaxOutputTokens,
@@ -223,9 +267,9 @@ public sealed class SimpleV1Composition
         );
         return new AgentBlock(
             config,
-            _chatClientFactory(profileName),
-            _tandemHome,
-            _tandemExePath,
+            chatClientFactory(profileName),
+            tandemHome,
+            tandemExePath,
             onUpdate,
             toolInterceptor,
             configureChatOptions
@@ -324,101 +368,6 @@ public sealed class SimpleV1Composition
                 """;
         };
 
-    private static StructuredOutcome ParsePlannerDecision(string assistantText, PipelineContext ctx)
-    {
-        var json = ExtractJson(assistantText);
-        var decision =
-            JsonSerializer.Deserialize<PlannerDecision>(json, _plannerJsonOptions)
-            ?? throw new InvalidOperationException(
-                "Failed to parse PlannerDecision from model response."
-            );
-        var kind = decision.Decision switch
-        {
-            PlannerDecisionValue.Proceed => OutcomeKinds.PlannerProceed,
-            PlannerDecisionValue.ProceedWithConstraints =>
-                OutcomeKinds.PlannerProceedWithConstraints,
-            PlannerDecisionValue.NeedsHuman => OutcomeKinds.PlannerNeedsHuman,
-            PlannerDecisionValue.Stop => OutcomeKinds.PlannerStop,
-            _ => throw new InvalidOperationException(
-                $"Unknown planner decision: {decision.Decision}"
-            ),
-        };
-        var payload = JsonSerializer.SerializeToElement(decision, _plannerJsonOptions);
-        var authorizesMutation =
-            decision.Decision
-            is PlannerDecisionValue.Proceed
-                or PlannerDecisionValue.ProceedWithConstraints;
-        var updatedCtx = ctx with
-        {
-            PlannerDecision = decision,
-            PlannerConstraints =
-                decision.Constraints.Count > 0 ? decision.Constraints : ctx.PlannerConstraints,
-            MutationAuthorized = authorizesMutation || ctx.MutationAuthorized,
-        };
-        return new StructuredOutcome(kind, decision.Rationale, payload, updatedCtx);
-    }
-
-    private static StructuredOutcome ParseReviewDecision(string assistantText, PipelineContext ctx)
-    {
-        var json = ExtractJson(assistantText);
-        var decision =
-            JsonSerializer.Deserialize<ReviewDecision>(json, _reviewJsonOptions)
-            ?? throw new InvalidOperationException(
-                "Failed to parse ReviewDecision from model response."
-            );
-        var kind = decision.Decision switch
-        {
-            ReviewDecisionValue.Accept => OutcomeKinds.ReviewAccepted,
-            ReviewDecisionValue.RequestChanges => OutcomeKinds.ReviewChangesRequested,
-            ReviewDecisionValue.NeedsHuman => OutcomeKinds.ReviewNeedsHuman,
-            _ => throw new InvalidOperationException(
-                $"Unknown review decision: {decision.Decision}"
-            ),
-        };
-        var payload = JsonSerializer.SerializeToElement(decision, _reviewJsonOptions);
-        return new StructuredOutcome(kind, decision.Summary, payload);
-    }
-
-    private static string ExtractJson(string text)
-    {
-        var start = text.IndexOf('{');
-        if (start < 0)
-        {
-            throw new InvalidOperationException("Model response contains no JSON object.");
-        }
-
-        var depth = 0;
-        for (var i = start; i < text.Length; i++)
-        {
-            if (text[i] == '{')
-            {
-                depth++;
-            }
-            else if (text[i] == '}')
-            {
-                depth--;
-                if (depth == 0)
-                {
-                    return text.Substring(start, i - start + 1);
-                }
-            }
-        }
-
-        throw new InvalidOperationException("Model response contains incomplete JSON object.");
-    }
-
-    private static readonly JsonSerializerOptions _plannerJsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        Converters = { new JsonStringEnumConverter() },
-    };
-
-    private static readonly JsonSerializerOptions _reviewJsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        Converters = { new JsonStringEnumConverter() },
-    };
-
     private static WorkflowBuilder AddOutcomeEdge(
         WorkflowBuilder builder,
         ExecutorBinding source,
@@ -464,6 +413,12 @@ public sealed class SimpleV1Composition
             && msg!.LatestOutcome?.Kind != OutcomeKinds.ReviewChangesRequested
             && msg!.LatestOutcome?.Kind != OutcomeKinds.ReviewNeedsHuman;
 
+    private static Func<PipelineMessage?, bool> CatchAllApplyAnswer() =>
+        msg =>
+            msg!.LatestOutcome?.Payload.TryGetProperty("sourceBlockId", out var sb) != true
+            || sb.ValueKind != System.Text.Json.JsonValueKind.String
+            || (sb.GetString() != BlockIds.Planner && sb.GetString() != BlockIds.Reviewer);
+
     private static bool HasVerificationCommands(PipelineMessage msg) =>
         msg.Context.Packet.Verification.Count > 0;
 
@@ -499,7 +454,8 @@ public sealed class SimpleV1Composition
         Review the packet outcomes and constraints, the executor's question,
         proposed approach, and evidence. Read files as needed. Return a structured
         decision: Proceed, ProceedWithConstraints, NeedsHuman, or Stop. Include a
-        rationale, any new constraints, and the evidence you used.
+        rationale, any new constraints, and the evidence you used. HumanQuestion must
+        be present only for NeedsHuman and null otherwise.
         """;
 
     private const string ReviewerInstructions = """
@@ -509,6 +465,7 @@ public sealed class SimpleV1Composition
         implementation report, and verification results. You may inspect changed files
         through your read-only tools. Return a structured decision: Accept,
         RequestChanges, or NeedsHuman. Include findings with severity, description,
-        and evidence for each issue found.
+        and evidence for each issue found. Severity is Critical, High, Medium, or Low.
+        HumanQuestion must be present only for NeedsHuman and null otherwise.
         """;
 }

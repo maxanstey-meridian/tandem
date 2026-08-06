@@ -11,44 +11,24 @@ using Tandem.Infrastructure.Lifecycle;
 
 namespace Tandem.Infrastructure.Blocks;
 
-public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
+public sealed class AgentBlock(
+    AgentBlockConfig config,
+    IChatClient chatClient,
+    string tandemHome,
+    string? tandemExePath = null,
+    Action<string, Guid, AgentResponseUpdate>? onUpdate = null,
+    ToolInterceptor? toolInterceptor = null,
+    Action<ChatOptions>? configureChatOptions = null
+) : Executor<PipelineMessage, PipelineMessage>(config.BlockId)
 {
     private static readonly TimeSpan _turnTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan _mcpCallTimeout = TimeSpan.FromSeconds(30);
 
-    private readonly AgentBlockConfig _config;
-    private readonly IChatClient _chatClient;
-    private readonly LifecycleReceiptStore _receiptStore;
-    private readonly string _tandemHome;
-    private readonly string _tandemExePath;
-    private readonly Action<Guid, AgentResponseUpdate>? _onUpdate;
-    private readonly ToolInterceptor? _toolInterceptor;
-    private readonly Action<ChatOptions>? _configureChatOptions;
-
-    public AgentBlock(
-        AgentBlockConfig config,
-        IChatClient chatClient,
-        string tandemHome,
-        string? tandemExePath = null,
-        Action<Guid, AgentResponseUpdate>? onUpdate = null,
-        ToolInterceptor? toolInterceptor = null,
-        Action<ChatOptions>? configureChatOptions = null
-    )
-        : base(config.BlockId)
-    {
-        _config = config;
-        _chatClient = chatClient;
-        _receiptStore = new LifecycleReceiptStore(tandemHome);
-        _tandemHome = tandemHome;
-        _tandemExePath =
-            tandemExePath
-            ?? Environment.ProcessPath
-            ?? throw new InvalidOperationException("Process path unavailable.");
-        _onUpdate = onUpdate;
-        _toolInterceptor = toolInterceptor;
-        _configureChatOptions = configureChatOptions;
-    }
-
+    private readonly LifecycleReceiptStore _receiptStore = new(tandemHome);
+    private readonly string _tandemExePath =
+        tandemExePath
+        ?? Environment.ProcessPath
+        ?? throw new InvalidOperationException("Process path unavailable.");
     public override async ValueTask<PipelineMessage> HandleAsync(
         PipelineMessage message,
         IWorkflowContext context,
@@ -60,17 +40,17 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
         cts.CancelAfter(_turnTimeout);
 
         var ctx = message.Context;
-        var invocationId = ctx.NextInvocationId(_config.BlockId);
+        var invocationId = ctx.NextInvocationId(config.BlockId);
 
         var existingReceipt = await _receiptStore.ReadAsync(ctx.RunId, invocationId, cts.Token);
         if (existingReceipt is not null)
         {
             blockSw.Stop();
             return new PipelineMessage(
-                ctx.IncrementInvocations(_config.BlockId),
+                ctx.IncrementInvocations(config.BlockId),
                 new BlockOutcome(
                     existingReceipt.Kind,
-                    _config.BlockId,
+                    config.BlockId,
                     existingReceipt.Summary,
                     existingReceipt.Payload,
                     blockSw.Elapsed
@@ -85,27 +65,27 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
         if (isCheckpointOnly)
         {
             mcpClient = new LifecycleMcpClient(
-                _tandemHome,
+                tandemHome,
                 _tandemExePath,
                 ctx.RunId,
-                _config.BlockId,
+                config.BlockId,
                 invocationId
             );
             lifecycleTools = (
                 await mcpClient.ListToolsAsync(["write_checkpoint"], cts.Token)
             ).ToArray();
         }
-        else if (_config.LifecycleToolNames.Count > 0)
+        else if (config.LifecycleToolNames.Count > 0)
         {
             mcpClient = new LifecycleMcpClient(
-                _tandemHome,
+                tandemHome,
                 _tandemExePath,
                 ctx.RunId,
-                _config.BlockId,
+                config.BlockId,
                 invocationId
             );
             lifecycleTools = (
-                await mcpClient.ListToolsAsync(_config.LifecycleToolNames, cts.Token)
+                await mcpClient.ListToolsAsync(config.LifecycleToolNames, cts.Token)
             ).ToArray();
         }
 
@@ -114,12 +94,12 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
             var collector = new LifecycleOutcomeCollector();
 
             var fileStore = new GitExcludedFileStore(
-                new FileSystemAgentFileStore(ctx.WorkspacePath)
+                new BomlessFileSystemAgentFileStore(ctx.WorkspacePath)
             );
 
             var instructions = isCheckpointOnly
                 ? CheckpointOnlyInstructions
-                : _config.SystemInstructions;
+                : config.SystemInstructions;
             var tools = lifecycleTools.ToList();
             var agent = CreateAgent(
                 fileStore,
@@ -135,19 +115,20 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
                 ? BuildCheckpointUserMessage(ctx)
                 : BuildUserMessage(message);
 
-            var augmentation = _config.MessageAugmentation is not null
-                ? await _config.MessageAugmentation(ctx, cts.Token)
+            var augmentation = config.MessageAugmentation is not null
+                ? await config.MessageAugmentation(ctx, cts.Token)
                 : null;
             var userMessage = augmentation is not null
                 ? $"{baseMessage}\n\n{augmentation}"
                 : baseMessage;
 
-            var assistantText = new StringBuilder();
             long? inputTokens = null;
             long? outputTokens = null;
             var lastModelCallDuration = TimeSpan.Zero;
             var continuationAttempt = 0;
             var policyExhausted = false;
+            var structuredAttempt = 0;
+            StructuredOutputResult? structuredResult = null;
 
             while (true)
             {
@@ -166,7 +147,6 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
                         if (content is TextContent text)
                         {
                             turnText.Append(text.Text);
-                            assistantText.Append(text.Text);
                         }
                         else if (content is FunctionCallContent functionCall)
                         {
@@ -179,31 +159,39 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
                         }
                     }
 
-                    _onUpdate?.Invoke(ctx.RunId, update);
+                    onUpdate?.Invoke(config.BlockId, ctx.RunId, update);
                 }
 
                 turnSw.Stop();
-                inputTokens = turnInputTokens;
-                outputTokens = turnOutputTokens;
-                lastModelCallDuration = turnSw.Elapsed;
+                inputTokens = (inputTokens ?? 0) + (turnInputTokens ?? 0);
+                outputTokens = (outputTokens ?? 0) + (turnOutputTokens ?? 0);
+                lastModelCallDuration += turnSw.Elapsed;
 
-                if (
-                    isCheckpointOnly
-                    || collector.HasLifecycleCall
-                    || _config.StructuredOutput is not null
-                    || _config.TurnPolicy is null
-                )
+                if (config.StructuredOutput is not null)
+                {
+                    structuredResult = config.StructuredOutput(turnText.ToString(), ctx);
+                    if (structuredResult.Success || structuredAttempt >= 1)
+                    {
+                        break;
+                    }
+
+                    structuredAttempt++;
+                    userMessage = structuredResult.CorrectionPrompt();
+                    continue;
+                }
+
+                if (isCheckpointOnly || collector.HasLifecycleCall || config.TurnPolicy is null)
                 {
                     break;
                 }
 
-                if (continuationAttempt >= _config.TurnPolicy.MaxContinuationAttempts)
+                if (continuationAttempt >= config.TurnPolicy.MaxContinuationAttempts)
                 {
                     policyExhausted = true;
                     break;
                 }
 
-                var directive = await _config.TurnPolicy.Continue(
+                var directive = await config.TurnPolicy.Continue(
                     new AgentTurnObservation(
                         ctx,
                         turnText.ToString(),
@@ -233,7 +221,7 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
             }
 
             var agentUsage = ResolveUsage(inputTokens, outputTokens, lastModelCallDuration);
-            var contextAfterUsage = ctx.WithUsage(_config.BlockId, agentUsage);
+            var contextAfterUsage = ctx.WithUsage(config.BlockId, agentUsage);
 
             var updatedContext = await PersistSessionAsync(
                 agent,
@@ -244,7 +232,7 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
 
             var outcome = await ResolveOutcomeAsync(
                 collector,
-                assistantText.ToString(),
+                structuredResult,
                 ctx.RunId,
                 invocationId,
                 updatedContext,
@@ -272,12 +260,12 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
 
     private bool ShouldRunCheckpointOnly(PipelineContext ctx)
     {
-        if (_config.Checkpoint is not { } policy)
+        if (config.Checkpoint is not { } policy)
         {
             return false;
         }
 
-        if (!ctx.AgentUsage.TryGetValue(_config.BlockId, out var usage))
+        if (!ctx.AgentUsage.TryGetValue(config.BlockId, out var usage))
         {
             return false;
         }
@@ -287,7 +275,7 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
 
     private AgentUsage ResolveUsage(long? inputTokens, long? outputTokens, TimeSpan elapsed)
     {
-        var policy = _config.Checkpoint;
+        var policy = config.Checkpoint;
         var contextWindow = policy?.ContextWindowTokens ?? 0;
         var checkpointAt = policy?.CheckpointAtTokens ?? 0;
 
@@ -320,12 +308,12 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
         invokingClient.FunctionInvoker = async (ficContext, ct) =>
         {
             var isLifecycle =
-                _config.LifecycleToolNames.Contains(ficContext.Function.Name)
+                config.LifecycleToolNames.Contains(ficContext.Function.Name)
                 || ficContext.Function.Name == "write_checkpoint";
 
-            if (!isLifecycle && _toolInterceptor is not null)
+            if (!isLifecycle && toolInterceptor is not null)
             {
-                var interception = await _toolInterceptor(ctx, ficContext, ct);
+                var interception = await toolInterceptor(ctx, ficContext, ct);
                 if (interception is ToolInterceptionResult.Blocked blocked)
                 {
                     return blocked.Message;
@@ -340,15 +328,25 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
             using var mcpCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             mcpCts.CancelAfter(_mcpCallTimeout);
             var result = await ficContext.Function.InvokeAsync(ficContext.Arguments, mcpCts.Token);
+            if (IsMcpError(result))
+            {
+                return result;
+            }
             collector.RecordLifecycleCall(ficContext.Function.Name);
             ficContext.Terminate = true;
             return result;
         };
     }
 
+    private static bool IsMcpError(object? result) =>
+        result is JsonElement element
+        && element.ValueKind == JsonValueKind.Object
+        && element.TryGetProperty("isError", out var isError)
+        && isError.ValueKind == JsonValueKind.True;
+
     private Task<PipelineMessage> ResolveOutcomeAsync(
         LifecycleOutcomeCollector collector,
-        string assistantText,
+        StructuredOutputResult? structuredResult,
         Guid runId,
         string invocationId,
         PipelineContext ctx,
@@ -365,16 +363,42 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
 
         if (!collector.HasLifecycleCall)
         {
-            if (_config.StructuredOutput is not null)
+            if (config.StructuredOutput is not null)
             {
-                var structured = _config.StructuredOutput(assistantText, ctx);
+                if (structuredResult is null)
+                {
+                    throw new InvalidOperationException("Structured output was not evaluated.");
+                }
+
+                if (!structuredResult.Success)
+                {
+                    return Task.FromResult(
+                        new PipelineMessage(
+                            ctx.IncrementInvocations(config.BlockId),
+                            new BlockOutcome(
+                                "agent.failed",
+                                config.BlockId,
+                                "Structured output remained invalid after one correction.",
+                                JsonSerializer.SerializeToElement(
+                                    new
+                                    {
+                                        problems = structuredResult.Problems,
+                                        rawResponse = structuredResult.RawResponse,
+                                    }
+                                )
+                            )
+                        )
+                    );
+                }
+
+                var structured = structuredResult.Outcome!;
                 var outcomeCtx = structured.UpdatedContext ?? ctx;
                 return Task.FromResult(
                     new PipelineMessage(
-                        outcomeCtx.IncrementInvocations(_config.BlockId),
+                        outcomeCtx.IncrementInvocations(config.BlockId),
                         new BlockOutcome(
                             structured.Kind,
-                            _config.BlockId,
+                            config.BlockId,
                             structured.Summary,
                             structured.Payload
                         )
@@ -393,8 +417,8 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
                 : EmptyPayload();
             return Task.FromResult(
                 new PipelineMessage(
-                    ctx.IncrementInvocations(_config.BlockId),
-                    new BlockOutcome(kind, _config.BlockId, summary, payload)
+                    ctx.IncrementInvocations(config.BlockId),
+                    new BlockOutcome(kind, config.BlockId, summary, payload)
                 )
             );
         }
@@ -413,10 +437,10 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
         if (!collector.HasLifecycleCall)
         {
             return new PipelineMessage(
-                ctx.IncrementInvocations(_config.BlockId),
+                ctx.IncrementInvocations(config.BlockId),
                 new BlockOutcome(
                     "agent.failed",
-                    _config.BlockId,
+                    config.BlockId,
                     "Checkpoint-only mode: model did not call write_checkpoint.",
                     EmptyPayload()
                 )
@@ -427,10 +451,10 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
         if (receipt is null)
         {
             return new PipelineMessage(
-                ctx.IncrementInvocations(_config.BlockId),
+                ctx.IncrementInvocations(config.BlockId),
                 new BlockOutcome(
                     "agent.failed",
-                    _config.BlockId,
+                    config.BlockId,
                     "Checkpoint tool called but no receipt written.",
                     EmptyPayload()
                 )
@@ -439,18 +463,18 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
 
         // After checkpoint: retain the checkpoint payload, remove the executor
         // session and usage so the next invocation starts fresh.
-        var clearedContext = ctx.WithoutSession(_config.BlockId).WithCheckpoint(receipt.Payload);
+        var clearedContext = ctx.WithoutSession(config.BlockId).WithCheckpoint(receipt.Payload);
 
         clearedContext = clearedContext with
         {
             AgentUsage = clearedContext
-                .AgentUsage.Where(kvp => kvp.Key != _config.BlockId)
+                .AgentUsage.Where(kvp => kvp.Key != config.BlockId)
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
         };
 
         return new PipelineMessage(
-            clearedContext.IncrementInvocations(_config.BlockId),
-            new BlockOutcome(receipt.Kind, _config.BlockId, receipt.Summary, receipt.Payload)
+            clearedContext.IncrementInvocations(config.BlockId),
+            new BlockOutcome(receipt.Kind, config.BlockId, receipt.Summary, receipt.Payload)
         );
     }
 
@@ -465,10 +489,10 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
         if (receipt is null)
         {
             return new PipelineMessage(
-                ctx.IncrementInvocations(_config.BlockId),
+                ctx.IncrementInvocations(config.BlockId),
                 new BlockOutcome(
                     "agent.failed",
-                    _config.BlockId,
+                    config.BlockId,
                     "Lifecycle tool called but no receipt written.",
                     EmptyPayload()
                 )
@@ -482,8 +506,8 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
         }
 
         return new PipelineMessage(
-            updatedCtx.IncrementInvocations(_config.BlockId),
-            new BlockOutcome(receipt.Kind, _config.BlockId, receipt.Summary, receipt.Payload)
+            updatedCtx.IncrementInvocations(config.BlockId),
+            new BlockOutcome(receipt.Kind, config.BlockId, receipt.Summary, receipt.Payload)
         );
     }
 
@@ -502,14 +526,14 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
         {
             chatOptions.ToolMode = ChatToolMode.RequireSpecific(requiredToolName);
         }
-        _configureChatOptions?.Invoke(chatOptions);
+        configureChatOptions?.Invoke(chatOptions);
 
         var agent = new HarnessAgent(
-            _chatClient,
+            chatClient,
             new HarnessAgentOptions
             {
-                Id = _config.BlockId,
-                Name = _config.BlockId,
+                Id = config.BlockId,
+                Name = config.BlockId,
                 HarnessInstructions = "",
                 ChatOptions = chatOptions,
                 DisableFileMemory = true,
@@ -547,7 +571,7 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
 
         // When a tool interceptor is configured, write tools stay visible —
         // the interceptor enforces the gate by blocking and returning a message.
-        if (_toolInterceptor is not null)
+        if (toolInterceptor is not null)
         {
             return new FileAccessProviderOptions
             {
@@ -557,7 +581,7 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
             };
         }
 
-        var allowMutation = _config.Access switch
+        var allowMutation = config.Access switch
         {
             WorkspaceAccess.ReadOnly => false,
             WorkspaceAccess.MutationGated => ctx.MutationAuthorized,
@@ -575,7 +599,7 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
     private static JsonElement EmptyPayload() => JsonSerializer.SerializeToElement(new { });
 
     private string BuildUserMessage(PipelineMessage message) =>
-        _config.BlockId switch
+        config.BlockId switch
         {
             BlockIds.Planner => BuildPlannerMessage(message),
             BlockIds.Reviewer => BuildReviewerMessage(message.Context),
@@ -774,9 +798,9 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
 
     private string BuildCheckpointUserMessage(PipelineContext ctx)
     {
-        var usage = ctx.AgentUsage.GetValueOrDefault(_config.BlockId);
+        var usage = ctx.AgentUsage.GetValueOrDefault(config.BlockId);
         var contextTokens = usage?.CurrentContextTokens ?? 0;
-        var checkpointAt = _config.Checkpoint?.CheckpointAtTokens ?? 0;
+        var checkpointAt = config.Checkpoint?.CheckpointAtTokens ?? 0;
 
         return $"""
             Context window approaching limit: {contextTokens} tokens used, checkpoint threshold is {checkpointAt}.
@@ -822,12 +846,12 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
         var serialized = await agent.SerializeSessionAsync(session, cancellationToken: ct);
         var json = JsonSerializer.Serialize(serialized);
 
-        var sessionPath = GetSessionPath(ctx.RunId, _config.BlockId);
+        var sessionPath = GetSessionPath(ctx.RunId, config.BlockId);
         Directory.CreateDirectory(Path.GetDirectoryName(sessionPath)!);
         await File.WriteAllTextAsync(sessionPath, json, ct);
 
         return ctx.WithSession(
-            _config.BlockId,
+            config.BlockId,
             JsonSerializer.SerializeToElement(new { stored = true })
         );
     }
@@ -838,8 +862,8 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
         CancellationToken ct
     )
     {
-        var sessionPath = GetSessionPath(ctx.RunId, _config.BlockId);
-        if (ctx.AgentSessions.ContainsKey(_config.BlockId) && File.Exists(sessionPath))
+        var sessionPath = GetSessionPath(ctx.RunId, config.BlockId);
+        if (ctx.AgentSessions.ContainsKey(config.BlockId) && File.Exists(sessionPath))
         {
             var json = await File.ReadAllTextAsync(sessionPath, ct);
             var serialized = JsonSerializer.Deserialize<JsonElement>(json);
@@ -850,7 +874,7 @@ public sealed class AgentBlock : Executor<PipelineMessage, PipelineMessage>
     }
 
     private string GetSessionPath(Guid runId, string blockId) =>
-        Path.Combine(_tandemHome, "runs", runId.ToString("N"), "sessions", $"{blockId}.json");
+        Path.Combine(tandemHome, "runs", runId.ToString("N"), "sessions", $"{blockId}.json");
 
     private const string CheckpointOnlyInstructions = """
         You are Tandem's implementation block in checkpoint-only mode.

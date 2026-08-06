@@ -151,7 +151,7 @@ public sealed class DurablePlannerHandoffTests
         }
     }
 
-    private static StructuredOutcome ParsePlannerDecision(
+    private static StructuredOutputResult ParsePlannerDecision(
         string assistantText,
         PipelineContext context
     )
@@ -162,16 +162,20 @@ public sealed class DurablePlannerHandoffTests
             Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
         };
         var decision = JsonSerializer.Deserialize<PlannerDecision>(assistantText, options)!;
-        return new StructuredOutcome(
-            OutcomeKinds.PlannerProceedWithConstraints,
-            decision.Rationale,
-            JsonSerializer.SerializeToElement(decision, options),
-            context with
-            {
-                PlannerDecision = decision,
-                PlannerConstraints = decision.Constraints,
-                MutationAuthorized = true,
-            }
+        return new StructuredOutputResult(
+            new StructuredOutcome(
+                OutcomeKinds.PlannerProceedWithConstraints,
+                decision.Rationale,
+                JsonSerializer.SerializeToElement(decision, options),
+                context with
+                {
+                    PlannerDecision = decision,
+                    PlannerConstraints = decision.Constraints,
+                    MutationAuthorized = true,
+                }
+            ),
+            [],
+            assistantText
         );
     }
 

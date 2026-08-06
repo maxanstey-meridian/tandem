@@ -1,9 +1,11 @@
 using System.CommandLine;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Agents.AI.Workflows;
+using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Client.AzureManaged;
 using Microsoft.DurableTask.Worker.AzureManaged;
 using Microsoft.Extensions.AI;
@@ -14,7 +16,9 @@ using Tandem.Application;
 using Tandem.Domain;
 using Tandem.Infrastructure;
 using Tandem.Infrastructure.Composition;
+using Tandem.Infrastructure.Dashboard;
 using Tandem.Infrastructure.Lifecycle;
+using Tandem.Infrastructure.Projection;
 using Tandem.Interfaces;
 using InfrastructureChatClientBuilder = Tandem.Infrastructure.ChatClientBuilder;
 
@@ -31,6 +35,23 @@ var runCommand = new Command("run", "Run a packet through the Tandem pipeline")
     debugOption,
 };
 
+var runIdArgument = new Argument<string>("run-id") { Description = "Run ID to attach to." };
+
+var attachCommand = new Command("attach", "Attach to a running Tandem run")
+{
+    runIdArgument,
+    debugOption,
+};
+
+var branchOption = new Option<string?>("--branch") { Description = "Branch name for publication." };
+
+var publishCommand = new Command("publish", "Publish a Ready candidate as a local branch")
+{
+    runIdArgument,
+    branchOption,
+    debugOption,
+};
+
 var lifecycleCommand = new Command("lifecycle", "Host lifecycle MCP tools over stdio")
 {
     Hidden = true,
@@ -38,7 +59,13 @@ var lifecycleCommand = new Command("lifecycle", "Host lifecycle MCP tools over s
 
 var mcpCommand = new Command("mcp") { lifecycleCommand };
 
-var rootCommand = new RootCommand("Tandem — agentic pipeline runner") { runCommand, mcpCommand };
+var rootCommand = new RootCommand("Tandem — agentic pipeline runner")
+{
+    runCommand,
+    attachCommand,
+    publishCommand,
+    mcpCommand,
+};
 
 runCommand.SetAction(
     async (ParseResult parseResult, CancellationToken cancellationToken) =>
@@ -60,6 +87,51 @@ runCommand.SetAction(
                 {
                     Console.Error.WriteLine($"Inner: {ex.InnerException}");
                 }
+            }
+            return 1;
+        }
+    }
+);
+
+attachCommand.SetAction(
+    async (ParseResult parseResult, CancellationToken cancellationToken) =>
+    {
+        var runId = parseResult.GetRequiredValue(runIdArgument);
+        var debug = parseResult.GetValue(debugOption);
+
+        try
+        {
+            return await AttachAsync(runId, debug, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error: {ex.Message}");
+            if (debug)
+            {
+                Console.Error.WriteLine(ex.StackTrace);
+            }
+            return 1;
+        }
+    }
+);
+
+publishCommand.SetAction(
+    async (ParseResult parseResult, CancellationToken cancellationToken) =>
+    {
+        var runId = parseResult.GetRequiredValue(runIdArgument);
+        var branch = parseResult.GetValue(branchOption);
+        var debug = parseResult.GetValue(debugOption);
+
+        try
+        {
+            return await PublishAsync(runId, branch, debug, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error: {ex.Message}");
+            if (debug)
+            {
+                Console.Error.WriteLine(ex.StackTrace);
             }
             return 1;
         }
@@ -129,25 +201,63 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
         chatClientFactory.Build,
         chatClientFactory.ResolveProfile
     );
+
+    var eventStore = new EventStore(runPaths.RunDirectory);
+    var runProjectors = new Dictionary<string, RunEventProjector>();
+    RunEventProjector GetProjector(string blockId)
+    {
+        if (!runProjectors.TryGetValue(blockId, out var p))
+        {
+            var profileName = blockId switch
+            {
+                BlockIds.Planner => "planning",
+                BlockIds.Reviewer => "review",
+                _ => "implementation",
+            };
+            p = new RunEventProjector(
+                runPaths.RunId,
+                blockId,
+                eventStore,
+                profile: chatClientFactory.ResolveProfile(profileName)
+            );
+            runProjectors[blockId] = p;
+        }
+        return p;
+    }
+
     var renderer = new StreamRenderer();
+    var interactive = !Console.IsInputRedirected && !Console.IsOutputRedirected;
     var workflow = composition.Build(
-        (updateRunId, update) =>
+        (blockId, updateRunId, update) =>
         {
             if (updateRunId == runPaths.RunId)
             {
-                renderer.RenderUpdate(update);
+                if (!interactive)
+                {
+                    renderer.RenderUpdate(update);
+                }
+                GetProjector(blockId).EmitAgentUpdateAsync(update).GetAwaiter().GetResult();
             }
-        }
+        },
+        new RunEventBlockExecutionObserver(GetProjector)
     );
 
     var implProfile = chatClientFactory.ResolveProfile("implementation");
-    Console.WriteLine($"Run:       {runPaths.RunId}");
-    Console.WriteLine($"Workspace: {runPaths.WorkspacePath}");
-    Console.WriteLine($"Model:     {implProfile.ProviderName}/{implProfile.Model}");
-    Console.WriteLine();
+    if (!interactive)
+    {
+        Console.WriteLine($"Run:       {runPaths.RunId}");
+        Console.WriteLine($"Workspace: {runPaths.WorkspacePath}");
+        Console.WriteLine($"Model:     {implProfile.ProviderName}/{implProfile.Model}");
+        Console.WriteLine();
+    }
 
     var initialMessage = new PipelineMessage(
         PipelineContext.Create(runPaths.RunId, packet, "", runPaths.WorkspacePath)
+    );
+
+    await new RunEventProjector(runPaths.RunId, "", eventStore).EmitRunStartedAsync(
+        packetPath,
+        cancellationToken
     );
 
     var baseConnectionString =
@@ -184,12 +294,12 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
         try
         {
             var workflowClient = host.Services.GetRequiredService<IWorkflowClient>();
-            // Use RunAsync instead of StreamAsync. The pinned durable preview
-            // (1.16.0-preview.260730.1) throws KeyNotFoundException in
-            // DeserializeEventByType for routed WorkflowOutputEvent shapes
-            // during WatchStreamAsync. Live model streaming still flows through
-            // the side-channel callback wired into the composition; only
-            // intermediate block transitions are deferred to completion.
+            var durableTaskClient = host.Services.GetRequiredService<DurableTaskClient>();
+            // Use RunAsync + WaitForCompletionAsync (not StreamAsync, which throws
+            // KeyNotFoundException in the pinned durable preview). Live agent updates
+            // flow through the side-channel callback wired into the composition,
+            // which writes to events.jsonl via RunEventProjector. The dashboard
+            // tails events.jsonl and renders from there.
             var run = await workflowClient.RunAsync(
                 workflow,
                 initialMessage,
@@ -197,10 +307,126 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
                 cancellationToken
             );
 
-            var finalMessage = await (
-                (IAwaitableWorkflowRun)run
-            ).WaitForCompletionAsync<PipelineMessage>(cancellationToken);
-            renderer.RenderTerminalMessage(finalMessage);
+            // Background: wait for completion + emit terminal events + write
+            // run.json, so subsequent tandem attach / tandem publish commands can
+            // reattach or publish the candidate.
+            var completionTask = Task.Run(
+                async () =>
+                {
+                    var final = await (
+                        (IAwaitableWorkflowRun)run
+                    ).WaitForCompletionAsync<PipelineMessage>(cancellationToken);
+                    renderer.RenderTerminalMessage(final);
+
+                    if (final is not null)
+                    {
+                        var finalProjector = new RunEventProjector(runPaths.RunId, "", eventStore);
+                        switch (final.Context.Status)
+                        {
+                            case Tandem.Domain.RunStatus.Ready:
+                                await finalProjector.EmitRunReadyAsync(
+                                    final.Context.CandidateSha,
+                                    cancellationToken
+                                );
+                                break;
+                            case Tandem.Domain.RunStatus.Failed:
+                                await finalProjector.EmitRunFailedAsync(
+                                    final.LatestOutcome?.Summary ?? "unknown",
+                                    cancellationToken
+                                );
+                                break;
+                        }
+
+                        var projection = new RunProjection(
+                            runPaths.RunId,
+                            runId,
+                            packetPath,
+                            packet.Repository,
+                            final.Context.Status,
+                            ActiveBlockId: null,
+                            final.Context.PinnedBaseSha,
+                            final.Context.CandidateSha,
+                            runPaths.WorkspacePath,
+                            PendingHumanRequest: null,
+                            PublishedBranch: null,
+                            DateTimeOffset.UtcNow,
+                            DateTimeOffset.UtcNow
+                        );
+                        await new RunProjectionStore(runPaths.RunDirectory).WriteAsync(
+                            projection,
+                            cancellationToken
+                        );
+                    }
+
+                    return final;
+                },
+                cancellationToken
+            );
+
+            // Foreground: dashboard loop tails events.jsonl, renders, and
+            // handles operator input. When interactive, the operator may
+            // detach (q/Ctrl+C), submit answers (Enter), or publish (p) on a
+            // Ready run. When non-interactive (piped), the dashboard exits on
+            // terminal status.
+            var dashboard = new DashboardLoop(
+                runPaths.RunDirectory,
+                onAnswerSubmitted: answer =>
+                    RaiseHumanAnswerAsync(durableTaskClient, runId, answer, cancellationToken),
+                onPublishRequested: async () =>
+                {
+                    var proj = new RunProjectionStore(runPaths.RunDirectory).Read();
+                    if (proj is not null)
+                    {
+                        await PublishCandidateAsync(
+                            runPaths.RunDirectory,
+                            proj,
+                            null,
+                            eventStore,
+                            cancellationToken
+                        );
+                    }
+                },
+                onDetach: () => Task.CompletedTask
+            );
+            var dashboardCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var dashboardTask = dashboard.RunAsync(null, dashboardCts.Token);
+            var completedTask = await Task.WhenAny(dashboardTask, completionTask);
+
+            if (completedTask == completionTask && completionTask.IsFaulted)
+            {
+                dashboardCts.Cancel();
+                try
+                {
+                    await dashboardTask;
+                }
+                catch (OperationCanceledException)
+                {
+                    /* close alternate screen before surfacing workflow failure */
+                }
+
+                await completionTask;
+            }
+
+            // If completion finished first (interactive), wait for the operator
+            // to detach. If the dashboard already exited (non-interactive
+            // terminal), this returns immediately.
+            if (!dashboardTask.IsCompleted)
+            {
+                await dashboardTask;
+            }
+
+            dashboardCts.Cancel();
+            try
+            {
+                if (completionTask.IsCompleted)
+                {
+                    await completionTask;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                /* workflow interrupted by detach */
+            }
         }
         finally
         {
@@ -241,6 +467,401 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
         Tandem.Domain.RunStatus.WaitingForHuman => 0,
         _ => 4,
     };
+}
+
+static async Task<int> AttachAsync(string runIdArg, bool debug, CancellationToken cancellationToken)
+{
+    var tandemHome = TandemHomeResolver.Resolve();
+
+    TandemConfig config;
+    try
+    {
+        config = new TandemConfigurationLoader().Load(tandemHome);
+    }
+    catch (ConfigurationLoadException ex)
+    {
+        Console.Error.WriteLine($"Error: {ex.Message}");
+        return 1;
+    }
+
+    var runDir = Path.Combine(tandemHome, "runs", runIdArg);
+    if (!Directory.Exists(runDir))
+    {
+        Console.Error.WriteLine($"Error: Run directory not found: {runDir}");
+        return 1;
+    }
+
+    var projection = new RunProjectionStore(runDir).Read();
+    if (projection is null)
+    {
+        Console.Error.WriteLine($"Error: run.json not found in {runDir}");
+        return 1;
+    }
+
+    var chatClientFactory = new ChatClientBuilderFactory(config);
+    var composition = new SimpleV1Composition(
+        tandemHome,
+        chatClientFactory.Build,
+        chatClientFactory.ResolveProfile
+    );
+
+    var eventStore = new EventStore(runDir);
+    var runProjectors = new Dictionary<string, RunEventProjector>();
+    RunEventProjector GetProjector(string blockId)
+    {
+        if (!runProjectors.TryGetValue(blockId, out var projector))
+        {
+            var profileName = blockId switch
+            {
+                BlockIds.Planner => "planning",
+                BlockIds.Reviewer => "review",
+                _ => "implementation",
+            };
+            projector = new RunEventProjector(
+                projection.RunId,
+                blockId,
+                eventStore,
+                profile: chatClientFactory.ResolveProfile(profileName)
+            );
+            runProjectors[blockId] = projector;
+        }
+        return projector;
+    }
+
+    // Workflow must be registered so MAF recognizes the workflow type
+    // when the Durable Task worker reconnects to the existing orchestration.
+    var workflow = composition.Build(
+        (blockId, updateRunId, update) =>
+        {
+            if (updateRunId == projection.RunId)
+            {
+                GetProjector(blockId).EmitAgentUpdateAsync(update).GetAwaiter().GetResult();
+            }
+        },
+        new RunEventBlockExecutionObserver(GetProjector)
+    );
+
+    var baseConnectionString =
+        Environment.GetEnvironmentVariable("TANDEM_DTS_CONNECTION_STRING")
+        ?? "Endpoint=http://localhost:8080;TaskHub=tandem-cli;Authentication=None";
+
+    try
+    {
+        var host = Host.CreateDefaultBuilder()
+            .ConfigureLogging(logging =>
+            {
+                if (!debug)
+                {
+                    logging.AddFilter("Microsoft.Hosting.Lifetime", LogLevel.Warning);
+                    logging.AddFilter("Microsoft.DurableTask", LogLevel.Warning);
+                    logging.AddFilter("DurableWorkflow", LogLevel.Warning);
+                }
+            })
+            .ConfigureServices(services =>
+            {
+                services.ConfigureDurableWorkflows(
+                    options => options.AddWorkflow(workflow),
+                    workerBuilder => workerBuilder.UseDurableTaskScheduler(baseConnectionString),
+                    clientBuilder => clientBuilder.UseDurableTaskScheduler(baseConnectionString)
+                );
+            })
+            .Build();
+
+        await host.StartAsync(cancellationToken);
+        try
+        {
+            var durableTaskClient = host.Services.GetRequiredService<DurableTaskClient>();
+
+            Console.WriteLine($"Attaching to run: {runIdArg}");
+            Console.WriteLine($"Durable run ID:   {projection.DurableRunId}");
+            Console.WriteLine($"Workspace:        {projection.WorkspacePath}");
+            Console.WriteLine();
+
+            var dashboard = new DashboardLoop(
+                runDir,
+                onAnswerSubmitted: answer =>
+                    RaiseHumanAnswerAsync(
+                        durableTaskClient,
+                        projection.DurableRunId,
+                        answer,
+                        cancellationToken
+                    ),
+                onPublishRequested: () =>
+                    PublishCandidateAsync(runDir, projection, null, eventStore, cancellationToken),
+                onDetach: () => Task.CompletedTask
+            );
+
+            await dashboard.RunAsync(null, cancellationToken);
+        }
+        finally
+        {
+            await host.StopAsync();
+            host.Dispose();
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Error: {ex.Message}");
+        if (debug)
+        {
+            Console.Error.WriteLine(ex.StackTrace);
+        }
+        return 4;
+    }
+
+    return 0;
+}
+
+static async Task<int> PublishAsync(
+    string runIdArg,
+    string? branch,
+    bool debug,
+    CancellationToken cancellationToken
+)
+{
+    var tandemHome = TandemHomeResolver.Resolve();
+    var runDir = Path.Combine(tandemHome, "runs", runIdArg);
+    if (!Directory.Exists(runDir))
+    {
+        Console.Error.WriteLine($"Error: Run directory not found: {runDir}");
+        return 1;
+    }
+
+    var projection = new RunProjectionStore(runDir).Read();
+    if (projection is null)
+    {
+        Console.Error.WriteLine($"Error: run.json not found in {runDir}");
+        return 1;
+    }
+
+    var eventStore = new EventStore(runDir);
+    return await PublishCandidateAsync(runDir, projection, branch, eventStore, cancellationToken);
+}
+
+static async Task<int> PublishCandidateAsync(
+    string runDir,
+    RunProjection projection,
+    string? explicitBranch,
+    EventStore eventStore,
+    CancellationToken ct
+)
+{
+    if (projection.Status != Tandem.Domain.RunStatus.Ready)
+    {
+        Console.Error.WriteLine($"Error: Run is not Ready (current: {projection.Status}).");
+        return 1;
+    }
+
+    if (string.IsNullOrEmpty(projection.CandidateSha))
+    {
+        Console.Error.WriteLine("Error: No candidate SHA in run projection.");
+        return 1;
+    }
+
+    if (string.IsNullOrEmpty(projection.RepositoryPath))
+    {
+        Console.Error.WriteLine("Error: No source repository path in run projection.");
+        return 1;
+    }
+
+    var candidateSha = projection.CandidateSha!;
+    var sourceRepo = projection.RepositoryPath!;
+    var workspace = projection.WorkspacePath;
+
+    // Verify workspace HEAD contains the candidate commit.
+    var git = new GitProcess();
+    var headResult = await git.RunAsync(workspace, ["rev-parse", "HEAD"], ct);
+    if (headResult.ExitCode != 0)
+    {
+        Console.Error.WriteLine($"Error: Could not read workspace HEAD: {headResult.Stderr}");
+        return 1;
+    }
+
+    var headSha = headResult.Stdout.Trim();
+    if (!headSha.StartsWith(candidateSha, StringComparison.OrdinalIgnoreCase))
+    {
+        Console.Error.WriteLine(
+            $"Error: Workspace HEAD ({headSha[..12]}) does not contain candidate ({candidateSha[..12]})."
+        );
+        return 1;
+    }
+
+    // Verify source repo still resolves the pinned base SHA.
+    if (!string.IsNullOrEmpty(projection.PinnedBaseSha))
+    {
+        var baseResult = await git.RunAsync(
+            sourceRepo,
+            ["cat-file", "-e", projection.PinnedBaseSha!],
+            ct
+        );
+        if (baseResult.ExitCode != 0)
+        {
+            Console.Error.WriteLine(
+                $"Error: Pinned base SHA {projection.PinnedBaseSha} not found in source repo."
+            );
+            return 1;
+        }
+    }
+
+    // Derive branch name.
+    string branchName;
+    if (!string.IsNullOrEmpty(explicitBranch))
+    {
+        branchName = explicitBranch!;
+    }
+    else
+    {
+        var slug = Slugify(Path.GetFileNameWithoutExtension(projection.PacketPath));
+        var prefix = runDir[^8..];
+        branchName = $"tandem/{slug}-{prefix}";
+    }
+
+    // Validate the branch name.
+    var validateResult = await git.RunAsync(null, ["check-ref-format", "--branch", branchName], ct);
+    if (validateResult.ExitCode != 0)
+    {
+        Console.Error.WriteLine(
+            $"Error: Invalid branch name '{branchName}': {validateResult.Stderr}"
+        );
+        return 1;
+    }
+
+    // Check target branch doesn't already exist.
+    var existingResult = await git.RunAsync(
+        sourceRepo,
+        ["rev-parse", "--verify", $"refs/heads/{branchName}"],
+        ct
+    );
+    if (existingResult.ExitCode == 0)
+    {
+        Console.Error.WriteLine($"Error: Branch '{branchName}' already exists in source repo.");
+        return 1;
+    }
+
+    // Record source repo's current state for postcondition.
+    var currentBranchResult = await git.RunAsync(
+        sourceRepo,
+        ["rev-parse", "--abbrev-ref", "HEAD"],
+        ct
+    );
+    var currentBranch = currentBranchResult.Stdout.Trim();
+    var sourceStatusBefore = await git.RunAsync(sourceRepo, ["status", "--porcelain"], ct);
+
+    // Transfer the commit: push from workspace to source repo.
+    var pushResult = await git.RunAsync(
+        workspace,
+        ["push", sourceRepo, $"{candidateSha}:refs/heads/{branchName}"],
+        ct
+    );
+    if (pushResult.ExitCode != 0)
+    {
+        Console.Error.WriteLine($"Error: git push failed: {pushResult.Stderr}");
+        return 1;
+    }
+
+    // Verify: the branch resolves to the exact candidate SHA.
+    var verifyResult = await git.RunAsync(
+        sourceRepo,
+        ["rev-parse", $"refs/heads/{branchName}"],
+        ct
+    );
+    if (verifyResult.ExitCode != 0)
+    {
+        Console.Error.WriteLine(
+            $"Error: Could not verify branch after push: {verifyResult.Stderr}"
+        );
+        return 1;
+    }
+
+    var publishedSha = verifyResult.Stdout.Trim();
+    if (!publishedSha.Equals(candidateSha, StringComparison.OrdinalIgnoreCase))
+    {
+        Console.Error.WriteLine(
+            $"Error: Branch resolves to {publishedSha[..12]} but expected {candidateSha[..12]}."
+        );
+        return 1;
+    }
+
+    // Verify source repo's current branch and working tree are unchanged.
+    var currentBranchAfter = await git.RunAsync(
+        sourceRepo,
+        ["rev-parse", "--abbrev-ref", "HEAD"],
+        ct
+    );
+    if (currentBranchAfter.Stdout.Trim() != currentBranch)
+    {
+        Console.Error.WriteLine(
+            $"Error: Source repo branch changed from '{currentBranch}' to '{currentBranchAfter.Stdout.Trim()}'."
+        );
+        return 1;
+    }
+
+    var sourceStatusAfter = await git.RunAsync(sourceRepo, ["status", "--porcelain"], ct);
+    if (sourceStatusAfter.Stdout != sourceStatusBefore.Stdout)
+    {
+        Console.Error.WriteLine("Error: Source repo working tree changed during publication.");
+        return 1;
+    }
+
+    // Update run projection.
+    var updatedProjection = projection with
+    {
+        PublishedBranch = branchName,
+        Status = Tandem.Domain.RunStatus.Ready,
+        UpdatedAt = DateTimeOffset.UtcNow,
+    };
+    await new RunProjectionStore(runDir).WriteAsync(updatedProjection, ct);
+
+    // Emit run.published event.
+    var projector = new RunEventProjector(updatedProjection.RunId, "", eventStore);
+    await projector.EmitRunPublishedAsync(branchName, candidateSha, ct);
+
+    Console.WriteLine($"Published: {branchName}");
+    Console.WriteLine($"Commit:    {candidateSha}");
+    Console.WriteLine($"Repository:{sourceRepo}");
+    return 0;
+}
+
+static async Task RaiseHumanAnswerAsync(
+    DurableTaskClient client,
+    string durableRunId,
+    string? answerText,
+    CancellationToken ct
+)
+{
+    if (string.IsNullOrWhiteSpace(answerText))
+    {
+        return;
+    }
+
+    var answer = new HumanAnswer(answerText.Trim());
+    var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    var serialized = JsonSerializer.Serialize(answer, options);
+    await client.RaiseEventAsync(durableRunId, "HumanInput", serialized, ct);
+}
+
+static string Slugify(string input)
+{
+    var slug = new StringBuilder();
+    var prevDash = false;
+    foreach (var c in input.ToLowerInvariant())
+    {
+        if (char.IsLetterOrDigit(c))
+        {
+            slug.Append(c);
+            prevDash = false;
+        }
+        else if (!prevDash && slug.Length > 0)
+        {
+            slug.Append('-');
+            prevDash = true;
+        }
+    }
+    if (slug.Length > 0 && slug[^1] == '-')
+    {
+        slug.Remove(slug.Length - 1, 1);
+    }
+    return slug.ToString();
 }
 
 file sealed class ChatClientBuilderFactory(TandemConfig config)
@@ -372,7 +993,7 @@ file sealed class StreamRenderer
         }
         if (ctx.PlannerDecision is { } decision && !string.IsNullOrEmpty(decision.Rationale))
         {
-            Console.WriteLine($"Review:       {decision.Rationale}");
+            Console.WriteLine($"Planner:      {decision.Rationale}");
         }
         if (
             ctx.Status == Tandem.Domain.RunStatus.WaitingForHuman

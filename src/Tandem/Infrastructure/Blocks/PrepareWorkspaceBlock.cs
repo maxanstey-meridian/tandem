@@ -5,15 +5,10 @@ using Tandem.Domain;
 
 namespace Tandem.Infrastructure.Blocks;
 
-public sealed class PrepareWorkspaceBlock : Executor<PipelineMessage, PipelineMessage>
+public sealed class PrepareWorkspaceBlock(WorkspacePreparation? preparation = null)
+    : Executor<PipelineMessage, PipelineMessage>(BlockIds.Prepare)
 {
-    private readonly WorkspacePreparation _preparation;
-
-    public PrepareWorkspaceBlock(WorkspacePreparation? preparation = null)
-        : base(BlockIds.Prepare)
-    {
-        _preparation = preparation ?? new WorkspacePreparation();
-    }
+    private readonly WorkspacePreparation _preparation = preparation ?? new WorkspacePreparation();
 
     public override async ValueTask<PipelineMessage> HandleAsync(
         PipelineMessage message,

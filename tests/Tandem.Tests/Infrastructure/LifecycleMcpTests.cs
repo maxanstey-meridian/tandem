@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
+using ModelContextProtocol.Client;
 using Tandem.Domain;
 using Tandem.Infrastructure.Blocks;
 using Tandem.Infrastructure.Lifecycle;
@@ -10,6 +11,113 @@ namespace Tandem.Tests.Infrastructure;
 
 public sealed class LifecycleMcpTests
 {
+    [Fact]
+    public async Task LifecycleTools_AdvertiseFlatTypedSchemas()
+    {
+        using var fixture = await LifecycleFixture.CreateAsync();
+        await using var client = new LifecycleMcpClient(
+            fixture.TandemHome,
+            fixture.TandemExePath,
+            fixture.RunId,
+            BlockIds.Executor,
+            "schema-probe"
+        );
+
+        var tools = await client.ListToolsAsync(
+            ["ask_planner", "submit_report", "write_checkpoint"],
+            CancellationToken.None
+        );
+
+        tools
+            .Select(tool => tool.Name)
+            .Should()
+            .BeEquivalentTo("ask_planner", "submit_report", "write_checkpoint");
+        var askPlanner = tools.OfType<McpClientTool>().Single(tool => tool.Name == "ask_planner");
+        var schema = askPlanner.JsonSchema;
+        schema
+            .GetProperty("required")
+            .EnumerateArray()
+            .Select(value => value.GetString())
+            .Should()
+            .BeEquivalentTo("question", "proposedApproach", "evidence");
+        schema.GetProperty("properties").TryGetProperty("request", out _).Should().BeFalse();
+        schema
+            .GetProperty("properties")
+            .GetProperty("evidence")
+            .GetProperty("items")
+            .GetProperty("type")
+            .GetString()
+            .Should()
+            .Be("string");
+    }
+
+    [Fact]
+    public async Task InvalidAskPlanner_ReturnsProblems_ThenAcceptsCorrectedCallInSameTurn()
+    {
+        using var fixture = await LifecycleFixture.CreateAsync();
+        var ctx = PipelineContext.Create(
+            fixture.RunId,
+            MakePacket(),
+            pinnedBaseSha: "abc123",
+            workspacePath: fixture.WorkspacePath
+        );
+        var toolResults = new List<string>();
+        var script = new ScriptedChatClient(
+            MakeToolCallResponse(
+                "invalid-call",
+                "ask_planner",
+                new Dictionary<string, object?>
+                {
+                    ["question"] = "Should I proceed?",
+                    ["proposedApproach"] = "",
+                    ["evidence"] = new[] { "README.md" },
+                }
+            ),
+            MakeToolCallResponse(
+                "corrected-call",
+                "ask_planner",
+                new Dictionary<string, object?>
+                {
+                    ["question"] = "Should I proceed?",
+                    ["proposedApproach"] = "Apply the requested focused change.",
+                    ["evidence"] = new[] { "README.md" },
+                }
+            )
+        );
+        var block = new AgentBlock(
+            new AgentBlockConfig(
+                BlockIds.Executor,
+                "implementation",
+                "executor instructions",
+                WorkspaceAccess.MutationGated,
+                ["ask_planner"]
+            ),
+            script,
+            fixture.TandemHome,
+            fixture.TandemExePath,
+            onUpdate: (_, _, update) =>
+            {
+                foreach (var result in update.Contents.OfType<FunctionResultContent>())
+                {
+                    toolResults.Add(result.Result?.ToString() ?? "");
+                }
+            }
+        );
+
+        var output = await RunBlockAsync(block, ctx);
+
+        output.LatestOutcome!.Kind.Should().Be(OutcomeKinds.PlannerRequested);
+        toolResults.Should().Contain(result => result.Contains("invalid ask_planner call"));
+        toolResults.Should().Contain(result => result.Contains("proposedApproach"));
+        var lifecycleDirectory = Path.Combine(
+            fixture.TandemHome,
+            "runs",
+            fixture.RunId.ToString("N"),
+            "lifecycle"
+        );
+        Directory.GetFiles(lifecycleDirectory, "*.json").Should().ContainSingle();
+    }
+
     [Fact]
     public async Task AskPlanner_AcceptsReceipt_TerminatesTurn_RoutesToPlanner()
     {
@@ -327,6 +435,11 @@ public sealed class LifecycleMcpTests
     public async Task Cancellation_WhileMcpCallActive_FailsBlockAndLeavesNoChild()
     {
         using var fixture = await LifecycleFixture.CreateAsync();
+        var childExeName = Path.GetFileNameWithoutExtension(fixture.TandemExePath);
+        var existingProcessIds = System
+            .Diagnostics.Process.GetProcessesByName(childExeName)
+            .Select(process => process.Id)
+            .ToHashSet();
         var packet = MakePacket();
 
         var ctx = PipelineContext.Create(
@@ -388,8 +501,9 @@ public sealed class LifecycleMcpTests
             );
 
         await Task.Delay(TimeSpan.FromSeconds(1));
-        var childExeName = Path.GetFileNameWithoutExtension(fixture.TandemExePath);
-        var childrenAfter = System.Diagnostics.Process.GetProcessesByName(childExeName);
+        var childrenAfter = System
+            .Diagnostics.Process.GetProcessesByName(childExeName)
+            .Where(process => !existingProcessIds.Contains(process.Id));
         childrenAfter
             .Should()
             .BeEmpty("no MCP child process should be left running after cancellation");
@@ -524,7 +638,7 @@ public sealed class LifecycleMcpTests
             script,
             fixture.TandemHome,
             fixture.TandemExePath,
-            onUpdate: (_, update) =>
+            onUpdate: (_, _, update) =>
             {
                 foreach (var result in update.Contents.OfType<FunctionResultContent>())
                 {
