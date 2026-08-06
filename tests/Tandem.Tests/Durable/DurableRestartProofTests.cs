@@ -40,8 +40,9 @@ public sealed class DurableRestartProofTests
             Constraints: [],
             ImplementationContext: ""
         );
-        var initialMessage = new PipelineMessage(
-            PipelineContext.Create(Guid.CreateVersion7(), packet, "abc123", "/tmp/test-ws")
+        var initialMessage = new PipelineMessage<SimpleV1State>(
+            PipelineRuntime.Create(Guid.CreateVersion7()),
+            SimpleV1State.Create(packet, "abc123", "/tmp/test-ws")
         );
 
         await using (
@@ -145,22 +146,22 @@ public sealed class DurableRestartProofTests
 
         return new WorkflowBuilder(prepareB)
             .WithName(workflowName)
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 prepareB,
                 executorB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 prepareB,
                 failedB,
                 m => m!.LatestOutcome?.Kind != OutcomeKinds.WorkspacePrepared
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 executorB,
                 plannerB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.PlannerRequested
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 executorB,
                 failedB,
                 m =>
@@ -168,42 +169,42 @@ public sealed class DurableRestartProofTests
                     && m!.LatestOutcome?.Kind != OutcomeKinds.ReportSubmitted
                     && m!.LatestOutcome?.Kind != OutcomeKinds.CheckpointWritten
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 plannerB,
                 executor2B,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.PlannerProceed
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 plannerB,
                 failedB,
                 m => m!.LatestOutcome?.Kind != OutcomeKinds.PlannerProceed
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 executor2B,
                 captureB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReportSubmitted
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 executor2B,
                 failedB,
                 m => m!.LatestOutcome?.Kind != OutcomeKinds.ReportSubmitted
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 captureB,
                 reviewerB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 captureB,
                 failedB,
                 m => m!.LatestOutcome?.Kind != OutcomeKinds.CandidateCaptured
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 reviewerB,
                 completeB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReviewAccepted
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 reviewerB,
                 failedB,
                 m => m!.LatestOutcome?.Kind != OutcomeKinds.ReviewAccepted
@@ -229,7 +230,8 @@ public sealed class DurableRestartProofTests
         }
     }
 
-    private sealed class LoggingBlock : Executor<PipelineMessage, PipelineMessage>
+    private sealed class LoggingBlock
+        : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>
     {
         private readonly string _logPath;
         private readonly string _outcomeKind;
@@ -241,8 +243,8 @@ public sealed class DurableRestartProofTests
             _outcomeKind = outcomeKind;
         }
 
-        public override ValueTask<PipelineMessage> HandleAsync(
-            PipelineMessage message,
+        public override ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
+            PipelineMessage<SimpleV1State> message,
             IWorkflowContext context,
             CancellationToken cancellationToken
         )
@@ -250,10 +252,10 @@ public sealed class DurableRestartProofTests
             File.AppendAllText(_logPath, Id + "\n");
             var payload = System.Text.Json.JsonSerializer.SerializeToElement(new { });
             return ValueTask.FromResult(
-                new PipelineMessage(
-                    message.Context,
-                    new BlockOutcome(_outcomeKind, Id, _outcomeKind, payload)
-                )
+                message with
+                {
+                    LatestOutcome = new BlockOutcome(_outcomeKind, Id, _outcomeKind, payload),
+                }
             );
         }
     }
@@ -264,10 +266,10 @@ public sealed class DurableRestartProofTests
     /// The transition is controlled by a file marker.
     /// </summary>
     private sealed class BlockingPlannerBlock(string logPath)
-        : Executor<PipelineMessage, PipelineMessage>(BlockIds.Planner)
+        : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>(BlockIds.Planner)
     {
-        public override async ValueTask<PipelineMessage> HandleAsync(
-            PipelineMessage message,
+        public override async ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
+            PipelineMessage<SimpleV1State> message,
             IWorkflowContext context,
             CancellationToken cancellationToken
         )
@@ -283,15 +285,15 @@ public sealed class DurableRestartProofTests
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             }
 
-            return new PipelineMessage(
-                message.Context,
-                new BlockOutcome(
+            return message with
+            {
+                LatestOutcome = new BlockOutcome(
                     OutcomeKinds.PlannerProceed,
                     BlockIds.Planner,
                     "proceed",
                     System.Text.Json.JsonSerializer.SerializeToElement(new { })
-                )
-            );
+                ),
+            };
         }
     }
 

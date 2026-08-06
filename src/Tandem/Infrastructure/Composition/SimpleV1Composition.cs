@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
@@ -19,48 +20,320 @@ public sealed class SimpleV1Composition(
         IBlockExecutionObserver? blockObserver = null
     )
     {
-        Executor<PipelineMessage, PipelineMessage> prepare = new PrepareWorkspaceBlock();
-        Executor<PipelineMessage, PipelineMessage> executor = CreateAgentBlock(
-            BlockIds.Executor,
-            "implementation",
-            ExecutorInstructions,
-            WorkspaceAccess.MutationGated,
-            ["ask_planner", "submit_report"],
-            onUpdate,
-            toolInterceptor: CreateMutationGate(),
-            turnPolicy: CreateExecutorTurnPolicy()
+        var nodes = CreateNodes(onUpdate, blockObserver);
+        return Compose(nodes);
+    }
+
+    /// <summary>
+    /// Wires every edge of the SimpleV1 lifecycle in one readable pass. Edges
+    /// are grouped by source block. Workflow identity (topology and durable
+    /// edge grouping) is pinned by <c>SimpleV1CompositionGraphTests</c>.
+    /// </summary>
+    private static Workflow Compose(SimpleV1Nodes nodes)
+    {
+        var builder = new WorkflowBuilder(nodes.Prepare)
+            .WithName("simple-v1")
+            .WithDescription("Plan, implement, verify, and review a software change.");
+
+        // Prepare
+        builder = AddOutcomeEdge(
+            builder,
+            nodes.Prepare,
+            nodes.Executor,
+            OutcomeKinds.WorkspacePrepared,
+            "workspace prepared"
         );
-        Executor<PipelineMessage, PipelineMessage> planner = CreateAgentBlock(
-            BlockIds.Planner,
-            "planning",
-            PlannerInstructions,
-            WorkspaceAccess.ReadOnly,
-            [],
-            onUpdate,
-            PlannerDecisionPolicy.Parse,
-            configureChatOptions: ConfigurePlannerChatOptions
+        builder = builder.AddEdge(
+            nodes.Prepare,
+            nodes.Failed,
+            CatchAllPrepared(),
+            label: "unexpected outcome",
+            idempotent: false
         );
-        Executor<PipelineMessage, PipelineMessage> captureCandidate = new CaptureCandidateBlock();
-        Executor<PipelineMessage, PipelineMessage> verify = new VerificationBlock(
-            blockObserver as ICommandOutputObserver
+
+        // Executor
+        builder = AddOutcomeEdge(
+            builder,
+            nodes.Executor,
+            nodes.Planner,
+            OutcomeKinds.PlannerRequested,
+            "planner requested"
         );
-        Executor<PipelineMessage, PipelineMessage> reviewer = CreateAgentBlock(
-            BlockIds.Reviewer,
-            "review",
-            ReviewerInstructions,
-            WorkspaceAccess.ReadOnly,
-            [],
-            onUpdate,
-            ReviewDecisionPolicy.Parse,
-            messageAugmentation: CreateDiffAugmentation(),
-            configureChatOptions: ConfigureReviewerChatOptions
+        builder = AddOutcomeEdge(
+            builder,
+            nodes.Executor,
+            nodes.CaptureCandidate,
+            OutcomeKinds.ReportSubmitted,
+            "report submitted"
         );
-        Executor<PipelineMessage, PipelineMessage> complete = new CompleteBlock();
-        Executor<PipelineMessage, PipelineMessage> failed = new FailedBlock();
+        builder = AddOutcomeEdge(
+            builder,
+            nodes.Executor,
+            nodes.Executor,
+            OutcomeKinds.CheckpointWritten,
+            "checkpoint written"
+        );
+        builder = builder.AddEdge(
+            nodes.Executor,
+            nodes.Failed,
+            CatchAllExecutor(),
+            label: "unexpected outcome",
+            idempotent: false
+        );
+
+        // Planner
+        // Keep successful planner outcomes on one route: the pinned durable
+        // adapter batches same-target edges and would deliver String[] where
+        // the executor expects one PipelineMessage.
+        builder = builder.AddEdge<PipelineMessage<SimpleV1State>>(
+            nodes.Planner,
+            nodes.Executor,
+            msg =>
+                msg!.LatestOutcome?.Kind == OutcomeKinds.PlannerProceed
+                || msg.LatestOutcome?.Kind == OutcomeKinds.PlannerProceedWithConstraints,
+            label: "proceed / proceed with constraints",
+            idempotent: false
+        );
+        builder = AddOutcomeEdge(
+            builder,
+            nodes.Planner,
+            nodes.HumanQuestion,
+            OutcomeKinds.PlannerNeedsHuman,
+            "needs human"
+        );
+        builder = AddOutcomeEdge(
+            builder,
+            nodes.Planner,
+            nodes.Failed,
+            OutcomeKinds.PlannerStop,
+            "stop"
+        );
+        builder = builder.AddEdge(
+            nodes.Planner,
+            nodes.Failed,
+            CatchAllPlanner(),
+            label: "unexpected outcome",
+            idempotent: false
+        );
+
+        // Capture and verification
+        builder = AddOutcomeEdge(
+            builder,
+            nodes.CaptureCandidate,
+            nodes.Verify,
+            OutcomeKinds.CandidateCaptured,
+            "verification configured",
+            HasVerificationCommands
+        );
+        builder = AddOutcomeEdge(
+            builder,
+            nodes.CaptureCandidate,
+            nodes.Reviewer,
+            OutcomeKinds.CandidateCaptured,
+            "no verification configured",
+            NoVerificationCommands
+        );
+        builder = builder.AddEdge(
+            nodes.CaptureCandidate,
+            nodes.Failed,
+            CatchAllCandidate(),
+            label: "unexpected outcome",
+            idempotent: false
+        );
+
+        builder = AddOutcomeEdge(
+            builder,
+            nodes.Verify,
+            nodes.Verify,
+            OutcomeKinds.CommandPassed,
+            "commands remain",
+            HasRemainingCommands
+        );
+        builder = AddOutcomeEdge(
+            builder,
+            nodes.Verify,
+            nodes.Reviewer,
+            OutcomeKinds.CommandPassed,
+            "verification complete",
+            AllCommandsComplete
+        );
+        builder = AddOutcomeEdge(
+            builder,
+            nodes.Verify,
+            nodes.Executor,
+            OutcomeKinds.CommandFailed,
+            "command failed"
+        );
+        builder = builder.AddEdge(
+            nodes.Verify,
+            nodes.Failed,
+            CatchAllVerify(),
+            label: "unexpected outcome",
+            idempotent: false
+        );
+
+        // Review
+        builder = AddOutcomeEdge(
+            builder,
+            nodes.Reviewer,
+            nodes.Complete,
+            OutcomeKinds.ReviewAccepted,
+            "accepted"
+        );
+        builder = AddOutcomeEdge(
+            builder,
+            nodes.Reviewer,
+            nodes.Executor,
+            OutcomeKinds.ReviewChangesRequested,
+            "changes requested"
+        );
+        builder = AddOutcomeEdge(
+            builder,
+            nodes.Reviewer,
+            nodes.HumanQuestion,
+            OutcomeKinds.ReviewNeedsHuman,
+            "needs human"
+        );
+        builder = builder.AddEdge(
+            nodes.Reviewer,
+            nodes.Failed,
+            CatchAllReviewer(),
+            label: "unexpected outcome",
+            idempotent: false
+        );
+
+        // Human suspension
+        builder = builder.AddEdge(
+            nodes.HumanQuestion,
+            nodes.HumanInput,
+            label: "request human input",
+            idempotent: false
+        );
+        builder = builder.AddEdge(
+            nodes.HumanInput,
+            nodes.ApplyHumanAnswer,
+            label: "answer received",
+            idempotent: false
+        );
+
+        // Route the answer back to the originating decision block. The
+        // apply-human-answer block's outcome payload carries the source
+        // block ID; combine same-target routes into one predicate so durable
+        // batching cannot deliver String[] where PipelineMessage is expected.
+        builder = builder.AddEdge<PipelineMessage<SimpleV1State>>(
+            nodes.ApplyHumanAnswer,
+            nodes.Planner,
+            msg =>
+                msg!.LatestOutcome?.Payload.TryGetProperty("sourceBlockId", out var sb) == true
+                && sb.ValueKind == System.Text.Json.JsonValueKind.String
+                && sb.GetString() == BlockIds.Planner,
+            label: "answer for planner",
+            idempotent: false
+        );
+        builder = builder.AddEdge<PipelineMessage<SimpleV1State>>(
+            nodes.ApplyHumanAnswer,
+            nodes.Reviewer,
+            msg =>
+                msg!.LatestOutcome?.Payload.TryGetProperty("sourceBlockId", out var sb) == true
+                && sb.ValueKind == System.Text.Json.JsonValueKind.String
+                && sb.GetString() == BlockIds.Reviewer,
+            label: "answer for reviewer",
+            idempotent: false
+        );
+        builder = builder.AddEdge(
+            nodes.ApplyHumanAnswer,
+            nodes.Failed,
+            CatchAllApplyAnswer(),
+            label: "unknown answer source",
+            idempotent: false
+        );
+
+        builder = builder.WithOutputFrom(nodes.Complete, nodes.Failed);
+        return builder.Build();
+    }
+
+    /// <summary>
+    /// Bound executors and the human-input request port for the SimpleV1 lifecycle.
+    /// All members are <see cref="ExecutorBinding"/> values so heterogeneous
+    /// message types (<see cref="PipelineMessage{SimpleV1State}"/> vs <see cref="HumanQuestion"/>/
+    /// <see cref="HumanAnswer"/>) share one typed shape for graph composition.
+    /// </summary>
+    private sealed record SimpleV1Nodes(
+        ExecutorBinding Prepare,
+        ExecutorBinding Executor,
+        ExecutorBinding Planner,
+        ExecutorBinding CaptureCandidate,
+        ExecutorBinding Verify,
+        ExecutorBinding Reviewer,
+        ExecutorBinding Complete,
+        ExecutorBinding Failed,
+        ExecutorBinding HumanQuestion,
+        ExecutorBinding HumanInput,
+        ExecutorBinding ApplyHumanAnswer
+    );
+
+    /// <summary>
+    /// Constructs every block and agent, decorates observed executors, then
+    /// binds each to its <see cref="ExecutorBinding"/>. Observer decoration is
+    /// applied before binding so the binding wraps the decorated executor and
+    /// block events remain observable during runs.
+    /// </summary>
+    private SimpleV1Nodes CreateNodes(
+        Action<string, Guid, AgentResponseUpdate>? onUpdate,
+        IBlockExecutionObserver? blockObserver
+    )
+    {
+        Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>> prepare =
+            new PrepareWorkspaceBlock();
+        Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>> executor =
+            CreateAgentBlock(
+                BlockIds.Executor,
+                "implementation",
+                ExecutorInstructions,
+                ["ask_planner", "submit_report"],
+                onUpdate,
+                toolInterceptor: CreateMutationGate(),
+                turnPolicy: CreateExecutorTurnPolicy()
+            );
+        Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>> planner =
+            CreateAgentBlock(
+                BlockIds.Planner,
+                "planning",
+                PlannerInstructions,
+                [],
+                onUpdate,
+                PlannerDecisionPolicy.Parse,
+                structuredOutputAcceptance: CreatePlannerGroundingPolicy(),
+                structuredOutputCorrectionRequiredToolName: "file_access_read",
+                configureChatOptions: ConfigurePlannerChatOptions
+            );
+        Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>> captureCandidate =
+            new CaptureCandidateBlock();
+        Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>> verify =
+            new VerificationBlock(blockObserver as ICommandOutputObserver);
+        Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>> reviewer =
+            CreateAgentBlock(
+                BlockIds.Reviewer,
+                "review",
+                ReviewerInstructions,
+                [],
+                onUpdate,
+                ReviewDecisionPolicy.Parse,
+                messageAugmentation: CreateDiffAugmentation(),
+                structuredOutputAcceptance: CreateReviewerGroundingPolicy(),
+                structuredOutputCorrectionRequiredToolName: "file_access_read",
+                configureChatOptions: ConfigureReviewerChatOptions
+            );
+        Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>> complete =
+            new CompleteBlock();
+        Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>> failed =
+            new FailedBlock();
 
         // Human-input blocks replace the terminal waiting block.
-        Executor<PipelineMessage, HumanQuestion> humanQuestion = new HumanQuestionBlock();
-        Executor<HumanAnswer, PipelineMessage> applyHumanAnswer = new ApplyHumanAnswerBlock();
+        Executor<PipelineMessage<SimpleV1State>, HumanQuestion> humanQuestion =
+            new HumanQuestionBlock();
+        Executor<HumanAnswer, PipelineMessage<SimpleV1State>> applyHumanAnswer =
+            new ApplyHumanAnswerBlock();
         var humanInputPort = RequestPort.Create<HumanQuestion, HumanAnswer>("HumanInput");
 
         if (blockObserver is not null)
@@ -77,154 +350,19 @@ public sealed class SimpleV1Composition(
             applyHumanAnswer = Observe(BlockIds.ApplyHumanAnswer, applyHumanAnswer, blockObserver);
         }
 
-        var prepareBinding = prepare.BindExecutor();
-        var executorBinding = executor.BindExecutor();
-        var plannerBinding = planner.BindExecutor();
-        var captureBinding = captureCandidate.BindExecutor();
-        var verifyBinding = verify.BindExecutor();
-        var reviewerBinding = reviewer.BindExecutor();
-        var completeBinding = complete.BindExecutor();
-        var failedBinding = failed.BindExecutor();
-        var humanQuestionBinding = humanQuestion.BindExecutor();
-        var humanInputBinding = (ExecutorBinding)humanInputPort;
-        var applyHumanAnswerBinding = applyHumanAnswer.BindExecutor();
-
-        var builder = new WorkflowBuilder(prepareBinding).WithName("simple-v1");
-
-        builder = AddOutcomeEdge(
-            builder,
-            prepareBinding,
-            executorBinding,
-            OutcomeKinds.WorkspacePrepared
+        return new SimpleV1Nodes(
+            Prepare: prepare.BindExecutor(),
+            Executor: executor.BindExecutor(),
+            Planner: planner.BindExecutor(),
+            CaptureCandidate: captureCandidate.BindExecutor(),
+            Verify: verify.BindExecutor(),
+            Reviewer: reviewer.BindExecutor(),
+            Complete: complete.BindExecutor(),
+            Failed: failed.BindExecutor(),
+            HumanQuestion: humanQuestion.BindExecutor(),
+            HumanInput: (ExecutorBinding)humanInputPort,
+            ApplyHumanAnswer: applyHumanAnswer.BindExecutor()
         );
-        builder = builder.AddEdge(prepareBinding, failedBinding, CatchAllPrepared());
-
-        builder = AddOutcomeEdge(
-            builder,
-            executorBinding,
-            plannerBinding,
-            OutcomeKinds.PlannerRequested
-        );
-        builder = AddOutcomeEdge(
-            builder,
-            executorBinding,
-            captureBinding,
-            OutcomeKinds.ReportSubmitted
-        );
-        builder = AddOutcomeEdge(
-            builder,
-            executorBinding,
-            executorBinding,
-            OutcomeKinds.CheckpointWritten
-        );
-        builder = builder.AddEdge(executorBinding, failedBinding, CatchAllExecutor());
-
-        // Keep successful planner outcomes on one route. DurableTask batches
-        // same-target routes, which would otherwise deliver String[] instead
-        // of the PipelineMessage expected by the executor.
-        builder = builder.AddEdge<PipelineMessage>(
-            plannerBinding,
-            executorBinding,
-            msg =>
-                msg!.LatestOutcome?.Kind == OutcomeKinds.PlannerProceed
-                || msg.LatestOutcome?.Kind == OutcomeKinds.PlannerProceedWithConstraints
-        );
-        builder = AddOutcomeEdge(
-            builder,
-            plannerBinding,
-            humanQuestionBinding,
-            OutcomeKinds.PlannerNeedsHuman
-        );
-        builder = AddOutcomeEdge(builder, plannerBinding, failedBinding, OutcomeKinds.PlannerStop);
-        builder = builder.AddEdge(plannerBinding, failedBinding, CatchAllPlanner());
-
-        builder = AddOutcomeEdge(
-            builder,
-            captureBinding,
-            verifyBinding,
-            OutcomeKinds.CandidateCaptured,
-            HasVerificationCommands
-        );
-        builder = AddOutcomeEdge(
-            builder,
-            captureBinding,
-            reviewerBinding,
-            OutcomeKinds.CandidateCaptured,
-            NoVerificationCommands
-        );
-        builder = builder.AddEdge(captureBinding, failedBinding, CatchAllCandidate());
-
-        builder = AddOutcomeEdge(
-            builder,
-            verifyBinding,
-            verifyBinding,
-            OutcomeKinds.CommandPassed,
-            HasRemainingCommands
-        );
-        builder = AddOutcomeEdge(
-            builder,
-            verifyBinding,
-            reviewerBinding,
-            OutcomeKinds.CommandPassed,
-            AllCommandsComplete
-        );
-        builder = AddOutcomeEdge(
-            builder,
-            verifyBinding,
-            executorBinding,
-            OutcomeKinds.CommandFailed
-        );
-        builder = builder.AddEdge(verifyBinding, failedBinding, CatchAllVerify());
-
-        builder = AddOutcomeEdge(
-            builder,
-            reviewerBinding,
-            completeBinding,
-            OutcomeKinds.ReviewAccepted
-        );
-        builder = AddOutcomeEdge(
-            builder,
-            reviewerBinding,
-            executorBinding,
-            OutcomeKinds.ReviewChangesRequested
-        );
-        builder = AddOutcomeEdge(
-            builder,
-            reviewerBinding,
-            humanQuestionBinding,
-            OutcomeKinds.ReviewNeedsHuman
-        );
-        builder = builder.AddEdge(reviewerBinding, failedBinding, CatchAllReviewer());
-
-        // Human input: question → request port (suspends) → apply answer →
-        // route back to the source decision block.
-        builder = builder.AddEdge(humanQuestionBinding, humanInputBinding);
-        builder = builder.AddEdge(humanInputBinding, applyHumanAnswerBinding);
-
-        // Route the answer back to the originating decision block. The
-        // apply-human-answer block's outcome payload carries the source
-        // block ID. Combine same-target routes into one predicate to avoid
-        // durable batching delivering String[] instead of PipelineMessage.
-        builder = builder.AddEdge<PipelineMessage>(
-            applyHumanAnswerBinding,
-            plannerBinding,
-            msg =>
-                msg!.LatestOutcome?.Payload.TryGetProperty("sourceBlockId", out var sb) == true
-                && sb.ValueKind == System.Text.Json.JsonValueKind.String
-                && sb.GetString() == BlockIds.Planner
-        );
-        builder = builder.AddEdge<PipelineMessage>(
-            applyHumanAnswerBinding,
-            reviewerBinding,
-            msg =>
-                msg!.LatestOutcome?.Payload.TryGetProperty("sourceBlockId", out var sb) == true
-                && sb.ValueKind == System.Text.Json.JsonValueKind.String
-                && sb.GetString() == BlockIds.Reviewer
-        );
-        builder = builder.AddEdge(applyHumanAnswerBinding, failedBinding, CatchAllApplyAnswer());
-
-        builder = builder.WithOutputFrom(completeBinding, failedBinding);
-        return builder.Build();
     }
 
     private static Executor<TInput, TOutput> Observe<TInput, TOutput>(
@@ -233,39 +371,66 @@ public sealed class SimpleV1Composition(
         IBlockExecutionObserver observer
     ) => new ObservedExecutor<TInput, TOutput>(blockId, executor, observer);
 
-    private AgentBlock CreateAgentBlock(
+    private AgentBlock<SimpleV1State> CreateAgentBlock(
         string blockId,
         string profileName,
         string instructions,
-        WorkspaceAccess access,
         IReadOnlyList<string> lifecycleTools,
         Action<string, Guid, AgentResponseUpdate>? onUpdate,
-        StructuredOutputParser? structuredOutput = null,
-        ToolInterceptor? toolInterceptor = null,
-        MessageAugmentation? messageAugmentation = null,
-        AgentTurnPolicy? turnPolicy = null,
+        StructuredOutputParser<SimpleV1State>? structuredOutput = null,
+        ToolInterceptor<SimpleV1State>? toolInterceptor = null,
+        MessageAugmentation<SimpleV1State>? messageAugmentation = null,
+        AgentTurnPolicy<SimpleV1State>? turnPolicy = null,
+        StructuredOutputAcceptancePolicy<SimpleV1State>? structuredOutputAcceptance = null,
+        string? structuredOutputCorrectionRequiredToolName = null,
         Action<ChatOptions>? configureChatOptions = null
     )
     {
         var profile = profileResolver(profileName);
-        var checkpoint = new CheckpointPolicy(
-            profile.ContextWindowTokens,
-            profile.MaxOutputTokens,
-            profile.CheckpointAtPercent
-        );
+        var checkpoint =
+            blockId == BlockIds.Executor
+                ? new CheckpointPolicy<SimpleV1State>(
+                    profile.ContextWindowTokens,
+                    profile.MaxOutputTokens,
+                    profile.CheckpointAtPercent,
+                    "write_checkpoint",
+                    OutcomeKinds.CheckpointWritten,
+                    CheckpointOnlyInstructions,
+                    BuildCheckpointUserMessage,
+                    (state, _, payload) => state with { CheckpointPayload = payload }
+                )
+                : null;
 
-        var config = new AgentBlockConfig(
+        var config = new AgentBlockConfig<SimpleV1State>(
             blockId,
             profileName,
             instructions,
-            access,
             lifecycleTools,
+            blockId switch
+            {
+                BlockIds.Planner => BuildPlannerMessage,
+                BlockIds.Reviewer => BuildReviewerMessage,
+                _ => BuildExecutorMessage,
+            },
+            state => state.WorkspacePath,
+            state => blockId == BlockIds.Executor && state.MutationAuthorized,
             structuredOutput,
             checkpoint,
             messageAugmentation,
-            turnPolicy
+            turnPolicy,
+            structuredOutputAcceptance,
+            structuredOutputCorrectionRequiredToolName,
+            blockId == BlockIds.Executor
+                ? (state, kind, payload) =>
+                    kind == OutcomeKinds.ReportSubmitted
+                        ? state with
+                        {
+                            ImplementationReport = payload,
+                        }
+                        : state
+                : null
         );
-        return new AgentBlock(
+        return new AgentBlock<SimpleV1State>(
             config,
             chatClientFactory(profileName),
             tandemHome,
@@ -279,13 +444,56 @@ public sealed class SimpleV1Composition(
     private static void ConfigurePlannerChatOptions(ChatOptions options) =>
         options.ResponseFormat = ChatResponseFormat.ForJsonSchema<PlannerDecision>();
 
+    private static StructuredOutputAcceptancePolicy<SimpleV1State> CreatePlannerGroundingPolicy() =>
+        StructuredOutputAcceptancePolicies.RequireToolCallWhen<SimpleV1State>(
+            result =>
+                result.Outcome?.Kind
+                    is OutcomeKinds.PlannerProceed
+                        or OutcomeKinds.PlannerProceedWithConstraints
+                || result.Candidate
+                    is PlannerDecision
+                    {
+                        Decision: PlannerDecisionValue.Proceed
+                            or PlannerDecisionValue.ProceedWithConstraints,
+                    },
+            IsRepositoryInspectionTool,
+            correction: "Accepted planner decisions require repository inspection in this consult. "
+                + "Use an available read-only repository tool to verify the material files and seams, "
+                + "then return only the corrected JSON decision with concrete evidenceUsed entries."
+        );
+
+    private static StructuredOutputAcceptancePolicy<SimpleV1State> CreateReviewerGroundingPolicy() =>
+        StructuredOutputAcceptancePolicies.RequireToolCallWhen<SimpleV1State>(
+            result =>
+                result.Outcome?.Kind
+                    is OutcomeKinds.ReviewAccepted
+                        or OutcomeKinds.ReviewChangesRequested
+                || result.Candidate
+                    is ReviewDecision
+                    {
+                        Decision: ReviewDecisionValue.Accept or ReviewDecisionValue.RequestChanges,
+                    },
+            IsRepositoryInspectionTool,
+            correction: "Accept and RequestChanges require repository inspection in this review. "
+                + "Use an available read-only repository tool to verify the candidate and packet outcomes, "
+                + "then return only the corrected JSON decision with concrete outcome evidence."
+        );
+
+    private static bool IsRepositoryInspectionTool(string name) =>
+        name is "read" or "grep" or "glob"
+        || name.StartsWith("file_access_read", StringComparison.Ordinal)
+        || name.StartsWith("file_access_search", StringComparison.Ordinal)
+        || name.StartsWith("file_access_list", StringComparison.Ordinal)
+        || name.StartsWith("gitnexus_", StringComparison.Ordinal)
+        || name.Contains("ast_grep", StringComparison.Ordinal);
+
     private static void ConfigureReviewerChatOptions(ChatOptions options) =>
         options.ResponseFormat = ChatResponseFormat.ForJsonSchema<ReviewDecision>();
 
-    private static ToolInterceptor CreateMutationGate() =>
-        (ctx, fic, ct) =>
+    private static ToolInterceptor<SimpleV1State> CreateMutationGate() =>
+        (message, fic, ct) =>
         {
-            if (ctx.MutationAuthorized)
+            if (message.State.MutationAuthorized)
             {
                 return ValueTask.FromResult<ToolInterceptionResult?>(null);
             }
@@ -313,12 +521,12 @@ public sealed class SimpleV1Composition(
             );
         };
 
-    private static AgentTurnPolicy CreateExecutorTurnPolicy() =>
+    private static AgentTurnPolicy<SimpleV1State> CreateExecutorTurnPolicy() =>
         new(
             maxContinuationAttempts: 2,
             (observation, _) =>
                 ValueTask.FromResult<AgentTurnDirective?>(
-                    !observation.Context.MutationAuthorized
+                    !observation.Message.State.MutationAuthorized
                         ? new AgentTurnDirective(
                             """
                             Your previous response was not a lifecycle route. Continue the
@@ -340,9 +548,10 @@ public sealed class SimpleV1Composition(
                 )
         );
 
-    private static MessageAugmentation CreateDiffAugmentation() =>
-        async (ctx, ct) =>
+    private static MessageAugmentation<SimpleV1State> CreateDiffAugmentation() =>
+        async (message, ct) =>
         {
+            var ctx = message.State;
             if (ctx.CandidateSha is null || string.IsNullOrEmpty(ctx.PinnedBaseSha))
             {
                 return null;
@@ -373,99 +582,352 @@ public sealed class SimpleV1Composition(
         ExecutorBinding source,
         ExecutorBinding target,
         string outcomeKind,
-        Func<PipelineMessage, bool>? extraCondition = null
+        string label,
+        Func<PipelineMessage<SimpleV1State>, bool>? extraCondition = null
     )
     {
-        return builder.AddEdge<PipelineMessage>(
+        return builder.AddEdge<PipelineMessage<SimpleV1State>>(
             source,
             target,
-            msg => msg!.LatestOutcome?.Kind == outcomeKind && (extraCondition?.Invoke(msg) ?? true)
+            msg => msg!.LatestOutcome?.Kind == outcomeKind && (extraCondition?.Invoke(msg) ?? true),
+            label: label,
+            idempotent: false
         );
     }
 
-    private static Func<PipelineMessage?, bool> CatchAllPrepared() =>
+    private static Func<PipelineMessage<SimpleV1State>?, bool> CatchAllPrepared() =>
         msg => msg!.LatestOutcome?.Kind != OutcomeKinds.WorkspacePrepared;
 
-    private static Func<PipelineMessage?, bool> CatchAllExecutor() =>
+    private static Func<PipelineMessage<SimpleV1State>?, bool> CatchAllExecutor() =>
         msg =>
             msg!.LatestOutcome?.Kind != OutcomeKinds.PlannerRequested
             && msg!.LatestOutcome?.Kind != OutcomeKinds.ReportSubmitted
             && msg!.LatestOutcome?.Kind != OutcomeKinds.CheckpointWritten;
 
-    private static Func<PipelineMessage?, bool> CatchAllPlanner() =>
+    private static Func<PipelineMessage<SimpleV1State>?, bool> CatchAllPlanner() =>
         msg =>
             msg!.LatestOutcome?.Kind != OutcomeKinds.PlannerProceed
             && msg!.LatestOutcome?.Kind != OutcomeKinds.PlannerProceedWithConstraints
             && msg!.LatestOutcome?.Kind != OutcomeKinds.PlannerNeedsHuman
             && msg!.LatestOutcome?.Kind != OutcomeKinds.PlannerStop;
 
-    private static Func<PipelineMessage?, bool> CatchAllCandidate() =>
+    private static Func<PipelineMessage<SimpleV1State>?, bool> CatchAllCandidate() =>
         msg => msg!.LatestOutcome?.Kind != OutcomeKinds.CandidateCaptured;
 
-    private static Func<PipelineMessage?, bool> CatchAllVerify() =>
+    private static Func<PipelineMessage<SimpleV1State>?, bool> CatchAllVerify() =>
         msg =>
             msg!.LatestOutcome?.Kind != OutcomeKinds.CommandPassed
             && msg!.LatestOutcome?.Kind != OutcomeKinds.CommandFailed;
 
-    private static Func<PipelineMessage?, bool> CatchAllReviewer() =>
+    private static Func<PipelineMessage<SimpleV1State>?, bool> CatchAllReviewer() =>
         msg =>
             msg!.LatestOutcome?.Kind != OutcomeKinds.ReviewAccepted
             && msg!.LatestOutcome?.Kind != OutcomeKinds.ReviewChangesRequested
             && msg!.LatestOutcome?.Kind != OutcomeKinds.ReviewNeedsHuman;
 
-    private static Func<PipelineMessage?, bool> CatchAllApplyAnswer() =>
+    private static Func<PipelineMessage<SimpleV1State>?, bool> CatchAllApplyAnswer() =>
         msg =>
             msg!.LatestOutcome?.Payload.TryGetProperty("sourceBlockId", out var sb) != true
             || sb.ValueKind != System.Text.Json.JsonValueKind.String
             || (sb.GetString() != BlockIds.Planner && sb.GetString() != BlockIds.Reviewer);
 
-    private static bool HasVerificationCommands(PipelineMessage msg) =>
-        msg.Context.Packet.Verification.Count > 0;
+    private static bool HasVerificationCommands(PipelineMessage<SimpleV1State> msg) =>
+        msg.State.Packet.Verification.Count > 0;
 
-    private static bool NoVerificationCommands(PipelineMessage msg) =>
-        msg.Context.Packet.Verification.Count == 0;
+    private static bool NoVerificationCommands(PipelineMessage<SimpleV1State> msg) =>
+        msg.State.Packet.Verification.Count == 0;
 
-    private static bool HasRemainingCommands(PipelineMessage msg) =>
-        msg.Context.VerificationIndex < msg.Context.Packet.Verification.Count;
+    private static bool HasRemainingCommands(PipelineMessage<SimpleV1State> msg) =>
+        msg.State.VerificationIndex < msg.State.Packet.Verification.Count;
 
-    private static bool AllCommandsComplete(PipelineMessage msg) =>
-        msg.Context.VerificationIndex >= msg.Context.Packet.Verification.Count;
+    private static bool AllCommandsComplete(PipelineMessage<SimpleV1State> msg) =>
+        msg.State.VerificationIndex >= msg.State.Packet.Verification.Count;
+
+    private static string BuildExecutorMessage(PipelineMessage<SimpleV1State> message)
+    {
+        var state = message.State;
+        var outcomes = string.Join(
+            "\n",
+            state.Packet.Outcomes.Select(o => $"- [{o.Id}] {o.Description}")
+        );
+        var constraints =
+            state.Packet.Constraints.Count == 0
+                ? "(none)"
+                : string.Join("\n", state.Packet.Constraints.Select(c => $"- {c}"));
+        var planner = state.PlannerDecision is { } decision
+            ? $"""
+
+                Planner decision: {decision.Decision}
+                Planner rationale: {decision.Rationale}
+                Planner constraints:
+                {string.Join(
+                    "\n",
+                    decision.Constraints.Count > 0
+                        ? decision.Constraints.Select(c => $"- {c}")
+                        : ["(none)"]
+                )}
+                """
+            : "";
+        var verification =
+            state.VerificationResults.Count > 0
+                ? $"\nLatest verification failure (if any):\n{FormatVerificationResults(state.VerificationResults)}"
+                : "";
+        var candidate = state.CandidateSha is { } sha ? $"\nCurrent candidate SHA: {sha}" : "";
+        var checkpoint = state.CheckpointPayload is { } payload
+            ? $"\nPrevious checkpoint (context was compacted, continue from here):\n{payload.GetRawText()}"
+            : "";
+        return $"""
+            Packet: {state.Packet.Title}
+            Workspace: {state.WorkspacePath}
+            Pinned base: {state.PinnedBaseSha}
+            Mutation authorized: {state.MutationAuthorized}
+
+            Outcomes:
+            {outcomes}
+
+            Constraints:
+            {constraints}{planner}{verification}{candidate}{checkpoint}
+            """;
+    }
+
+    private static string BuildPlannerMessage(PipelineMessage<SimpleV1State> message)
+    {
+        var state = message.State;
+        var packet = state.Packet;
+        var outcomes = string.Join(
+            "\n",
+            packet.Outcomes.Select(o => $"- [{o.Id}] {o.Description}")
+        );
+        var constraints =
+            packet.Constraints.Count > 0
+                ? string.Join("\n", packet.Constraints.Select(c => $"- {c}"))
+                : "(none)";
+        var request = message.LatestOutcome?.Payload.GetRawText() ?? "(no request provided)";
+        var previous =
+            state.PlannerConstraints.Count > 0
+                ? string.Join("\n", state.PlannerConstraints.Select(c => $"- {c}"))
+                : "(none)";
+        var example = JsonSerializer.Serialize(
+            new
+            {
+                decision = "Proceed",
+                rationale = "The inspected implementation seams support the proposed approach.",
+                constraints = Array.Empty<string>(),
+                evidenceUsed = new[] { "src/example.ts: inspected implementation seam." },
+                humanQuestion = (string?)null,
+            },
+            new JsonSerializerOptions { WriteIndented = true }
+        );
+        return $"""
+            Packet: {packet.Title}
+            Workspace: {state.WorkspacePath}
+
+            Outcomes:
+            {outcomes}
+
+            Constraints:
+            {constraints}
+
+            Executor request:
+            {request}
+
+            Previous planner constraints:
+            {previous}
+
+            Return a structured JSON decision: Proceed, ProceedWithConstraints, NeedsHuman, or Stop.
+            Example shape (use facts from this workspace, not these values):
+            {example}
+            """;
+    }
+
+    internal static string BuildReviewerMessage(PipelineMessage<SimpleV1State> message)
+    {
+        var state = message.State;
+        var outcomes = string.Join(
+            "\n",
+            state.Packet.Outcomes.Select(o => $"- [{o.Id}] {o.Description}")
+        );
+        var plannerConstraints =
+            state.PlannerConstraints.Count > 0
+                ? string.Join("\n", state.PlannerConstraints.Select(c => $"- {c}"))
+                : "(none)";
+        var verification =
+            state.VerificationResults.Count > 0
+                ? FormatVerificationResults(state.VerificationResults)
+                : "(no verification commands)";
+        var example = JsonSerializer.Serialize(
+            new
+            {
+                decision = "Accept",
+                summary = "Every packet outcome is implemented and supported by evidence.",
+                outcomes = state.Packet.Outcomes.Select(outcome => new
+                {
+                    outcomeId = outcome.Id,
+                    delivered = true,
+                    evidence = new[] { $"src/example.ts: '{outcome.Description}'." },
+                }),
+                findings = Array.Empty<object>(),
+                humanQuestion = (string?)null,
+            },
+            new JsonSerializerOptions { WriteIndented = true }
+        );
+        return $"""
+            Packet: {state.Packet.Title}
+            Workspace: {state.WorkspacePath}
+            Pinned base: {state.PinnedBaseSha}
+            Candidate SHA: {state.CandidateSha ?? "(no candidate)"}
+
+            Outcomes:
+            {outcomes}
+
+            Planner constraints:
+            {plannerConstraints}
+
+            Verification results:
+            {verification}
+
+            Implementation report:
+            {state.ImplementationReport?.GetRawText() ?? "(none)"}
+
+            Human answer for this review:
+            {state.ReviewerHumanAnswer ?? "(none)"}
+
+            You may inspect changed files through your read-only tools.
+            Return a structured JSON decision: Accept, RequestChanges, or NeedsHuman.
+            Assess every outcome ID exactly once. Example shape:
+            {example}
+            """;
+    }
+
+    private static string FormatVerificationResults(IReadOnlyList<VerificationResult> results) =>
+        string.Join(
+            "\n",
+            results.Select(result =>
+                $"[{(result.ExitCode == 0 ? "PASS" : "FAIL")}] {result.Command} "
+                + $"(exit {result.ExitCode})\nstdout: {result.Stdout}\nstderr: {result.Stderr}"
+            )
+        );
+
+    private static string BuildCheckpointUserMessage(PipelineMessage<SimpleV1State> message)
+    {
+        var usage = message.Runtime.AgentUsage.GetValueOrDefault(BlockIds.Executor);
+        return $"""
+            Context window approaching limit: {usage?.CurrentContextTokens ?? 0} tokens used.
+            Write a checkpoint of your current work state using the write_checkpoint tool.
+            Call write_checkpoint now.
+            """;
+    }
+
+    private const string CheckpointOnlyInstructions = """
+        You are Tandem's implementation block in checkpoint-only mode.
+
+        Your context window is approaching its limit. You must write a checkpoint
+        of your current work state using the write_checkpoint tool. Summarize
+        what you have completed and what remains to be done next.
+
+        This is the only action available. Do not attempt other work.
+        """;
 
     private const string ExecutorInstructions = """
         You are Tandem's implementation block.
 
-        Inspect the workspace and work toward the packet outcomes. When mutation
-        authority is closed, use read-only tools to understand the repository and call
-        ask_planner with your proposed approach before editing. When authority is open,
-        implement the approved approach and constraints.
+        You implement; you do not make planner, reviewer, verification, or human
+        decisions. Inspect the workspace and work toward the packet outcomes. Read files
+        before editing them and treat the repository as the source of truth for code facts.
 
-        Call ask_planner whenever independent guidance is required. During a
-        checkpoint-only invocation, call write_checkpoint with the supplied work state.
-        When the implementation is ready for verification, call submit_report with
-        outcome claims and repository evidence.
+        When mutation authority is closed, use your read-only tools to understand the
+        relevant repository seams, then call ask_planner with your proposed approach and
+        the evidence you inspected. Do not ask the planner to read a specific local fact
+        that you can inspect yourself. When authority is open, implement the approved
+        approach and satisfy every planner constraint.
+
+        Call ask_planner when engineering direction, scope interpretation, architecture,
+        repository procedure, or a changed plan requires independent guidance. Questions
+        about product, UX, business policy, security policy, permissions, tenancy, data,
+        migration, legal, or compliance belong to the human and must be routed through the
+        planner rather than answered or guessed by you.
+
+        During a checkpoint-only invocation, call write_checkpoint with the supplied work
+        state. When the implementation is ready for verification, call submit_report with
+        outcome claims and concrete repository evidence. Do not claim that work is complete
+        merely because code was written; the configured verification and review stages own
+        that decision.
 
         An accepted lifecycle call ends the current turn. Do not represent planner,
-        verification, or reviewer decisions yourself.
+        verification, reviewer, or human decisions in prose. Use the lifecycle tools.
         """;
 
     private const string PlannerInstructions = """
         You are Tandem's planner block.
 
-        Review the packet outcomes and constraints, the executor's question,
-        proposed approach, and evidence. Read files as needed. Return a structured
-        decision: Proceed, ProceedWithConstraints, NeedsHuman, or Stop. Include a
-        rationale, any new constraints, and the evidence you used. HumanQuestion must
-        be present only for NeedsHuman and null otherwise.
+        You decide engineering direction; you do not implement. Review the packet outcomes
+        and constraints, the executor's question, proposed approach, and evidence. Treat
+        the executor's evidence as pointers to verify, not proof.
+
+        You have read-only access to the entire workspace. When a decision depends on a
+        repository fact, inspect it yourself before deciding and cite the files, symbols,
+        or other facts you inspected. Do not ask the executor or human to provide source
+        files, signatures, configuration, tests, diffs, or any other repository evidence
+        available through your tools. Failure to inspect available evidence is not a reason
+        to escalate.
+
+        Return one structured decision:
+
+        - Proceed when the evidence is sufficient and the engineering direction is clear.
+        - ProceedWithConstraints when the approach is sound but concrete, checkable
+          implementation obligations remain.
+        - NeedsHuman only when the missing decision belongs to the human: product, UX,
+          business policy, security policy, permissions, tenancy, data policy, migration
+          policy, legal, or compliance. Repository facts and engineering decisions are not
+          human questions.
+        - Stop only when you cannot state a safe engineering next action after inspecting
+          the packet, supplied context, and available repository evidence. Do not use Stop
+          merely because inspection has not yet been performed.
+
+        Audit the executor's proposed approach, not only its literal question. Correct a
+        false premise, incomplete surface, or approach that would break existing behavior.
+        Include a direct rationale and the evidence you actually used. Proceed means no
+        implementation obligations remain and Constraints must be empty.
+        ProceedWithConstraints means concrete, checkable obligations remain and Constraints
+        must contain every such obligation.
+
+        Return exactly one JSON object matching the required response schema. Do not add
+        reasoning, narration, apologies, markdown fences, or text before or after the JSON.
+        HumanQuestion must be present only for NeedsHuman and null otherwise.
         """;
 
     private const string ReviewerInstructions = """
         You are Tandem's reviewer block.
 
-        Evaluate the candidate diff against the packet outcomes, planner constraints,
-        implementation report, and verification results. You may inspect changed files
-        through your read-only tools. Return a structured decision: Accept,
-        RequestChanges, or NeedsHuman. Include findings with severity, description,
-        and evidence for each issue found. Severity is Critical, High, Medium, or Low.
+        You independently judge whether the verified candidate delivers the packet outcomes
+        and remains sound. Treat the implementation report and prior approval as claims to
+        check, not proof. Evaluate the exact candidate diff, packet outcomes, planner
+        constraints, implementation report, verification results, and relevant existing
+        behavior.
+
+        You have read-only access to the entire candidate workspace, not only the injected
+        diff. Inspect any changed or unchanged source, tests, contracts, or configuration
+        needed to judge the candidate. Do not ask the executor or human to provide
+        repository contents or evidence available through your tools. Failure to inspect
+        available evidence is not a reason to escalate.
+
+        Return one structured decision:
+
+        - Accept when the outcomes are delivered, the verified diff is sound, and no
+          material issue remains.
+        - RequestChanges for a concrete correctness, integration, scope, safety, or test
+          quality problem the executor can fix. Make every finding specific and actionable.
+        - NeedsHuman only for a decision owned by the human: product, UX, business policy,
+          security policy, permissions, tenancy, data policy, migration policy, legal, or
+          compliance. Missing repository inspection is not NeedsHuman.
+
+        Ground every finding in evidence. Include its severity, a precise description, and
+        the file, symbol, behavior, verification result, or contract that proves it.
+        Severity is Critical, High, Medium, or Low. Do not manufacture findings to justify
+        another pass, and do not block on pure taste.
+
+        Return exactly one JSON object matching the required response schema. Do not add
+        reasoning, narration, apologies, markdown fences, or text before or after the JSON.
         HumanQuestion must be present only for NeedsHuman and null otherwise.
         """;
 }

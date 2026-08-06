@@ -2,12 +2,13 @@
 
 ## Architecture
 
-Tandem has six runtime concepts:
+Tandem has seven runtime concepts:
 
 - **Block**: one reusable operation.
-- **Context**: durable facts shared across the pipeline.
+- **State**: composition-owned durable lifecycle facts.
+- **Runtime**: composition-neutral session, usage, invocation, and run bookkeeping.
 - **Outcome**: the result emitted by a block.
-- **Condition**: a predicate over context and the latest outcome.
+- **Condition**: a predicate over the typed pipeline message and latest outcome.
 - **Route**: an ordered condition and destination pair.
 - **Prompt**: instructions contributed to an agent block.
 
@@ -21,6 +22,10 @@ Keep these ownership boundaries explicit:
 
 - Pipeline composition owns block order, prompts, profiles, conditions, and
   successors.
+- Pipeline composition owns its concrete `TState`, user messages, workspace
+  policy, structured mappings, and explicitly registered MCP terminal set.
+- Reusable execution uses `PipelineMessage<TState>`; core must not add a universal
+  lifecycle state interface or state bag.
 - Blocks own operations, not orchestration.
 - Durable context records facts; it does not hide routing logic.
 - Microsoft Agent Framework owns workflow execution, durability, sessions,

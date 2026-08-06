@@ -3,67 +3,43 @@ using System.Text.Json.Serialization;
 
 namespace Tandem.Domain;
 
-public sealed record PipelineMessage(PipelineContext Context, BlockOutcome? LatestOutcome = null)
+public interface IOutcomeBearingMessage
 {
-    public PipelineMessage WithOutcome(BlockOutcome outcome) =>
+    public BlockOutcome? LatestOutcome { get; }
+}
+
+public sealed record PipelineMessage<TState>(
+    PipelineRuntime Runtime,
+    TState State,
+    BlockOutcome? LatestOutcome = null
+) : IOutcomeBearingMessage
+{
+    public PipelineMessage<TState> WithOutcome(BlockOutcome outcome) =>
         this with
         {
             LatestOutcome = outcome,
         };
 }
 
-public sealed record PipelineContext(
+public sealed record PipelineRuntime(
     Guid RunId,
-    Packet Packet,
-    string PinnedBaseSha,
-    string WorkspacePath,
-    bool MutationAuthorized,
-    PlannerDecision? PlannerDecision,
-    IReadOnlyList<string> PlannerConstraints,
-    string? CandidateSha,
-    int VerificationIndex,
-    IReadOnlyList<VerificationResult> VerificationResults,
     IReadOnlyDictionary<string, JsonElement> AgentSessions,
     IReadOnlyDictionary<string, AgentUsage> AgentUsage,
-    IReadOnlyDictionary<string, int> InvocationCounts,
-    JsonElement? CheckpointPayload,
-    JsonElement? ImplementationReport,
-    RunStatus Status
+    IReadOnlyDictionary<string, int> InvocationCounts
 )
 {
-    public static PipelineContext Create(
-        Guid runId,
-        Packet packet,
-        string pinnedBaseSha,
-        string workspacePath
-    ) =>
+    public static PipelineRuntime Create(Guid runId) =>
         new(
             runId,
-            packet,
-            pinnedBaseSha,
-            workspacePath,
-            MutationAuthorized: false,
-            PlannerDecision: null,
-            PlannerConstraints: [],
-            CandidateSha: null,
-            VerificationIndex: 0,
-            VerificationResults: [],
-            AgentSessions: new Dictionary<string, JsonElement>(),
-            AgentUsage: new Dictionary<string, AgentUsage>(),
-            InvocationCounts: new Dictionary<string, int>(),
-            CheckpointPayload: null,
-            ImplementationReport: null,
-            Status: RunStatus.Running
+            new Dictionary<string, JsonElement>(),
+            new Dictionary<string, AgentUsage>(),
+            new Dictionary<string, int>()
         );
 
-    public string NextInvocationId(string blockId)
-    {
-        var counts = new Dictionary<string, int>(InvocationCounts);
-        counts[blockId] = counts.GetValueOrDefault(blockId) + 1;
-        return $"{RunId:N}--{blockId}--{counts[blockId]}";
-    }
+    public string NextInvocationId(string blockId) =>
+        $"{RunId:N}--{blockId}--{InvocationCounts.GetValueOrDefault(blockId) + 1}";
 
-    public PipelineContext IncrementInvocations(string blockId) =>
+    public PipelineRuntime IncrementInvocations(string blockId) =>
         this with
         {
             InvocationCounts = new Dictionary<string, int>(InvocationCounts)
@@ -72,7 +48,7 @@ public sealed record PipelineContext(
             },
         };
 
-    public PipelineContext WithSession(string blockId, JsonElement session) =>
+    public PipelineRuntime WithSession(string blockId, JsonElement session) =>
         this with
         {
             AgentSessions = new Dictionary<string, JsonElement>(AgentSessions)
@@ -81,7 +57,7 @@ public sealed record PipelineContext(
             },
         };
 
-    public PipelineContext WithoutSession(string blockId) =>
+    public PipelineRuntime WithoutSession(string blockId) =>
         this with
         {
             AgentSessions = AgentSessions
@@ -89,22 +65,18 @@ public sealed record PipelineContext(
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
         };
 
-    public PipelineContext WithUsage(string blockId, AgentUsage usage) =>
+    public PipelineRuntime WithUsage(string blockId, AgentUsage usage) =>
         this with
         {
             AgentUsage = new Dictionary<string, AgentUsage>(AgentUsage) { [blockId] = usage },
         };
 
-    public PipelineContext WithCheckpoint(JsonElement? checkpointPayload) =>
+    public PipelineRuntime WithoutUsage(string blockId) =>
         this with
         {
-            CheckpointPayload = checkpointPayload,
-        };
-
-    public PipelineContext WithImplementationReport(JsonElement? report) =>
-        this with
-        {
-            ImplementationReport = report,
+            AgentUsage = AgentUsage
+                .Where(kvp => kvp.Key != blockId)
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
         };
 }
 

@@ -1,35 +1,36 @@
+using System.Text.Json;
+
 namespace Tandem.Domain;
 
-public enum WorkspaceAccess
-{
-    ReadOnly,
-    MutationGated,
-}
-
-public sealed record AgentBlockConfig(
+public sealed record AgentBlockConfig<TState>(
     string BlockId,
     string ProfileName,
     string SystemInstructions,
-    WorkspaceAccess Access,
     IReadOnlyList<string> LifecycleToolNames,
-    StructuredOutputParser? StructuredOutput = null,
-    CheckpointPolicy? Checkpoint = null,
-    MessageAugmentation? MessageAugmentation = null,
-    AgentTurnPolicy? TurnPolicy = null
+    Func<PipelineMessage<TState>, string> UserMessage,
+    Func<TState, string> WorkspacePath,
+    Func<TState, bool> AllowMutation,
+    StructuredOutputParser<TState>? StructuredOutput = null,
+    CheckpointPolicy<TState>? Checkpoint = null,
+    MessageAugmentation<TState>? MessageAugmentation = null,
+    AgentTurnPolicy<TState>? TurnPolicy = null,
+    StructuredOutputAcceptancePolicy<TState>? StructuredOutputAcceptance = null,
+    string? StructuredOutputCorrectionRequiredToolName = null,
+    ReceiptStateTransition<TState>? ReceiptTransition = null,
+    string McpServerName = "simple-v1"
 );
 
-/// <summary>
-/// Produces additional prompt text from the pipeline context before the model
-/// is invoked. Returns null to add nothing.
-/// </summary>
-public delegate ValueTask<string?> MessageAugmentation(
-    PipelineContext context,
+public delegate ValueTask<string?> MessageAugmentation<TState>(
+    PipelineMessage<TState> message,
     CancellationToken cancellationToken
 );
 
-public sealed record AgentTurnPolicy
+public sealed record AgentTurnPolicy<TState>
 {
-    public AgentTurnPolicy(int maxContinuationAttempts, AgentTurnContinuationPolicy @continue)
+    public AgentTurnPolicy(
+        int maxContinuationAttempts,
+        AgentTurnContinuationPolicy<TState> @continue
+    )
     {
         if (maxContinuationAttempts < 1)
         {
@@ -41,11 +42,11 @@ public sealed record AgentTurnPolicy
     }
 
     public int MaxContinuationAttempts { get; }
-    public AgentTurnContinuationPolicy Continue { get; }
+    public AgentTurnContinuationPolicy<TState> Continue { get; }
 }
 
-public sealed record AgentTurnObservation(
-    PipelineContext Context,
+public sealed record AgentTurnObservation<TState>(
+    PipelineMessage<TState> Message,
     string AssistantText,
     IReadOnlyList<string> ToolNames,
     bool HasAcceptedLifecycleOutcome,
@@ -54,48 +55,62 @@ public sealed record AgentTurnObservation(
 
 public sealed record AgentTurnDirective(string Prompt, string? RequiredToolName = null);
 
-public delegate ValueTask<AgentTurnDirective?> AgentTurnContinuationPolicy(
-    AgentTurnObservation observation,
+public delegate ValueTask<AgentTurnDirective?> AgentTurnContinuationPolicy<TState>(
+    AgentTurnObservation<TState> observation,
     CancellationToken cancellationToken
 );
 
-/// <summary>
-/// Result of a tool interception check. When blocked, the supplied message
-/// is returned to the model as the tool result instead of executing the call.
-/// </summary>
 public abstract record ToolInterceptionResult
 {
     public sealed record Blocked(string Message) : ToolInterceptionResult;
 }
 
-/// <summary>
-/// Threshold values for checkpoint-only mode. When the executor's context
-/// tokens plus max output tokens reach the checkpoint threshold, the block
-/// runs in checkpoint-only mode.
-/// </summary>
-public sealed record CheckpointPolicy(
+public sealed record CheckpointPolicy<TState>(
     int ContextWindowTokens,
     int MaxOutputTokens,
-    int CheckpointAtPercent
+    int CheckpointAtPercent,
+    string ToolName,
+    string OutcomeKind,
+    string Instructions,
+    Func<PipelineMessage<TState>, string> UserMessage,
+    ReceiptStateTransition<TState> Transition
 )
 {
     public int CheckpointAtTokens =>
         (int)Math.Floor(ContextWindowTokens * (CheckpointAtPercent / 100.0));
 }
 
-/// <summary>
-/// Parses assistant text as JSON and maps it to a BlockOutcome.
-/// Used by planner and reviewer blocks that return structured decisions
-/// instead of calling lifecycle MCP tools.
-/// </summary>
-public delegate StructuredOutputResult StructuredOutputParser(
+public delegate StructuredOutputResult<TState> StructuredOutputParser<TState>(
     string assistantText,
-    PipelineContext context
+    PipelineMessage<TState> message
 );
 
-public sealed record StructuredOutcome(
+public sealed record StructuredOutputAcceptanceObservation<TState>(
+    PipelineMessage<TState> Message,
+    StructuredOutputResult<TState> Result,
+    IReadOnlySet<string> ToolNames,
+    int Attempt
+);
+
+public delegate IReadOnlyList<StructuredOutputProblem> StructuredOutputAcceptancePolicy<TState>(
+    StructuredOutputAcceptanceObservation<TState> observation
+);
+
+public sealed record StructuredOutcome<TState>(
     string Kind,
     string Summary,
-    System.Text.Json.JsonElement Payload,
-    PipelineContext? UpdatedContext = null
+    JsonElement Payload,
+    TState? UpdatedState = default
+);
+
+public delegate TState ReceiptStateTransition<TState>(
+    TState state,
+    string kind,
+    JsonElement payload
+);
+
+public delegate ValueTask<ToolInterceptionResult?> ToolInterceptor<TState>(
+    PipelineMessage<TState> message,
+    Microsoft.Extensions.AI.FunctionInvocationContext invocationContext,
+    CancellationToken cancellationToken
 );

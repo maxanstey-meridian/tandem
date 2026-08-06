@@ -8,12 +8,13 @@ namespace Tandem.Infrastructure.Lifecycle;
 public sealed class McpValidationFilter(McpToolContractRegistry registry)
 {
     private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
+
     public McpRequestFilter<CallToolRequestParams, CallToolResult> Create() =>
         next =>
             async (context, cancellationToken) =>
             {
                 var request = context.Params;
-            if (request is null || !registry.TryGet(request.Name, out var contract))
+                if (request is null || !registry.TryGet(request.Name, out var contract))
                 {
                     return await next(context, cancellationToken);
                 }

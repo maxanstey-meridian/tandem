@@ -45,7 +45,7 @@ public sealed class ObservedExecutor<TInput, TOutput>(
         var output = await inner.HandleAsync(input, context, cancellationToken);
         stopwatch.Stop();
 
-        var outcome = output is PipelineMessage message ? message.LatestOutcome : null;
+        var outcome = output is IOutcomeBearingMessage message ? message.LatestOutcome : null;
         await observer.CompletedAsync(Id, outcome, stopwatch.Elapsed, cancellationToken);
         return output;
     }

@@ -6,18 +6,18 @@ using Tandem.Domain;
 namespace Tandem.Infrastructure.Blocks;
 
 public sealed class PrepareWorkspaceBlock(WorkspacePreparation? preparation = null)
-    : Executor<PipelineMessage, PipelineMessage>(BlockIds.Prepare)
+    : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>(BlockIds.Prepare)
 {
     private readonly WorkspacePreparation _preparation = preparation ?? new WorkspacePreparation();
 
-    public override async ValueTask<PipelineMessage> HandleAsync(
-        PipelineMessage message,
+    public override async ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
+        PipelineMessage<SimpleV1State> message,
         IWorkflowContext context,
         CancellationToken cancellationToken
     )
     {
         var sw = Stopwatch.StartNew();
-        var ctx = message.Context;
+        var ctx = message.State;
         var runDir = Path.GetDirectoryName(ctx.WorkspacePath)!;
 
         var prep = await _preparation.PrepareAsync(
@@ -38,7 +38,8 @@ public sealed class PrepareWorkspaceBlock(WorkspacePreparation? preparation = nu
         );
 
         sw.Stop();
-        return new PipelineMessage(
+        return new PipelineMessage<SimpleV1State>(
+            message.Runtime,
             updatedContext,
             new BlockOutcome(
                 OutcomeKinds.WorkspacePrepared,

@@ -52,12 +52,13 @@ var publishCommand = new Command("publish", "Publish a Ready candidate as a loca
     debugOption,
 };
 
-var lifecycleCommand = new Command("lifecycle", "Host lifecycle MCP tools over stdio")
+var lifecycleCommand = new Command("simple-v1", "Host SimpleV1 MCP tools over stdio")
 {
     Hidden = true,
 };
+var debateCommand = new Command("debate", "Host Debate MCP tools over stdio") { Hidden = true };
 
-var mcpCommand = new Command("mcp") { lifecycleCommand };
+var mcpCommand = new Command("mcp") { lifecycleCommand, debateCommand };
 
 var rootCommand = new RootCommand("Tandem — agentic pipeline runner")
 {
@@ -138,27 +139,47 @@ publishCommand.SetAction(
     }
 );
 
+static (string Home, Guid RunId, string BlockId, string InvocationId) ReadMcpContext()
+{
+    var tandemHome =
+        Environment.GetEnvironmentVariable("TANDEM_HOME")
+        ?? throw new InvalidOperationException("TANDEM_HOME is required.");
+    var runId =
+        Environment.GetEnvironmentVariable("TANDEM_RUN_ID")
+        ?? throw new InvalidOperationException("TANDEM_RUN_ID is required.");
+    var blockId =
+        Environment.GetEnvironmentVariable("TANDEM_BLOCK_ID")
+        ?? throw new InvalidOperationException("TANDEM_BLOCK_ID is required.");
+    var invocationId =
+        Environment.GetEnvironmentVariable("TANDEM_INVOCATION_ID")
+        ?? throw new InvalidOperationException("TANDEM_INVOCATION_ID is required.");
+
+    return (tandemHome, Guid.Parse(runId), blockId, invocationId);
+}
+
 lifecycleCommand.SetAction(
     async (ParseResult parseResult, CancellationToken cancellationToken) =>
     {
-        var tandemHome =
-            Environment.GetEnvironmentVariable("TANDEM_HOME")
-            ?? throw new InvalidOperationException("TANDEM_HOME is required.");
-        var runId =
-            Environment.GetEnvironmentVariable("TANDEM_RUN_ID")
-            ?? throw new InvalidOperationException("TANDEM_RUN_ID is required.");
-        var blockId =
-            Environment.GetEnvironmentVariable("TANDEM_BLOCK_ID")
-            ?? throw new InvalidOperationException("TANDEM_BLOCK_ID is required.");
-        var invocationId =
-            Environment.GetEnvironmentVariable("TANDEM_INVOCATION_ID")
-            ?? throw new InvalidOperationException("TANDEM_INVOCATION_ID is required.");
-
-        await LifecycleMcpHost.RunAsync(
-            tandemHome,
-            Guid.Parse(runId),
-            blockId,
-            invocationId,
+        var context = ReadMcpContext();
+        await LifecycleMcpHost.RunSimpleV1Async(
+            context.Home,
+            context.RunId,
+            context.BlockId,
+            context.InvocationId,
+            cancellationToken
+        );
+        return 0;
+    }
+);
+debateCommand.SetAction(
+    async (ParseResult parseResult, CancellationToken cancellationToken) =>
+    {
+        var context = ReadMcpContext();
+        await LifecycleMcpHost.RunDebateAsync(
+            context.Home,
+            context.RunId,
+            context.BlockId,
+            context.InvocationId,
             cancellationToken
         );
         return 0;
@@ -251,8 +272,9 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
         Console.WriteLine();
     }
 
-    var initialMessage = new PipelineMessage(
-        PipelineContext.Create(runPaths.RunId, packet, "", runPaths.WorkspacePath)
+    var initialMessage = new PipelineMessage<SimpleV1State>(
+        PipelineRuntime.Create(runPaths.RunId),
+        SimpleV1State.Create(packet, "", runPaths.WorkspacePath)
     );
 
     await new RunEventProjector(runPaths.RunId, "", eventStore).EmitRunStartedAsync(
@@ -266,6 +288,17 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
 
     var runId = runPaths.RunId.ToString("N");
     var connectionString = baseConnectionString;
+
+    await new RunProjectionStore(runPaths.RunDirectory).WriteAsync(
+        RunProjection.Initial(
+            runPaths.RunId,
+            runId,
+            packetPath,
+            packet.Repository,
+            runPaths.WorkspacePath
+        ),
+        cancellationToken
+    );
 
     try
     {
@@ -313,19 +346,19 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
             var completionTask = Task.Run(
                 async () =>
                 {
-                    var final = await (
-                        (IAwaitableWorkflowRun)run
-                    ).WaitForCompletionAsync<PipelineMessage>(cancellationToken);
+                    var final = await ((IAwaitableWorkflowRun)run).WaitForCompletionAsync<
+                        PipelineMessage<SimpleV1State>
+                    >(cancellationToken);
                     renderer.RenderTerminalMessage(final);
 
                     if (final is not null)
                     {
                         var finalProjector = new RunEventProjector(runPaths.RunId, "", eventStore);
-                        switch (final.Context.Status)
+                        switch (final.State.Status)
                         {
                             case Tandem.Domain.RunStatus.Ready:
                                 await finalProjector.EmitRunReadyAsync(
-                                    final.Context.CandidateSha,
+                                    final.State.CandidateSha,
                                     cancellationToken
                                 );
                                 break;
@@ -342,10 +375,10 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
                             runId,
                             packetPath,
                             packet.Repository,
-                            final.Context.Status,
+                            final.State.Status,
                             ActiveBlockId: null,
-                            final.Context.PinnedBaseSha,
-                            final.Context.CandidateSha,
+                            final.State.PinnedBaseSha,
+                            final.State.CandidateSha,
                             runPaths.WorkspacePath,
                             PendingHumanRequest: null,
                             PublishedBranch: null,
@@ -908,9 +941,9 @@ file sealed class StreamRenderer
     private readonly StringBuilder _agent = new();
     private readonly StringBuilder _reasoning = new();
     private readonly Dictionary<string, string> _toolNames = new();
-    private PipelineMessage? _finalMessage;
+    private PipelineMessage<SimpleV1State>? _finalMessage;
 
-    public Tandem.Domain.RunStatus? TerminalStatus => _finalMessage?.Context.Status;
+    public Tandem.Domain.RunStatus? TerminalStatus => _finalMessage?.State.Status;
 
     public Task RenderEvent(WorkflowEvent evt)
     {
@@ -920,9 +953,9 @@ file sealed class StreamRenderer
                 RenderUpdate(updateEvent.Update);
                 break;
             case WorkflowOutputEvent outputEvent:
-                if (outputEvent.Is<PipelineMessage>())
+                if (outputEvent.Is<PipelineMessage<SimpleV1State>>())
                 {
-                    var msg = outputEvent.As<PipelineMessage>();
+                    var msg = outputEvent.As<PipelineMessage<SimpleV1State>>();
                     RenderTerminalBlockTransition(msg);
                 }
                 break;
@@ -931,7 +964,7 @@ file sealed class StreamRenderer
         return Task.CompletedTask;
     }
 
-    public void RenderTerminalMessage(PipelineMessage? msg)
+    public void RenderTerminalMessage(PipelineMessage<SimpleV1State>? msg)
     {
         if (msg is null)
         {
@@ -941,7 +974,7 @@ file sealed class StreamRenderer
         RenderTerminalBlockTransition(msg);
     }
 
-    private void RenderTerminalBlockTransition(PipelineMessage? msg)
+    private void RenderTerminalBlockTransition(PipelineMessage<SimpleV1State>? msg)
     {
         if (msg?.LatestOutcome is { } outcome)
         {
@@ -952,7 +985,7 @@ file sealed class StreamRenderer
             Console.WriteLine($"[block] {outcome.BlockId} completed: {outcome.Kind} ({durStr})");
         }
         if (
-            msg?.Context.Status
+            msg?.State.Status
             is Tandem.Domain.RunStatus.Ready
                 or Tandem.Domain.RunStatus.Failed
                 or Tandem.Domain.RunStatus.WaitingForHuman
@@ -975,10 +1008,10 @@ file sealed class StreamRenderer
             return;
         }
 
-        var ctx = msg.Context;
+        var ctx = msg.State;
         Console.WriteLine();
         Console.WriteLine($"Status:       {ctx.Status}");
-        Console.WriteLine($"Run:          {ctx.RunId}");
+        Console.WriteLine($"Run:          {msg.Runtime.RunId}");
         Console.WriteLine($"Base:         {ctx.PinnedBaseSha}");
         if (ctx.CandidateSha is { } candidate)
         {

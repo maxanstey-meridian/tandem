@@ -12,6 +12,50 @@ namespace Tandem.Tests.Infrastructure;
 public sealed class LifecycleMcpTests
 {
     [Fact]
+    public async Task ReceiptStore_ParallelCreateOrRead_PublishesExactlyOneReceipt()
+    {
+        using var fixture = await LifecycleFixture.CreateAsync();
+        var store = new LifecycleReceiptStore(fixture.TandemHome);
+        const string invocationId = "parallel-invocation";
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callers = Enumerable
+            .Range(0, 16)
+            .Select(async index =>
+            {
+                await ready.Task;
+                return await store.CreateOrReadAsync(
+                    fixture.RunId,
+                    invocationId,
+                    "executor",
+                    $"kind-{index}",
+                    $"summary-{index}",
+                    System.Text.Json.JsonSerializer.SerializeToElement(new { index }),
+                    CancellationToken.None
+                );
+            })
+            .ToArray();
+
+        ready.SetResult();
+        var results = await Task.WhenAll(callers);
+
+        results.Count(result => result.Created).Should().Be(1);
+        results
+            .Select(result => result.Receipt.Kind)
+            .Should()
+            .OnlyContain(kind => kind == results[0].Receipt.Kind);
+        results
+            .Select(result => result.Receipt.Summary)
+            .Should()
+            .OnlyContain(summary => summary == results[0].Receipt.Summary);
+        Directory
+            .GetFiles(
+                Path.Combine(fixture.TandemHome, "runs", fixture.RunId.ToString("N"), "lifecycle")
+            )
+            .Should()
+            .ContainSingle(path => path.EndsWith(".json", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task LifecycleTools_AdvertiseFlatTypedSchemas()
     {
         using var fixture = await LifecycleFixture.CreateAsync();
@@ -55,7 +99,7 @@ public sealed class LifecycleMcpTests
     public async Task InvalidAskPlanner_ReturnsProblems_ThenAcceptsCorrectedCallInSameTurn()
     {
         using var fixture = await LifecycleFixture.CreateAsync();
-        var ctx = PipelineContext.Create(
+        var ctx = CreateMessage(
             fixture.RunId,
             MakePacket(),
             pinnedBaseSha: "abc123",
@@ -84,13 +128,15 @@ public sealed class LifecycleMcpTests
                 }
             )
         );
-        var block = new AgentBlock(
-            new AgentBlockConfig(
+        var block = new AgentBlock<SimpleV1State>(
+            new AgentBlockConfig<SimpleV1State>(
                 BlockIds.Executor,
                 "implementation",
                 "executor instructions",
-                WorkspaceAccess.MutationGated,
-                ["ask_planner"]
+                ["ask_planner"],
+                _ => "test message",
+                state => state.WorkspacePath,
+                _ => false
             ),
             script,
             fixture.TandemHome,
@@ -124,7 +170,7 @@ public sealed class LifecycleMcpTests
         using var fixture = await LifecycleFixture.CreateAsync();
         var packet = MakePacket();
 
-        var ctx = PipelineContext.Create(
+        var ctx = CreateMessage(
             fixture.RunId,
             packet,
             pinnedBaseSha: "abc123",
@@ -154,13 +200,15 @@ public sealed class LifecycleMcpTests
             MakeTextResponse("I tried to write after the lifecycle call.")
         );
 
-        var block = new AgentBlock(
-            new AgentBlockConfig(
+        var block = new AgentBlock<SimpleV1State>(
+            new AgentBlockConfig<SimpleV1State>(
                 BlockIds.Executor,
                 "implementation",
                 "executor instructions",
-                WorkspaceAccess.MutationGated,
-                ["ask_planner", "submit_report", "write_checkpoint"]
+                ["ask_planner", "submit_report", "write_checkpoint"],
+                _ => "test message",
+                state => state.WorkspacePath,
+                _ => false
             ),
             script,
             fixture.TandemHome,
@@ -172,13 +220,13 @@ public sealed class LifecycleMcpTests
 
         var runHandle = await InProcessExecution.RunStreamingAsync(
             workflow,
-            new PipelineMessage(ctx),
+            ctx,
             fixture.RunId.ToString("N"),
             CancellationToken.None
         );
 
         var events = new List<WorkflowEvent>();
-        PipelineMessage? output = null;
+        PipelineMessage<SimpleV1State>? output = null;
         Exception? failure = null;
         await foreach (var evt in runHandle.WatchStreamAsync(CancellationToken.None))
         {
@@ -191,9 +239,9 @@ public sealed class LifecycleMcpTests
             {
                 failure = failedEvent.Data;
             }
-            else if (evt is WorkflowOutputEvent oe && oe.Is<PipelineMessage>())
+            else if (evt is WorkflowOutputEvent oe && oe.Is<PipelineMessage<SimpleV1State>>())
             {
-                output = oe.As<PipelineMessage>();
+                output = oe.As<PipelineMessage<SimpleV1State>>();
             }
         }
 
@@ -212,7 +260,7 @@ public sealed class LifecycleMcpTests
             "runs",
             fixture.RunId.ToString("N"),
             "lifecycle",
-            $"{ctx.NextInvocationId(BlockIds.Executor)}.json"
+            $"{ctx.Runtime.NextInvocationId(BlockIds.Executor)}.json"
         );
         File.Exists(receiptPath).Should().BeTrue("the receipt must be persisted");
         var receipt = await File.ReadAllTextAsync(receiptPath);
@@ -247,13 +295,13 @@ public sealed class LifecycleMcpTests
         using var fixture = await LifecycleFixture.CreateAsync();
         var packet = MakePacket();
 
-        var ctx = PipelineContext.Create(
+        var ctx = CreateMessage(
             fixture.RunId,
             packet,
             pinnedBaseSha: "abc123",
             workspacePath: fixture.WorkspacePath
         );
-        var invocationId = ctx.NextInvocationId(BlockIds.Executor);
+        var invocationId = ctx.Runtime.NextInvocationId(BlockIds.Executor);
 
         var store = new LifecycleReceiptStore(fixture.TandemHome);
         var payload = System.Text.Json.JsonSerializer.SerializeToElement(
@@ -278,13 +326,15 @@ public sealed class LifecycleMcpTests
             MakeTextResponse("This response must never be produced.")
         );
 
-        var block = new AgentBlock(
-            new AgentBlockConfig(
+        var block = new AgentBlock<SimpleV1State>(
+            new AgentBlockConfig<SimpleV1State>(
                 BlockIds.Executor,
                 "implementation",
                 "executor instructions",
-                WorkspaceAccess.MutationGated,
-                ["ask_planner", "submit_report", "write_checkpoint"]
+                ["ask_planner", "submit_report", "write_checkpoint"],
+                _ => "test message",
+                state => state.WorkspacePath,
+                _ => false
             ),
             script,
             fixture.TandemHome,
@@ -296,17 +346,17 @@ public sealed class LifecycleMcpTests
 
         var runHandle = await InProcessExecution.RunStreamingAsync(
             workflow,
-            new PipelineMessage(ctx),
+            ctx,
             fixture.RunId.ToString("N"),
             CancellationToken.None
         );
 
-        PipelineMessage? output = null;
+        PipelineMessage<SimpleV1State>? output = null;
         await foreach (var evt in runHandle.WatchStreamAsync(CancellationToken.None))
         {
-            if (evt is WorkflowOutputEvent oe && oe.Is<PipelineMessage>())
+            if (evt is WorkflowOutputEvent oe && oe.Is<PipelineMessage<SimpleV1State>>())
             {
-                output = oe.As<PipelineMessage>();
+                output = oe.As<PipelineMessage<SimpleV1State>>();
             }
         }
 
@@ -318,12 +368,87 @@ public sealed class LifecycleMcpTests
     }
 
     [Fact]
+    public async Task ExistingCheckpointReceipt_AppliesTransitionAndClearsExecutorRuntime()
+    {
+        using var fixture = await LifecycleFixture.CreateAsync();
+        var message = CreateMessage(
+            fixture.RunId,
+            MakePacket(),
+            pinnedBaseSha: "abc123",
+            workspacePath: fixture.WorkspacePath
+        );
+        var runtime = message
+            .Runtime.WithSession(
+                BlockIds.Executor,
+                System.Text.Json.JsonSerializer.SerializeToElement(true)
+            )
+            .WithUsage(BlockIds.Executor, new AgentUsage(10, 5, 15, 100, 80, TimeSpan.Zero));
+        message = message with { Runtime = runtime };
+        var payload = System.Text.Json.JsonSerializer.SerializeToElement(
+            new
+            {
+                summary = "saved",
+                completed = Array.Empty<string>(),
+                next = new[] { "finish" },
+            }
+        );
+        await new LifecycleReceiptStore(fixture.TandemHome).WriteAsync(
+            fixture.RunId,
+            runtime.NextInvocationId(BlockIds.Executor),
+            BlockIds.Executor,
+            OutcomeKinds.CheckpointWritten,
+            "Checkpoint written: saved",
+            payload,
+            CancellationToken.None
+        );
+        var block = new AgentBlock<SimpleV1State>(
+            new AgentBlockConfig<SimpleV1State>(
+                BlockIds.Executor,
+                "implementation",
+                "executor",
+                ["write_checkpoint"],
+                _ => "message",
+                state => state.WorkspacePath,
+                _ => true,
+                Checkpoint: new CheckpointPolicy<SimpleV1State>(
+                    100,
+                    10,
+                    80,
+                    "write_checkpoint",
+                    OutcomeKinds.CheckpointWritten,
+                    "checkpoint",
+                    _ => "checkpoint",
+                    (state, _, acceptedPayload) =>
+                        state with
+                        {
+                            CheckpointPayload = acceptedPayload,
+                        }
+                )
+            ),
+            new ScriptedChatClient(MakeTextResponse("must not execute")),
+            fixture.TandemHome,
+            fixture.TandemExePath
+        );
+
+        var output = await block.HandleAsync(
+            message,
+            new NoOpWorkflowContext(),
+            CancellationToken.None
+        );
+
+        output.State.CheckpointPayload.Should().NotBeNull();
+        output.Runtime.AgentSessions.Should().NotContainKey(BlockIds.Executor);
+        output.Runtime.AgentUsage.Should().NotContainKey(BlockIds.Executor);
+        output.Runtime.InvocationCounts[BlockIds.Executor].Should().Be(1);
+    }
+
+    [Fact]
     public async Task SubmitReport_AcceptsReceipt_RoutesToCaptureCandidate()
     {
         using var fixture = await LifecycleFixture.CreateAsync(initGitWorkspace: true);
         var packet = MakePacket();
 
-        var ctx = PipelineContext.Create(
+        var ctx = CreateMessage(
             fixture.RunId,
             packet,
             pinnedBaseSha: "abc123",
@@ -353,13 +478,15 @@ public sealed class LifecycleMcpTests
             MakeTextResponse("I tried to write after the lifecycle call.")
         );
 
-        var executor = new AgentBlock(
-            new AgentBlockConfig(
+        var executor = new AgentBlock<SimpleV1State>(
+            new AgentBlockConfig<SimpleV1State>(
                 BlockIds.Executor,
                 "implementation",
                 "executor instructions",
-                WorkspaceAccess.MutationGated,
-                ["ask_planner", "submit_report", "write_checkpoint"]
+                ["ask_planner", "submit_report", "write_checkpoint"],
+                _ => "test message",
+                state => state.WorkspacePath,
+                _ => false
             ),
             script,
             fixture.TandemHome,
@@ -371,7 +498,7 @@ public sealed class LifecycleMcpTests
         var captureBinding = capture.BindExecutor();
 
         var builder = new WorkflowBuilder(executorBinding);
-        builder = builder.AddEdge<PipelineMessage>(
+        builder = builder.AddEdge<PipelineMessage<SimpleV1State>>(
             executorBinding,
             captureBinding,
             msg => msg!.LatestOutcome?.Kind == OutcomeKinds.ReportSubmitted
@@ -381,13 +508,13 @@ public sealed class LifecycleMcpTests
 
         var runHandle = await InProcessExecution.RunStreamingAsync(
             workflow,
-            new PipelineMessage(ctx),
+            ctx,
             fixture.RunId.ToString("N"),
             CancellationToken.None
         );
 
         var events = new List<WorkflowEvent>();
-        PipelineMessage? output = null;
+        PipelineMessage<SimpleV1State>? output = null;
         Exception? failure = null;
         await foreach (var evt in runHandle.WatchStreamAsync(CancellationToken.None))
         {
@@ -400,9 +527,9 @@ public sealed class LifecycleMcpTests
             {
                 failure = failedEvent.Data;
             }
-            else if (evt is WorkflowOutputEvent oe && oe.Is<PipelineMessage>())
+            else if (evt is WorkflowOutputEvent oe && oe.Is<PipelineMessage<SimpleV1State>>())
             {
-                output = oe.As<PipelineMessage>();
+                output = oe.As<PipelineMessage<SimpleV1State>>();
             }
         }
 
@@ -415,7 +542,7 @@ public sealed class LifecycleMcpTests
         output!
             .LatestOutcome!.Kind.Should()
             .Be(OutcomeKinds.CandidateCaptured, "submit_report should route to capture-candidate");
-        output.Context.CandidateSha.Should().NotBeNullOrEmpty("the candidate SHA must be set");
+        output.State.CandidateSha.Should().NotBeNullOrEmpty("the candidate SHA must be set");
 
         File.Exists(Path.Combine(fixture.WorkspacePath, "post-submit.txt"))
             .Should()
@@ -442,7 +569,7 @@ public sealed class LifecycleMcpTests
             .ToHashSet();
         var packet = MakePacket();
 
-        var ctx = PipelineContext.Create(
+        var ctx = CreateMessage(
             fixture.RunId,
             packet,
             pinnedBaseSha: "abc123",
@@ -462,13 +589,15 @@ public sealed class LifecycleMcpTests
             )
         );
 
-        var block = new AgentBlock(
-            new AgentBlockConfig(
+        var block = new AgentBlock<SimpleV1State>(
+            new AgentBlockConfig<SimpleV1State>(
                 BlockIds.Executor,
                 "implementation",
                 "executor instructions",
-                WorkspaceAccess.MutationGated,
-                ["ask_planner", "submit_report", "write_checkpoint"]
+                ["ask_planner", "submit_report", "write_checkpoint"],
+                _ => "test message",
+                state => state.WorkspacePath,
+                _ => false
             ),
             script,
             fixture.TandemHome,
@@ -476,9 +605,7 @@ public sealed class LifecycleMcpTests
         );
 
         using var cts = new CancellationTokenSource();
-        var handleTask = block
-            .HandleAsync(new PipelineMessage(ctx), new NoOpWorkflowContext(), cts.Token)
-            .AsTask();
+        var handleTask = block.HandleAsync(ctx, new NoOpWorkflowContext(), cts.Token).AsTask();
 
         await Task.Delay(TimeSpan.FromSeconds(6));
         cts.Cancel();
@@ -514,7 +641,7 @@ public sealed class LifecycleMcpTests
     {
         using var fixture = await LifecycleFixture.CreateAsync();
         var packet = MakePacket();
-        var ctx = PipelineContext.Create(
+        var ctx = CreateMessage(
             fixture.RunId,
             packet,
             pinnedBaseSha: "abc123",
@@ -535,7 +662,7 @@ public sealed class LifecycleMcpTests
             )
         );
 
-        var policy = new AgentTurnPolicy(
+        var policy = new AgentTurnPolicy<SimpleV1State>(
             1,
             (observation, _) =>
             {
@@ -548,13 +675,15 @@ public sealed class LifecycleMcpTests
                 );
             }
         );
-        var block = new AgentBlock(
-            new AgentBlockConfig(
+        var block = new AgentBlock<SimpleV1State>(
+            new AgentBlockConfig<SimpleV1State>(
                 BlockIds.Executor,
                 "implementation",
                 "executor instructions",
-                WorkspaceAccess.MutationGated,
                 ["ask_planner", "submit_report", "write_checkpoint"],
+                _ => "test message",
+                state => state.WorkspacePath,
+                _ => false,
                 TurnPolicy: policy
             ),
             script,
@@ -573,7 +702,7 @@ public sealed class LifecycleMcpTests
     {
         using var fixture = await LifecycleFixture.CreateAsync();
         var packet = MakePacket();
-        var ctx = PipelineContext.Create(
+        var ctx = CreateMessage(
             fixture.RunId,
             packet,
             pinnedBaseSha: "abc123",
@@ -604,10 +733,10 @@ public sealed class LifecycleMcpTests
                 }
             )
         );
-        ToolInterceptor interceptor = (context, invocation, _) =>
+        ToolInterceptor<SimpleV1State> interceptor = (context, invocation, _) =>
         {
             if (
-                context.MutationAuthorized
+                context.State.MutationAuthorized
                 || !invocation.Function.Name.StartsWith("file_access_", StringComparison.Ordinal)
                 || invocation.Function.Name == "file_access_read"
             )
@@ -619,20 +748,22 @@ public sealed class LifecycleMcpTests
                 new ToolInterceptionResult.Blocked(warning)
             );
         };
-        var policy = new AgentTurnPolicy(
+        var policy = new AgentTurnPolicy<SimpleV1State>(
             1,
             (_, _) =>
                 ValueTask.FromResult<AgentTurnDirective?>(
                     new AgentTurnDirective("Call ask_planner now.", "ask_planner")
                 )
         );
-        var block = new AgentBlock(
-            new AgentBlockConfig(
+        var block = new AgentBlock<SimpleV1State>(
+            new AgentBlockConfig<SimpleV1State>(
                 BlockIds.Executor,
                 "implementation",
                 "executor instructions",
-                WorkspaceAccess.MutationGated,
                 ["ask_planner", "submit_report", "write_checkpoint"],
+                _ => "test message",
+                state => state.WorkspacePath,
+                _ => false,
                 TurnPolicy: policy
             ),
             script,
@@ -660,7 +791,7 @@ public sealed class LifecycleMcpTests
     {
         using var fixture = await LifecycleFixture.CreateAsync();
         var packet = MakePacket();
-        var ctx = PipelineContext.Create(
+        var ctx = CreateMessage(
             fixture.RunId,
             packet,
             pinnedBaseSha: "abc123",
@@ -670,20 +801,22 @@ public sealed class LifecycleMcpTests
             MakeTextResponse("I inspected the repository."),
             MakeTextResponse("I am still describing the repository.")
         );
-        var policy = new AgentTurnPolicy(
+        var policy = new AgentTurnPolicy<SimpleV1State>(
             1,
             (_, _) =>
                 ValueTask.FromResult<AgentTurnDirective?>(
                     new AgentTurnDirective("Continue, but do not finish in prose.")
                 )
         );
-        var block = new AgentBlock(
-            new AgentBlockConfig(
+        var block = new AgentBlock<SimpleV1State>(
+            new AgentBlockConfig<SimpleV1State>(
                 BlockIds.Executor,
                 "implementation",
                 "executor instructions",
-                WorkspaceAccess.ReadOnly,
                 [],
+                _ => "test message",
+                state => state.WorkspacePath,
+                _ => false,
                 TurnPolicy: policy
             ),
             script,
@@ -697,21 +830,21 @@ public sealed class LifecycleMcpTests
         output.LatestOutcome.Summary.Should().Contain("2 model turn(s)");
     }
 
-    private static async Task<PipelineMessage> RunBlockAsync(
-        AgentBlock block,
-        PipelineContext context
+    private static async Task<PipelineMessage<SimpleV1State>> RunBlockAsync(
+        AgentBlock<SimpleV1State> block,
+        PipelineMessage<SimpleV1State> message
     )
     {
         var binding = block.BindExecutor();
         var workflow = new WorkflowBuilder(binding).WithOutputFrom(binding).Build();
         await using var runHandle = await InProcessExecution.RunStreamingAsync(
             workflow,
-            new PipelineMessage(context),
-            context.RunId.ToString("N"),
+            message,
+            message.Runtime.RunId.ToString("N"),
             CancellationToken.None
         );
 
-        PipelineMessage? output = null;
+        PipelineMessage<SimpleV1State>? output = null;
         Exception? failure = null;
         await foreach (var evt in runHandle.WatchStreamAsync(CancellationToken.None))
         {
@@ -723,15 +856,29 @@ public sealed class LifecycleMcpTests
             {
                 failure = failedEvent.Data;
             }
-            else if (evt is WorkflowOutputEvent outputEvent && outputEvent.Is<PipelineMessage>())
+            else if (
+                evt is WorkflowOutputEvent outputEvent
+                && outputEvent.Is<PipelineMessage<SimpleV1State>>()
+            )
             {
-                output = outputEvent.As<PipelineMessage>();
+                output = outputEvent.As<PipelineMessage<SimpleV1State>>();
             }
         }
 
         failure.Should().BeNull("the block workflow should not throw");
         return output ?? throw new InvalidOperationException("The block produced no output.");
     }
+
+    private static PipelineMessage<SimpleV1State> CreateMessage(
+        Guid runId,
+        Packet packet,
+        string pinnedBaseSha,
+        string workspacePath
+    ) =>
+        new(
+            PipelineRuntime.Create(runId),
+            SimpleV1State.Create(packet, pinnedBaseSha, workspacePath)
+        );
 
     private static Packet MakePacket() =>
         new(

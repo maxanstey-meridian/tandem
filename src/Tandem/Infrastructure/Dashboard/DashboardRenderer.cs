@@ -10,6 +10,7 @@ namespace Tandem.Infrastructure.Dashboard;
 public sealed class DashboardRenderer(IAnsiConsole? console = null)
 {
     private const int NarrowWidth = 100;
+    private const int MaxScrollbackLines = 2_000;
     private static readonly string[] _blockBackgrounds =
     [
         "#244866",
@@ -26,12 +27,26 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
     private readonly IAnsiConsole _console = console ?? AnsiConsole.Console;
     private int _lastWidth;
     private int _lastHeight;
+    private int _scrollOffset;
+    private int _maxScrollOffset;
+    private int _lastRenderedLineCount;
+    private int _lastTranscriptCount;
+    private int _viewportHeight = 1;
 
     public int Width => _console.Profile.Width;
 
     public int Height => _console.Profile.Height;
 
     public void RunInAlternateScreen(Action action) => _console.AlternateScreen(action);
+
+    public void ScrollLines(int lines) =>
+        _scrollOffset = Math.Clamp(_scrollOffset + lines, 0, _maxScrollOffset);
+
+    public void ScrollPage(int pages) => ScrollLines(pages * _viewportHeight);
+
+    public void ScrollHome() => _scrollOffset = _maxScrollOffset;
+
+    public void ScrollEnd() => _scrollOffset = 0;
 
     public void Render(DashboardModel model)
     {
@@ -48,7 +63,6 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         );
 
         root["header"].Update(RenderHeader(model));
-        root["footer"].Update(RenderFooter(model));
 
         if (width < NarrowWidth)
         {
@@ -71,6 +85,7 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
                 .Update(RenderWork(model, bodyHeight, Math.Max(10, width * 3 / 4 - 4)));
             root["body"]["pipeline"].Update(RenderPipeline(model, bodyHeight));
         }
+        root["footer"].Update(RenderFooter(model));
 
         if (_lastWidth != Width || _lastHeight != Height)
         {
@@ -97,10 +112,11 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         return new Panel(text).Border(BoxBorder.Rounded).Padding(1, 0, 1, 0);
     }
 
-    private static IRenderable RenderWork(DashboardModel model, int paneHeight, int paneWidth)
+    private IRenderable RenderWork(DashboardModel model, int paneHeight, int paneWidth)
     {
         var activeBlockId = model.ActiveBlockId;
         var visibleCount = Math.Max(1, paneHeight - 2);
+        _viewportHeight = visibleCount;
         var lines = new List<IRenderable>();
         var blockWidth = Math.Max(
             1,
@@ -109,7 +125,7 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
 
         for (
             var index = model.Transcript.Count - 1;
-            index >= 0 && lines.Count < visibleCount;
+            index >= 0 && lines.Count < MaxScrollbackLines;
             index--
         )
         {
@@ -120,7 +136,7 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
             }
 
             var rendered = RenderLines(entry.Line, entry.BlockId, blockWidth, paneWidth).ToList();
-            var remaining = visibleCount - lines.Count;
+            var remaining = MaxScrollbackLines - lines.Count;
             if (rendered.Count > remaining)
             {
                 rendered = rendered.TakeLast(remaining).ToList();
@@ -133,6 +149,18 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
             lines.Add(new Text("waiting for activity…", new Style(Color.Grey)));
         }
 
+        if (_scrollOffset > 0 && model.Transcript.Count > _lastTranscriptCount)
+        {
+            _scrollOffset += Math.Max(0, lines.Count - _lastRenderedLineCount);
+        }
+        _maxScrollOffset = Math.Max(0, lines.Count - visibleCount);
+        _scrollOffset = Math.Clamp(_scrollOffset, 0, _maxScrollOffset);
+        _lastRenderedLineCount = lines.Count;
+        _lastTranscriptCount = model.Transcript.Count;
+
+        var start = Math.Max(0, lines.Count - visibleCount - _scrollOffset);
+        var visibleLines = lines.Skip(start).Take(visibleCount).ToList();
+
         var active =
             model.Blocks.FirstOrDefault(b => b.BlockId == activeBlockId)
             ?? model.Blocks.LastOrDefault();
@@ -141,7 +169,7 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
             active?.IsActive == true ? "running"
             : model.Blocks.Count > 0 ? "done"
             : "waiting";
-        return new Panel(new Rows(lines))
+        return new Panel(new Rows(visibleLines))
             .Header($" {Markup.Escape(Center(title, blockWidth))} · {state} ")
             .Border(BoxBorder.Rounded)
             .Expand();
@@ -245,23 +273,40 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
             return null;
         }
 
-        string formatted;
+        IReadOnlyList<string> documents;
         try
         {
-            using var document = JsonDocument.Parse(candidate);
-            formatted = JsonSerializer.Serialize(
-                document.RootElement,
-                new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-                }
-            );
+            documents = ExtractJsonDocuments(candidate);
         }
         catch (JsonException)
         {
             return null;
         }
+
+        var formattedDocuments = new List<string>(documents.Count);
+        foreach (var json in documents)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(json);
+                formattedDocuments.Add(
+                    JsonSerializer.Serialize(
+                        document.RootElement,
+                        new JsonSerializerOptions
+                        {
+                            WriteIndented = true,
+                            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+                        }
+                    )
+                );
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        var formatted = string.Join('\n', formattedDocuments);
 
         var gutterWidth = label.Length + prefix.Length;
         var lines = preamble is null
@@ -308,6 +353,82 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
             }
         }
         return rendered;
+    }
+
+    private static IReadOnlyList<string> ExtractJsonDocuments(string candidate)
+    {
+        var documents = new List<string>();
+        var offset = 0;
+        while (offset < candidate.Length)
+        {
+            while (offset < candidate.Length && char.IsWhiteSpace(candidate[offset]))
+            {
+                offset++;
+            }
+            if (offset == candidate.Length)
+            {
+                break;
+            }
+            if (candidate[offset] is not ('{' or '['))
+            {
+                throw new JsonException("Unexpected content between JSON documents.");
+            }
+
+            var start = offset;
+            var depth = 0;
+            var inString = false;
+            var escaped = false;
+            for (; offset < candidate.Length; offset++)
+            {
+                var character = candidate[offset];
+                if (inString)
+                {
+                    if (escaped)
+                    {
+                        escaped = false;
+                    }
+                    else if (character == '\\')
+                    {
+                        escaped = true;
+                    }
+                    else if (character == '"')
+                    {
+                        inString = false;
+                    }
+                    continue;
+                }
+
+                if (character == '"')
+                {
+                    inString = true;
+                }
+                else if (character is '{' or '[')
+                {
+                    depth++;
+                }
+                else if (character is '}' or ']')
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        offset++;
+                        documents.Add(candidate[start..offset]);
+                        break;
+                    }
+                }
+            }
+
+            if (depth != 0 || inString)
+            {
+                throw new JsonException("Incomplete JSON document.");
+            }
+        }
+
+        if (documents.Count == 0)
+        {
+            throw new JsonException("No JSON documents found.");
+        }
+        return documents;
     }
 
     private static string JsonContinuationColor(string line)
@@ -507,7 +628,7 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         return new Panel(new Rows(visible)).Header(" Pipeline ").Border(BoxBorder.Rounded).Expand();
     }
 
-    private static IRenderable RenderFooter(DashboardModel model)
+    private IRenderable RenderFooter(DashboardModel model)
     {
         string text;
         Style style;
@@ -525,9 +646,12 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
             var filled = (int)Math.Round(fraction * barWidth);
             var bar = new string('▓', filled) + new string('░', barWidth - filled);
             var usage = window > 0 ? $"{current / 1000.0:F1}k/{window / 1000.0:F0}k" : "—/—";
-            var keys = model.IsReady ? "p publish  q detach" : "q detach";
+            var scroll = _scrollOffset > 0 ? $"↑ {_scrollOffset} lines · End follow  " : "";
+            var keys = model.IsReady
+                ? "↑↓/Pg scroll  p publish  q detach"
+                : "↑↓/Pg scroll  q detach";
             text =
-                $"ctx {bar} {usage}  steps {model.PipelineHistory.Count}  {model.ActiveBlockId ?? model.Status.ToString()}  {keys}";
+                $"{scroll}ctx {bar} {usage}  steps {model.PipelineHistory.Count}  {model.ActiveBlockId ?? model.Status.ToString()}  {keys}";
             style =
                 fraction > 0.85 ? new Style(Color.Red)
                 : fraction > 0.6 ? new Style(Color.Yellow)

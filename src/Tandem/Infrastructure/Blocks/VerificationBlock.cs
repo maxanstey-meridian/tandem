@@ -7,17 +7,18 @@ using Tandem.Infrastructure.Projection;
 namespace Tandem.Infrastructure.Blocks;
 
 public sealed class VerificationBlock(ICommandOutputObserver? outputObserver = null)
-    : Executor<PipelineMessage, PipelineMessage>(BlockIds.Verify)
+    : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>(BlockIds.Verify)
 {
     private static readonly TimeSpan _commandTimeout = TimeSpan.FromMinutes(10);
-    public override async ValueTask<PipelineMessage> HandleAsync(
-        PipelineMessage message,
+
+    public override async ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
+        PipelineMessage<SimpleV1State> message,
         IWorkflowContext context,
         CancellationToken cancellationToken
     )
     {
         var blockSw = Stopwatch.StartNew();
-        var ctx = message.Context;
+        var ctx = message.State;
         var commands = ctx.Packet.Verification;
 
         if (ctx.VerificationIndex >= commands.Count)
@@ -25,7 +26,8 @@ public sealed class VerificationBlock(ICommandOutputObserver? outputObserver = n
             var allPassed = ctx.VerificationResults.All(r => r.ExitCode == 0);
             var finalKind = allPassed ? OutcomeKinds.CommandPassed : OutcomeKinds.CommandFailed;
             blockSw.Stop();
-            return new PipelineMessage(
+            return new PipelineMessage<SimpleV1State>(
+                message.Runtime,
                 ctx,
                 new BlockOutcome(
                     finalKind,
@@ -75,7 +77,8 @@ public sealed class VerificationBlock(ICommandOutputObserver? outputObserver = n
         );
 
         blockSw.Stop();
-        return new PipelineMessage(
+        return new PipelineMessage<SimpleV1State>(
+            message.Runtime,
             updatedContext,
             new BlockOutcome(
                 kind,

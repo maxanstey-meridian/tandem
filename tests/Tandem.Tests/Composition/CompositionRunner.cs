@@ -10,9 +10,9 @@ internal static class CompositionRunner
     /// Runs a workflow in-process with the given input and returns the first
     /// PipelineMessage output. Throws if the workflow fails or produces no output.
     /// </summary>
-    public static async Task<PipelineMessage> RunAsync(
+    public static async Task<PipelineMessage<SimpleV1State>> RunAsync(
         Workflow workflow,
-        PipelineMessage input,
+        PipelineMessage<SimpleV1State> input,
         string sessionId
     )
     {
@@ -23,7 +23,7 @@ internal static class CompositionRunner
             CancellationToken.None
         );
 
-        PipelineMessage? output = null;
+        PipelineMessage<SimpleV1State>? output = null;
         Exception? failure = null;
 
         await foreach (var evt in runHandle.WatchStreamAsync(CancellationToken.None))
@@ -36,9 +36,9 @@ internal static class CompositionRunner
             {
                 failure = failedEvent.Data;
             }
-            else if (evt is WorkflowOutputEvent oe && oe.Is<PipelineMessage>())
+            else if (evt is WorkflowOutputEvent oe && oe.Is<PipelineMessage<SimpleV1State>>())
             {
-                output = oe.As<PipelineMessage>();
+                output = oe.As<PipelineMessage<SimpleV1State>>();
             }
         }
 

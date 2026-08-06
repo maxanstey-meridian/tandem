@@ -19,6 +19,7 @@ public sealed class DashboardLoop(
 {
     private readonly DashboardEventFeed _feed = new(runDirectory);
     private readonly DashboardRenderer _renderer = renderer ?? new DashboardRenderer();
+
     public Task<DashboardOutcome> RunAsync(
         DashboardModel? seed = null,
         CancellationToken ct = default
@@ -97,6 +98,30 @@ public sealed class DashboardLoop(
             var key = Console.ReadKey(intercept: true);
             switch (key.Key)
             {
+                case ConsoleKey.UpArrow:
+                    _renderer.ScrollLines(1);
+                    _renderer.Render(model);
+                    break;
+                case ConsoleKey.DownArrow:
+                    _renderer.ScrollLines(-1);
+                    _renderer.Render(model);
+                    break;
+                case ConsoleKey.PageUp:
+                    _renderer.ScrollPage(1);
+                    _renderer.Render(model);
+                    break;
+                case ConsoleKey.PageDown:
+                    _renderer.ScrollPage(-1);
+                    _renderer.Render(model);
+                    break;
+                case ConsoleKey.Home:
+                    _renderer.ScrollHome();
+                    _renderer.Render(model);
+                    break;
+                case ConsoleKey.End:
+                    _renderer.ScrollEnd();
+                    _renderer.Render(model);
+                    break;
                 case ConsoleKey.Q:
                 case ConsoleKey.C when (key.Modifiers & ConsoleModifiers.Control) != 0:
                     await onDetach();

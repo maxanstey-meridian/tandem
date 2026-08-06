@@ -21,6 +21,12 @@ Tandem composes reusable blocks into a Microsoft Agent Framework workflow. A
 block performs one operation and emits an outcome. Ordered route conditions
 inspect that outcome and the durable pipeline context to select the next block.
 
+Each composition owns one concrete immutable state record. Tandem carries it in
+`PipelineMessage<TState>` beside a small runtime envelope containing only run ID,
+agent sessions, usage, and invocation counts. Reusable agent blocks receive
+composition-supplied message, workspace, structured-output, checkpoint, and MCP
+receipt transitions; they do not infer planner, executor, or reviewer roles.
+
 ```text
 executor asks for guidance      -> planner
 planner approves                -> executor

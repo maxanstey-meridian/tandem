@@ -8,7 +8,8 @@ public sealed class LifecycleMcpClient(
     string tandemExePath,
     Guid runId,
     string blockId,
-    string invocationId
+    string invocationId,
+    string serverName = "simple-v1"
 ) : IAsyncDisposable
 {
     private readonly string _runId = runId.ToString("N");
@@ -23,7 +24,7 @@ public sealed class LifecycleMcpClient(
             new StdioClientTransportOptions
             {
                 Command = tandemExePath,
-                Arguments = ["mcp", "lifecycle"],
+                Arguments = ["mcp", serverName],
                 EnvironmentVariables = new Dictionary<string, string?>
                 {
                     ["TANDEM_HOME"] = tandemHome,

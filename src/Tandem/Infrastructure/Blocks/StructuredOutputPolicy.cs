@@ -6,12 +6,12 @@ namespace Tandem.Infrastructure.Blocks;
 
 public static class StructuredOutputPolicy
 {
-    public static StructuredOutputResult Parse<T>(
+    public static StructuredOutputResult<TState> Parse<T, TState>(
         string response,
-        PipelineContext context,
+        PipelineMessage<TState> message,
         JsonSerializerOptions options,
         IValidator<T> validator,
-        Func<T, PipelineContext, StructuredOutcome> map
+        Func<T, PipelineMessage<TState>, StructuredOutcome<TState>> map
     )
     {
         string json;
@@ -21,7 +21,7 @@ public static class StructuredOutputPolicy
         }
         catch (InvalidOperationException exception)
         {
-            return Failure(response, "$", exception.Message);
+            return Failure<TState>(response, "$", exception.Message);
         }
 
         T? value;
@@ -31,18 +31,18 @@ public static class StructuredOutputPolicy
         }
         catch (JsonException exception)
         {
-            return Failure(response, exception.Path ?? "$", exception.Message);
+            return Failure<TState>(response, exception.Path ?? "$", exception.Message);
         }
 
         if (value is null)
         {
-            return Failure(response, "$", "Response must contain a JSON object.");
+            return Failure<TState>(response, "$", "Response must contain a JSON object.");
         }
 
         var validation = validator.Validate(value);
         if (!validation.IsValid)
         {
-            return new StructuredOutputResult(
+            return new StructuredOutputResult<TState>(
                 null,
                 validation
                     .Errors.Select(error => new StructuredOutputProblem(
@@ -50,15 +50,19 @@ public static class StructuredOutputPolicy
                         error.ErrorMessage
                     ))
                     .ToArray(),
-                response
+                response,
+                value
             );
         }
 
-        return new StructuredOutputResult(map(value, context), [], response);
+        return new StructuredOutputResult<TState>(map(value, message), [], response, value);
     }
 
-    private static StructuredOutputResult Failure(string raw, string field, string message) =>
-        new(null, [new StructuredOutputProblem(field, message)], raw);
+    private static StructuredOutputResult<TState> Failure<TState>(
+        string raw,
+        string field,
+        string message
+    ) => new(null, [new StructuredOutputProblem(field, message)], raw);
 
     private static string ToCamelCase(string path) =>
         string.IsNullOrEmpty(path) ? path : char.ToLowerInvariant(path[0]) + path[1..];

@@ -10,13 +10,14 @@ namespace Tandem.Tests.Composition;
 /// prepared outcomes without invoking a model and record their invocations.
 /// These are substitutes for block operations, not a fake workflow runtime.
 /// </summary>
-internal sealed class ScriptedOutcomeBlock : Executor<PipelineMessage, PipelineMessage>
+internal sealed class ScriptedOutcomeBlock
+    : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>
 {
-    public ConcurrentQueue<PipelineMessage> ReceivedMessages { get; } = new();
+    public ConcurrentQueue<PipelineMessage<SimpleV1State>> ReceivedMessages { get; } = new();
 
-    private readonly Func<PipelineContext, BlockOutcome> _outcomeFactory;
+    private readonly Func<SimpleV1State, BlockOutcome> _outcomeFactory;
 
-    public ScriptedOutcomeBlock(string blockId, Func<PipelineContext, BlockOutcome> outcomeFactory)
+    public ScriptedOutcomeBlock(string blockId, Func<SimpleV1State, BlockOutcome> outcomeFactory)
         : base(blockId)
     {
         _outcomeFactory = outcomeFactory;
@@ -36,15 +37,15 @@ internal sealed class ScriptedOutcomeBlock : Executor<PipelineMessage, PipelineM
             )
         ) { }
 
-    public override ValueTask<PipelineMessage> HandleAsync(
-        PipelineMessage message,
+    public override ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
+        PipelineMessage<SimpleV1State> message,
         IWorkflowContext context,
         CancellationToken cancellationToken
     )
     {
         ReceivedMessages.Enqueue(message);
-        var outcome = _outcomeFactory(message.Context);
-        return ValueTask.FromResult(new PipelineMessage(message.Context, outcome));
+        var outcome = _outcomeFactory(message.State);
+        return ValueTask.FromResult(message with { LatestOutcome = outcome });
     }
 
     public int InvocationCount => ReceivedMessages.Count;
@@ -54,13 +55,14 @@ internal sealed class ScriptedOutcomeBlock : Executor<PipelineMessage, PipelineM
 /// Block that records invocations and returns an outcome derived from the
 /// incoming context (e.g. for inspecting verification index progression).
 /// </summary>
-internal sealed class RecordingBlock : Executor<PipelineMessage, PipelineMessage>
+internal sealed class RecordingBlock
+    : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>
 {
-    public ConcurrentQueue<PipelineMessage> ReceivedMessages { get; } = new();
+    public ConcurrentQueue<PipelineMessage<SimpleV1State>> ReceivedMessages { get; } = new();
 
-    private readonly Func<PipelineContext, BlockOutcome> _outcomeFactory;
+    private readonly Func<SimpleV1State, BlockOutcome> _outcomeFactory;
 
-    public RecordingBlock(string blockId, Func<PipelineContext, BlockOutcome> outcomeFactory)
+    public RecordingBlock(string blockId, Func<SimpleV1State, BlockOutcome> outcomeFactory)
         : base(blockId)
     {
         _outcomeFactory = outcomeFactory;
@@ -77,15 +79,15 @@ internal sealed class RecordingBlock : Executor<PipelineMessage, PipelineMessage
             )
         ) { }
 
-    public override ValueTask<PipelineMessage> HandleAsync(
-        PipelineMessage message,
+    public override ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
+        PipelineMessage<SimpleV1State> message,
         IWorkflowContext context,
         CancellationToken cancellationToken
     )
     {
         ReceivedMessages.Enqueue(message);
-        var outcome = _outcomeFactory(message.Context);
-        return ValueTask.FromResult(new PipelineMessage(message.Context, outcome));
+        var outcome = _outcomeFactory(message.State);
+        return ValueTask.FromResult(message with { LatestOutcome = outcome });
     }
 
     public int InvocationCount => ReceivedMessages.Count;
@@ -95,12 +97,13 @@ internal sealed class RecordingBlock : Executor<PipelineMessage, PipelineMessage
 /// A verification block substitute that returns a canned pass/fail result
 /// based on the current verification index, recording the order of commands.
 /// </summary>
-internal sealed class ScriptedVerificationBlock : Executor<PipelineMessage, PipelineMessage>
+internal sealed class ScriptedVerificationBlock
+    : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>
 {
     public ConcurrentQueue<int> InvokedIndices { get; } = new();
 
     private readonly bool[] _results;
-    private readonly Func<PipelineContext, BlockOutcome> _outcomeFactory;
+    private readonly Func<SimpleV1State, BlockOutcome> _outcomeFactory;
 
     public ScriptedVerificationBlock(params bool[] results)
         : base(BlockIds.Verify)
@@ -122,24 +125,24 @@ internal sealed class ScriptedVerificationBlock : Executor<PipelineMessage, Pipe
         };
     }
 
-    public override ValueTask<PipelineMessage> HandleAsync(
-        PipelineMessage message,
+    public override ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
+        PipelineMessage<SimpleV1State> message,
         IWorkflowContext context,
         CancellationToken cancellationToken
     )
     {
-        var outcome = _outcomeFactory(message.Context);
-        var idx = message.Context.VerificationIndex;
+        var outcome = _outcomeFactory(message.State);
+        var idx = message.State.VerificationIndex;
         var passed = idx < _results.Length && _results[idx];
         var newIndex = passed ? idx + 1 : idx;
-        var updated = message.Context with
+        var updated = message.State with
         {
             VerificationIndex = newIndex,
             VerificationResults = message
-                .Context.VerificationResults.Append(
+                .State.VerificationResults.Append(
                     new VerificationResult(
                         idx,
-                        message.Context.Packet.Verification[idx],
+                        message.State.Packet.Verification[idx],
                         passed ? 0 : 1,
                         "",
                         "",
@@ -148,7 +151,7 @@ internal sealed class ScriptedVerificationBlock : Executor<PipelineMessage, Pipe
                 )
                 .ToList(),
         };
-        return ValueTask.FromResult(new PipelineMessage(updated, outcome));
+        return ValueTask.FromResult(message with { State = updated, LatestOutcome = outcome });
     }
 }
 

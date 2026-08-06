@@ -5,20 +5,22 @@ using Tandem.Domain;
 
 namespace Tandem.Infrastructure.Blocks;
 
-public sealed class CompleteBlock() : Executor<PipelineMessage, PipelineMessage>(BlockIds.Complete)
+public sealed class CompleteBlock()
+    : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>(BlockIds.Complete)
 {
-    public override ValueTask<PipelineMessage> HandleAsync(
-        PipelineMessage message,
+    public override ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
+        PipelineMessage<SimpleV1State> message,
         IWorkflowContext context,
         CancellationToken cancellationToken
     )
     {
         var sw = Stopwatch.StartNew();
-        var ctx = message.Context with { Status = Domain.RunStatus.Ready };
+        var state = message.State with { Status = Domain.RunStatus.Ready };
         sw.Stop();
         return ValueTask.FromResult(
-            new PipelineMessage(
-                ctx,
+            new PipelineMessage<SimpleV1State>(
+                message.Runtime,
+                state,
                 new BlockOutcome(
                     OutcomeKinds.RunReady,
                     BlockIds.Complete,
@@ -31,20 +33,22 @@ public sealed class CompleteBlock() : Executor<PipelineMessage, PipelineMessage>
     }
 }
 
-public sealed class WaitingBlock() : Executor<PipelineMessage, PipelineMessage>(BlockIds.Waiting)
+public sealed class WaitingBlock()
+    : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>(BlockIds.Waiting)
 {
-    public override ValueTask<PipelineMessage> HandleAsync(
-        PipelineMessage message,
+    public override ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
+        PipelineMessage<SimpleV1State> message,
         IWorkflowContext context,
         CancellationToken cancellationToken
     )
     {
         var sw = Stopwatch.StartNew();
-        var ctx = message.Context with { Status = Domain.RunStatus.WaitingForHuman };
+        var state = message.State with { Status = Domain.RunStatus.WaitingForHuman };
         sw.Stop();
         return ValueTask.FromResult(
-            new PipelineMessage(
-                ctx,
+            new PipelineMessage<SimpleV1State>(
+                message.Runtime,
+                state,
                 new BlockOutcome(
                     OutcomeKinds.RunWaiting,
                     BlockIds.Waiting,
@@ -57,10 +61,11 @@ public sealed class WaitingBlock() : Executor<PipelineMessage, PipelineMessage>(
     }
 }
 
-public sealed class FailedBlock() : Executor<PipelineMessage, PipelineMessage>(BlockIds.Failed)
+public sealed class FailedBlock()
+    : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>(BlockIds.Failed)
 {
-    public override ValueTask<PipelineMessage> HandleAsync(
-        PipelineMessage message,
+    public override ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
+        PipelineMessage<SimpleV1State> message,
         IWorkflowContext context,
         CancellationToken cancellationToken
     )
@@ -68,11 +73,12 @@ public sealed class FailedBlock() : Executor<PipelineMessage, PipelineMessage>(B
         var sw = Stopwatch.StartNew();
         var sourceBlock = message.LatestOutcome?.BlockId ?? "unknown";
         var sourceKind = message.LatestOutcome?.Kind ?? "unknown";
-        var ctx = message.Context with { Status = Domain.RunStatus.Failed };
+        var state = message.State with { Status = Domain.RunStatus.Failed };
         sw.Stop();
         return ValueTask.FromResult(
-            new PipelineMessage(
-                ctx,
+            new PipelineMessage<SimpleV1State>(
+                message.Runtime,
+                state,
                 new BlockOutcome(
                     OutcomeKinds.RunFailed,
                     BlockIds.Failed,

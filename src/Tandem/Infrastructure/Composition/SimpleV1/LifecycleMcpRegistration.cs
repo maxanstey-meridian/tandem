@@ -7,7 +7,7 @@ namespace Tandem.Infrastructure.Lifecycle;
 
 public static class LifecycleMcpRegistration
 {
-    public static IMcpServerBuilder AddLifecycleMcpTools(this IServiceCollection services)
+    public static IMcpServerBuilder AddSimpleV1McpTools(this IServiceCollection services)
     {
         var contracts = new[]
         {

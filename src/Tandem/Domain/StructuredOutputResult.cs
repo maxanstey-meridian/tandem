@@ -2,10 +2,11 @@ namespace Tandem.Domain;
 
 public sealed record StructuredOutputProblem(string Field, string Message);
 
-public sealed record StructuredOutputResult(
-    StructuredOutcome? Outcome,
+public sealed record StructuredOutputResult<TState>(
+    StructuredOutcome<TState>? Outcome,
     IReadOnlyList<StructuredOutputProblem> Problems,
-    string RawResponse
+    string RawResponse,
+    object? Candidate = null
 )
 {
     public bool Success => Outcome is not null;

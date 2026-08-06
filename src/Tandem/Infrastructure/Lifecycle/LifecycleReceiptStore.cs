@@ -59,6 +59,35 @@ public sealed class LifecycleReceiptStore(string tandemHome)
         CancellationToken cancellationToken
     )
     {
+        var result = await CreateOrReadAsync(
+            runId,
+            invocationId,
+            blockId,
+            kind,
+            summary,
+            payload,
+            cancellationToken
+        );
+        if (!result.Created)
+        {
+            throw new IOException(
+                $"A lifecycle receipt already exists for invocation '{invocationId}'."
+            );
+        }
+
+        return result.Receipt;
+    }
+
+    public async Task<LifecycleReceiptWriteResult> CreateOrReadAsync(
+        Guid runId,
+        string invocationId,
+        string blockId,
+        string kind,
+        string summary,
+        JsonElement payload,
+        CancellationToken cancellationToken
+    )
+    {
         var receipt = new LifecycleReceipt(
             invocationId,
             blockId,
@@ -67,24 +96,101 @@ public sealed class LifecycleReceiptStore(string tandemHome)
             payload,
             DateTimeOffset.UtcNow
         );
-
         var path = ResolvePath(runId, invocationId);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
+        var publicationLockPath = path + ".lock";
 
-        var tempPath = path + ".tmp";
-        await using (var stream = File.Create(tempPath))
+        try
         {
-            await JsonSerializer.SerializeAsync(
-                stream,
-                receipt,
-                cancellationToken: cancellationToken
-            );
-        }
+            await using (
+                var stream = new FileStream(
+                    tempPath,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None
+                )
+            )
+            {
+                await JsonSerializer.SerializeAsync(
+                    stream,
+                    receipt,
+                    cancellationToken: cancellationToken
+                );
+                await stream.FlushAsync(cancellationToken);
+            }
 
-        File.Move(tempPath, path);
-        return receipt;
+            while (true)
+            {
+                FileStream? publicationLock = null;
+                try
+                {
+                    publicationLock = new FileStream(
+                        publicationLockPath,
+                        FileMode.CreateNew,
+                        FileAccess.Write,
+                        FileShare.None
+                    );
+                }
+                catch (IOException)
+                {
+                    var accepted = await ReadAsync(runId, invocationId, cancellationToken);
+                    if (accepted is not null)
+                    {
+                        return new LifecycleReceiptWriteResult(accepted, Created: false);
+                    }
+
+                    TryDeleteStaleLock(publicationLockPath);
+                    await Task.Delay(10, cancellationToken);
+                    continue;
+                }
+
+                LifecycleReceiptWriteResult result;
+                try
+                {
+                    await using (publicationLock)
+                    {
+                        var accepted = await ReadAsync(runId, invocationId, cancellationToken);
+                        if (accepted is not null)
+                        {
+                            result = new LifecycleReceiptWriteResult(accepted, Created: false);
+                        }
+                        else
+                        {
+                            File.Move(tempPath, path, overwrite: false);
+                            result = new LifecycleReceiptWriteResult(receipt, Created: true);
+                        }
+                    }
+                }
+                finally
+                {
+                    File.Delete(publicationLockPath);
+                }
+
+                return result;
+            }
+        }
+        finally
+        {
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+        }
+    }
+
+    private static void TryDeleteStaleLock(string path)
+    {
+        try
+        {
+            using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+            File.Delete(path);
+        }
+        catch (IOException) { }
     }
 
     private string ResolvePath(Guid runId, string invocationId) =>
         Path.Combine(tandemHome, "runs", runId.ToString("N"), "lifecycle", $"{invocationId}.json");
 }
+
+public sealed record LifecycleReceiptWriteResult(LifecycleReceipt Receipt, bool Created);

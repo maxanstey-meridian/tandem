@@ -115,13 +115,14 @@ public sealed class RealModelLifecycleProofTests
             ImplementationContext: "Inspect the existing code in src/ before making changes."
         );
 
-        var initialMessage = new PipelineMessage(
-            PipelineContext.Create(Guid.CreateVersion7(), packet, "", workspacePath)
+        var initialMessage = new PipelineMessage<SimpleV1State>(
+            PipelineRuntime.Create(Guid.CreateVersion7()),
+            SimpleV1State.Create(packet, "", workspacePath)
         );
 
         var connectionString = DtsFixture.ConnectionString;
 
-        PipelineMessage? pipelineOutput = null;
+        PipelineMessage<SimpleV1State>? pipelineOutput = null;
 
         var host = Host.CreateDefaultBuilder()
             .ConfigureServices(services =>
@@ -148,7 +149,7 @@ public sealed class RealModelLifecycleProofTests
 
             try
             {
-                pipelineOutput = await run.WaitForCompletionAsync<PipelineMessage>();
+                pipelineOutput = await run.WaitForCompletionAsync<PipelineMessage<SimpleV1State>>();
             }
             catch (Exception ex)
             {
@@ -181,7 +182,7 @@ public sealed class RealModelLifecycleProofTests
         }
 
         pipelineOutput.Should().NotBeNull("the workflow must produce a terminal output");
-        pipelineOutput!.Context.Status.Should().Be(Domain.RunStatus.Ready);
+        pipelineOutput!.State.Status.Should().Be(Tandem.Domain.RunStatus.Ready);
         pipelineOutput.LatestOutcome.Should().NotBeNull("the terminal output must have an outcome");
         pipelineOutput.LatestOutcome!.Kind.Should().Be(OutcomeKinds.RunReady);
         reasoningUpdates

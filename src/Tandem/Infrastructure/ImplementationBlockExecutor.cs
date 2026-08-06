@@ -41,7 +41,7 @@ public sealed class ImplementationBlockExecutor : Executor<RunContext, BlockResu
             {
                 Id = "implementation",
                 Name = "Implementation",
-                HarnessInstructions = "",
+                HarnessInstructions = TandemHarnessInstructions.Value,
                 ChatOptions = new ChatOptions
                 {
                     Instructions = """

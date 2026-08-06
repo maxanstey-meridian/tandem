@@ -782,6 +782,51 @@ public sealed class DashboardRendererTests
     }
 
     [Fact]
+    public void Render_CoalescedCorrection_PrettyPrintsBothJsonDocuments()
+    {
+        var console = new TestConsole().Width(120).Height(30);
+        var renderer = new DashboardRenderer(console);
+        var model = DashboardReducer.FromEvents([
+            DashboardTestEvents.Make(
+                "planner",
+                EventKinds.AgentText,
+                "{\"decision\":\"ProceedWithConstraints\",\"constraints\":[\"\"]} "
+                    + "{\"decision\":\"Proceed\",\"constraints\":[]}"
+            ),
+        ]);
+
+        renderer.Render(model);
+
+        var output = console.Output;
+        output.Should().Contain("\"decision\": \"ProceedWithConstraints\"");
+        output.Should().Contain("\"decision\": \"Proceed\"");
+        output.Split('\n').Count(line => line.Contains("\"decision\"")).Should().Be(2);
+    }
+
+    [Fact]
+    public void Render_ScrollHome_ShowsOlderTranscriptAndFollowHint()
+    {
+        var console = new TestConsole().Width(120).Height(16);
+        var renderer = new DashboardRenderer(console);
+        var events = Enumerable
+            .Range(0, 40)
+            .Select(index =>
+                DashboardTestEvents.Make("executor", EventKinds.AgentText, $"line-{index:D2}\n")
+            )
+            .ToArray();
+        var model = DashboardReducer.FromEvents(events);
+
+        renderer.Render(model);
+        console.Output.Should().Contain("line-39");
+
+        renderer.ScrollHome();
+        renderer.Render(model);
+
+        console.Output.Should().Contain("line-00");
+        console.Output.Should().Contain("End follow");
+    }
+
+    [Fact]
     public void Render_MergedTranscript_TagsLinesWithBlockId()
     {
         var console = new TestConsole().Width(120).Height(40);

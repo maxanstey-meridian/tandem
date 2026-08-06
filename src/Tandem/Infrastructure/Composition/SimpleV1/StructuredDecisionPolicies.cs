@@ -12,16 +12,22 @@ public static class PlannerDecisionPolicy
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public static StructuredOutputResult Parse(string response, PipelineContext context) =>
+    public static StructuredOutputResult<SimpleV1State> Parse(
+        string response,
+        PipelineMessage<SimpleV1State> message
+    ) =>
         StructuredOutputPolicy.Parse(
             response,
-            context,
+            message,
             _jsonOptions,
             new PlannerDecisionValidator(),
             Map
         );
 
-    private static StructuredOutcome Map(PlannerDecision decision, PipelineContext context)
+    private static StructuredOutcome<SimpleV1State> Map(
+        PlannerDecision decision,
+        PipelineMessage<SimpleV1State> message
+    )
     {
         var kind = decision.Decision switch
         {
@@ -39,14 +45,20 @@ public static class PlannerDecisionPolicy
             decision.Decision
             is PlannerDecisionValue.Proceed
                 or PlannerDecisionValue.ProceedWithConstraints;
-        var updatedContext = context with
+        var state = message.State;
+        var updatedState = state with
         {
             PlannerDecision = decision,
             PlannerConstraints =
-                decision.Constraints.Count > 0 ? decision.Constraints : context.PlannerConstraints,
-            MutationAuthorized = authorizesMutation || context.MutationAuthorized,
+                decision.Constraints.Count > 0 ? decision.Constraints : state.PlannerConstraints,
+            MutationAuthorized = authorizesMutation || state.MutationAuthorized,
         };
-        return new StructuredOutcome(kind, decision.Rationale, payload, updatedContext);
+        return new StructuredOutcome<SimpleV1State>(
+            kind,
+            decision.Rationale,
+            payload,
+            updatedState
+        );
     }
 }
 
@@ -58,16 +70,24 @@ public static class ReviewDecisionPolicy
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public static StructuredOutputResult Parse(string response, PipelineContext context) =>
+    public static StructuredOutputResult<SimpleV1State> Parse(
+        string response,
+        PipelineMessage<SimpleV1State> message
+    ) =>
         StructuredOutputPolicy.Parse(
             response,
-            context,
+            message,
             _jsonOptions,
-            new ReviewDecisionValidator(),
+            new ReviewDecisionValidator(
+                message.State.Packet.Outcomes.Select(outcome => outcome.Id)
+            ),
             Map
         );
 
-    private static StructuredOutcome Map(ReviewDecision decision, PipelineContext context)
+    private static StructuredOutcome<SimpleV1State> Map(
+        ReviewDecision decision,
+        PipelineMessage<SimpleV1State> message
+    )
     {
         var kind = decision.Decision switch
         {
@@ -79,6 +99,14 @@ public static class ReviewDecisionPolicy
             ),
         };
         var payload = JsonSerializer.SerializeToElement(decision, _jsonOptions);
-        return new StructuredOutcome(kind, decision.Summary, payload);
+        return new StructuredOutcome<SimpleV1State>(
+            kind,
+            decision.Summary,
+            payload,
+            message.State with
+            {
+                ReviewerHumanAnswer = null,
+            }
+        );
     }
 }

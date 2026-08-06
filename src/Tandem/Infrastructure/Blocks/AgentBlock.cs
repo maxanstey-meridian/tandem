@@ -11,15 +11,15 @@ using Tandem.Infrastructure.Lifecycle;
 
 namespace Tandem.Infrastructure.Blocks;
 
-public sealed class AgentBlock(
-    AgentBlockConfig config,
+public sealed class AgentBlock<TState>(
+    AgentBlockConfig<TState> config,
     IChatClient chatClient,
     string tandemHome,
     string? tandemExePath = null,
     Action<string, Guid, AgentResponseUpdate>? onUpdate = null,
-    ToolInterceptor? toolInterceptor = null,
+    ToolInterceptor<TState>? toolInterceptor = null,
     Action<ChatOptions>? configureChatOptions = null
-) : Executor<PipelineMessage, PipelineMessage>(config.BlockId)
+) : Executor<PipelineMessage<TState>, PipelineMessage<TState>>(config.BlockId)
 {
     private static readonly TimeSpan _turnTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan _mcpCallTimeout = TimeSpan.FromSeconds(30);
@@ -29,8 +29,9 @@ public sealed class AgentBlock(
         tandemExePath
         ?? Environment.ProcessPath
         ?? throw new InvalidOperationException("Process path unavailable.");
-    public override async ValueTask<PipelineMessage> HandleAsync(
-        PipelineMessage message,
+
+    public override async ValueTask<PipelineMessage<TState>> HandleAsync(
+        PipelineMessage<TState> message,
         IWorkflowContext context,
         CancellationToken cancellationToken
     )
@@ -39,26 +40,17 @@ public sealed class AgentBlock(
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(_turnTimeout);
 
-        var ctx = message.Context;
-        var invocationId = ctx.NextInvocationId(config.BlockId);
+        var runtime = message.Runtime;
+        var invocationId = runtime.NextInvocationId(config.BlockId);
 
-        var existingReceipt = await _receiptStore.ReadAsync(ctx.RunId, invocationId, cts.Token);
+        var existingReceipt = await _receiptStore.ReadAsync(runtime.RunId, invocationId, cts.Token);
         if (existingReceipt is not null)
         {
             blockSw.Stop();
-            return new PipelineMessage(
-                ctx.IncrementInvocations(config.BlockId),
-                new BlockOutcome(
-                    existingReceipt.Kind,
-                    config.BlockId,
-                    existingReceipt.Summary,
-                    existingReceipt.Payload,
-                    blockSw.Elapsed
-                )
-            );
+            return ApplyAcceptedReceipt(runtime, message.State, existingReceipt, blockSw.Elapsed);
         }
 
-        var isCheckpointOnly = ShouldRunCheckpointOnly(ctx);
+        var isCheckpointOnly = ShouldRunCheckpointOnly(runtime);
 
         var lifecycleTools = Array.Empty<AITool>();
         LifecycleMcpClient? mcpClient = null;
@@ -67,12 +59,13 @@ public sealed class AgentBlock(
             mcpClient = new LifecycleMcpClient(
                 tandemHome,
                 _tandemExePath,
-                ctx.RunId,
+                runtime.RunId,
                 config.BlockId,
-                invocationId
+                invocationId,
+                config.McpServerName
             );
             lifecycleTools = (
-                await mcpClient.ListToolsAsync(["write_checkpoint"], cts.Token)
+                await mcpClient.ListToolsAsync([config.Checkpoint!.ToolName], cts.Token)
             ).ToArray();
         }
         else if (config.LifecycleToolNames.Count > 0)
@@ -80,9 +73,10 @@ public sealed class AgentBlock(
             mcpClient = new LifecycleMcpClient(
                 tandemHome,
                 _tandemExePath,
-                ctx.RunId,
+                runtime.RunId,
                 config.BlockId,
-                invocationId
+                invocationId,
+                config.McpServerName
             );
             lifecycleTools = (
                 await mcpClient.ListToolsAsync(config.LifecycleToolNames, cts.Token)
@@ -91,32 +85,32 @@ public sealed class AgentBlock(
 
         try
         {
-            var collector = new LifecycleOutcomeCollector();
+            var collector = new ToolOutcomeCollector();
 
             var fileStore = new GitExcludedFileStore(
-                new BomlessFileSystemAgentFileStore(ctx.WorkspacePath)
+                new BomlessFileSystemAgentFileStore(config.WorkspacePath(message.State))
             );
 
             var instructions = isCheckpointOnly
-                ? CheckpointOnlyInstructions
+                ? config.Checkpoint!.Instructions
                 : config.SystemInstructions;
             var tools = lifecycleTools.ToList();
             var agent = CreateAgent(
                 fileStore,
                 instructions,
                 tools,
-                ctx,
+                message,
                 isCheckpointOnly,
                 requiredToolName: null,
                 collector: collector
             );
-            var session = await RestoreOrCreateSessionAsync(agent, ctx, cts.Token);
+            var session = await RestoreOrCreateSessionAsync(agent, runtime, cts.Token);
             var baseMessage = isCheckpointOnly
-                ? BuildCheckpointUserMessage(ctx)
-                : BuildUserMessage(message);
+                ? config.Checkpoint!.UserMessage(message)
+                : config.UserMessage(message);
 
             var augmentation = config.MessageAugmentation is not null
-                ? await config.MessageAugmentation(ctx, cts.Token)
+                ? await config.MessageAugmentation(message, cts.Token)
                 : null;
             var userMessage = augmentation is not null
                 ? $"{baseMessage}\n\n{augmentation}"
@@ -128,7 +122,8 @@ public sealed class AgentBlock(
             var continuationAttempt = 0;
             var policyExhausted = false;
             var structuredAttempt = 0;
-            StructuredOutputResult? structuredResult = null;
+            StructuredOutputResult<TState>? structuredResult = null;
+            var structuredToolNames = new HashSet<string>(StringComparer.Ordinal);
 
             while (true)
             {
@@ -159,17 +154,40 @@ public sealed class AgentBlock(
                         }
                     }
 
-                    onUpdate?.Invoke(config.BlockId, ctx.RunId, update);
+                    onUpdate?.Invoke(config.BlockId, runtime.RunId, update);
                 }
 
                 turnSw.Stop();
                 inputTokens = (inputTokens ?? 0) + (turnInputTokens ?? 0);
                 outputTokens = (outputTokens ?? 0) + (turnOutputTokens ?? 0);
                 lastModelCallDuration += turnSw.Elapsed;
+                foreach (var toolName in collector.SuccessfulToolNames)
+                {
+                    structuredToolNames.Add(toolName);
+                }
 
                 if (config.StructuredOutput is not null)
                 {
-                    structuredResult = config.StructuredOutput(turnText.ToString(), ctx);
+                    structuredResult = config.StructuredOutput(turnText.ToString(), message);
+                    if (config.StructuredOutputAcceptance is not null)
+                    {
+                        var problems = config.StructuredOutputAcceptance(
+                            new StructuredOutputAcceptanceObservation<TState>(
+                                message,
+                                structuredResult,
+                                structuredToolNames,
+                                structuredAttempt
+                            )
+                        );
+                        if (problems.Count > 0)
+                        {
+                            structuredResult = structuredResult with
+                            {
+                                Outcome = null,
+                                Problems = [.. structuredResult.Problems, .. problems],
+                            };
+                        }
+                    }
                     if (structuredResult.Success || structuredAttempt >= 1)
                     {
                         break;
@@ -177,6 +195,23 @@ public sealed class AgentBlock(
 
                     structuredAttempt++;
                     userMessage = structuredResult.CorrectionPrompt();
+                    if (
+                        !string.IsNullOrWhiteSpace(
+                            config.StructuredOutputCorrectionRequiredToolName
+                        )
+                    )
+                    {
+                        agent = CreateAgent(
+                            fileStore,
+                            instructions,
+                            tools,
+                            message,
+                            isCheckpointOnly,
+                            config.StructuredOutputCorrectionRequiredToolName,
+                            collector,
+                            configureStructuredOutput: false
+                        );
+                    }
                     continue;
                 }
 
@@ -192,8 +227,8 @@ public sealed class AgentBlock(
                 }
 
                 var directive = await config.TurnPolicy.Continue(
-                    new AgentTurnObservation(
-                        ctx,
+                    new AgentTurnObservation<TState>(
+                        message,
                         turnText.ToString(),
                         turnToolNames,
                         collector.HasLifecycleCall,
@@ -213,7 +248,7 @@ public sealed class AgentBlock(
                     fileStore,
                     instructions,
                     tools,
-                    ctx,
+                    message,
                     isCheckpointOnly,
                     directive.RequiredToolName,
                     collector
@@ -221,21 +256,22 @@ public sealed class AgentBlock(
             }
 
             var agentUsage = ResolveUsage(inputTokens, outputTokens, lastModelCallDuration);
-            var contextAfterUsage = ctx.WithUsage(config.BlockId, agentUsage);
+            var runtimeAfterUsage = runtime.WithUsage(config.BlockId, agentUsage);
 
-            var updatedContext = await PersistSessionAsync(
+            var updatedRuntime = await PersistSessionAsync(
                 agent,
                 session,
-                contextAfterUsage,
+                runtimeAfterUsage,
                 cts.Token
             );
 
             var outcome = await ResolveOutcomeAsync(
                 collector,
                 structuredResult,
-                ctx.RunId,
+                runtime.RunId,
                 invocationId,
-                updatedContext,
+                updatedRuntime,
+                message.State,
                 isCheckpointOnly,
                 policyExhausted,
                 continuationAttempt,
@@ -247,7 +283,7 @@ public sealed class AgentBlock(
                 return outcome;
             }
             var timedOutcome = outcome.LatestOutcome with { Duration = blockSw.Elapsed };
-            return new PipelineMessage(outcome.Context, timedOutcome);
+            return outcome with { LatestOutcome = timedOutcome };
         }
         finally
         {
@@ -258,14 +294,14 @@ public sealed class AgentBlock(
         }
     }
 
-    private bool ShouldRunCheckpointOnly(PipelineContext ctx)
+    private bool ShouldRunCheckpointOnly(PipelineRuntime runtime)
     {
         if (config.Checkpoint is not { } policy)
         {
             return false;
         }
 
-        if (!ctx.AgentUsage.TryGetValue(config.BlockId, out var usage))
+        if (!runtime.AgentUsage.TryGetValue(config.BlockId, out var usage))
         {
             return false;
         }
@@ -295,8 +331,8 @@ public sealed class AgentBlock(
 
     private void ConfigureFunctionInvocation(
         HarnessAgent agent,
-        LifecycleOutcomeCollector collector,
-        PipelineContext ctx
+        ToolOutcomeCollector collector,
+        PipelineMessage<TState> message
     )
     {
         var invokingClient =
@@ -313,7 +349,7 @@ public sealed class AgentBlock(
 
             if (!isLifecycle && toolInterceptor is not null)
             {
-                var interception = await toolInterceptor(ctx, ficContext, ct);
+                var interception = await toolInterceptor(message, ficContext, ct);
                 if (interception is ToolInterceptionResult.Blocked blocked)
                 {
                     return blocked.Message;
@@ -322,13 +358,18 @@ public sealed class AgentBlock(
 
             if (!isLifecycle)
             {
-                return await ficContext.Function.InvokeAsync(ficContext.Arguments, ct);
+                var toolResult = await ficContext.Function.InvokeAsync(ficContext.Arguments, ct);
+                if (!IsToolError(toolResult))
+                {
+                    collector.RecordSuccessfulToolCall(ficContext.Function.Name);
+                }
+                return toolResult;
             }
 
             using var mcpCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             mcpCts.CancelAfter(_mcpCallTimeout);
             var result = await ficContext.Function.InvokeAsync(ficContext.Arguments, mcpCts.Token);
-            if (IsMcpError(result))
+            if (IsToolError(result))
             {
                 return result;
             }
@@ -338,18 +379,35 @@ public sealed class AgentBlock(
         };
     }
 
-    private static bool IsMcpError(object? result) =>
-        result is JsonElement element
-        && element.ValueKind == JsonValueKind.Object
-        && element.TryGetProperty("isError", out var isError)
-        && isError.ValueKind == JsonValueKind.True;
+    private static bool IsToolError(object? result) =>
+        result switch
+        {
+            JsonElement element
+                when element.ValueKind == JsonValueKind.Object
+                    && element.TryGetProperty("isError", out var isError)
+                    && isError.ValueKind == JsonValueKind.True => true,
+            string text when text.StartsWith("Error", StringComparison.OrdinalIgnoreCase) => true,
+            string text
+                when text.StartsWith("File '", StringComparison.Ordinal)
+                    && text.EndsWith("' not found.", StringComparison.Ordinal) => true,
+            _ => IsFileNotFoundResult(result),
+        };
 
-    private Task<PipelineMessage> ResolveOutcomeAsync(
-        LifecycleOutcomeCollector collector,
-        StructuredOutputResult? structuredResult,
+    private static bool IsFileNotFoundResult(object? result)
+    {
+        var text = result?.ToString();
+        return text is not null
+            && text.StartsWith("File '", StringComparison.Ordinal)
+            && text.EndsWith("' not found.", StringComparison.Ordinal);
+    }
+
+    private Task<PipelineMessage<TState>> ResolveOutcomeAsync(
+        ToolOutcomeCollector collector,
+        StructuredOutputResult<TState>? structuredResult,
         Guid runId,
         string invocationId,
-        PipelineContext ctx,
+        PipelineRuntime runtime,
+        TState state,
         bool isCheckpointOnly,
         bool policyExhausted,
         int continuationAttempt,
@@ -358,7 +416,14 @@ public sealed class AgentBlock(
     {
         if (isCheckpointOnly)
         {
-            return ResolveCheckpointOutcomeAsync(collector, runId, invocationId, ctx, ct);
+            return ResolveCheckpointOutcomeAsync(
+                collector,
+                runId,
+                invocationId,
+                runtime,
+                state,
+                ct
+            );
         }
 
         if (!collector.HasLifecycleCall)
@@ -373,8 +438,9 @@ public sealed class AgentBlock(
                 if (!structuredResult.Success)
                 {
                     return Task.FromResult(
-                        new PipelineMessage(
-                            ctx.IncrementInvocations(config.BlockId),
+                        new PipelineMessage<TState>(
+                            runtime.IncrementInvocations(config.BlockId),
+                            state,
                             new BlockOutcome(
                                 "agent.failed",
                                 config.BlockId,
@@ -392,10 +458,13 @@ public sealed class AgentBlock(
                 }
 
                 var structured = structuredResult.Outcome!;
-                var outcomeCtx = structured.UpdatedContext ?? ctx;
+                var outcomeState = structured.UpdatedState is null
+                    ? state
+                    : structured.UpdatedState;
                 return Task.FromResult(
-                    new PipelineMessage(
-                        outcomeCtx.IncrementInvocations(config.BlockId),
+                    new PipelineMessage<TState>(
+                        runtime.IncrementInvocations(config.BlockId),
+                        outcomeState,
                         new BlockOutcome(
                             structured.Kind,
                             config.BlockId,
@@ -416,28 +485,31 @@ public sealed class AgentBlock(
                 )
                 : EmptyPayload();
             return Task.FromResult(
-                new PipelineMessage(
-                    ctx.IncrementInvocations(config.BlockId),
+                new PipelineMessage<TState>(
+                    runtime.IncrementInvocations(config.BlockId),
+                    state,
                     new BlockOutcome(kind, config.BlockId, summary, payload)
                 )
             );
         }
 
-        return ResolveLifecycleReceiptAsync(runId, invocationId, ctx, ct);
+        return ResolveLifecycleReceiptAsync(runId, invocationId, runtime, state, ct);
     }
 
-    private async Task<PipelineMessage> ResolveCheckpointOutcomeAsync(
-        LifecycleOutcomeCollector collector,
+    private async Task<PipelineMessage<TState>> ResolveCheckpointOutcomeAsync(
+        ToolOutcomeCollector collector,
         Guid runId,
         string invocationId,
-        PipelineContext ctx,
+        PipelineRuntime runtime,
+        TState state,
         CancellationToken ct
     )
     {
         if (!collector.HasLifecycleCall)
         {
-            return new PipelineMessage(
-                ctx.IncrementInvocations(config.BlockId),
+            return new PipelineMessage<TState>(
+                runtime.IncrementInvocations(config.BlockId),
+                state,
                 new BlockOutcome(
                     "agent.failed",
                     config.BlockId,
@@ -450,8 +522,9 @@ public sealed class AgentBlock(
         var receipt = await _receiptStore.ReadAsync(runId, invocationId, ct);
         if (receipt is null)
         {
-            return new PipelineMessage(
-                ctx.IncrementInvocations(config.BlockId),
+            return new PipelineMessage<TState>(
+                runtime.IncrementInvocations(config.BlockId),
+                state,
                 new BlockOutcome(
                     "agent.failed",
                     config.BlockId,
@@ -461,35 +534,23 @@ public sealed class AgentBlock(
             );
         }
 
-        // After checkpoint: retain the checkpoint payload, remove the executor
-        // session and usage so the next invocation starts fresh.
-        var clearedContext = ctx.WithoutSession(config.BlockId).WithCheckpoint(receipt.Payload);
-
-        clearedContext = clearedContext with
-        {
-            AgentUsage = clearedContext
-                .AgentUsage.Where(kvp => kvp.Key != config.BlockId)
-                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
-        };
-
-        return new PipelineMessage(
-            clearedContext.IncrementInvocations(config.BlockId),
-            new BlockOutcome(receipt.Kind, config.BlockId, receipt.Summary, receipt.Payload)
-        );
+        return ApplyAcceptedReceipt(runtime, state, receipt);
     }
 
-    private async Task<PipelineMessage> ResolveLifecycleReceiptAsync(
+    private async Task<PipelineMessage<TState>> ResolveLifecycleReceiptAsync(
         Guid runId,
         string invocationId,
-        PipelineContext ctx,
+        PipelineRuntime runtime,
+        TState state,
         CancellationToken ct
     )
     {
         var receipt = await _receiptStore.ReadAsync(runId, invocationId, ct);
         if (receipt is null)
         {
-            return new PipelineMessage(
-                ctx.IncrementInvocations(config.BlockId),
+            return new PipelineMessage<TState>(
+                runtime.IncrementInvocations(config.BlockId),
+                state,
                 new BlockOutcome(
                     "agent.failed",
                     config.BlockId,
@@ -499,26 +560,18 @@ public sealed class AgentBlock(
             );
         }
 
-        var updatedCtx = ctx;
-        if (receipt.Kind == OutcomeKinds.ReportSubmitted)
-        {
-            updatedCtx = ctx.WithImplementationReport(receipt.Payload);
-        }
-
-        return new PipelineMessage(
-            updatedCtx.IncrementInvocations(config.BlockId),
-            new BlockOutcome(receipt.Kind, config.BlockId, receipt.Summary, receipt.Payload)
-        );
+        return ApplyAcceptedReceipt(runtime, state, receipt);
     }
 
     private HarnessAgent CreateAgent(
         AgentFileStore fileStore,
         string instructions,
         IReadOnlyList<AITool> tools,
-        PipelineContext ctx,
+        PipelineMessage<TState> message,
         bool isCheckpointOnly,
         string? requiredToolName,
-        LifecycleOutcomeCollector collector
+        ToolOutcomeCollector collector,
+        bool configureStructuredOutput = true
     )
     {
         var chatOptions = new ChatOptions { Instructions = instructions, Tools = tools.ToList() };
@@ -526,7 +579,10 @@ public sealed class AgentBlock(
         {
             chatOptions.ToolMode = ChatToolMode.RequireSpecific(requiredToolName);
         }
-        configureChatOptions?.Invoke(chatOptions);
+        if (configureStructuredOutput)
+        {
+            configureChatOptions?.Invoke(chatOptions);
+        }
 
         var agent = new HarnessAgent(
             chatClient,
@@ -534,7 +590,7 @@ public sealed class AgentBlock(
             {
                 Id = config.BlockId,
                 Name = config.BlockId,
-                HarnessInstructions = "",
+                HarnessInstructions = TandemHarnessInstructions.Value,
                 ChatOptions = chatOptions,
                 DisableFileMemory = true,
                 DisableTodoProvider = true,
@@ -546,16 +602,16 @@ public sealed class AgentBlock(
                 DisableCompaction = true,
                 MaximumIterationsPerRequest = 999,
                 FileAccessStore = fileStore,
-                FileAccessProviderOptions = ResolveAccessOptions(ctx, isCheckpointOnly),
+                FileAccessProviderOptions = ResolveAccessOptions(message, isCheckpointOnly),
             }
         );
 
-        ConfigureFunctionInvocation(agent, collector, ctx);
+        ConfigureFunctionInvocation(agent, collector, message);
         return agent;
     }
 
     private FileAccessProviderOptions ResolveAccessOptions(
-        PipelineContext ctx,
+        PipelineMessage<TState> message,
         bool isCheckpointOnly
     )
     {
@@ -581,12 +637,7 @@ public sealed class AgentBlock(
             };
         }
 
-        var allowMutation = config.Access switch
-        {
-            WorkspaceAccess.ReadOnly => false,
-            WorkspaceAccess.MutationGated => ctx.MutationAuthorized,
-            _ => false,
-        };
+        var allowMutation = config.AllowMutation(message.State);
 
         return new FileAccessProviderOptions
         {
@@ -598,259 +649,53 @@ public sealed class AgentBlock(
 
     private static JsonElement EmptyPayload() => JsonSerializer.SerializeToElement(new { });
 
-    private string BuildUserMessage(PipelineMessage message) =>
-        config.BlockId switch
-        {
-            BlockIds.Planner => BuildPlannerMessage(message),
-            BlockIds.Reviewer => BuildReviewerMessage(message.Context),
-            _ => BuildExecutorMessage(message.Context),
-        };
+    private TState ApplyReceipt(TState state, string kind, JsonElement payload) =>
+        config.ReceiptTransition is null ? state : config.ReceiptTransition(state, kind, payload);
 
-    private static string BuildExecutorMessage(PipelineContext ctx)
+    private PipelineMessage<TState> ApplyAcceptedReceipt(
+        PipelineRuntime runtime,
+        TState state,
+        LifecycleReceipt receipt,
+        TimeSpan duration = default
+    )
     {
-        var packet = ctx.Packet;
-        var outcomes = string.Join(
-            "\n",
-            packet.Outcomes.Select(o => $"- [{o.Id}] {o.Description}")
-        );
-        var constraints =
-            packet.Constraints.Count > 0
-                ? string.Join("\n", packet.Constraints.Select(c => $"- {c}"))
-                : "(none)";
+        var isCheckpoint =
+            config.Checkpoint is { } checkpoint && receipt.Kind == checkpoint.OutcomeKind;
+        var updatedRuntime = isCheckpoint
+            ? runtime.WithoutSession(config.BlockId).WithoutUsage(config.BlockId)
+            : runtime;
+        var updatedState = isCheckpoint
+            ? config.Checkpoint!.Transition(state, receipt.Kind, receipt.Payload)
+            : ApplyReceipt(state, receipt.Kind, receipt.Payload);
 
-        var plannerSection = ctx.PlannerDecision is { } decision
-            ? $"""
-
-                Planner decision: {decision.Decision}
-                Planner rationale: {decision.Rationale}
-                Planner constraints:
-                {string.Join(
-                    "\n",
-                    decision.Constraints.Count > 0
-                        ? decision.Constraints.Select(c => $"- {c}")
-                        : ["(none)"]
-                )}
-                """
-            : "";
-
-        var verificationSection =
-            ctx.VerificationResults.Count > 0
-                ? $"""
-
-                    Latest verification failure (if any):
-                    {FormatVerificationResults(ctx.VerificationResults)}
-                    """
-                : "";
-
-        var candidateSection = ctx.CandidateSha is { } sha
-            ? $"""
-
-                Current candidate SHA: {sha}
-                """
-            : "";
-
-        var checkpointSection = ctx.CheckpointPayload is { } checkpoint
-            ? $"""
-
-                Previous checkpoint (context was compacted, continue from here):
-                {checkpoint.GetRawText()}
-                """
-            : "";
-
-        return $"""
-            Packet: {packet.Title}
-            Workspace: {ctx.WorkspacePath}
-            Pinned base: {ctx.PinnedBaseSha}
-            Mutation authorized: {ctx.MutationAuthorized}
-
-            Outcomes:
-            {outcomes}
-
-            Constraints:
-            {constraints}{plannerSection}{verificationSection}{candidateSection}{checkpointSection}
-            """;
-    }
-
-    private static string BuildPlannerMessage(PipelineMessage message)
-    {
-        var ctx = message.Context;
-        var packet = ctx.Packet;
-        var outcomes = string.Join(
-            "\n",
-            packet.Outcomes.Select(o => $"- [{o.Id}] {o.Description}")
-        );
-        var constraints =
-            packet.Constraints.Count > 0
-                ? string.Join("\n", packet.Constraints.Select(c => $"- {c}"))
-                : "(none)";
-
-        // The executor's ask_planner payload is the latest outcome payload.
-        var executorQuestion = "(no question provided)";
-        var executorApproach = "(no approach provided)";
-        var executorEvidence = "(no evidence provided)";
-
-        if (message.LatestOutcome?.Payload is { } payload)
-        {
-            if (
-                payload.TryGetProperty("question", out var q)
-                && q.ValueKind == JsonValueKind.String
+        return new PipelineMessage<TState>(
+            updatedRuntime.IncrementInvocations(config.BlockId),
+            updatedState,
+            new BlockOutcome(
+                receipt.Kind,
+                config.BlockId,
+                receipt.Summary,
+                receipt.Payload,
+                duration
             )
-            {
-                executorQuestion = q.GetString() ?? executorQuestion;
-            }
-            if (
-                payload.TryGetProperty("proposedApproach", out var a)
-                && a.ValueKind == JsonValueKind.String
-            )
-            {
-                executorApproach = a.GetString() ?? executorApproach;
-            }
-            if (
-                payload.TryGetProperty("evidence", out var ev)
-                && ev.ValueKind == JsonValueKind.Array
-            )
-            {
-                executorEvidence = string.Join(
-                    ", ",
-                    ev.EnumerateArray().Select(e => e.GetString())
-                );
-            }
-        }
-
-        var previousConstraints =
-            ctx.PlannerConstraints.Count > 0
-                ? string.Join("\n", ctx.PlannerConstraints.Select(c => $"- {c}"))
-                : "(none)";
-
-        return $"""
-            Packet: {packet.Title}
-            Workspace: {ctx.WorkspacePath}
-
-            Outcomes:
-            {outcomes}
-
-            Constraints:
-            {constraints}
-
-            Executor's question:
-            {executorQuestion}
-
-            Executor's proposed approach:
-            {executorApproach}
-
-            Executor's evidence:
-            {executorEvidence}
-
-            Previous planner constraints:
-            {previousConstraints}
-
-            Return a structured JSON decision: Proceed, ProceedWithConstraints, NeedsHuman, or Stop.
-            """;
-    }
-
-    private static string BuildReviewerMessage(PipelineContext ctx)
-    {
-        var packet = ctx.Packet;
-        var outcomes = string.Join(
-            "\n",
-            packet.Outcomes.Select(o => $"- [{o.Id}] {o.Description}")
         );
-        var constraints =
-            ctx.PlannerConstraints.Count > 0
-                ? string.Join("\n", ctx.PlannerConstraints.Select(c => $"- {c}"))
-                : "(none)";
-
-        var verification =
-            ctx.VerificationResults.Count > 0
-                ? FormatVerificationResults(ctx.VerificationResults)
-                : "(no verification commands)";
-
-        var candidate = ctx.CandidateSha ?? "(no candidate)";
-
-        var reportSection = ctx.ImplementationReport is { } report
-            ? $"""
-
-                Implementation report:
-                {report.GetRawText()}
-                """
-            : "";
-
-        return $"""
-            Packet: {packet.Title}
-            Workspace: {ctx.WorkspacePath}
-            Pinned base: {ctx.PinnedBaseSha}
-            Candidate SHA: {candidate}
-
-            Outcomes:
-            {outcomes}
-
-            Planner constraints:
-            {constraints}
-
-            Verification results:
-            {verification}{reportSection}
-
-            You may inspect changed files through your read-only tools.
-
-            Return a structured JSON decision: Accept, RequestChanges, or NeedsHuman.
-            """;
     }
 
-    private string BuildCheckpointUserMessage(PipelineContext ctx)
-    {
-        var usage = ctx.AgentUsage.GetValueOrDefault(config.BlockId);
-        var contextTokens = usage?.CurrentContextTokens ?? 0;
-        var checkpointAt = config.Checkpoint?.CheckpointAtTokens ?? 0;
-
-        return $"""
-            Context window approaching limit: {contextTokens} tokens used, checkpoint threshold is {checkpointAt}.
-
-            Write a checkpoint of your current work state using the write_checkpoint tool.
-            Summarize what you have completed and what remains to be done.
-
-            Call write_checkpoint now.
-            """;
-    }
-
-    private static string FormatVerificationResults(IReadOnlyList<VerificationResult> results)
-    {
-        var sb = new StringBuilder();
-        foreach (var r in results)
-        {
-            var status = r.ExitCode == 0 ? "PASS" : "FAIL";
-            sb.AppendLine(
-                $"  [{status}] {r.Command} (exit {r.ExitCode}, {r.Elapsed.TotalMilliseconds:F0}ms)"
-            );
-            if (!string.IsNullOrWhiteSpace(r.Stdout))
-            {
-                sb.AppendLine($"    stdout: {Truncate(r.Stdout, 500)}");
-            }
-            if (!string.IsNullOrWhiteSpace(r.Stderr))
-            {
-                sb.AppendLine($"    stderr: {Truncate(r.Stderr, 500)}");
-            }
-        }
-        return sb.ToString();
-    }
-
-    private static string Truncate(string text, int max) =>
-        text.Length <= max ? text : text[..max] + "...";
-
-    private async Task<PipelineContext> PersistSessionAsync(
+    private async Task<PipelineRuntime> PersistSessionAsync(
         HarnessAgent agent,
         AgentSession session,
-        PipelineContext ctx,
+        PipelineRuntime runtime,
         CancellationToken ct
     )
     {
         var serialized = await agent.SerializeSessionAsync(session, cancellationToken: ct);
         var json = JsonSerializer.Serialize(serialized);
 
-        var sessionPath = GetSessionPath(ctx.RunId, config.BlockId);
+        var sessionPath = GetSessionPath(runtime.RunId, config.BlockId);
         Directory.CreateDirectory(Path.GetDirectoryName(sessionPath)!);
         await File.WriteAllTextAsync(sessionPath, json, ct);
 
-        return ctx.WithSession(
+        return runtime.WithSession(
             config.BlockId,
             JsonSerializer.SerializeToElement(new { stored = true })
         );
@@ -858,12 +703,12 @@ public sealed class AgentBlock(
 
     private async Task<AgentSession> RestoreOrCreateSessionAsync(
         HarnessAgent agent,
-        PipelineContext ctx,
+        PipelineRuntime runtime,
         CancellationToken ct
     )
     {
-        var sessionPath = GetSessionPath(ctx.RunId, config.BlockId);
-        if (ctx.AgentSessions.ContainsKey(config.BlockId) && File.Exists(sessionPath))
+        var sessionPath = GetSessionPath(runtime.RunId, config.BlockId);
+        if (runtime.AgentSessions.ContainsKey(config.BlockId) && File.Exists(sessionPath))
         {
             var json = await File.ReadAllTextAsync(sessionPath, ct);
             var serialized = JsonSerializer.Deserialize<JsonElement>(json);
@@ -875,38 +720,22 @@ public sealed class AgentBlock(
 
     private string GetSessionPath(Guid runId, string blockId) =>
         Path.Combine(tandemHome, "runs", runId.ToString("N"), "sessions", $"{blockId}.json");
-
-    private const string CheckpointOnlyInstructions = """
-        You are Tandem's implementation block in checkpoint-only mode.
-
-        Your context window is approaching its limit. You must write a checkpoint
-        of your current work state using the write_checkpoint tool. Summarize
-        what you have completed and what remains to be done next.
-
-        This is the only action available. Do not attempt other work.
-        """;
 }
 
-internal sealed class LifecycleOutcomeCollector
+internal sealed class ToolOutcomeCollector
 {
     private string? _lifecycleToolName;
+    private readonly HashSet<string> _successfulToolNames = new(StringComparer.Ordinal);
 
     public bool HasLifecycleCall => _lifecycleToolName is not null;
 
     public void RecordLifecycleCall(string toolName) => _lifecycleToolName ??= toolName;
 
+    public void RecordSuccessfulToolCall(string toolName) => _successfulToolNames.Add(toolName);
+
+    public IReadOnlySet<string> SuccessfulToolNames => _successfulToolNames;
+
     public string? LifecycleToolName => _lifecycleToolName;
 }
-
-/// <summary>
-/// Inspects a tool call before execution. Return null to allow the call,
-/// or <see cref="ToolInterceptionResult.Blocked"/> to return the message
-/// to the model instead of executing the tool.
-/// </summary>
-public delegate ValueTask<ToolInterceptionResult?> ToolInterceptor(
-    PipelineContext context,
-    FunctionInvocationContext invocationContext,
-    CancellationToken cancellationToken
-);
 
 #pragma warning restore MAAI001

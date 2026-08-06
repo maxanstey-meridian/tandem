@@ -32,5 +32,6 @@
 
     <ItemGroup>
         <InternalsVisibleTo Include="Tandem.Tests" />
+        <EmbeddedResource Include="../../TANDEM.md" LogicalName="Tandem.TANDEM.md" />
     </ItemGroup>
 </Project>

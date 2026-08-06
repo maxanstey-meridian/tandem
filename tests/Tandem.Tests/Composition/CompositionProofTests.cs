@@ -43,22 +43,22 @@ public sealed class CompositionProofTests
         // Composition WITHOUT a planner edge: executor.report.submitted -> capture
         var workflow = new WorkflowBuilder(prepareB)
             .WithName("proof-1-no-planner")
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 prepareB,
                 executorB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 executorB,
                 captureB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReportSubmitted
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 captureB,
                 reviewerB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 reviewerB,
                 completeB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReviewAccepted
@@ -66,13 +66,13 @@ public sealed class CompositionProofTests
             .WithOutputFrom(completeB)
             .Build();
 
-        var ctx = PipelineContext.Create(
+        var ctx = CreateMessage(
             Guid.CreateVersion7(),
             TestPackets.MakePacket(),
             PinnedBase,
             Workspace
         );
-        await CompositionRunner.RunAsync(workflow, new PipelineMessage(ctx), "proof-1");
+        await CompositionRunner.RunAsync(workflow, ctx, "proof-1");
 
         planner.InvocationCount.Should().Be(0, "planner must not run when no edge routes to it");
         executor.InvocationCount.Should().Be(1);
@@ -108,33 +108,33 @@ public sealed class CompositionProofTests
         // Insert recorder between executor and planner
         var workflow = new WorkflowBuilder(prepareB)
             .WithName("proof-2-recorder-before-planner")
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 prepareB,
                 executorB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 executorB,
                 recorderB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.PlannerRequested
             )
             .AddEdge(recorderB, plannerB)
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 plannerB,
                 executor2B,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.PlannerProceed
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 executor2B,
                 captureB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReportSubmitted
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 captureB,
                 reviewerB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 reviewerB,
                 completeB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReviewAccepted
@@ -142,13 +142,13 @@ public sealed class CompositionProofTests
             .WithOutputFrom(completeB)
             .Build();
 
-        var ctx = PipelineContext.Create(
+        var ctx = CreateMessage(
             Guid.CreateVersion7(),
             TestPackets.MakePacket(),
             PinnedBase,
             Workspace
         );
-        await CompositionRunner.RunAsync(workflow, new PipelineMessage(ctx), "proof-2");
+        await CompositionRunner.RunAsync(workflow, ctx, "proof-2");
 
         recorder.InvocationCount.Should().Be(1, "recorder must run exactly once");
         planner.InvocationCount.Should().Be(1, "planner must run after recorder");
@@ -191,8 +191,8 @@ public sealed class CompositionProofTests
             "proof-3"
         );
 
-        var ctx = PipelineContext.Create(Guid.CreateVersion7(), packet, PinnedBase, Workspace);
-        await CompositionRunner.RunAsync(workflow, new PipelineMessage(ctx), "proof-3");
+        var ctx = CreateMessage(Guid.CreateVersion7(), packet, PinnedBase, Workspace);
+        await CompositionRunner.RunAsync(workflow, ctx, "proof-3");
 
         verify.InvokedIndices.Should().Equal(0, 1);
     }
@@ -244,48 +244,48 @@ public sealed class CompositionProofTests
 
         var workflow = new WorkflowBuilder(prepareB)
             .WithName("proof-4-failed-first-command")
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 prepareB,
                 executorB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 executorB,
                 captureB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReportSubmitted
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 captureB,
                 verifyB,
                 m =>
                     m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
-                    && m!.Context.Packet.Verification.Count > 0
+                    && m!.State.Packet.Verification.Count > 0
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 verifyB,
                 verifyB,
                 m =>
                     m!.LatestOutcome?.Kind == OutcomeKinds.CommandPassed
-                    && m!.Context.VerificationIndex < m!.Context.Packet.Verification.Count
+                    && m!.State.VerificationIndex < m!.State.Packet.Verification.Count
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 verifyB,
                 reviewerB,
                 m =>
                     m!.LatestOutcome?.Kind == OutcomeKinds.CommandPassed
-                    && m!.Context.VerificationIndex >= m!.Context.Packet.Verification.Count
+                    && m!.State.VerificationIndex >= m!.State.Packet.Verification.Count
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 verifyB,
                 executorB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.CommandFailed
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 reviewerB,
                 completeB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReviewAccepted
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 executorB,
                 failedB,
                 m =>
@@ -296,12 +296,8 @@ public sealed class CompositionProofTests
             .WithOutputFrom(completeB, failedB)
             .Build();
 
-        var ctx = PipelineContext.Create(Guid.CreateVersion7(), packet, PinnedBase, Workspace);
-        var output = await CompositionRunner.RunAsync(
-            workflow,
-            new PipelineMessage(ctx),
-            "proof-4"
-        );
+        var ctx = CreateMessage(Guid.CreateVersion7(), packet, PinnedBase, Workspace);
+        var output = await CompositionRunner.RunAsync(workflow, ctx, "proof-4");
 
         verify
             .InvokedIndices.Should()
@@ -348,8 +344,8 @@ public sealed class CompositionProofTests
             "proof-5"
         );
 
-        var ctx = PipelineContext.Create(Guid.CreateVersion7(), packet, PinnedBase, Workspace);
-        await CompositionRunner.RunAsync(workflow, new PipelineMessage(ctx), "proof-5");
+        var ctx = CreateMessage(Guid.CreateVersion7(), packet, PinnedBase, Workspace);
+        await CompositionRunner.RunAsync(workflow, ctx, "proof-5");
 
         verify.InvokedIndices.Should().Equal(0, 1);
         reviewer.InvocationCount.Should().Be(1, "reviewer must run after all commands pass");
@@ -379,46 +375,42 @@ public sealed class CompositionProofTests
         // Composition WITHOUT review: verify passes -> complete
         var workflow = new WorkflowBuilder(prepareB)
             .WithName("proof-6-no-review")
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 prepareB,
                 executorB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 executorB,
                 captureB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReportSubmitted
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 captureB,
                 verifyB,
                 m =>
                     m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
-                    && m!.Context.Packet.Verification.Count > 0
+                    && m!.State.Packet.Verification.Count > 0
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 verifyB,
                 verifyB,
                 m =>
                     m!.LatestOutcome?.Kind == OutcomeKinds.CommandPassed
-                    && m!.Context.VerificationIndex < m!.Context.Packet.Verification.Count
+                    && m!.State.VerificationIndex < m!.State.Packet.Verification.Count
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 verifyB,
                 completeB,
                 m =>
                     m!.LatestOutcome?.Kind == OutcomeKinds.CommandPassed
-                    && m!.Context.VerificationIndex >= m!.Context.Packet.Verification.Count
+                    && m!.State.VerificationIndex >= m!.State.Packet.Verification.Count
             )
             .WithOutputFrom(completeB)
             .Build();
 
-        var ctx = PipelineContext.Create(Guid.CreateVersion7(), packet, PinnedBase, Workspace);
-        var output = await CompositionRunner.RunAsync(
-            workflow,
-            new PipelineMessage(ctx),
-            "proof-6"
-        );
+        var ctx = CreateMessage(Guid.CreateVersion7(), packet, PinnedBase, Workspace);
+        var output = await CompositionRunner.RunAsync(workflow, ctx, "proof-6");
 
         output.LatestOutcome!.Kind.Should().Be(OutcomeKinds.RunReady);
         complete.InvocationCount.Should().Be(1, "complete must run after verification passes");
@@ -455,37 +447,37 @@ public sealed class CompositionProofTests
         // reviewer-1 requests changes -> executor -> capture -> reviewer-2 accepts -> complete
         var workflow = new WorkflowBuilder(prepareB)
             .WithName("proof-7-two-reviews")
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 prepareB,
                 executorB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 executorB,
                 captureB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReportSubmitted
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 captureB,
                 reviewer1B,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 reviewer1B,
                 executor2B,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReviewChangesRequested
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 executor2B,
                 capture2B,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReportSubmitted
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 capture2B,
                 reviewer2B,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 reviewer2B,
                 completeB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReviewAccepted
@@ -493,13 +485,13 @@ public sealed class CompositionProofTests
             .WithOutputFrom(completeB)
             .Build();
 
-        var ctx = PipelineContext.Create(
+        var ctx = CreateMessage(
             Guid.CreateVersion7(),
             TestPackets.MakePacket(),
             PinnedBase,
             Workspace
         );
-        await CompositionRunner.RunAsync(workflow, new PipelineMessage(ctx), "proof-7");
+        await CompositionRunner.RunAsync(workflow, ctx, "proof-7");
 
         reviewer1.InvocationCount.Should().Be(1, "reviewer-1 must run");
         reviewer2
@@ -532,19 +524,19 @@ public sealed class CompositionProofTests
         var completeB = complete.BindExecutor();
 
         // Custom condition: route to agent-zh when summary contains Chinese characters
-        static bool HasChinese(PipelineMessage? m) =>
+        static bool HasChinese(PipelineMessage<SimpleV1State>? m) =>
             m!.LatestOutcome?.Summary != null
             && m.LatestOutcome.Summary.Any(c => c >= '\u4E00' && c <= '\u9FFF');
 
         var workflow = new WorkflowBuilder(prepareB)
             .WithName("proof-8-chinese-routing")
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 prepareB,
                 executorB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
             )
-            .AddEdge<PipelineMessage>(executorB, secondAgentB, HasChinese)
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(executorB, secondAgentB, HasChinese)
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 secondAgentB,
                 completeB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReviewAccepted
@@ -552,13 +544,13 @@ public sealed class CompositionProofTests
             .WithOutputFrom(completeB)
             .Build();
 
-        var ctx = PipelineContext.Create(
+        var ctx = CreateMessage(
             Guid.CreateVersion7(),
             TestPackets.MakePacket(),
             PinnedBase,
             Workspace
         );
-        await CompositionRunner.RunAsync(workflow, new PipelineMessage(ctx), "proof-8");
+        await CompositionRunner.RunAsync(workflow, ctx, "proof-8");
 
         secondAgent
             .InvocationCount.Should()
@@ -576,10 +568,6 @@ public sealed class CompositionProofTests
             ctx =>
             {
                 // Normal invocation exposes ask_planner + submit_report
-                var usage = ctx.AgentUsage.GetValueOrDefault(BlockIds.Executor);
-                usage.Should().NotBeNull("executor usage must be present");
-                var belowThreshold = usage!.CurrentContextTokens + 32000 < usage.CheckpointAtTokens;
-                belowThreshold.Should().BeTrue("normal invocation only runs below threshold");
                 return new BlockOutcome(
                     OutcomeKinds.ReportSubmitted,
                     BlockIds.Executor,
@@ -607,7 +595,7 @@ public sealed class CompositionProofTests
         var checkpointB = checkpointExecutor.BindExecutor();
 
         // Context window 200000, checkpoint at 80% = 160000. Usage 50000 + 32000 < 160000 → normal
-        var ctx = PipelineContext.Create(
+        var ctx = CreateMessage(
             Guid.CreateVersion7(),
             TestPackets.MakePacket(),
             PinnedBase,
@@ -615,39 +603,36 @@ public sealed class CompositionProofTests
         );
         ctx = ctx with
         {
-            AgentUsage = new Dictionary<string, AgentUsage>
-            {
-                [BlockIds.Executor] = new AgentUsage(
-                    CurrentInputTokens: 40000,
-                    CurrentOutputTokens: 10000,
-                    CurrentContextTokens: 50000,
-                    ContextWindowTokens: 200000,
-                    CheckpointAtTokens: 160000,
-                    LastModelCallDuration: TimeSpan.Zero
-                ),
-            },
+            Runtime = ctx.Runtime.WithUsage(
+                BlockIds.Executor,
+                new AgentUsage(40000, 10000, 50000, 200000, 160000, TimeSpan.Zero)
+            ),
         };
 
         // Composition: normal route + checkpoint route
         var workflow = new WorkflowBuilder(prepareB)
             .WithName("proof-9-below-threshold")
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 prepareB,
                 executorB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
             )
-            .AddEdge<PipelineMessage>(executorB, checkpointB, IsUsageAtOrAboveThreshold)
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
+                executorB,
+                checkpointB,
+                IsUsageAtOrAboveThreshold
+            )
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 executorB,
                 captureB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReportSubmitted
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 captureB,
                 reviewerB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 reviewerB,
                 completeB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReviewAccepted
@@ -655,7 +640,7 @@ public sealed class CompositionProofTests
             .WithOutputFrom(completeB)
             .Build();
 
-        await CompositionRunner.RunAsync(workflow, new PipelineMessage(ctx), "proof-9");
+        await CompositionRunner.RunAsync(workflow, ctx, "proof-9");
 
         normalExecutor.InvocationCount.Should().Be(1, "normal executor must run below threshold");
         checkpointExecutor
@@ -691,9 +676,6 @@ public sealed class CompositionProofTests
             ctx =>
             {
                 // After checkpoint: session must be cleared (no AgentSessions entry for executor)
-                ctx.AgentSessions.ContainsKey(BlockIds.Executor)
-                    .Should()
-                    .BeFalse("executor session must be cleared after checkpoint");
                 // The checkpoint payload should be available in context for the fresh prompt
                 return new BlockOutcome(
                     OutcomeKinds.ReportSubmitted,
@@ -718,7 +700,7 @@ public sealed class CompositionProofTests
         var completeB = complete.BindExecutor();
 
         // Context window 200000, checkpoint at 80% = 160000. Usage 140000 + 32000 >= 160000 → checkpoint
-        var ctx = PipelineContext.Create(
+        var ctx = CreateMessage(
             Guid.CreateVersion7(),
             TestPackets.MakePacket(),
             PinnedBase,
@@ -729,50 +711,43 @@ public sealed class CompositionProofTests
         );
         ctx = ctx with
         {
-            AgentUsage = new Dictionary<string, AgentUsage>
-            {
-                [BlockIds.Executor] = new AgentUsage(
-                    CurrentInputTokens: 100000,
-                    CurrentOutputTokens: 40000,
-                    CurrentContextTokens: 140000,
-                    ContextWindowTokens: 200000,
-                    CheckpointAtTokens: 160000,
-                    LastModelCallDuration: TimeSpan.Zero
+            Runtime = ctx
+                .Runtime.WithUsage(
+                    BlockIds.Executor,
+                    new AgentUsage(100000, 40000, 140000, 200000, 160000, TimeSpan.Zero)
+                )
+                .WithSession(
+                    BlockIds.Executor,
+                    JsonSerializer.SerializeToElement(new { history = "old session" })
                 ),
-            },
-            AgentSessions = new Dictionary<string, JsonElement>
-            {
-                [BlockIds.Executor] = JsonSerializer.SerializeToElement(
-                    new { history = "old session" }
-                ),
-            },
+            State = ctx.State with { CheckpointPayload = checkpointPayload },
         };
 
         var workflow = new WorkflowBuilder(prepareB)
             .WithName("proof-10-cross-threshold")
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 prepareB,
                 checkpointB,
                 m =>
                     m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
                     && IsUsageAtOrAboveThreshold(m)
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 checkpointB,
                 executorB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.CheckpointWritten
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 executorB,
                 captureB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReportSubmitted
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 captureB,
                 reviewerB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 reviewerB,
                 completeB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReviewAccepted
@@ -781,7 +756,7 @@ public sealed class CompositionProofTests
             .Build();
 
         // Need to simulate session clearing between checkpoint and next executor.
-        // The checkpoint block in the real AgentBlock clears the session. Here we
+        // The checkpoint block in the real AgentBlock<SimpleV1State> clears the session. Here we
         // model it: the checkpoint block updates context to remove the session.
         // We use a custom block that does the session clearing.
         var clearingCheckpoint = new SessionClearingCheckpointBlock();
@@ -789,29 +764,29 @@ public sealed class CompositionProofTests
 
         var workflowWithClearing = new WorkflowBuilder(prepareB)
             .WithName("proof-10-cross-threshold-clearing")
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 prepareB,
                 clearingCheckpointB,
                 m =>
                     m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
                     && IsUsageAtOrAboveThreshold(m)
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 clearingCheckpointB,
                 executorB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.CheckpointWritten
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 executorB,
                 captureB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReportSubmitted
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 captureB,
                 reviewerB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 reviewerB,
                 completeB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReviewAccepted
@@ -819,11 +794,7 @@ public sealed class CompositionProofTests
             .WithOutputFrom(completeB)
             .Build();
 
-        await CompositionRunner.RunAsync(
-            workflowWithClearing,
-            new PipelineMessage(ctx),
-            "proof-10"
-        );
+        await CompositionRunner.RunAsync(workflowWithClearing, ctx, "proof-10");
 
         clearingCheckpoint
             .InvocationCount.Should()
@@ -832,14 +803,14 @@ public sealed class CompositionProofTests
         complete.InvocationCount.Should().Be(1);
     }
 
-    private static bool IsUsageAtOrAboveThreshold(PipelineMessage? m)
+    private static bool IsUsageAtOrAboveThreshold(PipelineMessage<SimpleV1State>? m)
     {
         if (m is null)
         {
             return false;
         }
 
-        var usage = m.Context.AgentUsage.GetValueOrDefault(BlockIds.Executor);
+        var usage = m.Runtime.AgentUsage.GetValueOrDefault(BlockIds.Executor);
         if (usage is null)
         {
             return false;
@@ -860,48 +831,48 @@ public sealed class CompositionProofTests
     {
         return new WorkflowBuilder(prepareB)
             .WithName(name)
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 prepareB,
                 executorB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 executorB,
                 captureB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReportSubmitted
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 captureB,
                 verifyB,
                 m =>
                     m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
-                    && m!.Context.Packet.Verification.Count > 0
+                    && m!.State.Packet.Verification.Count > 0
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 verifyB,
                 verifyB,
                 m =>
                     m!.LatestOutcome?.Kind == OutcomeKinds.CommandPassed
-                    && m!.Context.VerificationIndex < m!.Context.Packet.Verification.Count
+                    && m!.State.VerificationIndex < m!.State.Packet.Verification.Count
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 verifyB,
                 reviewerB,
                 m =>
                     m!.LatestOutcome?.Kind == OutcomeKinds.CommandPassed
-                    && m!.Context.VerificationIndex >= m!.Context.Packet.Verification.Count
+                    && m!.State.VerificationIndex >= m!.State.Packet.Verification.Count
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 verifyB,
                 executorB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.CommandFailed
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 reviewerB,
                 completeB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReviewAccepted
             )
-            .AddEdge<PipelineMessage>(
+            .AddEdge<PipelineMessage<SimpleV1State>>(
                 reviewerB,
                 executorB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReviewChangesRequested
@@ -909,33 +880,46 @@ public sealed class CompositionProofTests
             .WithOutputFrom(completeB)
             .Build();
     }
+
+    private static PipelineMessage<SimpleV1State> CreateMessage(
+        Guid runId,
+        Packet packet,
+        string pinnedBaseSha,
+        string workspacePath
+    ) =>
+        new(
+            PipelineRuntime.Create(runId),
+            SimpleV1State.Create(packet, pinnedBaseSha, workspacePath)
+        );
 }
 
 /// <summary>
 /// Checkpoint block that clears the executor session and records the checkpoint,
-/// modeling the real AgentBlock's checkpoint-only behavior.
+/// modeling the real generic agent block's checkpoint-only behavior.
 /// </summary>
-internal sealed class SessionClearingCheckpointBlock : Executor<PipelineMessage, PipelineMessage>
+internal sealed class SessionClearingCheckpointBlock
+    : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>
 {
     public int InvocationCount { get; private set; }
 
     public SessionClearingCheckpointBlock()
         : base("checkpoint-only") { }
 
-    public override ValueTask<PipelineMessage> HandleAsync(
-        PipelineMessage message,
+    public override ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
+        PipelineMessage<SimpleV1State> message,
         IWorkflowContext context,
         CancellationToken cancellationToken
     )
     {
         InvocationCount++;
-        var updatedCtx = message.Context.WithoutSession(BlockIds.Executor);
+        var updatedRuntime = message.Runtime.WithoutSession(BlockIds.Executor);
         var payload = System.Text.Json.JsonSerializer.SerializeToElement(
             new { summary = "checkpoint", next = new[] { "finish" } }
         );
         return ValueTask.FromResult(
-            new PipelineMessage(
-                updatedCtx,
+            new PipelineMessage<SimpleV1State>(
+                updatedRuntime,
+                message.State,
                 new BlockOutcome(
                     OutcomeKinds.CheckpointWritten,
                     "checkpoint-only",

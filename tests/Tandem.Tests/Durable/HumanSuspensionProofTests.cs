@@ -49,7 +49,7 @@ public sealed class HumanSuspensionProofTests
                     "test",
                     "https://test",
                     "test-model",
-                    Domain.WireApi.Completions,
+                    Tandem.Domain.WireApi.Completions,
                     null,
                     128000,
                     4096,
@@ -69,8 +69,9 @@ public sealed class HumanSuspensionProofTests
                 ""
             );
             var runId = Guid.CreateVersion7();
-            var message = new PipelineMessage(
-                PipelineContext.Create(runId, packet, "abc123", workspacePath) with
+            var message = new PipelineMessage<SimpleV1State>(
+                PipelineRuntime.Create(runId),
+                SimpleV1State.Create(packet, "abc123", workspacePath) with
                 {
                     MutationAuthorized = false,
                     PlannerDecision = null,

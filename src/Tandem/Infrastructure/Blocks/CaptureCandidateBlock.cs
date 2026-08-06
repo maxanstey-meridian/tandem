@@ -6,18 +6,20 @@ using Tandem.Domain;
 namespace Tandem.Infrastructure.Blocks;
 
 public sealed class CaptureCandidateBlock(GitProcess? git = null)
-    : Executor<PipelineMessage, PipelineMessage>(BlockIds.CaptureCandidate)
+    : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>(
+        BlockIds.CaptureCandidate
+    )
 {
     private readonly GitProcess _git = git ?? new GitProcess();
 
-    public override async ValueTask<PipelineMessage> HandleAsync(
-        PipelineMessage message,
+    public override async ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
+        PipelineMessage<SimpleV1State> message,
         IWorkflowContext context,
         CancellationToken cancellationToken
     )
     {
         var sw = Stopwatch.StartNew();
-        var ctx = message.Context;
+        var ctx = message.State;
         var ws = ctx.WorkspacePath;
 
         await _git.RunAsync(ws, ["add", "-A"], cancellationToken);
@@ -31,7 +33,7 @@ public sealed class CaptureCandidateBlock(GitProcess? git = null)
                 "commit",
                 "--allow-empty",
                 "-m",
-                $"Tandem candidate {ctx.RunId:N}",
+                $"Tandem candidate {message.Runtime.RunId:N}",
             ],
             cancellationToken
         );
@@ -48,7 +50,8 @@ public sealed class CaptureCandidateBlock(GitProcess? git = null)
 
         var payload = JsonSerializer.SerializeToElement(new { candidateSha });
         sw.Stop();
-        return new PipelineMessage(
+        return new PipelineMessage<SimpleV1State>(
+            message.Runtime,
             updatedContext,
             new BlockOutcome(
                 OutcomeKinds.CandidateCaptured,

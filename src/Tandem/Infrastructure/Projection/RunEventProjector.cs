@@ -243,15 +243,7 @@ public sealed class RunEventProjector(
     {
         var seq = Interlocked.Increment(ref _eventSequence);
         var eventId = $"{runId:N}--{blockId}--{kind}--{seq}";
-        var evt = new RunEvent(
-            eventId,
-            DateTimeOffset.UtcNow,
-            runId,
-            blockId,
-            kind,
-            message,
-            data
-        );
+        var evt = new RunEvent(eventId, DateTimeOffset.UtcNow, runId, blockId, kind, message, data);
         await eventStore.AppendAsync(evt, ct);
         onEvent?.Invoke(evt);
     }

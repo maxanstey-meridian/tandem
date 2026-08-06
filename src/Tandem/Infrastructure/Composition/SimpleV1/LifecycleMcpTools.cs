@@ -131,46 +131,34 @@ public sealed class LifecycleMcpTools(
         CancellationToken cancellationToken
     )
     {
-        var existing = await receiptStore.ReadAsync(
+        var accepted = await receiptStore.CreateOrReadAsync(
             context.RunId,
             context.InvocationId,
+            context.BlockId,
+            kind,
+            summary,
+            payload,
             cancellationToken
         );
-        LifecycleReceipt receipt;
-        if (existing is not null)
+        var receipt = accepted.Receipt;
+        if (!SameOutcome(receipt, kind, summary, payload))
         {
-            if (!SameOutcome(existing, kind, summary, payload))
-            {
-                return Result(
-                    new
+            return Result(
+                new
+                {
+                    error = "conflicting lifecycle outcome",
+                    invocationId = context.InvocationId,
+                    blockId = context.BlockId,
+                    problems = new[]
                     {
-                        error = "conflicting lifecycle outcome",
-                        invocationId = context.InvocationId,
-                        blockId = context.BlockId,
-                        problems = new[]
+                        new
                         {
-                            new
-                            {
-                                field = "$",
-                                message = "A different lifecycle outcome is already accepted for this invocation.",
-                            },
+                            field = "$",
+                            message = "A different lifecycle outcome is already accepted for this invocation.",
                         },
                     },
-                    isError: true
-                );
-            }
-            receipt = existing;
-        }
-        else
-        {
-            receipt = await receiptStore.WriteAsync(
-                context.RunId,
-                context.InvocationId,
-                context.BlockId,
-                kind,
-                summary,
-                payload,
-                cancellationToken
+                },
+                isError: true
             );
         }
 

@@ -83,6 +83,17 @@ public sealed class ImplementationBlockExecutorTests
         result!.FinalResponse.Should().Contain("greeting.txt");
         result.ModelId.Should().Be(profile.Model);
         result.WorkspacePath.Should().Be(workspacePath);
+        script.Instructions.Should().Contain("# Tandem Harness");
+        script.Instructions.Should().Contain("You are the implementation block in Tandem.");
+        script
+            .Instructions!.IndexOf("# Tandem Harness", StringComparison.Ordinal)
+            .Should()
+            .BeLessThan(
+                script.Instructions.IndexOf(
+                    "You are the implementation block in Tandem.",
+                    StringComparison.Ordinal
+                )
+            );
 
         File.Exists(Path.Combine(workspacePath, "greeting.txt")).Should().BeTrue();
         File.ReadAllText(Path.Combine(workspacePath, "greeting.txt"))
@@ -231,12 +242,15 @@ public sealed class ImplementationBlockExecutorTests
     {
         private readonly Queue<ChatResponse> _responses = new(responses);
 
+        public string? Instructions { get; private set; }
+
         public Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages,
             ChatOptions? options = null,
             CancellationToken cancellationToken = default
         )
         {
+            Instructions = options?.Instructions;
             return Task.FromResult(Dequeue());
         }
 
@@ -246,6 +260,7 @@ public sealed class ImplementationBlockExecutorTests
             [EnumeratorCancellation] CancellationToken cancellationToken = default
         )
         {
+            Instructions = options?.Instructions;
             var response = Dequeue();
             foreach (var update in response.ToChatResponseUpdates())
             {
