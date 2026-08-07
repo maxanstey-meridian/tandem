@@ -50,13 +50,10 @@ internal sealed class AgentBlock<TState>(
         var runtime = ApplyPreInvocationPolicies(message);
         message = message with { Runtime = runtime };
         var invocationId = runtime.NextInvocationId(config.BlockId);
-        await PersistProfileDecisionAsync(runtime, cts.Token);
 
         var existingReceipt = await _receiptStore.ReadAsync(runtime.RunId, invocationId, cts.Token);
         if (existingReceipt is not null)
         {
-            runtime = await RecoverReceiptSessionAsync(runtime, invocationId, cts.Token);
-            message = message with { Runtime = runtime };
             blockSw.Stop();
             return FinalizeConversation(
                 ApplyAcceptedReceipt(message, existingReceipt, blockSw.Elapsed)
@@ -270,11 +267,10 @@ internal sealed class AgentBlock<TState>(
             var agentUsage = ResolveUsage(inputTokens, outputTokens, lastModelCallDuration);
             var runtimeAfterUsage = runtime.WithUsage(config.BlockId, agentUsage);
 
-            var updatedRuntime = await PersistSessionAsync(
+            var updatedRuntime = await CaptureSessionAsync(
                 agent,
                 session,
                 runtimeAfterUsage,
-                invocationId,
                 cts.Token
             );
 
@@ -726,10 +722,6 @@ internal sealed class AgentBlock<TState>(
         var updatedRuntime = isCheckpoint
             ? message.Runtime.WithoutSession(config.BlockId).WithoutUsage(config.BlockId)
             : message.Runtime;
-        if (isCheckpoint)
-        {
-            DeletePersistedSession(message.Runtime.RunId);
-        }
         var updatedState = isCheckpoint
             ? config.Checkpoint!.Capability.Transition(message.State, receipt.Kind, receipt.Payload)
             : ApplyReceipt(message.State, receipt.Kind, receipt.Payload);
@@ -759,8 +751,6 @@ internal sealed class AgentBlock<TState>(
             return message;
         }
 
-        DeletePersistedSession(message.Runtime.RunId);
-        DeletePersistedProfile(message.Runtime.RunId);
         return message with
         {
             Runtime = message
@@ -784,7 +774,6 @@ internal sealed class AgentBlock<TState>(
         if (session.Action is AgentSessionAction.Reset or AgentSessionAction.Teardown)
         {
             runtime = runtime.WithoutSession(config.BlockId).WithoutUsage(config.BlockId);
-            DeletePersistedSession(runtime.RunId);
         }
 
         var profile =
@@ -793,35 +782,15 @@ internal sealed class AgentBlock<TState>(
         return runtime.WithProfile(config.BlockId, profile);
     }
 
-    private async Task<PipelineRuntime> PersistSessionAsync(
+    private async Task<PipelineRuntime> CaptureSessionAsync(
         HarnessAgent agent,
         AgentSession session,
         PipelineRuntime runtime,
-        string invocationId,
         CancellationToken ct
     )
     {
         var serialized = await agent.SerializeSessionAsync(session, cancellationToken: ct);
-        var persistedSession = new PersistedAgentSession(invocationId, serialized);
-        var json = JsonSerializer.Serialize(persistedSession);
-
-        var sessionPath = GetSessionPath(runtime.RunId, config.BlockId);
-        Directory.CreateDirectory(Path.GetDirectoryName(sessionPath)!);
-        var tempPath = $"{sessionPath}.{Guid.NewGuid():N}.tmp";
-        try
-        {
-            await File.WriteAllTextAsync(tempPath, json, ct);
-            File.Move(tempPath, sessionPath, overwrite: true);
-        }
-        finally
-        {
-            File.Delete(tempPath);
-        }
-
-        return runtime.WithSession(
-            config.BlockId,
-            JsonSerializer.SerializeToElement(new { invocationId })
-        );
+        return runtime.WithSession(config.BlockId, serialized);
     }
 
     private async Task<AgentSession> RestoreOrCreateSessionAsync(
@@ -830,137 +799,14 @@ internal sealed class AgentBlock<TState>(
         CancellationToken ct
     )
     {
-        var sessionPath = GetSessionPath(runtime.RunId, config.BlockId);
-        if (
-            TryGetSessionInvocationId(runtime, out var invocationId)
-            && await ReadPersistedSessionAsync(sessionPath, ct) is { } persistedSession
-            && persistedSession.InvocationId == invocationId
-        )
+        if (runtime.AgentSessions.TryGetValue(config.BlockId, out var serialized))
         {
-            return await agent.DeserializeSessionAsync(
-                persistedSession.Session,
-                cancellationToken: ct
-            );
+            return await agent.DeserializeSessionAsync(serialized, cancellationToken: ct);
         }
 
-        DeletePersistedSession(runtime.RunId);
         return await agent.CreateSessionAsync(ct);
     }
-
-    private async Task<PipelineRuntime> RecoverReceiptSessionAsync(
-        PipelineRuntime runtime,
-        string invocationId,
-        CancellationToken ct
-    )
-    {
-        var persistedSession = await ReadPersistedSessionAsync(
-            GetSessionPath(runtime.RunId, config.BlockId),
-            ct
-        );
-        if (persistedSession?.InvocationId == invocationId)
-        {
-            return runtime.WithSession(
-                config.BlockId,
-                JsonSerializer.SerializeToElement(new { invocationId })
-            );
-        }
-
-        DeletePersistedSession(runtime.RunId);
-        return runtime.WithoutSession(config.BlockId);
-    }
-
-    private static async Task<PersistedAgentSession?> ReadPersistedSessionAsync(
-        string path,
-        CancellationToken ct
-    )
-    {
-        if (!File.Exists(path))
-        {
-            return null;
-        }
-
-        try
-        {
-            var json = await File.ReadAllTextAsync(path, ct);
-            return JsonSerializer.Deserialize<PersistedAgentSession>(json);
-        }
-        catch (FileNotFoundException)
-        {
-            return null;
-        }
-        catch (DirectoryNotFoundException)
-        {
-            return null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    private bool TryGetSessionInvocationId(PipelineRuntime runtime, out string? invocationId)
-    {
-        invocationId = null;
-        return runtime.AgentSessions.TryGetValue(config.BlockId, out var marker)
-            && marker.ValueKind == JsonValueKind.Object
-            && marker.TryGetProperty("invocationId", out var value)
-            && value.ValueKind == JsonValueKind.String
-            && (invocationId = value.GetString()) is not null;
-    }
-
-    private string GetSessionPath(Guid runId, string blockId) =>
-        Path.Combine(tandemHome, "runs", runId.ToString("N"), "sessions", $"{blockId}.json");
-
-    private void DeletePersistedSession(Guid runId)
-    {
-        var sessionPath = GetSessionPath(runId, config.BlockId);
-        var directory = Path.GetDirectoryName(sessionPath)!;
-        if (!Directory.Exists(directory))
-        {
-            return;
-        }
-
-        File.Delete(sessionPath);
-        foreach (
-            var tempPath in Directory.EnumerateFiles(directory, $"{config.BlockId}.json.*.tmp")
-        )
-        {
-            File.Delete(tempPath);
-        }
-    }
-
-    private async Task PersistProfileDecisionAsync(PipelineRuntime runtime, CancellationToken ct)
-    {
-        var decision =
-            runtime.AgentProfiles.GetValueOrDefault(config.BlockId)
-            ?? throw new InvalidOperationException(
-                $"Agent '{config.BlockId}' did not produce a profile decision."
-            );
-        var directory = Path.Combine(tandemHome, "runs", runtime.RunId.ToString("N"), "profiles");
-        Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, $"{config.BlockId}.json");
-        var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
-        await File.WriteAllTextAsync(tempPath, JsonSerializer.Serialize(decision), ct);
-        File.Move(tempPath, path, overwrite: true);
-    }
-
-    private void DeletePersistedProfile(Guid runId)
-    {
-        var path = Path.Combine(
-            tandemHome,
-            "runs",
-            runId.ToString("N"),
-            "profiles",
-            $"{config.BlockId}.json"
-        );
-        if (File.Exists(path))
-        {
-            File.Delete(path);
-        }
-    }
 }
-
-internal sealed record PersistedAgentSession(string InvocationId, JsonElement Session);
 
 internal sealed class ToolOutcomeCollector
 {

@@ -457,25 +457,14 @@ public sealed class LifecycleMcpTests
                 evidence = new[] { "src/change.cs" },
             }
         );
-        var sessionPath = Path.Combine(
-            fixture.TandemHome,
-            "runs",
-            fixture.RunId.ToString("N"),
-            "sessions",
-            $"{BlockIds.Executor}.json"
-        );
-        Directory.CreateDirectory(Path.GetDirectoryName(sessionPath)!);
+        message = message with
+        {
+            Runtime = message.Runtime.WithSession(
+                BlockIds.Executor,
+                System.Text.Json.JsonSerializer.SerializeToElement(new { })
+            ),
+        };
         var invocationId = message.Runtime.NextInvocationId(BlockIds.Executor);
-        await File.WriteAllTextAsync(
-            sessionPath,
-            System.Text.Json.JsonSerializer.Serialize(
-                new
-                {
-                    invocationId,
-                    session = System.Text.Json.JsonSerializer.SerializeToElement(new { }),
-                }
-            )
-        );
         await new LifecycleReceiptStore(fixture.TandemHome).WriteAsync(
             fixture.RunId,
             invocationId,
@@ -524,94 +513,8 @@ public sealed class LifecycleMcpTests
             .BeTrue();
         output.Runtime.InvocationCounts[BlockIds.Executor].Should().Be(1);
         output.Runtime.AgentProfiles.Should().NotContainKey(BlockIds.Executor);
-        File.Exists(
-                Path.Combine(
-                    fixture.TandemHome,
-                    "runs",
-                    fixture.RunId.ToString("N"),
-                    "profiles",
-                    $"{BlockIds.Executor}.json"
-                )
-            )
-            .Should()
-            .BeFalse();
         output.Runtime.AgentSessions.Should().NotContainKey(BlockIds.Executor);
         output.Runtime.AgentUsage.Should().NotContainKey(BlockIds.Executor);
-        File.Exists(sessionPath).Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task ExistingReceipt_WithoutMatchingPersistedInvocation_DropsStaleSession()
-    {
-        using var fixture = await LifecycleFixture.CreateAsync();
-        var message = CreateMessage(
-            fixture.RunId,
-            MakePacket(),
-            pinnedBaseSha: "abc123",
-            workspacePath: fixture.WorkspacePath
-        );
-        message = message with
-        {
-            Runtime = message.Runtime.WithSession(
-                BlockIds.Executor,
-                System.Text.Json.JsonSerializer.SerializeToElement(
-                    new { invocationId = "prior-invocation" }
-                )
-            ),
-        };
-        var sessionPath = Path.Combine(
-            fixture.TandemHome,
-            "runs",
-            fixture.RunId.ToString("N"),
-            "sessions",
-            $"{BlockIds.Executor}.json"
-        );
-        Directory.CreateDirectory(Path.GetDirectoryName(sessionPath)!);
-        await File.WriteAllTextAsync(
-            sessionPath,
-            System.Text.Json.JsonSerializer.Serialize(
-                new
-                {
-                    invocationId = "prior-invocation",
-                    session = System.Text.Json.JsonSerializer.SerializeToElement(new { }),
-                }
-            )
-        );
-        var orphanTempPath = $"{sessionPath}.orphan.tmp";
-        await File.WriteAllTextAsync(orphanTempPath, "stale");
-        var invocationId = message.Runtime.NextInvocationId(BlockIds.Executor);
-        await new LifecycleReceiptStore(fixture.TandemHome).WriteAsync(
-            fixture.RunId,
-            invocationId,
-            BlockIds.Executor,
-            OutcomeKinds.PlannerRequested,
-            "Planner requested",
-            System.Text.Json.JsonSerializer.SerializeToElement(new { }),
-            CancellationToken.None
-        );
-        var block = new AgentBlock<DeliveryState>(
-            new AgentBlockConfig<DeliveryState>(
-                BlockIds.Executor,
-                "implementation",
-                "executor",
-                ["ask_planner"],
-                _ => "must not execute",
-                state => state.WorkspacePath,
-                _ => false,
-                LifecycleActionSetIdentity: "delivery",
-                SessionPolicy: ContinueSession
-            ),
-            new ScriptedChatClient(MakeTextResponse("must not execute")),
-            fixture.TandemHome,
-            Path.Combine(fixture.TandemHome, "must-not-spawn")
-        );
-
-        var output = await block.ExecuteAsync(message, CancellationToken.None);
-
-        output.LatestOutcome!.Kind.Should().Be(OutcomeKinds.PlannerRequested);
-        output.Runtime.AgentSessions.Should().NotContainKey(BlockIds.Executor);
-        File.Exists(sessionPath).Should().BeFalse();
-        File.Exists(orphanTempPath).Should().BeFalse();
     }
 
     [Fact]
@@ -626,15 +529,6 @@ public sealed class LifecycleMcpTests
                 System.Text.Json.JsonSerializer.SerializeToElement(true)
             ),
         };
-        var sessionPath = Path.Combine(
-            fixture.TandemHome,
-            "runs",
-            fixture.RunId.ToString("N"),
-            "sessions",
-            $"{BlockIds.Executor}.json"
-        );
-        Directory.CreateDirectory(Path.GetDirectoryName(sessionPath)!);
-        await File.WriteAllTextAsync(sessionPath, "{}");
         var block = new AgentBlock<DeliveryState>(
             new AgentBlockConfig<DeliveryState>(
                 BlockIds.Executor,
@@ -659,7 +553,6 @@ public sealed class LifecycleMcpTests
         await act.Should()
             .ThrowAsync<InvalidOperationException>()
             .WithMessage("*must explicitly select a lifecycle action set*");
-        File.Exists(sessionPath).Should().BeFalse();
     }
 
     [Fact]
@@ -680,24 +573,6 @@ public sealed class LifecycleMcpTests
             )
             .WithUsage(BlockIds.Executor, new AgentUsage(10, 5, 15, 100, 80, TimeSpan.Zero));
         message = message with { Runtime = runtime };
-        var sessionPath = Path.Combine(
-            fixture.TandemHome,
-            "runs",
-            fixture.RunId.ToString("N"),
-            "sessions",
-            $"{BlockIds.Executor}.json"
-        );
-        Directory.CreateDirectory(Path.GetDirectoryName(sessionPath)!);
-        await File.WriteAllTextAsync(
-            sessionPath,
-            System.Text.Json.JsonSerializer.Serialize(
-                new
-                {
-                    invocationId,
-                    session = System.Text.Json.JsonSerializer.SerializeToElement(new { }),
-                }
-            )
-        );
         var checkpoint = AgentCapabilities.Create<DeliveryState, WriteCheckpointRequest>(
             "write_checkpoint",
             "Write a checkpoint.",
@@ -761,7 +636,6 @@ public sealed class LifecycleMcpTests
         output.Runtime.AgentSessions.Should().NotContainKey(BlockIds.Executor);
         output.Runtime.AgentUsage.Should().NotContainKey(BlockIds.Executor);
         output.Runtime.InvocationCounts[BlockIds.Executor].Should().Be(1);
-        File.Exists(sessionPath).Should().BeFalse();
     }
 
     [Fact]

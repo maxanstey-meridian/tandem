@@ -2,7 +2,6 @@ namespace Tandem.Domain;
 
 public sealed record RunProjection(
     Guid RunId,
-    string DurableRunId,
     string CompositionIdentity,
     string PacketPath,
     string RepositoryPath,
@@ -11,7 +10,6 @@ public sealed record RunProjection(
     string? PinnedBaseSha,
     string? CandidateSha,
     string WorkspacePath,
-    PendingHumanRequest? PendingHumanRequest,
     string? PublishedBranch,
     DateTimeOffset StartedAt,
     DateTimeOffset UpdatedAt
@@ -19,7 +17,6 @@ public sealed record RunProjection(
 {
     public static RunProjection Initial(
         Guid runId,
-        string durableRunId,
         string compositionIdentity,
         string packetPath,
         string repositoryPath,
@@ -27,7 +24,6 @@ public sealed record RunProjection(
     ) =>
         new(
             runId,
-            durableRunId,
             compositionIdentity,
             packetPath,
             repositoryPath,
@@ -36,11 +32,8 @@ public sealed record RunProjection(
             PinnedBaseSha: null,
             CandidateSha: null,
             workspacePath,
-            PendingHumanRequest: null,
             PublishedBranch: null,
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow
         );
 }
-
-public sealed record PendingHumanRequest(string SourceBlockId, string Question, string Reason);

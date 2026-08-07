@@ -1,5 +1,8 @@
 # Support Sample And Consumer Cleanup Plan
 
+> Historical sample plan. Durable Task, scheduler, restart, and cross-process
+> continuation statements are superseded by `IN_PROCESS_RUNTIME_PLAN.md`.
+
 ## Objective
 
 Prove Tandem's complete non-coding author journey with a compiled, unprivileged

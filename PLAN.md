@@ -1,5 +1,9 @@
 # Tandem Pipeline Authoring
 
+> Historical implementation plan. Runtime durability, restart, scheduler, and
+> attach statements are superseded by `IN_PROCESS_RUNTIME_PLAN.md` and are not
+> current product contracts.
+
 ## Goal
 
 **Make Tandem an installable pipeline-authoring and execution library whose

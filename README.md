@@ -1,11 +1,11 @@
 # Tandem
 
-Tandem is a .NET library for building durable agentic pipelines that can run for
-minutes, hours, or days and continue after the host process restarts.
+Tandem is a .NET library for building typed agentic pipelines that live for the
+lifetime of the process that starts them.
 
 You write ordinary C# classes for work and compose their successors explicitly.
 Tandem builds that graph as a Microsoft Agent Framework workflow. MAF owns
-orchestration, durability, agent loops, sessions, and tool dispatch; authored
+orchestration, agent loops, sessions, and tool dispatch; authored
 pipeline code owns state, prompts, policies, capabilities, meaningful results,
 and routes.
 
@@ -21,7 +21,7 @@ implicit successor: every edge is declared with `Route`.
 ## Start With Songwriter
 
 [`samples/Tandem.Sample.Songwriter`](samples/Tandem.Sample.Songwriter) is the
-smallest complete authoring example. Its durable state is an immutable record.
+smallest complete authoring example. Its pipeline state is an immutable record.
 A default declarative agent is already a typed pipeline step:
 
 ```csharp
@@ -58,7 +58,7 @@ var complete = PipelineNodes.Complete<SongwriterState>("complete");
 
 The terminal preserves current state and produces standard success.
 
-Put semantic branch facts in durable state and route successful execution with a
+Put semantic branch facts in pipeline state and route successful execution with a
 state predicate:
 
 ```csharp
@@ -197,14 +197,14 @@ programming models:
   unconditional serial routes, and agent execution without workspace or runtime
   plumbing.
 - **Support** adds consumer-owned account lookup, typed state transitions, and a
-  durable typed customer request/response handoff.
+  typed customer request/response handoff.
 - **Debate** adds revision loops, explicit retained/reset sessions, a lifecycle
   action with a receipt-backed state transition, and teardown based on block
   evidence.
 - **Delivery** adds custom blocks, workspaces and mutation policy, checkpoints,
-  tools, verification commands, observations, and durable human handoff.
+  tools, verification commands, observations, and live human handoff.
 
-### Durable Support Handoff
+### Live Support Handoff
 
 Support declares one semantic interaction with state-first transformations:
 
@@ -217,8 +217,8 @@ var customerReply = PipelineNodes.WaitFor<SupportState, CustomerQuestion, Custom
 ```
 
 Composition routes to and from that interaction. Tandem privately expands it to
-MAF's request, port, and resume executors, saving and restoring the complete
-execution envelope around suspension.
+MAF's request, port, and resume executors, preserving the complete execution
+envelope while the live run waits asynchronously.
 
 ### Debate Sessions And Teardown
 
@@ -285,26 +285,30 @@ Run the included Delivery packet:
 dotnet run --project src/Tandem.Tool -- run examples/01-todo-api/packet.md
 ```
 
-Reconnect or publish a ready candidate:
+Publish a ready candidate:
 
 ```sh
-dotnet run --project src/Tandem.Tool -- attach <run-id>
 dotnet run --project src/Tandem.Tool -- publish <run-id> --branch tandem/my-change
 ```
 
-The Delivery host requires .NET 10, Docker, a Durable Task Scheduler, and an
-OpenAI-compatible model provider.
+Each `tandem run` process owns its workflow, agent sessions, and pending human
+requests. Human waits consume no blocked worker thread, but exiting the process
+destroys the run and it cannot be resumed or attached from another process.
+Independent `tandem run` processes continue independently.
+
+The Delivery host requires .NET 10 and an OpenAI-compatible model provider. It
+requires no scheduler, workflow database, daemon, or Docker runtime service.
 
 ## Repository
 
 - `src/Tandem`: authoring API and execution engine
 - `src/Tandem.Generators`: incremental source generator
 - `src/Tandem.Delivery`: advanced first-party acceptance consumer
-- `src/Tandem.Tool`: `run`, `attach`, and `publish` host
+- `src/Tandem.Tool`: process-owned `run` and standalone `publish` host
 - `samples/Tandem.Sample.Songwriter`: minimal progressive example
-- `samples/Tandem.Sample.Support`: durable customer-support handoff
+- `samples/Tandem.Sample.Support`: typed live customer-support handoff
 - `samples/Tandem.Sample.Debate`: loops, lifecycle actions, and teardown policy
-- `tests/Tandem.Tests`: unit, architecture, in-process, and durable tests
+- `tests/Tandem.Tests`: unit, architecture, and real in-process workflow tests
 
 See [Pipeline Authoring](docs/pipeline-authoring.md) for the complete API journey
 and [CONTRIBUTING.md](CONTRIBUTING.md) for architecture rules.

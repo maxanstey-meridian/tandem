@@ -1,15 +1,11 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using FluentAssertions;
-using Microsoft.Agents.AI.DurableTask.Workflows;
-using Microsoft.Agents.AI.Workflows;
-using Microsoft.DurableTask.Client;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Tandem.Domain;
+using Tandem.Infrastructure;
 using Tandem.Sample.Support;
-using Tandem.Tests.Durable;
 
 namespace Tandem.Tests.Composition;
 
@@ -106,6 +102,8 @@ public sealed class SupportCompositionTests
         output.State.FinalDisposition.Should().Be(disposition);
         output.LatestResult!.StepId.Should().Be(terminalStep);
         output.LatestResult.CaseId.Should().Be("Success");
+        output.Runtime.AgentSessions.Should().ContainKeys("support-classify", "support-resolve");
+        output.Runtime.AgentUsage.Should().ContainKeys("support-classify", "support-resolve");
         fixture.Lookup.ReceivedState!.Category.Should().Be("billing");
         fixture.Lookup.ReceivedState.AccountContext.Should().BeNull();
     }
@@ -122,37 +120,13 @@ public sealed class SupportCompositionTests
         CustomerReply reply
     )
     {
-        await using var run = await InProcessExecution.RunStreamingAsync(
-            PipelineMafBridge.GetWorkflow(pipeline),
-            input,
-            input.Runtime.RunId.ToString("N"),
+        return await new InProcessPipelineRunner().RunAsync(
+            pipeline,
+            input.Runtime.RunId,
+            input.State,
+            new SupportRequestHandler(reply),
             CancellationToken.None
         );
-        PipelineMessage<SupportState>? output = null;
-        await foreach (var evt in run.WatchStreamAsync(CancellationToken.None))
-        {
-            if (evt is RequestInfoEvent request)
-            {
-                request.Request.IsDataOfType<CustomerQuestion>().Should().BeTrue();
-                await run.SendResponseAsync(request.Request.CreateResponse(reply));
-            }
-            else if (
-                evt is WorkflowOutputEvent workflowOutput
-                && workflowOutput.Is<PipelineMessage<SupportState>>()
-            )
-            {
-                output = workflowOutput.As<PipelineMessage<SupportState>>();
-            }
-            else if (evt is WorkflowErrorEvent error)
-            {
-                throw error.Exception ?? new InvalidOperationException("Support workflow failed.");
-            }
-            else if (evt is ExecutorFailedEvent failed)
-            {
-                throw failed.Data ?? new InvalidOperationException("Support executor failed.");
-            }
-        }
-        return output ?? throw new InvalidOperationException("Support produced no output.");
     }
 
     internal sealed class Fixture : IDisposable
@@ -226,6 +200,25 @@ public sealed class SupportCompositionTests
         }
     }
 
+    private sealed class SupportRequestHandler(CustomerReply reply) : IExternalRequestHandler
+    {
+        public ValueTask<ExternalRequestAnswer> WaitAsync(
+            PendingExternalRequest request,
+            CancellationToken cancellationToken
+        )
+        {
+            request.RequestType.Should().Be(typeof(CustomerQuestion).FullName);
+            request.Payload.Deserialize<CustomerQuestion>().Should().NotBeNull();
+            return ValueTask.FromResult(
+                new ExternalRequestAnswer(
+                    request.RunId,
+                    request.RequestId,
+                    JsonSerializer.SerializeToElement(reply)
+                )
+            );
+        }
+    }
+
     internal sealed class ScriptedChatClient(params string[] responses) : IChatClient
     {
         private readonly Queue<string> _responses = new(responses);
@@ -257,65 +250,5 @@ public sealed class SupportCompositionTests
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
 
         public void Dispose() { }
-    }
-}
-
-[Collection("Durable Task Scheduler")]
-public sealed class SupportDurableCompositionTests
-{
-    private static readonly JsonSerializerOptions _jsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        Converters = { new JsonStringEnumConverter() },
-    };
-
-    [Fact]
-    public async Task Support_SuspendsResumesAndCompletesAsClosedGenericMessage()
-    {
-        DtsFixture.EnsureReachable();
-        using var fixture = SupportCompositionTests.Fixture.Create();
-        var input = SupportCompositionTests.Input();
-        var workflow = PipelineMafBridge.GetWorkflow(fixture.Pipeline);
-        var runId = "support-durable-" + Guid.NewGuid().ToString("N");
-
-        await using var host = await DurableHost.StartAsync(options =>
-            options.AddWorkflow(workflow)
-        );
-        var run = (IAwaitableWorkflowRun)await host.WorkflowClient.RunAsync(workflow, input, runId);
-        for (var i = 0; i < 60 && fixture.Lookup.ReceivedState is null; i++)
-        {
-            await Task.Delay(250, CancellationToken.None);
-        }
-
-        fixture.Lookup.ReceivedState.Should().NotBeNull("execution must reach the request port");
-        var pending = await host.DurableTaskClient.GetInstanceAsync(
-            runId,
-            getInputsAndOutputs: false,
-            CancellationToken.None
-        );
-        pending.Should().NotBeNull();
-
-        await host.DurableTaskClient.RaiseEventAsync(
-            runId,
-            SupportIds.CustomerReply,
-            JsonSerializer.Serialize(new CustomerReply("Confirmed fixed.", true), _jsonOptions),
-            CancellationToken.None
-        );
-        var output = await run.WaitForCompletionAsync<PipelineMessage<SupportState>>();
-        var completed = await host.DurableTaskClient.WaitForInstanceCompletionAsync(
-            runId,
-            getInputsAndOutputs: true,
-            CancellationToken.None
-        );
-
-        output.Should().NotBeNull();
-        output!.GetType().Should().Be<PipelineMessage<SupportState>>();
-        output.State.CustomerId.Should().Be(input.State.CustomerId);
-        output.State.CustomerReply.Should().Be("Confirmed fixed.");
-        output.State.FinalDisposition.Should().Be("closed");
-        output.LatestResult!.StepId.Should().Be("support-close");
-        output.LatestResult.CaseId.Should().Be("Success");
-        completed!.RuntimeStatus.Should().Be(OrchestrationRuntimeStatus.Completed);
     }
 }

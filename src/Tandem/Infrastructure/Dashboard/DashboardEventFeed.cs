@@ -89,7 +89,7 @@ public sealed class DashboardEventFeed(string runDirectory)
             catch (JsonException)
             {
                 // Projection events are observational. A malformed historical
-                // line must not terminate or detach the durable run.
+                // line must not terminate the live run.
             }
         }
 

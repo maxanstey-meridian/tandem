@@ -1,5 +1,9 @@
 # Tandem Public SDK Refactor
 
+> Historical authoring refactor plan. Runtime durability and restart statements
+> are superseded by `IN_PROCESS_RUNTIME_PLAN.md`; the current authoring model runs
+> in one process and does not resume after exit.
+
 ## Objective
 
 Tandem provides one progressive pipeline-authoring SDK over MAF.

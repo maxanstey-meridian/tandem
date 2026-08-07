@@ -8,7 +8,7 @@ pipelines are unprivileged consumers. The runtime vocabulary is:
 - **Step**: one executable pipeline operation.
 - **Stage**: one deterministic step.
 - **Agent**: one model-backed step.
-- **State**: composition-owned durable lifecycle facts.
+- **State**: composition-owned lifecycle facts for the live run.
 - **Runtime**: composition-neutral session, usage, invocation, and run bookkeeping.
 - **Outcome**: the result emitted by a block.
 - **Condition**: a predicate over the typed pipeline message and latest outcome.
@@ -38,8 +38,8 @@ Keep these ownership boundaries explicit:
   transitions. Tandem owns receipt and transport identity, serialization,
   registration, persistence, and replay.
 - Steps own operations, not orchestration.
-- Durable context records facts; it does not hide routing logic.
-- Microsoft Agent Framework owns workflow execution, durability, sessions,
+- Pipeline state records facts; it does not hide routing logic.
+- Microsoft Agent Framework owns workflow execution, sessions,
   model loops, tool dispatch, and workflow events.
 - Tandem owns product composition, blocks, conditions, policies, Git and
   verification operations, event projection, and operator interfaces.
@@ -84,7 +84,7 @@ Use a semantic name followed by one role suffix: `Agent`, `Stage`, `Port`,
 
 The generator infers pass-through, state-updating, or standard `Outcome<TState>`
 authoring from `ExecuteAsync`. Use only standard `Success` and `Failed` as step
-outcomes; put domain decisions in typed durable state and route with state
+  outcomes; put domain decisions in typed pipeline state and route with state
 predicates. Do not introduce pipeline-wide ad hoc string results, custom result
 unions, or vague `Manager`, `Service`, `Processor`, `Handler`, `Provider`, or
 `Helper` names where a precise pipeline role exists.
@@ -108,13 +108,13 @@ The design is healthy when composition changes alone can:
 - route a failed command to a configured remediation block;
 - contribute prompts to selected agents;
 - rotate sessions or promote models under configured conditions; and
-- preserve accepted side effects across process restart.
+- preserve accepted side effects across live agent turns.
 
 The decisive rule is:
 
 ```text
 The configured pipeline is the lifecycle.
-The runtime only executes it durably.
+The runtime executes it in the initiating process.
 ```
 
 ## Development
@@ -130,4 +130,4 @@ dotnet tool restore
 task check
 ```
 
-Durable tests use the scheduler emulator documented in [README.md](README.md).
+Runtime tests use real MAF in-process execution rather than a mocked event loop.

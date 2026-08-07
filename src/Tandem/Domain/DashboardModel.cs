@@ -41,7 +41,6 @@ public sealed record HumanRequestView(string SourceBlockId, string Question, str
 public sealed record DashboardModel
 {
     public string RunId { get; init; } = "";
-    public string DurableRunId { get; init; } = "";
     public string PacketPath { get; init; } = "";
     public string RepositoryPath { get; init; } = "";
     public string WorkspacePath { get; init; } = "";
@@ -84,9 +83,6 @@ public static class DashboardReducer
                     UpdatedAt = evt.Timestamp,
                 };
             }
-
-            case EventKinds.RunResumed:
-                return model with { Status = RunStatus.Running, UpdatedAt = evt.Timestamp };
 
             case EventKinds.RunReady:
             {

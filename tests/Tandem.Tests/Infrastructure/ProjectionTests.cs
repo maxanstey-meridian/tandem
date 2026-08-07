@@ -2,6 +2,7 @@ using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows;
 using Tandem.Domain;
+using Tandem.Infrastructure;
 using Tandem.Infrastructure.Projection;
 
 namespace Tandem.Tests.Infrastructure;
@@ -170,7 +171,6 @@ public sealed class RunProjectionStoreTests
             var store = new RunProjectionStore(dir);
             var projection = RunProjection.Initial(
                 Guid.CreateVersion7(),
-                "durable-run-123",
                 "delivery",
                 "/path/to/packet.md",
                 "/path/to/repo",
@@ -182,7 +182,6 @@ public sealed class RunProjectionStoreTests
             var read = store.Read();
             read.Should().NotBeNull();
             read!.Status.Should().Be(Tandem.Domain.RunStatus.Running);
-            read.DurableRunId.Should().Be("durable-run-123");
             read.PacketPath.Should().Be("/path/to/packet.md");
         }
         finally
@@ -204,9 +203,9 @@ public sealed class RunProjectionStoreTests
             var store = new RunProjectionStore(dir);
             var runId = Guid.CreateVersion7();
 
-            await store.WriteAsync(RunProjection.Initial(runId, "dr-1", "delivery", "p", "r", "w"));
+            await store.WriteAsync(RunProjection.Initial(runId, "delivery", "p", "r", "w"));
             await store.WriteAsync(
-                RunProjection.Initial(runId, "dr-1", "delivery", "p", "r", "w") with
+                RunProjection.Initial(runId, "delivery", "p", "r", "w") with
                 {
                     Status = Tandem.Domain.RunStatus.Ready,
                     CandidateSha = "abc123",
@@ -236,7 +235,7 @@ public sealed class RunProjectionStoreTests
             var store = new RunProjectionStore(dir);
 
             await store.WriteAsync(
-                RunProjection.Initial(Guid.CreateVersion7(), "dr-1", "delivery", "p", "r", "w")
+                RunProjection.Initial(Guid.CreateVersion7(), "delivery", "p", "r", "w")
             );
 
             File.Exists(Path.Combine(dir, "run.json.tmp")).Should().BeFalse();
@@ -274,47 +273,37 @@ public sealed class RunProjectionStoreTests
 public sealed class RunEventProjectorTests
 {
     [Fact]
-    public async Task HumanInteractionRequest_ProjectsPendingHumanRequest()
+    public async Task RegisteredHumanInteraction_ProjectsPendingHumanRequest()
     {
         var (eventStore, observer, cleanup) = CreateObserver();
         try
         {
-            var interaction = PipelineNodes.WaitFor<DeliveryState, HumanQuestion, HumanAnswer>(
-                "HumanInput",
-                HumanInteraction.BuildQuestion,
-                HumanInteraction.ApplyAnswer,
-                observer
-            );
-            var binding = interaction.Request.Descriptor.Bind();
-            var workflow = new WorkflowBuilder(binding)
-                .WithName("human-question-projection")
-                .WithOutputFrom(binding)
-                .Build();
-            var message = CreateMessage(
-                new BlockOutcome(
-                    "human-input-required",
-                    BlockIds.Planner,
-                    "question",
-                    JsonSerializer.SerializeToElement(
-                        new { humanQuestion = "Which pattern?", reason = "ambiguous" }
-                    )
-                )
-            );
-            message = message with
-            {
-                State = message.State with
+            var question = new HumanQuestion(BlockIds.Planner, "Which pattern?", "ambiguous");
+            await using var broker = new InMemoryExternalRequestBroker(
+                async (request, cancellationToken) =>
                 {
-                    PlannerDecision = new PlannerDecision(
-                        PlannerDecisionValue.NeedsHuman,
-                        "ambiguous",
-                        [],
-                        [],
-                        "Which pattern?"
+                    var pendingQuestion = request.Payload.Deserialize<HumanQuestion>()!;
+                    await new RunEventProjector(
+                        request.RunId,
+                        request.PortId,
+                        eventStore
+                    ).EmitHumanRequestedAsync(pendingQuestion, cancellationToken);
+                }
+            );
+            using var cancellation = new CancellationTokenSource();
+            var wait = broker
+                .WaitAsync(
+                    new PendingExternalRequest(
+                        Guid.CreateVersion7(),
+                        Guid.NewGuid().ToString("N"),
+                        "HumanInput",
+                        typeof(HumanQuestion).FullName!,
+                        typeof(HumanAnswer).FullName!,
+                        JsonSerializer.SerializeToElement(question)
                     ),
-                },
-            };
-
-            await RunAsync<PipelineMessage<DeliveryState>, HumanQuestion>(workflow, message);
+                    cancellation.Token
+                )
+                .AsTask();
 
             var model = DashboardReducer.FromEvents(await eventStore.ReadAllAsync());
             model
@@ -322,6 +311,9 @@ public sealed class RunEventProjectorTests
                 .BeEquivalentTo(
                     new HumanRequestView(BlockIds.Planner, "Which pattern?", "ambiguous")
                 );
+            await cancellation.CancelAsync();
+            var act = async () => await wait;
+            await act.Should().ThrowAsync<OperationCanceledException>();
         }
         finally
         {

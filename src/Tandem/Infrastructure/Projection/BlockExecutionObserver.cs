@@ -42,11 +42,6 @@ public sealed class RunEventBlockExecutionObserver(Func<string, RunEventProjecto
         CancellationToken cancellationToken
     )
     {
-        if (output is HumanQuestion question)
-        {
-            await projectorFactory(blockId).EmitHumanRequestedAsync(question, cancellationToken);
-        }
-
         if (input is HumanAnswer answer && output is IOutcomeBearingMessage answeredMessage)
         {
             var sourceBlockId = ReadString(answeredMessage.LatestOutcome?.Payload, "sourceBlockId");

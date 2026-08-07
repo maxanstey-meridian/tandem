@@ -1,9 +1,7 @@
 using System.Text.Json;
 using FluentAssertions;
-using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Agents.AI.Workflows;
 using Tandem.Domain;
-using Tandem.Tests.Durable;
 
 namespace Tandem.Tests.Composition;
 
@@ -232,43 +230,6 @@ public sealed class GeneratedAuthoringVerticalTests
         failure.Should().BeNull();
         output.Should().NotBeNull();
         return output!;
-    }
-}
-
-[Collection("Durable Task Scheduler")]
-public sealed class GeneratedAuthoringDurableTests
-{
-    [Fact]
-    public async Task GeneratedResultRoute_ExecutesDurablyAsClosedGenericMessage()
-    {
-        DtsFixture.EnsureReachable();
-        var increment = new IncrementStage();
-        var complete = new CompleteStage();
-        var pipeline = TandemWorkflow
-            .Start(at: increment, name: "generated-authoring-durable")
-            .Route(on: increment, to: complete, label: "incremented")
-            .Build(complete);
-        var input = new PipelineMessage<CounterState>(
-            PipelineRuntime.Create(Guid.CreateVersion7()),
-            new CounterState(0)
-        );
-
-        await using var host = await DurableHost.StartAsync(options =>
-            options.AddWorkflow(pipeline.Workflow)
-        );
-        var run = (IAwaitableWorkflowRun)
-            await host.WorkflowClient.RunAsync(
-                pipeline.Workflow,
-                input,
-                "generated-authoring-durable-" + Guid.NewGuid().ToString("N")
-            );
-        var output = await run.WaitForCompletionAsync<PipelineMessage<CounterState>>();
-
-        output.Should().NotBeNull();
-        output!.State.Count.Should().Be(2);
-        output
-            .LatestResult.Should()
-            .Be(new PipelineResult("complete", "Success", output.LatestResult!.Payload));
     }
 }
 

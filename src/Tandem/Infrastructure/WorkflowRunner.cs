@@ -1,61 +1,179 @@
+using System.Text.Json;
 using Microsoft.Agents.AI.Workflows;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Tandem.Domain;
 
 namespace Tandem.Infrastructure;
 
-internal sealed class WorkflowRunner
+internal sealed record PendingExternalRequest(
+    Guid RunId,
+    string RequestId,
+    string PortId,
+    string RequestType,
+    string ResponseType,
+    JsonElement Payload
+);
+
+internal sealed record ExternalRequestAnswer(Guid RunId, string RequestId, JsonElement Payload);
+
+internal interface IExternalRequestHandler
 {
-    public async Task<BlockResult> RunAsync(
-        RunContext context,
-        string apiKey,
-        Func<WorkflowEvent, Task> onEvent,
+    public ValueTask<ExternalRequestAnswer> WaitAsync(
+        PendingExternalRequest request,
+        CancellationToken cancellationToken
+    );
+}
+
+internal sealed class InProcessPipelineRunner
+{
+    public Task<PipelineMessage<TState>> RunAsync<TState>(
+        Pipeline pipeline,
+        Guid runId,
+        TState initialState,
+        CancellationToken cancellationToken
+    ) =>
+        RunAsync(pipeline, runId, initialState, RejectExternalRequests.Instance, cancellationToken);
+
+    public async Task<PipelineMessage<TState>> RunAsync<TState>(
+        Pipeline pipeline,
+        Guid runId,
+        TState initialState,
+        IExternalRequestHandler requests,
         CancellationToken cancellationToken
     )
     {
-        var executor = new ImplementationBlockExecutor(apiKey);
-        var binding = executor.BindExecutor();
-        var workflow = new WorkflowBuilder(binding).WithOutputFrom(binding).Build();
+        ArgumentNullException.ThrowIfNull(pipeline);
+        ArgumentNullException.ThrowIfNull(initialState);
+        ArgumentNullException.ThrowIfNull(requests);
 
-        var sessionId = context.RunId.ToString("N");
+        var initialMessage = new PipelineMessage<TState>(
+            PipelineRuntime.Create(runId),
+            initialState
+        );
         await using var run = await InProcessExecution.RunStreamingAsync(
-            workflow,
-            context,
-            sessionId,
+            PipelineMafBridge.GetWorkflow(pipeline),
+            initialMessage,
+            runId.ToString("N"),
             cancellationToken
         );
 
-        BlockResult? result = null;
-        Exception? failure = null;
-
-        await foreach (var evt in run.WatchStreamAsync(cancellationToken))
+        PipelineMessage<TState>? output = null;
+        try
         {
-            await onEvent(evt);
+            await foreach (var evt in run.WatchStreamAsync(cancellationToken))
+            {
+                switch (evt)
+                {
+                    case WorkflowErrorEvent error:
+                        throw new WorkflowRunException(
+                            "Workflow execution failed.",
+                            error.Exception
+                        );
+                    case ExecutorFailedEvent failed:
+                        throw new WorkflowRunException("Workflow executor failed.", failed.Data);
+                    case WorkflowOutputEvent workflowOutput
+                        when workflowOutput.Is<PipelineMessage<TState>>():
+                        output = workflowOutput.As<PipelineMessage<TState>>();
+                        break;
+                    case RequestInfoEvent request:
+                        await SendResponseAsync(
+                            run,
+                            runId,
+                            request.Request,
+                            requests,
+                            cancellationToken
+                        );
+                        break;
+                }
+            }
 
-            if (evt is WorkflowErrorEvent errorEvent)
-            {
-                failure = errorEvent.Exception;
-            }
-            else if (evt is ExecutorFailedEvent failedEvent)
-            {
-                failure = failedEvent.Data;
-            }
-            else if (evt is WorkflowOutputEvent output && output.Is<BlockResult>())
-            {
-                result = output.As<BlockResult>();
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        catch
+        {
+            await CancelQuietlyAsync(run);
+            throw;
         }
 
-        if (failure is not null)
+        return output
+            ?? throw new WorkflowRunException(
+                "Workflow completed without producing a pipeline output."
+            );
+    }
+
+    private static async ValueTask SendResponseAsync(
+        StreamingRun run,
+        Guid runId,
+        ExternalRequest request,
+        IExternalRequestHandler requests,
+        CancellationToken cancellationToken
+    )
+    {
+        var requestType = ResolveType(request.PortInfo.RequestType);
+        if (!request.TryGetDataAs(requestType, out var requestData))
         {
-            throw new WorkflowRunException("Workflow execution failed.", failure);
+            throw new InvalidOperationException(
+                $"Request '{request.RequestId}' did not contain the declared request type "
+                    + $"'{request.PortInfo.RequestType.TypeName}'."
+            );
         }
 
-        if (result is null)
+        var pending = new PendingExternalRequest(
+            runId,
+            request.RequestId,
+            request.PortInfo.PortId,
+            request.PortInfo.RequestType.TypeName,
+            request.PortInfo.ResponseType.TypeName,
+            JsonSerializer.SerializeToElement(requestData, requestType)
+        );
+        var answer = await requests.WaitAsync(pending, cancellationToken);
+        if (
+            answer.RunId != runId
+            || !string.Equals(answer.RequestId, request.RequestId, StringComparison.Ordinal)
+        )
         {
-            throw new WorkflowRunException("Workflow completed without producing a block result.");
+            throw new InvalidOperationException(
+                $"Answer for run/request '{answer.RunId:N}/{answer.RequestId}' cannot satisfy "
+                    + $"pending run/request '{runId:N}/{request.RequestId}'."
+            );
         }
 
-        return result;
+        var responseType = ResolveType(request.PortInfo.ResponseType);
+        var response =
+            JsonSerializer.Deserialize(answer.Payload, responseType)
+            ?? throw new InvalidOperationException(
+                $"Answer for request '{request.RequestId}' produced a null response."
+            );
+        await run.SendResponseAsync(request.CreateResponse(response));
+    }
+
+    private static Type ResolveType(TypeId typeId) =>
+        Type.GetType($"{typeId.TypeName}, {typeId.AssemblyName}", throwOnError: true)!;
+
+    private static async ValueTask CancelQuietlyAsync(StreamingRun run)
+    {
+        try
+        {
+            await run.CancelRunAsync();
+        }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
+    }
+
+    private sealed class RejectExternalRequests : IExternalRequestHandler
+    {
+        public static RejectExternalRequests Instance { get; } = new();
+
+        public ValueTask<ExternalRequestAnswer> WaitAsync(
+            PendingExternalRequest request,
+            CancellationToken cancellationToken
+        ) =>
+            ValueTask.FromException<ExternalRequestAnswer>(
+                new InvalidOperationException(
+                    $"Workflow requested external input from port '{request.PortId}', but no "
+                        + "external request handler was provided."
+                )
+            );
     }
 }
 

@@ -1,15 +1,12 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using FluentAssertions;
-using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.DurableTask.Client;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Tandem.Actions;
 using Tandem.Domain;
 using Tandem.Sample.Debate;
-using Tandem.Tests.Durable;
 using Tandem.Tests.Infrastructure;
 
 namespace Tandem.Tests.Composition;
@@ -281,39 +278,5 @@ public sealed class DebateCompositionTests
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
 
         public void Dispose() { }
-    }
-}
-
-[Collection("Durable Task Scheduler")]
-public sealed class DebateDurableCompositionTests
-{
-    [Fact]
-    public async Task Debate_ExecutesDurablyAsClosedGenericPipelineMessage()
-    {
-        DtsFixture.EnsureReachable();
-        using var fixture = await LifecycleFixture.CreateAsync();
-        var clients = DebateCompositionTests.ScriptedClients.Create();
-        var pipeline = DebateCompositionTests.Build(fixture, clients);
-        var input = DebateCompositionTests.Input(fixture);
-        await DebateCompositionTests.WriteVerdictReceiptAsync(fixture, input);
-        var workflow = PipelineMafBridge.GetWorkflow(pipeline);
-        var runId = "debate-durable-" + Guid.NewGuid().ToString("N");
-
-        await using var host = await DurableHost.StartAsync(options =>
-            options.AddWorkflow(workflow)
-        );
-        var run = (IAwaitableWorkflowRun)await host.WorkflowClient.RunAsync(workflow, input, runId);
-        var output = await run.WaitForCompletionAsync<PipelineMessage<DebateState>>();
-        var instance = await host.DurableTaskClient.WaitForInstanceCompletionAsync(
-            runId,
-            getInputsAndOutputs: true,
-            CancellationToken.None
-        );
-
-        output.Should().NotBeNull();
-        output!.State.Verdict.Should().Be(new DebateVerdict("Affirmed", "Already accepted."));
-        output.GetType().Should().Be<PipelineMessage<DebateState>>();
-        instance!.RuntimeStatus.Should().Be(OrchestrationRuntimeStatus.Completed);
-        instance.SerializedOutput.Should().Contain("Already accepted.");
     }
 }

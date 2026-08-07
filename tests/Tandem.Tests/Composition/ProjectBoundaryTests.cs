@@ -340,7 +340,7 @@ public sealed class ProjectBoundaryTests
     }
 
     [Fact]
-    public void Tool_PersistsCompositionMetadataBeforePublishingAnAttachableRunId()
+    public void Tool_UsesOneProcessOwnedRuntimeAndPersistsPublicationMetadata()
     {
         var source = File.ReadAllText(Path("src/Tandem.Tool/Program.cs"));
         var persistence = source.IndexOf("RunProjection.Initial(", StringComparison.Ordinal);
@@ -351,9 +351,10 @@ public sealed class ProjectBoundaryTests
 
         persistence.Should().BeGreaterThan(-1);
         publication.Should().BeGreaterThan(persistence);
-        source
-            .Should()
-            .Contain("projection.CompositionIdentity != DeliveryLifecycleActions.Identity");
+        source.Should().Contain("new InProcessPipelineRunner()");
+        source.Should().NotContain("attachCommand");
+        source.Should().NotContain("DurableTask");
+        source.Should().NotContain("TaskHub");
     }
 
     private static IReadOnlyList<string> ProjectReferences(string relativePath) =>

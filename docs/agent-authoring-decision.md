@@ -15,7 +15,7 @@ receipts, interactions, and projection.
 - `WithMessage` receives `TState`.
 - Validated typed output application is `Func<TState, TOutput, TState>`.
 - A step produces only canonical `Success` or `Failed` outcomes.
-- Domain decisions are durable facts in `TState` and routes use state predicates.
+- Domain decisions are facts in `TState` and routes use state predicates.
 - Pass-through and state-returning stages produce canonical `Success`.
 - Unhandled canonical `Failed` terminates with failed disposition.
 - Exceptions remain faults and cancellation remains cancellation.

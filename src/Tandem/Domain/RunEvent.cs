@@ -38,7 +38,6 @@ public sealed record RunEvent(
 public static class EventKinds
 {
     public const string RunStarted = "run.started";
-    public const string RunResumed = "run.resumed";
     public const string RunReady = "run.ready";
     public const string RunFailed = "run.failed";
     public const string RunPublished = "run.published";

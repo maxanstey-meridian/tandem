@@ -1,17 +1,17 @@
 # Pipeline Authoring
 
 Tandem exposes one progressive authoring model over Microsoft Agent Framework.
-Pipeline packages own typed durable state, steps, prompts, policies, capabilities,
+Pipeline packages own typed state, steps, prompts, policies, capabilities,
 semantic results, and explicit routes. Tandem generates adapters and owns the
-execution envelope, durability, sessions, agent loops, tool dispatch, suspension,
-and replay without exposing MAF to consumers.
+execution envelope, sessions, agent loops, tool dispatch, and live suspension
+without exposing MAF to consumers.
 
 Use the compiled examples in this order:
 
 1. [`Tandem.Sample.Songwriter`](../samples/Tandem.Sample.Songwriter) for the
    minimal step, agent, branch, loop, and composition model.
 2. [`Tandem.Sample.Support`](../samples/Tandem.Sample.Support) for deterministic
-   ports and durable typed request/response handoff.
+   ports and typed request/response handoff.
 3. [`Tandem.Sample.Debate`](../samples/Tandem.Sample.Debate) for sessions,
    lifecycle actions, receipts, and teardown.
 4. [`Tandem.Delivery`](../src/Tandem.Delivery) for custom blocks, workspace,
@@ -20,7 +20,7 @@ Use the compiled examples in this order:
 ## Author Journey
 
 1. Reference `Tandem` and add `Tandem.Generators` as an analyzer.
-2. Define one immutable, serializable `<Name>State` containing durable facts,
+2. Define one immutable, serializable `<Name>State` containing lifecycle facts,
    never services, framework contexts, or a mutable state bag.
 3. Implement each generated step as a partial class marked with
    `[PipelineStage("stable-id")]`.
@@ -31,8 +31,8 @@ Use the compiled examples in this order:
 6. Put executable instances in a DI-constructed `<Name>Steps` record or factory.
 7. Declare every successor in `<Name>Composition` with `Route`; fluent order does
    not imply edges.
-8. Test inspection, serialization, in-process execution, and durable execution
-   for the capabilities the pipeline uses.
+8. Test inspection, serialization, and real in-process execution for the
+   capabilities the pipeline uses.
 
 ## Inferred ExecuteAsync Forms
 
@@ -57,7 +57,7 @@ var complete = PipelineNodes.Complete<SongwriterState>("complete");
 ValueTask<TState> ExecuteAsync(TState state, CancellationToken cancellationToken)
 ```
 
-Completion replaces only durable state with the returned value and produces
+Completion replaces only pipeline state with the returned value and produces
 standard success. The generated step has no outcome selectors. Support's
 compiled deterministic stage is:
 
@@ -122,7 +122,7 @@ undeclared execution faults. Cancellation is cancellation. Neither is a declared
 
 ### Domain Branches
 
-Domain decisions are durable state facts, not additional step outcome types.
+Domain decisions are pipeline state facts, not additional step outcome types.
 Songwriter's lint step records its decision in state:
 
 ```csharp
@@ -172,10 +172,10 @@ The callbacks above are state-first:
 - `AgentSessionPolicy<TState>` accepts `TState`.
 - `WithWorkspace` accepts state-first path and mutation predicates.
 - ordinary `Route` predicates accept `Func<TState, bool>`.
-- durable request creation and response application are state-first.
+- request creation and response application are state-first.
 
 Definitions are immutable DI-owned configuration. Tandem binds live updates by
-durable run ID during execution; definitions capture no pipeline build or run.
+run ID during execution; definitions capture no pipeline build or run.
 
 Agent output transitions put semantic decisions in state. Infrastructure failure
 returns canonical `Failed`; composition does not reinterpret it as a domain branch
@@ -230,7 +230,7 @@ nodes are not generated steps:
 `RouteWithContext` is the explicit advanced variant for predicates that genuinely
 need `PipelineMessage<TState>`. Do not use it merely to read state.
 
-## Durable Request Handoffs
+## Live Request Handoffs
 
 Support creates a typed request handoff with the compiled API:
 
@@ -250,8 +250,9 @@ Func<TState, TResponse, TState> applyResponse
 ```
 
 Composition sees one semantic handoff. Tandem privately expands it into MAF's
-request, port, and resume executors, restores the execution envelope, applies the
-response transition, and records resume evidence.
+request, port, and resume executors, preserves the execution envelope, applies the
+response transition, and records continuation evidence. The wait is asynchronous
+and lives only as long as the initiating process.
 
 Support routes after resume with state-first predicates:
 
@@ -328,7 +329,7 @@ This is advanced block integration, not the default shape for ordinary stages.
 
 - Songwriter: simple state, state-updating steps, agents, state-owned branches,
   unconditional routes, and a review loop.
-- Support: consumer-owned deterministic I/O and durable typed suspension/resume.
+- Support: consumer-owned deterministic I/O and typed live suspension/continuation.
 - Debate: revision sessions, lifecycle actions and receipts, and evidence-aware
   teardown.
 - Delivery: custom blocks, workspace mutation policy, checkpoints, tools,
