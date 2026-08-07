@@ -55,7 +55,8 @@ public sealed class PipelineMessageSerializationTests
                 "ready",
                 JsonSerializer.SerializeToElement(new { candidate = "candidate-sha" }),
                 TimeSpan.FromSeconds(3)
-            )
+            ),
+            Disposition: PipelineRunDisposition.Failed
         );
 
         var json = JsonSerializer.Serialize(message);
@@ -76,6 +77,7 @@ public sealed class PipelineMessageSerializationTests
                         .Excluding(candidate => candidate.ImplementationReport)
             );
         roundTrip.LatestOutcome!.Kind.Should().Be(message.LatestOutcome!.Kind);
+        roundTrip.Disposition.Should().Be(PipelineRunDisposition.Failed);
         roundTrip.LatestOutcome.BlockId.Should().Be(message.LatestOutcome.BlockId);
         roundTrip.LatestOutcome.Summary.Should().Be(message.LatestOutcome.Summary);
         JsonElement

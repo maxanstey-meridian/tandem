@@ -90,7 +90,7 @@ public sealed class HumanSuspensionProofTests
                     to: delivery.ApplyHumanAnswer,
                     label: "answer received"
                 )
-                .Route(
+                .RouteWithContext(
                     when: message =>
                         message.LatestOutcome?.Payload.GetProperty("sourceBlockId").GetString()
                         == BlockIds.Planner,

@@ -1,6 +1,3 @@
-using System.Text.Json;
-using Tandem.Domain;
-
 namespace Tandem.Delivery;
 
 public sealed class DeliveryComposition(DeliveryStepsFactory stepsFactory)
@@ -44,6 +41,7 @@ public sealed class DeliveryComposition(DeliveryStepsFactory stepsFactory)
                 to: delivery.FailRun,
                 label: "unexpected outcome"
             )
+            .Route(on: delivery.Executor.Result.Failed, to: delivery.FailRun, label: "agent failed")
             .Route(
                 on: delivery.Planner.Result.Proceed,
                 to: delivery.Executor,
@@ -60,6 +58,7 @@ public sealed class DeliveryComposition(DeliveryStepsFactory stepsFactory)
                 to: delivery.FailRun,
                 label: "unexpected outcome"
             )
+            .Route(on: delivery.Planner.Result.Failed, to: delivery.FailRun, label: "agent failed")
             .Route(
                 on: delivery.CaptureCandidate.Result.Captured,
                 when: HasVerificationCommands,
@@ -119,6 +118,7 @@ public sealed class DeliveryComposition(DeliveryStepsFactory stepsFactory)
                 to: delivery.FailRun,
                 label: "unexpected outcome"
             )
+            .Route(on: delivery.Reviewer.Result.Failed, to: delivery.FailRun, label: "agent failed")
             .Route(
                 from: delivery.HumanQuestion,
                 to: delivery.HumanInput,
@@ -150,30 +150,24 @@ public sealed class DeliveryComposition(DeliveryStepsFactory stepsFactory)
             .Build(delivery.CompleteRun, delivery.FailRun);
     }
 
-    private static bool HasVerificationCommands(PipelineMessage<DeliveryState> msg) =>
-        msg.State.Packet.Verification.Count > 0;
+    private static bool HasVerificationCommands(DeliveryState state) =>
+        state.Packet.Verification.Count > 0;
 
-    private static bool NoVerificationCommands(PipelineMessage<DeliveryState> msg) =>
-        msg.State.Packet.Verification.Count == 0;
+    private static bool NoVerificationCommands(DeliveryState state) =>
+        state.Packet.Verification.Count == 0;
 
-    private static bool HasRemainingCommands(PipelineMessage<DeliveryState> msg) =>
-        msg.State.VerificationIndex < msg.State.Packet.Verification.Count;
+    private static bool HasRemainingCommands(DeliveryState state) =>
+        state.VerificationIndex < state.Packet.Verification.Count;
 
-    private static bool AllCommandsComplete(PipelineMessage<DeliveryState> msg) =>
-        msg.State.VerificationIndex >= msg.State.Packet.Verification.Count;
+    private static bool AllCommandsComplete(DeliveryState state) =>
+        state.VerificationIndex >= state.Packet.Verification.Count;
 
-    private static bool IsPlannerHumanAnswer(PipelineMessage<DeliveryState> message) =>
-        HumanAnswerSource(message) == BlockIds.Planner;
+    private static bool IsPlannerHumanAnswer(DeliveryState state) =>
+        state.HumanAnswerSourceBlockId == BlockIds.Planner;
 
-    private static bool IsReviewerHumanAnswer(PipelineMessage<DeliveryState> message) =>
-        HumanAnswerSource(message) == BlockIds.Reviewer;
+    private static bool IsReviewerHumanAnswer(DeliveryState state) =>
+        state.HumanAnswerSourceBlockId == BlockIds.Reviewer;
 
-    private static bool IsUnknownHumanAnswer(PipelineMessage<DeliveryState> message) =>
-        HumanAnswerSource(message) is not (BlockIds.Planner or BlockIds.Reviewer);
-
-    private static string? HumanAnswerSource(PipelineMessage<DeliveryState> message) =>
-        message.LatestOutcome?.Payload.TryGetProperty("sourceBlockId", out var source) == true
-        && source.ValueKind == JsonValueKind.String
-            ? source.GetString()
-            : null;
+    private static bool IsUnknownHumanAnswer(DeliveryState state) =>
+        state.HumanAnswerSourceBlockId is not (BlockIds.Planner or BlockIds.Reviewer);
 }

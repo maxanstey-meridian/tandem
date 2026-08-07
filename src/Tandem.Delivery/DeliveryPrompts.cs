@@ -5,9 +5,8 @@ namespace Tandem.Delivery;
 
 public static class DeliveryPrompts
 {
-    public static string BuildExecutorMessage(PipelineMessage<DeliveryState> message)
+    public static string BuildExecutorMessage(DeliveryState state)
     {
-        var state = message.State;
         var outcomes = string.Join(
             "\n",
             state.Packet.Outcomes.Select(o => $"- [{o.Id}] {o.Description}")
@@ -102,9 +101,8 @@ public static class DeliveryPrompts
             """;
     }
 
-    public static string BuildReviewerMessage(PipelineMessage<DeliveryState> message)
+    public static string BuildReviewerMessage(DeliveryState state)
     {
-        var state = message.State;
         var outcomes = string.Join(
             "\n",
             state.Packet.Outcomes.Select(o => $"- [{o.Id}] {o.Description}")

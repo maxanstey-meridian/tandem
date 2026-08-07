@@ -14,11 +14,11 @@ public static class PlannerDecisionPolicy
 
     public static StructuredOutputResult<DeliveryState> Parse(
         string response,
-        PipelineMessage<DeliveryState> message
+        DeliveryState state
     ) =>
         StructuredOutputPolicy.Parse(
             response,
-            message,
+            state,
             _jsonOptions,
             new PlannerDecisionValidator(),
             Map
@@ -26,7 +26,7 @@ public static class PlannerDecisionPolicy
 
     private static StructuredOutcome<DeliveryState> Map(
         PlannerDecision decision,
-        PipelineMessage<DeliveryState> message
+        DeliveryState state
     )
     {
         var kind = decision.Decision switch
@@ -45,13 +45,13 @@ public static class PlannerDecisionPolicy
             decision.Decision
             is PlannerDecisionValue.Proceed
                 or PlannerDecisionValue.ProceedWithConstraints;
-        var state = message.State;
         var updatedState = state with
         {
             PlannerDecision = decision,
             PlannerConstraints =
                 decision.Constraints.Count > 0 ? decision.Constraints : state.PlannerConstraints,
             MutationAuthorized = authorizesMutation || state.MutationAuthorized,
+            HumanAnswerSourceBlockId = null,
         };
         return new StructuredOutcome<DeliveryState>(
             kind,
@@ -72,21 +72,19 @@ public static class ReviewDecisionPolicy
 
     public static StructuredOutputResult<DeliveryState> Parse(
         string response,
-        PipelineMessage<DeliveryState> message
+        DeliveryState state
     ) =>
         StructuredOutputPolicy.Parse(
             response,
-            message,
+            state,
             _jsonOptions,
-            new ReviewDecisionValidator(
-                message.State.Packet.Outcomes.Select(outcome => outcome.Id)
-            ),
+            new ReviewDecisionValidator(state.Packet.Outcomes.Select(outcome => outcome.Id)),
             Map
         );
 
     private static StructuredOutcome<DeliveryState> Map(
         ReviewDecision decision,
-        PipelineMessage<DeliveryState> message
+        DeliveryState state
     )
     {
         var kind = decision.Decision switch
@@ -103,9 +101,10 @@ public static class ReviewDecisionPolicy
             kind,
             decision.Summary,
             payload,
-            message.State with
+            state with
             {
                 ReviewerHumanAnswer = null,
+                HumanAnswerSourceBlockId = null,
             }
         );
     }

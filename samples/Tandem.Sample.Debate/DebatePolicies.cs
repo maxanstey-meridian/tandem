@@ -5,10 +5,10 @@ namespace Tandem.Sample.Debate;
 
 public static class DebatePolicies
 {
-    public static AgentSessionDecision RetainRevisionContext(PipelineMessage<DebateState> _) =>
+    public static AgentSessionDecision RetainRevisionContext(DebateState _) =>
         new(AgentSessionAction.Continue, "Retain critic context across revision rounds.");
 
-    public static AgentSessionDecision StartJudgeFresh(PipelineMessage<DebateState> _) =>
+    public static AgentSessionDecision StartJudgeFresh(DebateState _) =>
         new(AgentSessionAction.Reset, "Judge each accepted argument from a fresh session.");
 
     public static AgentTeardownDecision ReleaseJudgeAfterVerdict(
@@ -18,7 +18,7 @@ public static class DebatePolicies
 
     public static StructuredOutputResult<DebateState> ParseProposal(
         string text,
-        PipelineMessage<DebateState> pipeline
+        DebateState state
     ) =>
         Parse(
             text,
@@ -29,22 +29,23 @@ public static class DebatePolicies
                 {
                     throw new InvalidOperationException("Proposal text must not be blank.");
                 }
-                var state = pipeline.State with
+                var updatedState = state with
                 {
-                    Arguments =
-                    [
-                        .. pipeline.State.Arguments,
-                        new DebateArgument("proposer", proposal),
-                    ],
-                    Round = pipeline.State.Round + 1,
+                    Arguments = [.. state.Arguments, new DebateArgument("proposer", proposal)],
+                    Round = state.Round + 1,
                 };
-                return new StructuredOutcome<DebateState>("debate.proposed", proposal, root, state);
+                return new StructuredOutcome<DebateState>(
+                    "debate.proposed",
+                    proposal,
+                    root,
+                    updatedState
+                );
             }
         );
 
     public static StructuredOutputResult<DebateState> ParseCritique(
         string text,
-        PipelineMessage<DebateState> pipeline
+        DebateState state
     ) =>
         Parse(
             text,
@@ -56,19 +57,15 @@ public static class DebatePolicies
                 {
                     throw new InvalidOperationException("Critique must not be blank.");
                 }
-                var state = pipeline.State with
+                var updatedState = state with
                 {
-                    Arguments =
-                    [
-                        .. pipeline.State.Arguments,
-                        new DebateArgument("critic", critique),
-                    ],
+                    Arguments = [.. state.Arguments, new DebateArgument("critic", critique)],
                 };
                 return new StructuredOutcome<DebateState>(
                     accepted ? "debate.critique.accepted" : "debate.revision.requested",
                     critique,
                     root,
-                    state
+                    updatedState
                 );
             }
         );

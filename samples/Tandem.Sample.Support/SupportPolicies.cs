@@ -8,41 +8,29 @@ public static class SupportPolicies
     public const string CategorizedOutcome = "support.categorized";
     public const string ResolutionProposedOutcome = "support.resolution.proposed";
 
-    public static AgentSessionDecision StartClassificationFresh(PipelineMessage<SupportState> _) =>
+    public static AgentSessionDecision StartClassificationFresh(SupportState _) =>
         new(AgentSessionAction.Reset, "Classify each ticket from a fresh session.");
 
-    public static AgentSessionDecision StartResolutionFresh(PipelineMessage<SupportState> _) =>
+    public static AgentSessionDecision StartResolutionFresh(SupportState _) =>
         new(AgentSessionAction.Reset, "Resolve each classified ticket from a fresh session.");
 
-    public static CustomerQuestion BuildCustomerQuestion(PipelineMessage<SupportState> pipeline) =>
+    public static CustomerQuestion BuildCustomerQuestion(SupportState state) =>
         new(
-            pipeline.State.Ticket,
-            pipeline.State.ProposedResolution
+            state.Ticket,
+            state.ProposedResolution
                 ?? throw new InvalidOperationException("A proposed resolution is required.")
         );
 
-    public static PipelineMessage<SupportState> ApplyCustomerReply(
-        PipelineMessage<SupportState> pipeline,
-        CustomerReply reply
-    ) =>
-        pipeline with
+    public static SupportState ApplyCustomerReply(SupportState state, CustomerReply reply) =>
+        state with
         {
-            State = pipeline.State with
-            {
-                CustomerReply = reply.Text,
-                FinalDisposition = reply.Resolved ? "closed" : "escalated",
-            },
-            LatestOutcome = new BlockOutcome(
-                reply.Resolved ? "support.customer.resolved" : "support.customer.blocked",
-                SupportIds.ApplyReply,
-                reply.Text,
-                JsonSerializer.SerializeToElement(new { reply.Text, reply.Resolved })
-            ),
+            CustomerReply = reply.Text,
+            FinalDisposition = reply.Resolved ? "closed" : "escalated",
         };
 
     public static StructuredOutputResult<SupportState> ParseClassification(
         string text,
-        PipelineMessage<SupportState> pipeline
+        SupportState state
     ) =>
         Parse(
             text,
@@ -53,7 +41,7 @@ public static class SupportPolicies
                     CategorizedOutcome,
                     $"Classified as {category}.",
                     root,
-                    pipeline.State with
+                    state with
                     {
                         Category = category,
                     }
@@ -63,7 +51,7 @@ public static class SupportPolicies
 
     public static StructuredOutputResult<SupportState> ParseResolution(
         string text,
-        PipelineMessage<SupportState> pipeline
+        SupportState state
     ) =>
         Parse(
             text,
@@ -74,7 +62,7 @@ public static class SupportPolicies
                     ResolutionProposedOutcome,
                     "Proposed a customer-facing resolution.",
                     root,
-                    pipeline.State with
+                    state with
                     {
                         ProposedResolution = proposal,
                     }

@@ -12,7 +12,8 @@ public sealed record PipelineMessage<TState>(
     PipelineRuntime Runtime,
     TState State,
     BlockOutcome? LatestOutcome = null,
-    PipelineResult? LatestResult = null
+    PipelineResult? LatestResult = null,
+    PipelineRunDisposition? Disposition = null
 ) : IOutcomeBearingMessage
 {
     public PipelineMessage<TState> WithOutcome(BlockOutcome outcome) =>
@@ -23,6 +24,12 @@ public sealed record PipelineMessage<TState>(
 }
 
 public sealed record PipelineResult(string StepId, string CaseId, JsonElement Payload);
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum PipelineRunDisposition
+{
+    Failed,
+}
 
 public sealed record PipelineRuntime(
     Guid RunId,

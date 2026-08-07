@@ -7,7 +7,7 @@ internal sealed record AgentBlockConfig<TState>(
     string ProfileName,
     string SystemInstructions,
     IReadOnlyList<string> LifecycleActionNames,
-    Func<PipelineMessage<TState>, string> UserMessage,
+    Func<TState, string>? UserMessage,
     Func<TState, string>? WorkspacePath,
     Func<TState, bool>? AllowMutation,
     StructuredOutputParser<TState>? StructuredOutput = null,
@@ -20,7 +20,8 @@ internal sealed record AgentBlockConfig<TState>(
     string? LifecycleActionSetIdentity = null,
     AgentSessionPolicy<TState>? SessionPolicy = null,
     AgentProfilePolicy<TState>? ProfilePolicy = null,
-    AgentTeardownPolicy<TState>? TeardownPolicy = null
+    AgentTeardownPolicy<TState>? TeardownPolicy = null,
+    AdvancedAgentMessage<TState>? ContextUserMessage = null
 );
 
 public enum AgentSessionAction
@@ -39,9 +40,11 @@ public sealed record AgentTeardownDecision(bool ReleaseSession, bool ReleaseUsag
     public static AgentTeardownDecision None(string reason) => new(false, false, reason);
 }
 
-public delegate AgentSessionDecision AgentSessionPolicy<TState>(PipelineMessage<TState> message);
+public delegate AgentSessionDecision AgentSessionPolicy<TState>(TState state);
 
-public delegate AgentProfileDecision AgentProfilePolicy<TState>(PipelineMessage<TState> message);
+public delegate AgentProfileDecision AgentProfilePolicy<TState>(TState state);
+
+public delegate string AdvancedAgentMessage<TState>(PipelineMessage<TState> message);
 
 public delegate AgentTeardownDecision AgentTeardownPolicy<TState>(
     PipelineMessage<TState> message,
@@ -112,7 +115,7 @@ public sealed record CheckpointPolicy<TState>(
 
 public delegate StructuredOutputResult<TState> StructuredOutputParser<TState>(
     string assistantText,
-    PipelineMessage<TState> message
+    TState state
 );
 
 public sealed record StructuredOutputAcceptanceObservation<TState>(

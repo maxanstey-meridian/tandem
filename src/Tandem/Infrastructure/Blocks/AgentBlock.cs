@@ -117,7 +117,7 @@ internal sealed class AgentBlock<TState>(
             var session = await RestoreOrCreateSessionAsync(agent, runtime, cts.Token);
             var baseMessage = isCheckpointOnly
                 ? config.Checkpoint!.UserMessage(message)
-                : config.UserMessage(message);
+                : config.ContextUserMessage?.Invoke(message) ?? config.UserMessage!(message.State);
 
             var augmentation = config.MessageAugmentation is not null
                 ? await config.MessageAugmentation(message, cts.Token)
@@ -178,7 +178,7 @@ internal sealed class AgentBlock<TState>(
 
                 if (config.StructuredOutput is not null)
                 {
-                    structuredResult = config.StructuredOutput(turnText.ToString(), message);
+                    structuredResult = config.StructuredOutput(turnText.ToString(), message.State);
                     if (config.StructuredOutputAcceptance is not null)
                     {
                         var problems = config.StructuredOutputAcceptance(
@@ -768,7 +768,7 @@ internal sealed class AgentBlock<TState>(
         }
 
         var runtime = message.Runtime;
-        var session = config.SessionPolicy(message);
+        var session = config.SessionPolicy(message.State);
         if (session.Action is AgentSessionAction.Reset or AgentSessionAction.Teardown)
         {
             runtime = runtime.WithoutSession(config.BlockId).WithoutUsage(config.BlockId);
@@ -776,7 +776,7 @@ internal sealed class AgentBlock<TState>(
         }
 
         var profile =
-            config.ProfilePolicy?.Invoke(message)
+            config.ProfilePolicy?.Invoke(message.State)
             ?? new AgentProfileDecision(config.ProfileName, "Configured agent profile.");
         return runtime.WithProfile(config.BlockId, profile);
     }

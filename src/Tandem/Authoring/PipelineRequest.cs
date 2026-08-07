@@ -9,8 +9,8 @@ public sealed class PipelineRequest<TState, TRequest, TResponse>
         string requestStepId,
         string portId,
         string resumeStepId,
-        Func<PipelineMessage<TState>, TRequest> createRequest,
-        Func<PipelineMessage<TState>, TResponse, PipelineMessage<TState>> applyResponse,
+        Func<TState, TRequest> createRequest,
+        Func<TState, TResponse, TState> applyResponse,
         IBlockExecutionObserver? observer
     )
     {
@@ -19,16 +19,16 @@ public sealed class PipelineRequest<TState, TRequest, TResponse>
         Resume = new ResumeStage(resumeStepId, portId, applyResponse, observer);
     }
 
-    public IPipelineNode Request { get; }
-    public IPipelineNode Port { get; }
-    public IPipelineNode Resume { get; }
+    public IRawPipelineNode Request { get; }
+    public IRawPipelineNode Port { get; }
+    public IRawPipelineNode Resume { get; }
 
-    private sealed class RequestStage : IPipelineNode
+    private sealed class RequestStage : IRawPipelineNode
     {
         public RequestStage(
             string id,
             string scope,
-            Func<PipelineMessage<TState>, TRequest> createRequest,
+            Func<TState, TRequest> createRequest,
             IBlockExecutionObserver? observer
         )
         {
@@ -43,7 +43,7 @@ public sealed class PipelineRequest<TState, TRequest, TResponse>
                         scope,
                         cancellationToken
                     );
-                    return createRequest(pipeline);
+                    return createRequest(pipeline.State);
                 },
                 observer
             );
@@ -53,19 +53,19 @@ public sealed class PipelineRequest<TState, TRequest, TResponse>
         public PipelineNodeDescriptor Descriptor { get; }
     }
 
-    private sealed class RequestPort(string id) : IPipelineNode
+    private sealed class RequestPort(string id) : IRawPipelineNode
     {
         public string Id => id;
         public PipelineNodeDescriptor Descriptor { get; } =
             PipelineNodes.RequestPort<TRequest, TResponse>(id);
     }
 
-    private sealed class ResumeStage : IPipelineNode
+    private sealed class ResumeStage : IRawPipelineNode
     {
         public ResumeStage(
             string id,
             string scope,
-            Func<PipelineMessage<TState>, TResponse, PipelineMessage<TState>> applyResponse,
+            Func<TState, TResponse, TState> applyResponse,
             IBlockExecutionObserver? observer
         )
         {
@@ -92,7 +92,17 @@ public sealed class PipelineRequest<TState, TRequest, TResponse>
                         ?? throw new InvalidOperationException(
                             $"The saved pipeline message for request port '{scope}' was invalid."
                         );
-                    return applyResponse(pipeline, response);
+                    return pipeline with
+                    {
+                        State = applyResponse(pipeline.State, response),
+                        LatestOutcome = new BlockOutcome(
+                            "request.resumed",
+                            id,
+                            $"Request '{scope}' resumed.",
+                            JsonSerializer.SerializeToElement(response)
+                        ),
+                        LatestResult = null,
+                    };
                 },
                 observer
             );

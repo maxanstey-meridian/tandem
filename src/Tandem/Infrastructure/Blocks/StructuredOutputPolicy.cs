@@ -8,10 +8,10 @@ public static class StructuredOutputPolicy
 {
     public static StructuredOutputResult<TState> Parse<T, TState>(
         string response,
-        PipelineMessage<TState> message,
+        TState state,
         JsonSerializerOptions options,
         IValidator<T> validator,
-        Func<T, PipelineMessage<TState>, StructuredOutcome<TState>> map
+        Func<T, TState, StructuredOutcome<TState>> map
     )
     {
         string json;
@@ -55,7 +55,7 @@ public static class StructuredOutputPolicy
             );
         }
 
-        return new StructuredOutputResult<TState>(map(value, message), [], response, value);
+        return new StructuredOutputResult<TState>(map(value, state), [], response, value);
     }
 
     private static StructuredOutputResult<TState> Failure<TState>(

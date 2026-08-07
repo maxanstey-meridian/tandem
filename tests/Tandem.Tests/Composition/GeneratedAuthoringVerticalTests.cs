@@ -47,6 +47,170 @@ public sealed class GeneratedAuthoringVerticalTests
             .BeTrue();
     }
 
+    [Fact]
+    public async Task UnconditionalRoute_AcceptsCustomResultAndStateOnlyStepsHaveNoSelectors()
+    {
+        var increment = new IncrementStage();
+        var complete = new StateCompleteStage();
+        var pipeline = TandemWorkflow
+            .Start(at: increment, name: "unconditional-authoring")
+            .Route(on: increment, to: complete, label: "continue")
+            .Build(complete);
+
+        var output = await RunAsync(
+            pipeline.Workflow,
+            new PipelineMessage<CounterState>(
+                PipelineRuntime.Create(Guid.CreateVersion7()),
+                new CounterState(0)
+            )
+        );
+
+        output.State.Count.Should().Be(2);
+        typeof(StateCompleteStage).GetProperty("Result").Should().BeNull();
+        output.LatestOutcome!.Payload.ValueKind.Should().Be(JsonValueKind.Object);
+        var json = () => JsonSerializer.Serialize(output);
+        json.Should().NotThrow();
+    }
+
+    [Theory]
+    [InlineData(false, 2)]
+    [InlineData(true, 11)]
+    public async Task StandardOutcome_UsesTypedSuccessAndFailedRoutes(bool fail, int expected)
+    {
+        var outcome = new StandardOutcomeStage(fail);
+        var success = new StateCompleteStage();
+        var recovery = new RecoveryStage();
+        var pipeline = TandemWorkflow
+            .Start(at: outcome, name: "standard-outcome")
+            .Route(on: outcome.Result.Success, to: success, label: "success")
+            .Route(on: outcome.Result.Failed, to: recovery, label: "recover")
+            .Build(success, recovery);
+
+        var output = await RunAsync(
+            pipeline.Workflow,
+            new PipelineMessage<CounterState>(
+                PipelineRuntime.Create(Guid.CreateVersion7()),
+                new CounterState(0)
+            )
+        );
+
+        output.State.Count.Should().Be(expected);
+        output.Disposition.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task StandardFailed_PreservesTypedFailureEvidenceWhenItIsAnOutput()
+    {
+        var outcome = new StandardOutcomeStage(fail: true);
+        var pipeline = TandemWorkflow
+            .Start(at: outcome, name: "standard-failure-evidence")
+            .Build(outcome);
+
+        var output = await RunAsync(
+            pipeline.Workflow,
+            new PipelineMessage<CounterState>(
+                PipelineRuntime.Create(Guid.CreateVersion7()),
+                new CounterState(0)
+            )
+        );
+
+        output.LatestOutcome!.Kind.Should().Be(StandardOutcomeKinds.Failed);
+        output
+            .LatestOutcome.Payload.Deserialize<FailureEvidence>()
+            .Should()
+            .Be(new FailureEvidence("test.failure", "Expected failure"));
+        output.Disposition.Should().Be(PipelineRunDisposition.Failed);
+    }
+
+    [Theory]
+    [InlineData(1, true, 11)]
+    [InlineData(1, false, 1)]
+    public async Task ConditionalFailedRoute_SuppressesDispositionOnlyWhenStateMatches(
+        int failedCount,
+        bool matches,
+        int expectedCount
+    )
+    {
+        var outcome = new StandardOutcomeStage(fail: true);
+        var recovery = new RecoveryStage();
+        var pipeline = TandemWorkflow
+            .Start(at: outcome, name: "conditional-standard-failure")
+            .Route(
+                on: outcome.Result.Failed,
+                when: state => matches && state.Count == failedCount,
+                to: recovery,
+                label: "conditional recovery"
+            )
+            .Build(outcome, recovery);
+
+        var output = await RunAsync(
+            pipeline.Workflow,
+            new PipelineMessage<CounterState>(
+                PipelineRuntime.Create(Guid.CreateVersion7()),
+                new CounterState(0)
+            )
+        );
+
+        output.State.Count.Should().Be(expectedCount);
+        output.Disposition.Should().Be(matches ? null : PipelineRunDisposition.Failed);
+        var roundTrip = JsonSerializer.Deserialize<PipelineMessage<CounterState>>(
+            JsonSerializer.Serialize(output)
+        );
+        roundTrip!.Disposition.Should().Be(output.Disposition);
+    }
+
+    [Fact]
+    public async Task UnconditionalOutputRoute_HandlesStandardFailure()
+    {
+        var outcome = new StandardOutcomeStage(fail: true);
+        var recovery = new RecoveryStage();
+        var pipeline = TandemWorkflow
+            .Start(at: outcome, name: "unconditional-standard-failure")
+            .Route(on: outcome, to: recovery, label: "recover")
+            .Build(recovery);
+
+        var output = await RunAsync(
+            pipeline.Workflow,
+            new PipelineMessage<CounterState>(
+                PipelineRuntime.Create(Guid.CreateVersion7()),
+                new CounterState(0)
+            )
+        );
+
+        output.State.Count.Should().Be(11);
+        output.Disposition.Should().BeNull();
+    }
+
+    [Fact]
+    public void Route_RejectsMixedOutgoingModesForSameSource()
+    {
+        var outcome = new StandardOutcomeStage(false);
+        var complete = new StateCompleteStage();
+        var builder = TandemWorkflow
+            .Start(at: outcome, name: "invalid-routes")
+            .Route(on: outcome, to: complete, label: "all");
+
+        var act = () => builder.Route(on: outcome.Result.Success, to: complete, label: "success");
+
+        act.Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage("*cannot mix unconditional and result-specific*");
+    }
+
+    [Fact]
+    public void ResultCase_RejectsFabricatedCaseId()
+    {
+        var outcome = new StandardOutcomeStage(false);
+
+        var act = () =>
+            new ResultCase<CounterState, Outcome<CounterState>, Outcome<CounterState>.Failed>(
+                outcome,
+                "Success"
+            );
+
+        act.Should().Throw<ArgumentException>().WithMessage("*does not match case type*");
+    }
+
     private static async Task<PipelineMessage<CounterState>> RunAsync(
         Workflow workflow,
         PipelineMessage<CounterState> input
@@ -134,17 +298,9 @@ public sealed partial class IncrementStage
         public partial record Incremented(CounterState State);
     }
 
-    public ValueTask<IncrementResult> ExecuteAsync(
-        PipelineMessage<CounterState> pipeline,
-        CancellationToken _
-    ) =>
+    public ValueTask<IncrementResult> ExecuteAsync(CounterState state, CancellationToken _) =>
         ValueTask.FromResult<IncrementResult>(
-            new IncrementResult.Incremented(
-                pipeline.State with
-                {
-                    Count = pipeline.State.Count + 1,
-                }
-            )
+            new IncrementResult.Incremented(state with { Count = state.Count + 1 })
         );
 }
 
@@ -157,11 +313,39 @@ public sealed partial class CompleteStage
         public partial record Completed(CounterState State);
     }
 
-    public ValueTask<CompleteResult> ExecuteAsync(
-        PipelineMessage<CounterState> pipeline,
-        CancellationToken _
-    ) =>
+    public ValueTask<CompleteResult> ExecuteAsync(CounterState state, CancellationToken _) =>
         ValueTask.FromResult<CompleteResult>(
-            new CompleteResult.Completed(pipeline.State with { Count = pipeline.State.Count + 1 })
+            new CompleteResult.Completed(state with { Count = state.Count + 1 })
         );
+}
+
+[PipelineStage("state-complete")]
+public sealed partial class StateCompleteStage
+{
+    public ValueTask<CounterState> ExecuteAsync(CounterState state, CancellationToken _) =>
+        ValueTask.FromResult(state with { Count = state.Count + 1 });
+}
+
+[PipelineStage("standard-outcome")]
+public sealed partial class StandardOutcomeStage(bool fail)
+{
+    public ValueTask<Outcome<CounterState>> ExecuteAsync(CounterState state, CancellationToken _) =>
+        ValueTask.FromResult<Outcome<CounterState>>(
+            fail
+                ? new Outcome<CounterState>.Failed(
+                    state with
+                    {
+                        Count = state.Count + 1,
+                    },
+                    new FailureEvidence("test.failure", "Expected failure")
+                )
+                : new Outcome<CounterState>.Success(state with { Count = state.Count + 1 })
+        );
+}
+
+[PipelineStage("recovery")]
+public sealed partial class RecoveryStage
+{
+    public ValueTask<CounterState> ExecuteAsync(CounterState state, CancellationToken _) =>
+        ValueTask.FromResult(state with { Count = state.Count + 10 });
 }

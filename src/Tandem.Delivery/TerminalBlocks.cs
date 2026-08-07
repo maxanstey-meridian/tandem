@@ -41,17 +41,18 @@ public sealed class FailedBlock
         var state = message.State with { Status = Domain.RunStatus.Failed };
         sw.Stop();
         return ValueTask.FromResult(
-            new PipelineMessage<DeliveryState>(
-                message.Runtime,
-                state,
-                new BlockOutcome(
+            message with
+            {
+                State = state,
+                LatestOutcome = new BlockOutcome(
                     OutcomeKinds.RunFailed,
                     BlockIds.Failed,
                     $"Unhandled outcome '{sourceKind}' from block '{sourceBlock}'",
-                    JsonSerializer.SerializeToElement(new { }),
+                    message.LatestOutcome?.Payload ?? JsonSerializer.SerializeToElement(new { }),
                     sw.Elapsed
-                )
-            )
+                ),
+                Disposition = PipelineRunDisposition.Failed,
+            }
         );
     }
 }

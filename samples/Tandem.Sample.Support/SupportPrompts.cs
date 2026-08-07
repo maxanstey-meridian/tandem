@@ -1,5 +1,3 @@
-using Tandem.Domain;
-
 namespace Tandem.Sample.Support;
 
 public static class SupportPrompts
@@ -10,9 +8,8 @@ public static class SupportPrompts
     public const string Resolver =
         "Propose a concise customer-facing resolution using the ticket and account context. Return structured JSON.";
 
-    public static string ClassificationMessage(PipelineMessage<SupportState> pipeline) =>
-        $"Ticket: {pipeline.State.Ticket}";
+    public static string ClassificationMessage(SupportState state) => $"Ticket: {state.Ticket}";
 
-    public static string ResolutionMessage(PipelineMessage<SupportState> pipeline) =>
-        $"Ticket: {pipeline.State.Ticket}\nCategory: {pipeline.State.Category}\nAccount: {pipeline.State.AccountContext}";
+    public static string ResolutionMessage(SupportState state) =>
+        $"Ticket: {state.Ticket}\nCategory: {state.Category}\nAccount: {state.AccountContext}";
 }

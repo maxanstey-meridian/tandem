@@ -16,6 +16,7 @@ public sealed record DeliveryState(
     JsonElement? CheckpointPayload,
     JsonElement? ImplementationReport,
     string? ReviewerHumanAnswer,
+    string? HumanAnswerSourceBlockId,
     RunStatus Status
 )
 {
@@ -33,6 +34,7 @@ public sealed record DeliveryState(
             CheckpointPayload: null,
             ImplementationReport: null,
             ReviewerHumanAnswer: null,
+            HumanAnswerSourceBlockId: null,
             Status: RunStatus.Running
         );
 }

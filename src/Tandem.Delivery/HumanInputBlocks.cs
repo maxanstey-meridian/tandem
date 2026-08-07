@@ -79,6 +79,7 @@ public static class ApplyHumanAnswerBlock
         {
             PlannerDecision = null,
             ReviewerHumanAnswer = sourceBlockId == BlockIds.Reviewer ? answer.Text : null,
+            HumanAnswerSourceBlockId = sourceBlockId,
             Status = Tandem.Domain.RunStatus.Running,
         };
         return new PipelineMessage<DeliveryState>(
@@ -109,7 +110,7 @@ public static class ApplyHumanAnswerBlock
         );
 }
 
-public sealed class HumanQuestionStage(IBlockExecutionObserver? observer = null) : IPipelineNode
+public sealed class HumanQuestionStage(IBlockExecutionObserver? observer = null) : IRawPipelineNode
 {
     public string Id => BlockIds.HumanQuestion;
 
@@ -121,7 +122,7 @@ public sealed class HumanQuestionStage(IBlockExecutionObserver? observer = null)
         );
 }
 
-public sealed class HumanInputPort : IPipelineNode
+public sealed class HumanInputPort : IRawPipelineNode
 {
     public string Id => "HumanInput";
 
@@ -129,7 +130,8 @@ public sealed class HumanInputPort : IPipelineNode
         PipelineNodes.RequestPort<HumanQuestion, HumanAnswer>("HumanInput");
 }
 
-public sealed class ApplyHumanAnswerStage(IBlockExecutionObserver? observer = null) : IPipelineNode
+public sealed class ApplyHumanAnswerStage(IBlockExecutionObserver? observer = null)
+    : IRawPipelineNode
 {
     public string Id => BlockIds.ApplyHumanAnswer;
 

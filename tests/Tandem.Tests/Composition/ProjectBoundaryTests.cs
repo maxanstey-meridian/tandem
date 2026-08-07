@@ -19,6 +19,9 @@ public sealed class ProjectBoundaryTests
         var support = ProjectReferences(
             "samples/Tandem.Sample.Support/Tandem.Sample.Support.csproj"
         );
+        var songwriter = ProjectReferences(
+            "samples/Tandem.Sample.Songwriter/Tandem.Sample.Songwriter.csproj"
+        );
 
         tandem.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
         delivery.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
@@ -28,6 +31,8 @@ public sealed class ProjectBoundaryTests
         debate.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
         support.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         support.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
+        songwriter.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
+        songwriter.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
     }
 
     [Fact]
@@ -128,6 +133,7 @@ public sealed class ProjectBoundaryTests
         SourceLines("src/Tandem.Delivery")
             .Concat(SourceLines("samples/Tandem.Sample.Debate"))
             .Concat(SourceLines("samples/Tandem.Sample.Support"))
+            .Concat(SourceLines("samples/Tandem.Sample.Songwriter"))
             .Should()
             .NotContain(line => line.Contains("Microsoft.Agents", StringComparison.Ordinal));
     }
@@ -146,7 +152,7 @@ public sealed class ProjectBoundaryTests
     }
 
     [Fact]
-    public void AuthoredSteps_UseDunetAndGeneratedSelectors()
+    public void AuthoredSteps_UseGeneratedAdaptersWithoutRequiringDunetForEveryStep()
     {
         foreach (
             var root in new[]
@@ -154,17 +160,33 @@ public sealed class ProjectBoundaryTests
                 "src/Tandem.Delivery",
                 "samples/Tandem.Sample.Debate",
                 "samples/Tandem.Sample.Support",
+                "samples/Tandem.Sample.Songwriter",
             }
         )
         {
             var source = string.Join('\n', SourceLines(root));
-            source.Should().Contain("using Dunet;");
-            source.Should().Contain("[Union");
-            source.Should().Contain(".Result.");
             source.Should().NotContain("class ResultCase");
             source.Should().NotContain("record ResultCase");
             source.Should().NotContain("ExecutorBinding");
         }
+
+        var songwriter = File.ReadAllText(
+            Path("samples/Tandem.Sample.Songwriter/SongwriterSteps.cs")
+        );
+        songwriter.Should().Contain("ValueTask<Outcome<SongwriterState>> ExecuteAsync(");
+        songwriter.Should().Contain("ValueTask ExecuteAsync(SongwriterState");
+        songwriter.Should().Contain("[Union");
+        File.ReadAllText(Path("samples/Tandem.Sample.Songwriter/SongwriterComposition.cs"))
+            .Should()
+            .Contain(".Result.");
+
+        var generator = File.ReadAllText(Path("src/Tandem.Generators/PipelineStepGenerator.cs"));
+        generator.Should().Contain("GeneratedPassThroughStepDescriptor");
+        generator.Should().Contain("GeneratedStateStepDescriptor");
+        generator.Should().Contain("GeneratedOutcomeStepDescriptor");
+        generator.Should().Contain("GeneratedCustomStepDescriptor");
+        generator.Should().NotContain("GetMembers(\"Runtime\")");
+        generator.Should().NotContain("GetMembers(\"Outcome\")");
     }
 
     [Fact]
@@ -179,6 +201,35 @@ public sealed class ProjectBoundaryTests
         debate.Should().Contain(".WithSessionPolicy(");
         var support = string.Join('\n', SourceLines("samples/Tandem.Sample.Support"));
         support.Should().Contain(".WithSessionPolicy(");
+        var songwriter = string.Join('\n', SourceLines("samples/Tandem.Sample.Songwriter"));
+        songwriter.Should().Contain(".WithSessionPolicy(");
+    }
+
+    [Fact]
+    public void AuthoredStepResults_ContainNoExecutionEnvelopePlumbing()
+    {
+        var source = new[]
+        {
+            "src/Tandem.Delivery/DeliverySteps.cs",
+            "samples/Tandem.Sample.Debate/DebateSteps.cs",
+            "samples/Tandem.Sample.Support/SupportSteps.cs",
+            "samples/Tandem.Sample.Songwriter/SongwriterSteps.cs",
+        }
+            .Select(Path)
+            .Select(File.ReadAllText)
+            .ToArray();
+
+        source
+            .Should()
+            .NotContain(text => text.Contains("PipelineRuntime", StringComparison.Ordinal));
+        source.Should().NotContain(text => text.Contains("BlockOutcome", StringComparison.Ordinal));
+        source
+            .Should()
+            .NotContain(text => text.Contains("LatestOutcome", StringComparison.Ordinal));
+        source.Should().NotContain(text => text.Contains("LatestResult", StringComparison.Ordinal));
+        source
+            .Should()
+            .NotContain(text => text.Contains("PipelineStepResult", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -167,7 +167,7 @@ public sealed class DurablePlannerHandoffTests
 
     private static StructuredOutputResult<DeliveryState> ParsePlannerDecision(
         string assistantText,
-        PipelineMessage<DeliveryState> message
+        DeliveryState state
     )
     {
         var options = new JsonSerializerOptions
@@ -181,7 +181,7 @@ public sealed class DurablePlannerHandoffTests
                 OutcomeKinds.PlannerProceedWithConstraints,
                 decision.Rationale,
                 JsonSerializer.SerializeToElement(decision, options),
-                message.State with
+                state with
                 {
                     PlannerDecision = decision,
                     PlannerConstraints = decision.Constraints,

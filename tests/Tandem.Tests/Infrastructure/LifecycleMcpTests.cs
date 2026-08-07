@@ -13,7 +13,7 @@ namespace Tandem.Tests.Infrastructure;
 
 public sealed class LifecycleMcpTests
 {
-    private static AgentSessionDecision ContinueSession(PipelineMessage<DeliveryState> _) =>
+    private static AgentSessionDecision ContinueSession(DeliveryState _) =>
         new(AgentSessionAction.Continue, "Lifecycle fixture policy.");
 
     [Fact]

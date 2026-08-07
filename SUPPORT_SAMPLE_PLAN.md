@@ -16,7 +16,9 @@ Agent SDK redesign.
 2. Delivery and every sample are unprivileged Tandem consumers.
 3. `examples/` contains runnable Delivery packets. `samples/` contains example
    pipeline implementations.
-4. Authored steps remain plain partial classes with nested Dunet result unions.
+4. Authored steps remain plain partial classes. They use pass-through or
+   state-updating returns for serial flow, standard outcomes for declared
+   success/failure, and nested Dunet unions only for meaningful semantic branches.
 5. The pipeline owns typed state, semantic outcome meaning, prompts, policies,
    and routes.
 6. Tandem owns execution, durability, session persistence, replay, generated
@@ -98,8 +100,9 @@ OutcomeKinds.Resolved => new ResolveResult.Resolved(...)
 ```
 
 in userland. They express pipeline meaning and must not move into the generator.
-Only add a helper if it removes mechanical state/runtime/outcome copying while
-leaving the semantic mapping explicit. Otherwise retain the current shape.
+Only add a helper if it removes mechanical adaptation while leaving the semantic
+mapping explicit. Ordinary generated adapters and agent operations already own
+execution-envelope transport. Otherwise retain the current shape.
 
 ## Bounded Delivery Cleanup
 
@@ -162,14 +165,14 @@ Implemented:
   request suspension/resumption, and durable closed-generic proofs;
 - unprivileged consumer architecture checks;
 - shared stable identity constants in Support and Debate;
-- explicit semantic outcome-to-Dunet mapping retained after comparison across
-  Support, Debate, and Delivery;
+- explicit semantic outcome-to-Dunet mapping retained where branching requires
+  it after comparison across Support, Debate, and Delivery;
 - Delivery consolidated under `Tandem.Delivery` with graph-only composition,
   Delivery-owned prompts and policies, injected Git/diff/workspace capabilities,
   and no Tandem infrastructure namespace imports; and
 - README and authoring documentation aligned to the compiled Support journey.
 
-No mapping helper was introduced: all three consumers showed that the switch from
-semantic outcome to authored Dunet case carries pipeline meaning. The repeated
-envelope fields alone did not justify moving that decision into Tandem or the
-generator.
+No mapping helper was introduced: custom switches from semantic outcomes to
+authored Dunet cases carry pipeline meaning. Generated adapters and operations
+now preserve the execution envelope; serial steps no longer need custom cases or
+mechanical envelope copying.

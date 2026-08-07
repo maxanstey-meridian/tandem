@@ -4,7 +4,7 @@ namespace Tandem.Delivery;
 
 internal static class ExecutorPolicies
 {
-    public static AgentSessionDecision ContinueWorkingSession(PipelineMessage<DeliveryState> _) =>
+    public static AgentSessionDecision ContinueWorkingSession(DeliveryState _) =>
         new(AgentSessionAction.Continue, "Retain implementation context across delivery loops.");
 
     public static AgentTeardownDecision ReleaseSessionAfterAcceptedReport(
@@ -18,15 +18,14 @@ internal static class ExecutorPolicies
 
 internal static class PlannerPolicies
 {
-    public static AgentSessionDecision ContinueConsultation(PipelineMessage<DeliveryState> _) =>
+    public static AgentSessionDecision ContinueConsultation(DeliveryState _) =>
         new(AgentSessionAction.Continue, "Retain constraints across related consultations.");
 }
 
 internal static class ReviewerPolicies
 {
-    public static AgentSessionDecision StartFreshForEachCandidate(
-        PipelineMessage<DeliveryState> _
-    ) => new(AgentSessionAction.Reset, "Review each captured candidate independently.");
+    public static AgentSessionDecision StartFreshForEachCandidate(DeliveryState _) =>
+        new(AgentSessionAction.Reset, "Review each captured candidate independently.");
 
     public static AgentTeardownDecision TeardownAfterDecision(
         PipelineMessage<DeliveryState> _,

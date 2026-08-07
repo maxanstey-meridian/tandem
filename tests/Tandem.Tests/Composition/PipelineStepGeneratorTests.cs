@@ -21,6 +21,7 @@ public sealed class PipelineStepGeneratorTests
                 public sealed class PipelineStageAttribute(string id) : Attribute;
                 public sealed record ResultCase<TState, TResult, TCase>;
                 public interface IGeneratedPipelineStep<TState, TResult>;
+                public readonly struct GeneratedStepCompletion;
                 public static class PipelineResultPayload;
             }
 
@@ -54,7 +55,7 @@ public sealed class PipelineStepGeneratorTests
                     }
 
                     public ValueTask<VerificationResult> ExecuteAsync(
-                        PipelineMessage<State> pipeline,
+                        State state,
                         CancellationToken cancellationToken
                     ) => throw new NotImplementedException();
                 }
@@ -83,7 +84,7 @@ public sealed class PipelineStepGeneratorTests
         generated.Should().Contain("Passed =>");
         generated.Should().Contain("Failed =>");
         generated.Should().Contain("State = value.State");
-        generated.Should().Contain("GeneratedPipelineStepDescriptor");
+        generated.Should().Contain("GeneratedCustomStepDescriptor");
         generated.Should().NotContain("IGeneratedPipelineNode");
         generated.Should().NotContain("Microsoft.Agents");
     }
@@ -127,7 +128,7 @@ public sealed class PipelineStepGeneratorTests
                     [Union]
                     public partial record VerificationResult { {{cases}} }
                     public ValueTask<VerificationResult> ExecuteAsync(
-                        PipelineMessage<State> pipeline,
+                        State state,
                         CancellationToken cancellationToken
                     ) => throw new NotImplementedException();
                 }
@@ -142,17 +143,12 @@ public sealed class PipelineStepGeneratorTests
 
     [Theory]
     [InlineData(
-        "Consumer.PipelineMessage<State>",
-        "System.Threading.CancellationToken",
-        "System.Threading.Tasks.ValueTask<VerificationResult>"
-    )]
-    [InlineData(
-        "Tandem.Domain.PipelineMessage<State>",
+        "State",
         "Consumer.CancellationToken",
         "System.Threading.Tasks.ValueTask<VerificationResult>"
     )]
     [InlineData(
-        "Tandem.Domain.PipelineMessage<State>",
+        "State",
         "System.Threading.CancellationToken",
         "Consumer.ValueTask<VerificationResult>"
     )]
@@ -198,7 +194,7 @@ public sealed class PipelineStepGeneratorTests
     }
 
     [Fact]
-    public void Generator_ClearsStaleOutcomeForOutcomeLessCase()
+    public void Generator_PreservesExecutionEnvelopeIndependentlyOfResultShape()
     {
         const string source = """
             using System;
@@ -210,20 +206,27 @@ public sealed class PipelineStepGeneratorTests
                 public sealed class PipelineStageAttribute(string id) : Attribute;
             }
             namespace Tandem.Domain { public sealed record PipelineMessage<TState>(TState State); }
+            namespace Dunet
+            {
+                [AttributeUsage(AttributeTargets.Class)]
+                public sealed class UnionAttribute : Attribute;
+            }
             namespace Consumer
             {
+                using Dunet;
                 public sealed record State;
                 public sealed record Outcome;
                 [Tandem.PipelineStage("mixed")]
                 public sealed partial class MixedStage
                 {
+                    [Union]
                     public partial record MixedResult
                     {
                         public partial record WithOutcome(State State, Outcome Outcome);
                         public partial record WithoutOutcome(State State);
                     }
                     public ValueTask<MixedResult> ExecuteAsync(
-                        Tandem.Domain.PipelineMessage<State> pipeline,
+                        State state,
                         CancellationToken cancellationToken
                     ) => throw new NotImplementedException();
                 }
@@ -235,8 +238,59 @@ public sealed class PipelineStepGeneratorTests
             .GeneratedSources.Single()
             .SourceText.ToString();
 
-        generated.Should().Contain("LatestOutcome = value.Outcome");
-        generated.Should().Contain("LatestOutcome = null");
+        generated.Should().NotContain("LatestOutcome = value.Outcome");
+        generated.Should().NotContain("LatestOutcome = null");
+        generated.Should().NotContain("Runtime = value.Runtime");
+    }
+
+    [Theory]
+    [InlineData("ValueTask", "GeneratedPassThroughStepDescriptor", false)]
+    [InlineData("ValueTask<State>", "GeneratedStateStepDescriptor", false)]
+    [InlineData("ValueTask<Outcome<State>>", "GeneratedOutcomeStepDescriptor", true)]
+    public void Generator_InfersStandardStepModes(
+        string returnType,
+        string descriptor,
+        bool hasResultSelectors
+    )
+    {
+        var source = $$"""
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+            namespace Tandem
+            {
+                [AttributeUsage(AttributeTargets.Class)]
+                public sealed class PipelineStageAttribute(string id) : Attribute;
+            }
+            namespace Tandem.Domain
+            {
+                public abstract record Outcome<T>;
+            }
+            namespace Consumer
+            {
+                using Tandem;
+                using Tandem.Domain;
+                public sealed record State;
+                [PipelineStage("stage")]
+                public sealed partial class Stage
+                {
+                    public {{returnType}} ExecuteAsync(State state, CancellationToken cancellationToken) =>
+                        throw new NotImplementedException();
+                }
+            }
+            """;
+
+        var result = RunGenerator(source);
+
+        result.Diagnostics.Should().BeEmpty();
+        var generated = result.Results.Single().GeneratedSources.Single().SourceText.ToString();
+        generated.Should().Contain(descriptor);
+        generated.Contains("public ResultRoutes Result").Should().Be(hasResultSelectors);
+        if (hasResultSelectors)
+        {
+            generated.Should().Contain("Success =>");
+            generated.Should().Contain("Failed =>");
+        }
     }
 
     private static GeneratorDriverRunResult RunGenerator(string source)

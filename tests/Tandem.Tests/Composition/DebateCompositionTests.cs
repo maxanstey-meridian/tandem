@@ -80,17 +80,18 @@ public sealed class DebateCompositionTests
         inspection.StartStepId.Should().Be("open");
         inspection
             .StepIds.Should()
-            .BeEquivalentTo("open", "proposer", "critic", "judge", "complete");
+            .BeEquivalentTo("open", "proposer", "critic", "judge", "complete", "debate-failed");
         inspection.Ports.Should().BeEmpty();
-        inspection.OutputStepIds.Should().Equal("complete");
-        inspection.Routes.Should().HaveCount(5);
+        inspection.OutputStepIds.Should().Equal("complete", "debate-failed");
+        inspection.Routes.Should().HaveCount(6);
         inspection
             .Routes.Should()
             .OnlyContain(route =>
                 inspection.StepIds.Contains(route.SourceId)
                 && inspection.StepIds.Contains(route.TargetId)
             );
-        inspection.Routes.Should().OnlyContain(route => route.Conditional);
+        inspection.Routes.Count(route => route.Conditional).Should().Be(5);
+        inspection.Routes.Count(route => !route.Conditional).Should().Be(1);
         inspection.Mermaid.Should().StartWith("flowchart").And.Contain("revision requested");
         inspection.Dot.Should().StartWith("digraph");
         roundTrip.Should().BeEquivalentTo(input);
@@ -108,7 +109,7 @@ public sealed class DebateCompositionTests
 
         provider
             .GetRequiredService<DebateComposition>()
-            .Build()
+            .Build(new PipelineBuildContext())
             .Inspect()
             .Name.Should()
             .Be("debate");
@@ -129,7 +130,7 @@ public sealed class DebateCompositionTests
             new DebateState("Question", [], 0, null)
         );
 
-        var result = DebatePolicies.ParseProposal(response, input);
+        var result = DebatePolicies.ParseProposal(response, input.State);
 
         result.Success.Should().BeFalse();
         result.Outcome.Should().BeNull();
@@ -147,7 +148,7 @@ public sealed class DebateCompositionTests
             new DebateState("Question", [new DebateArgument("proposer", "Case")], 1, null)
         );
 
-        var result = DebatePolicies.ParseCritique(response, input);
+        var result = DebatePolicies.ParseCritique(response, input.State);
 
         result.Success.Should().BeFalse();
         result.Outcome.Should().BeNull();
@@ -160,7 +161,7 @@ public sealed class DebateCompositionTests
         services.AddSingleton(new TandemEnvironment(fixture.TandemHome, fixture.TandemExePath));
         services.AddTandem().AddDebate(Options(clients));
         using var provider = services.BuildServiceProvider();
-        return provider.GetRequiredService<DebateComposition>().Build();
+        return provider.GetRequiredService<DebateComposition>().Build(new PipelineBuildContext());
     }
 
     internal static PipelineMessage<DebateState> Input(LifecycleFixture fixture) =>

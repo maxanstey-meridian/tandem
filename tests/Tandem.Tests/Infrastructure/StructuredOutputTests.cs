@@ -186,7 +186,7 @@ public sealed class StructuredOutputTests
             "{\"decision\":\"Proceed\",\"rationale\":\"Verified.\","
                 + "\"constraints\":[],\"evidenceUsed\":[\"src/service.ts\"],"
                 + "\"humanQuestion\":null}",
-            CreateContext("/tmp")
+            CreateContext("/tmp").State
         );
         var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(result =>
             result.Outcome?.Kind == OutcomeKinds.PlannerProceed
@@ -211,7 +211,7 @@ public sealed class StructuredOutputTests
             "{\"decision\":\"Proceed\",\"rationale\":\"Verified.\","
                 + "\"constraints\":[],\"evidenceUsed\":[\"src/service.ts\"],"
                 + "\"humanQuestion\":null}",
-            CreateContext("/tmp")
+            CreateContext("/tmp").State
         );
         var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(
             result => result.Outcome?.Kind == OutcomeKinds.PlannerProceed,
@@ -236,7 +236,7 @@ public sealed class StructuredOutputTests
         var parsed = PlannerDecisionPolicy.Parse(
             "{\"decision\":\"Proceed\",\"rationale\":\"Inspect first.\","
                 + "\"constraints\":[],\"evidenceUsed\":[],\"humanQuestion\":null}",
-            CreateContext("/tmp")
+            CreateContext("/tmp").State
         );
         var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(result =>
             result.Candidate is PlannerDecision { Decision: PlannerDecisionValue.Proceed }
@@ -263,14 +263,14 @@ public sealed class StructuredOutputTests
         var missing = ReviewDecisionPolicy.Parse(
             "{\"decision\":\"Accept\",\"summary\":\"The candidate delivers the work.\","
                 + "\"outcomes\":[],\"findings\":[],\"humanQuestion\":null}",
-            context
+            context.State
         );
         var valid = ReviewDecisionPolicy.Parse(
             "{\"decision\":\"Accept\",\"summary\":\"The inspected implementation delivers the packet outcome.\","
                 + "\"outcomes\":[{\"outcomeId\":\"outcome\",\"delivered\":true,"
                 + "\"evidence\":[\"src/service.ts: implementation\"]}],"
                 + "\"findings\":[],\"humanQuestion\":null}",
-            context
+            context.State
         );
 
         missing.Success.Should().BeFalse();
@@ -300,8 +300,9 @@ public sealed class StructuredOutputTests
         resumed = JsonSerializer.Deserialize<PipelineMessage<DeliveryState>>(persisted)!;
 
         resumed.State.ReviewerHumanAnswer.Should().Be("Keep public behavior.");
+        resumed.State.HumanAnswerSourceBlockId.Should().Be(BlockIds.Reviewer);
         DeliveryPrompts
-            .BuildReviewerMessage(resumed)
+            .BuildReviewerMessage(resumed.State)
             .Should()
             .Contain("Human answer for this review:")
             .And.Contain("Keep public behavior.");
@@ -311,10 +312,11 @@ public sealed class StructuredOutputTests
                 + "\"outcomes\":[{\"outcomeId\":\"outcome\",\"delivered\":true,"
                 + "\"evidence\":[\"src/service.ts: implementation\"]}],"
                 + "\"findings\":[],\"humanQuestion\":null}",
-            resumed
+            resumed.State
         );
 
         decision.Outcome!.UpdatedState!.ReviewerHumanAnswer.Should().BeNull();
+        decision.Outcome.UpdatedState.HumanAnswerSourceBlockId.Should().BeNull();
     }
 
     [Fact]

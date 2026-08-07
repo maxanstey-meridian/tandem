@@ -40,7 +40,7 @@ public sealed class RegistrationTests : IDisposable
     {
         var builder = new AgentRuntime(_home, null)
             .Create<TestState>("classify", "support", "Classify the ticket.", new FakeChatClient())
-            .WithMessage(pipeline => pipeline.State.Message);
+            .WithMessage(state => state.Message);
 
         var act = () => builder.Build();
 
@@ -52,7 +52,7 @@ public sealed class RegistrationTests : IDisposable
     {
         var operation = new AgentRuntime(_home, null)
             .Create<TestState>("classify", "support", "Classify the ticket.", new FakeChatClient())
-            .WithMessage(pipeline => pipeline.State.Message)
+            .WithMessage(state => state.Message)
             .WithSessionPolicy(_ => new AgentSessionDecision(
                 AgentSessionAction.Reset,
                 "Classify independently."

@@ -22,15 +22,12 @@ public sealed class SupportCompositionTests
 
         var classification = SupportPolicies.ParseClassification(
             "{\"category\":\"billing\"}",
-            input
+            input.State
         );
         var classified = classification.Outcome!.UpdatedState!;
         var resolution = SupportPolicies.ParseResolution(
             "{\"proposedResolution\":\"The duplicate charge was reversed.\"}",
-            input with
-            {
-                State = classified,
-            }
+            classified
         );
 
         classification.Success.Should().BeTrue();
@@ -48,7 +45,7 @@ public sealed class SupportCompositionTests
     {
         var input = Input();
 
-        var result = SupportPolicies.ParseClassification(response, input);
+        var result = SupportPolicies.ParseClassification(response, input.State);
 
         result.Success.Should().BeFalse();
         result.Outcome.Should().BeNull();
@@ -77,13 +74,14 @@ public sealed class SupportCompositionTests
                 SupportIds.CustomerReply,
                 SupportIds.ApplyReply,
                 CloseTicketStage.StepId,
-                EscalateTicketStage.StepId
+                EscalateTicketStage.StepId,
+                "support-failed"
             );
         inspection.Ports.Should().ContainSingle(port => port.Id == SupportIds.CustomerReply);
         inspection
             .OutputStepIds.Should()
-            .Equal(CloseTicketStage.StepId, EscalateTicketStage.StepId);
-        inspection.Routes.Should().HaveCount(7);
+            .Equal(CloseTicketStage.StepId, EscalateTicketStage.StepId, "support-failed");
+        inspection.Routes.Should().HaveCount(8);
         roundTrip.Should().BeEquivalentTo(input);
         fixture.Provider.GetRequiredService<SupportComposition>().Should().NotBeNull();
         await Task.CompletedTask;
@@ -111,6 +109,7 @@ public sealed class SupportCompositionTests
         output.State.ProposedResolution.Should().Contain("reversed");
         output.State.FinalDisposition.Should().Be(disposition);
         output.LatestResult!.StepId.Should().Be(terminalStep);
+        output.LatestResult.CaseId.Should().Be("Success");
         fixture.Lookup.ReceivedState!.Category.Should().Be("billing");
         fixture.Lookup.ReceivedState.AccountContext.Should().BeNull();
     }
@@ -205,7 +204,7 @@ public sealed class SupportCompositionTests
             return new Fixture(
                 home,
                 provider,
-                provider.GetRequiredService<SupportComposition>().Build(),
+                provider.GetRequiredService<SupportComposition>().Build(new PipelineBuildContext()),
                 lookup
             );
         }
@@ -320,6 +319,7 @@ public sealed class SupportDurableCompositionTests
         output.State.CustomerReply.Should().Be("Confirmed fixed.");
         output.State.FinalDisposition.Should().Be("closed");
         output.LatestResult!.StepId.Should().Be(CloseTicketStage.StepId);
+        output.LatestResult.CaseId.Should().Be("Success");
         completed!.RuntimeStatus.Should().Be(OrchestrationRuntimeStatus.Completed);
     }
 }

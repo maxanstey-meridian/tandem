@@ -6,6 +6,7 @@ namespace Tandem;
 
 public sealed class AgentOperation<TState>
 {
+    private const string AgentFailedOutcome = "agent.failed";
     private readonly AgentBlock<TState> _runtime;
 
     internal AgentOperation(AgentBlock<TState> runtime)
@@ -13,10 +14,82 @@ public sealed class AgentOperation<TState>
         _runtime = runtime;
     }
 
-    public ValueTask<PipelineMessage<TState>> RunAsync(
-        PipelineMessage<TState> pipeline,
+    public async ValueTask<TResult> RunAsync<TResult>(
+        TState state,
+        Func<OperationResult<TState>, TResult> map,
+        Func<FailureEvidence, TResult> mapFailure,
         CancellationToken cancellationToken
-    ) => _runtime.ExecuteAsync(pipeline, cancellationToken);
+    )
+    {
+        using var operation = PipelineExecutionEnvelope.BeginOperation<TState>();
+        var pipeline = PipelineExecutionEnvelope.Get(state);
+        var result = await _runtime.ExecuteAsync(pipeline, cancellationToken);
+        if (result.LatestOutcome?.Kind == AgentFailedOutcome)
+        {
+            result = result with { Disposition = PipelineRunDisposition.Failed };
+            PipelineExecutionEnvelope.Set(result);
+            return mapFailure(ToFailure(result.LatestOutcome));
+        }
+        PipelineExecutionEnvelope.Set(result);
+        return map(OperationResult<TState>.From(result));
+    }
+
+    public async ValueTask<Outcome<TState>> RunAsync(
+        TState state,
+        CancellationToken cancellationToken
+    )
+    {
+        using var operation = PipelineExecutionEnvelope.BeginOperation<TState>();
+        var pipeline = PipelineExecutionEnvelope.Get(state);
+        var result = await _runtime.ExecuteAsync(pipeline, cancellationToken);
+        PipelineExecutionEnvelope.Set(result);
+        return result.LatestOutcome?.Kind is StandardOutcomeKinds.Failed or AgentFailedOutcome
+            ? new Outcome<TState>.Failed(result.State, ToFailure(result.LatestOutcome))
+            : new Outcome<TState>.Success(result.State);
+    }
+
+    private static FailureEvidence ToFailure(BlockOutcome outcome) =>
+        new(
+            "agent.failed",
+            outcome.Summary,
+            outcome.Payload.ValueKind == System.Text.Json.JsonValueKind.Undefined
+                ? null
+                : outcome.Payload.GetRawText()
+        );
+}
+
+public sealed record OperationResult<TState>(TState State, OperationOutcome Outcome)
+{
+    internal static OperationResult<TState> From(PipelineMessage<TState> message)
+    {
+        var outcome =
+            message.LatestOutcome
+            ?? throw new InvalidOperationException("Agent execution produced no outcome.");
+        return new OperationResult<TState>(
+            message.State,
+            new OperationOutcome(outcome.Kind, outcome.Summary, outcome.Payload)
+        );
+    }
+}
+
+public sealed record OperationOutcome(
+    string Kind,
+    string Summary,
+    System.Text.Json.JsonElement Payload
+);
+
+public static class PipelineOperation
+{
+    public static async ValueTask<TResult> RunAsync<TState, TResult>(
+        Func<ValueTask<PipelineMessage<TState>>> execute,
+        Func<OperationResult<TState>, TResult> map
+    )
+    {
+        using var operation = PipelineExecutionEnvelope.BeginOperation<TState>();
+        var result = await execute();
+        PipelineExecutionEnvelope.Set(result);
+        return map(OperationResult<TState>.From(result));
+    }
 }
 
 public sealed class AgentRuntime
@@ -48,7 +121,8 @@ public sealed class AgentBuilder<TState>
     private readonly string _home;
     private readonly string? _executablePath;
     private readonly Func<string, IChatClient>? _chatClientFactory;
-    private Func<PipelineMessage<TState>, string>? _message;
+    private Func<TState, string>? _message;
+    private AdvancedAgentMessage<TState>? _contextMessage;
     private Func<TState, string>? _workspacePath;
     private Func<TState, bool>? _allowMutation;
     private StructuredOutputParser<TState>? _structuredOutput;
@@ -88,9 +162,15 @@ public sealed class AgentBuilder<TState>
         _chatClientFactory = chatClientFactory;
     }
 
-    public AgentBuilder<TState> WithMessage(Func<PipelineMessage<TState>, string> message)
+    public AgentBuilder<TState> WithMessage(Func<TState, string> message)
     {
         _message = message;
+        return this;
+    }
+
+    public AgentBuilder<TState> WithMessageFromContext(AdvancedAgentMessage<TState> message)
+    {
+        _contextMessage = message;
         return this;
     }
 
@@ -178,7 +258,7 @@ public sealed class AgentBuilder<TState>
 
     public AgentOperation<TState> Build(PipelineBuildContext? context = null)
     {
-        if (_message is null)
+        if (_message is null && _contextMessage is null)
         {
             throw new InvalidOperationException($"Agent '{_id}' must configure a user message.");
         }
@@ -211,7 +291,8 @@ public sealed class AgentBuilder<TState>
             _lifecycleActionSetIdentity,
             _sessionPolicy,
             _profilePolicy,
-            _teardownPolicy
+            _teardownPolicy,
+            _contextMessage
         );
 
         return new AgentOperation<TState>(

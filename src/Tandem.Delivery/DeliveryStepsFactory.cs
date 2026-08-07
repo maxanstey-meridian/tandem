@@ -110,14 +110,6 @@ public sealed class DeliveryStepsFactory(
                 chatClients(profileName),
                 chatClients
             )
-            .WithMessage(
-                blockId switch
-                {
-                    BlockIds.Planner => DeliveryPrompts.BuildPlannerMessage,
-                    BlockIds.Reviewer => DeliveryPrompts.BuildReviewerMessage,
-                    _ => DeliveryPrompts.BuildExecutorMessage,
-                }
-            )
             .WithWorkspace(
                 state => state.WorkspacePath,
                 state => DeliveryPolicies.AllowsWorkspaceMutation(blockId, state),
@@ -129,6 +121,19 @@ public sealed class DeliveryStepsFactory(
                         $"Agent '{blockId}' must supply a session policy."
                     )
             );
+
+        if (blockId == BlockIds.Planner)
+        {
+            builder.WithMessageFromContext(DeliveryPrompts.BuildPlannerMessage);
+        }
+        else
+        {
+            builder.WithMessage(
+                blockId == BlockIds.Reviewer
+                    ? DeliveryPrompts.BuildReviewerMessage
+                    : DeliveryPrompts.BuildExecutorMessage
+            );
+        }
 
         if (structuredOutput is not null)
         {

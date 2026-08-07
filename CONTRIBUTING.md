@@ -27,8 +27,10 @@ Keep these ownership boundaries explicit:
   successors.
 - Pipeline composition owns its concrete `TState`, user messages, workspace
   policy, structured mappings, and explicitly registered MCP terminal set.
-- Reusable execution uses `PipelineMessage<TState>`; core must not add a universal
-  lifecycle state interface or state bag.
+- Ordinary authored steps and policies use concrete `TState`; core must not add a
+  universal lifecycle state interface or state bag. Advanced block and runtime
+  policy APIs may use `PipelineMessage<TState>` and `BlockOutcome` when execution
+  evidence is their purpose.
 - Steps own operations, not orchestration.
 - Durable context records facts; it does not hide routing logic.
 - Microsoft Agent Framework owns workflow execution, durability, sessions,
@@ -74,15 +76,23 @@ Use a semantic name followed by one role suffix: `Agent`, `Stage`, `Port`,
 `VerificationStage`, `HumanInputPort`, `SubmitReportAction`,
 `DeliveryComposition`, and `DeliverySteps`.
 
-Every authored step returns a nested Dunet `<Name>Result` union. Do not introduce
-pipeline-wide string outcomes, a Tandem union implementation, or vague `Manager`,
-`Service`, `Processor`, `Handler`, `Provider`, or `Helper` names where a precise
-pipeline role exists.
+The generator infers pass-through, state-updating, standard `Outcome<TState>`, or
+custom Dunet result authoring from `ExecuteAsync`. Use standard `Success` and
+`Failed` for ordinary declared outcomes. Add a nested Dunet `<Name>Result` only
+when composition needs additional semantic branches; do not add one-case unions
+for routine success. Do not introduce pipeline-wide ad hoc string results, a
+second Tandem union implementation, or vague `Manager`, `Service`, `Processor`,
+`Handler`, `Provider`, or `Helper` names where a precise pipeline role exists.
 
 Composition is the complete route map. Route calls immediately add real MAF edges
 and never retain route descriptors, a graph AST, staged route state, or a parallel
 renderer. Inspection reflects the built MAF workflow and delegates Mermaid/DOT
 export to MAF.
+
+Use `.Route(on: step, to: next)` for unconditional serial flow and
+`.Route(on: step.Result.Case, to: next)` for semantic branching. Ordinary route
+predicates receive `TState`. Do not mix unconditional and result-specific routes
+from one source.
 
 ## Composition Test
 
