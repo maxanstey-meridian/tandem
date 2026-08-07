@@ -7,9 +7,8 @@ using Microsoft.DurableTask.Client;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
+using Tandem.Actions;
 using Tandem.Domain;
-using Tandem.Infrastructure;
-using Tandem.Infrastructure.Lifecycle;
 using Tandem.Sample.Debate;
 using Tandem.Tests.Durable;
 using Tandem.Tests.Infrastructure;
@@ -51,10 +50,10 @@ public sealed class DebateCompositionTests
     public async Task DebateAction_DetectsConflictingAcceptedVerdict()
     {
         using var fixture = await LifecycleFixture.CreateAsync();
-        var invocationId = $"{fixture.RunId:N}--judge--1";
+        var invocationId = $"{fixture.RunId:N}--{JudgeAgent.StepId}--1";
         var action = new SubmitVerdictAction(
             new LifecycleReceiptStore(fixture.TandemHome),
-            new LifecycleToolContext(fixture.RunId, "judge", invocationId)
+            new LifecycleToolContext(fixture.RunId, JudgeAgent.StepId, invocationId)
         );
 
         var accepted = await action.SubmitAsync("Affirmed", "First", CancellationToken.None);
@@ -103,7 +102,8 @@ public sealed class DebateCompositionTests
         using var fixture = await LifecycleFixture.CreateAsync();
         var clients = ScriptedClients.Create();
         var services = new ServiceCollection();
-        services.AddTandem().AddDebate(Options(fixture, clients));
+        services.AddSingleton(new TandemEnvironment(fixture.TandemHome, fixture.TandemExePath));
+        services.AddTandem().AddDebate(Options(clients));
         await using var provider = services.BuildServiceProvider();
 
         provider
@@ -126,7 +126,7 @@ public sealed class DebateCompositionTests
     {
         var input = new PipelineMessage<DebateState>(
             PipelineRuntime.Create(Guid.CreateVersion7()),
-            new DebateState("Question", "/tmp", [], 0, null)
+            new DebateState("Question", [], 0, null)
         );
 
         var result = DebatePolicies.ParseProposal(response, input);
@@ -144,7 +144,7 @@ public sealed class DebateCompositionTests
     {
         var input = new PipelineMessage<DebateState>(
             PipelineRuntime.Create(Guid.CreateVersion7()),
-            new DebateState("Question", "/tmp", [new DebateArgument("proposer", "Case")], 1, null)
+            new DebateState("Question", [new DebateArgument("proposer", "Case")], 1, null)
         );
 
         var result = DebatePolicies.ParseCritique(response, input);
@@ -157,7 +157,8 @@ public sealed class DebateCompositionTests
     internal static Pipeline Build(LifecycleFixture fixture, ScriptedClients clients)
     {
         var services = new ServiceCollection();
-        services.AddTandem().AddDebate(Options(fixture, clients));
+        services.AddSingleton(new TandemEnvironment(fixture.TandemHome, fixture.TandemExePath));
+        services.AddTandem().AddDebate(Options(clients));
         using var provider = services.BuildServiceProvider();
         return provider.GetRequiredService<DebateComposition>().Build();
     }
@@ -165,13 +166,7 @@ public sealed class DebateCompositionTests
     internal static PipelineMessage<DebateState> Input(LifecycleFixture fixture) =>
         new(
             PipelineRuntime.Create(fixture.RunId),
-            new DebateState(
-                "Should typed composition own lifecycle state?",
-                fixture.WorkspacePath,
-                [],
-                0,
-                null
-            )
+            new DebateState("Should typed composition own lifecycle state?", [], 0, null)
         );
 
     internal static async Task WriteVerdictReceiptAsync(
@@ -181,7 +176,7 @@ public sealed class DebateCompositionTests
         await new LifecycleReceiptStore(fixture.TandemHome).WriteAsync(
             fixture.RunId,
             input.Runtime.NextInvocationId("judge"),
-            "judge",
+            JudgeAgent.StepId,
             SubmitVerdictAction.OutcomeKind,
             "Verdict submitted: Affirmed",
             JsonSerializer.SerializeToElement(
@@ -190,14 +185,8 @@ public sealed class DebateCompositionTests
             CancellationToken.None
         );
 
-    private static DebateOptions Options(LifecycleFixture fixture, ScriptedClients clients) =>
-        new(
-            fixture.TandemHome,
-            fixture.TandemExePath,
-            clients.Proposer,
-            clients.Critic,
-            clients.Judge
-        );
+    private static DebateOptions Options(ScriptedClients clients) =>
+        new(clients.Proposer, clients.Critic, clients.Judge);
 
     private static async Task<PipelineMessage<DebateState>> RunAsync(
         Pipeline pipeline,

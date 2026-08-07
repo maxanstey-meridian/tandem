@@ -1,13 +1,12 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Tandem.Domain;
+using Tandem.Git;
 
-namespace Tandem.Infrastructure.Blocks;
+namespace Tandem.Delivery;
 
-public sealed class CaptureCandidateBlock(GitProcess? git = null)
+public sealed class CaptureCandidateBlock(GitProcess git)
 {
-    private readonly GitProcess _git = git ?? new GitProcess();
-
     public async ValueTask<PipelineMessage<DeliveryState>> ExecuteAsync(
         PipelineMessage<DeliveryState> message,
         CancellationToken cancellationToken
@@ -17,10 +16,10 @@ public sealed class CaptureCandidateBlock(GitProcess? git = null)
         var ctx = message.State;
         var ws = ctx.WorkspacePath;
 
-        var addResult = await _git.RunAsync(ws, ["add", "-A"], cancellationToken);
+        var addResult = await git.RunAsync(ws, ["add", "-A"], cancellationToken);
         EnsureSucceeded("git add", addResult, cancellationToken);
 
-        var commitResult = await _git.RunAsync(
+        var commitResult = await git.RunAsync(
             ws,
             [
                 "-c",
@@ -36,7 +35,7 @@ public sealed class CaptureCandidateBlock(GitProcess? git = null)
         );
         EnsureSucceeded("git commit", commitResult, cancellationToken);
 
-        var revResult = await _git.RunAsync(ws, ["rev-parse", "HEAD"], cancellationToken);
+        var revResult = await git.RunAsync(ws, ["rev-parse", "HEAD"], cancellationToken);
         EnsureSucceeded("git rev-parse", revResult, cancellationToken);
         var candidateSha = revResult.Stdout.Trim();
 

@@ -1,4 +1,4 @@
-namespace Tandem.Domain;
+namespace Tandem.Delivery;
 
 public sealed record ReviewDecision(
     ReviewDecisionValue Decision,

@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Tandem.Infrastructure.Lifecycle;
+namespace Tandem.Actions;
 
 public sealed record LifecycleReceipt(
     string InvocationId,

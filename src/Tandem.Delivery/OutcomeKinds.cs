@@ -1,4 +1,4 @@
-namespace Tandem.Domain;
+namespace Tandem.Delivery;
 
 public static class OutcomeKinds
 {

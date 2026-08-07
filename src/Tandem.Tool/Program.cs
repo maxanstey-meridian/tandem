@@ -1,7 +1,6 @@
 using System.CommandLine;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Agents.AI.Workflows;
@@ -12,12 +11,14 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Tandem;
+using Tandem.Actions;
 using Tandem.Application;
+using Tandem.Delivery;
 using Tandem.Domain;
+using Tandem.Git;
 using Tandem.Infrastructure;
-using Tandem.Infrastructure.Composition;
 using Tandem.Infrastructure.Dashboard;
-using Tandem.Infrastructure.Lifecycle;
 using Tandem.Infrastructure.Projection;
 using Tandem.Interfaces;
 using InfrastructureChatClientBuilder = Tandem.Infrastructure.ChatClientBuilder;
@@ -1030,9 +1031,6 @@ file sealed class StreamRenderer
     {
         switch (evt)
         {
-            case AgentResponseUpdateEvent updateEvent:
-                RenderUpdate(updateEvent.Update);
-                break;
             case WorkflowOutputEvent outputEvent:
                 if (outputEvent.Is<PipelineMessage<DeliveryState>>())
                 {
@@ -1118,43 +1116,35 @@ file sealed class StreamRenderer
         }
     }
 
-    public void RenderUpdate(AgentResponseUpdate update)
+    public void RenderUpdate(Tandem.AgentUpdate update)
     {
         var ts = DateTime.UtcNow.ToString("HH:mm:ss.fff");
-        foreach (var content in update.Contents)
+        switch (update)
         {
-            switch (content)
-            {
-                case TextReasoningContent reasoning:
-                    _reasoning.Append(reasoning.Text);
-                    FlushReasoningOnNewline();
-                    break;
-                case TextContent text:
-                    _agent.Append(text.Text);
-                    FlushAgentOnNewline();
-                    break;
-                case FunctionCallContent call:
-                    FlushAgent();
-                    FlushReasoning();
-                    _toolNames[call.CallId] = call.Name;
-                    Console.WriteLine($"[{ts}] [tool] {call.Name}");
-                    break;
-                case FunctionResultContent result:
-                    FlushAgent();
-                    FlushReasoning();
-                    var name = _toolNames.GetValueOrDefault(result.CallId, result.CallId);
-                    if (result.Exception is not null)
-                    {
-                        Console.WriteLine(
-                            $"[{ts}] [tool] {name} failed: {result.Exception.Message}"
-                        );
-                    }
-                    else
-                    {
-                        Console.WriteLine($"[{ts}] [tool] {name} done");
-                    }
-                    break;
-            }
+            case Tandem.AgentUpdate.Reasoning reasoning:
+                _reasoning.Append(reasoning.Value);
+                FlushReasoningOnNewline();
+                break;
+            case Tandem.AgentUpdate.Text text:
+                _agent.Append(text.Value);
+                FlushAgentOnNewline();
+                break;
+            case Tandem.AgentUpdate.ToolStarted call:
+                FlushAgent();
+                FlushReasoning();
+                _toolNames[call.CallId] = call.Name;
+                Console.WriteLine($"[{ts}] [tool] {call.Name}");
+                break;
+            case Tandem.AgentUpdate.ToolCompleted result:
+                FlushAgent();
+                FlushReasoning();
+                var name = _toolNames.GetValueOrDefault(result.CallId, result.CallId);
+                Console.WriteLine(
+                    result.Succeeded
+                        ? $"[{ts}] [tool] {name} done"
+                        : $"[{ts}] [tool] {name} failed: {result.Error}"
+                );
+                break;
         }
     }
 

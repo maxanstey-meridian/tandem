@@ -1,7 +1,6 @@
 using FluentValidation;
-using Tandem.Domain;
 
-namespace Tandem.Infrastructure.Blocks;
+namespace Tandem.Delivery;
 
 public sealed class PlannerDecisionValidator : AbstractValidator<PlannerDecision>
 {

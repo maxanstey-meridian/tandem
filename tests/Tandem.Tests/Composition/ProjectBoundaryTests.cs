@@ -16,6 +16,9 @@ public sealed class ProjectBoundaryTests
         var delivery = ProjectReferences("src/Tandem.Delivery/Tandem.Delivery.csproj");
         var tool = ProjectReferences("src/Tandem.Tool/Tandem.Tool.csproj");
         var debate = ProjectReferences("samples/Tandem.Sample.Debate/Tandem.Sample.Debate.csproj");
+        var support = ProjectReferences(
+            "samples/Tandem.Sample.Support/Tandem.Sample.Support.csproj"
+        );
 
         tandem.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
         delivery.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
@@ -23,6 +26,32 @@ public sealed class ProjectBoundaryTests
         tool.Should().Contain(reference => reference.EndsWith("Tandem.Delivery.csproj"));
         debate.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         debate.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
+        support.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
+        support.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
+    }
+
+    [Fact]
+    public void Support_IsAnUnprivilegedConsumerWithoutCodingOrRuntimePlumbing()
+    {
+        var project = File.ReadAllText(
+            Path("samples/Tandem.Sample.Support/Tandem.Sample.Support.csproj")
+        );
+        project.Should().NotContain("Microsoft.Agents");
+        project.Should().NotContain("Tandem.Delivery");
+        project.Should().NotContain("Compile Include");
+        project.Should().NotContain("InternalsVisibleTo");
+
+        var source = string.Join('\n', SourceLines("samples/Tandem.Sample.Support"));
+        source.Should().NotContain("using Microsoft.Agents");
+        source.Should().NotContain("Tandem.Delivery");
+        source.Should().NotContain("using Tandem.Infrastructure");
+        source.Should().NotContain("System.Reflection");
+        source.Should().NotContain("InternalsVisibleTo");
+        source.Should().NotContain("WorkspacePath");
+        source.Should().NotContain("WithWorkspace");
+        source.Should().NotContain("IPipelineExecutionContext");
+        source.Should().NotContain("QueueStateUpdateAsync");
+        source.Should().NotContain("ReadStateAsync");
     }
 
     [Fact]
@@ -56,9 +85,10 @@ public sealed class ProjectBoundaryTests
             .ToArray();
         source.Should().NotContain(line => line.Contains("using Microsoft.Agents"));
         source.Should().NotContain(line => line.Contains("Tandem.Delivery"));
-        source.Should().NotContain(line => line.Contains("Tandem.Infrastructure.Composition"));
+        source.Should().NotContain(line => line.Contains("using Tandem.Infrastructure"));
         source.Should().NotContain(line => line.Contains("System.Reflection"));
         source.Should().NotContain(line => line.Contains("InternalsVisibleTo"));
+        source.Should().NotContain(line => line.Contains("WorkspacePath"));
     }
 
     [Fact]
@@ -85,8 +115,11 @@ public sealed class ProjectBoundaryTests
 
         var source = Directory
             .EnumerateFiles(Path("src/Tandem.Delivery"), "*.cs", SearchOption.AllDirectories)
-            .SelectMany(File.ReadLines);
+            .SelectMany(File.ReadLines)
+            .ToArray();
         source.Should().NotContain(line => line.Contains("using Microsoft.Agents"));
+        source.Should().NotContain(line => line.Contains("using Tandem.Infrastructure"));
+        source.Should().NotContain(line => line.Contains("namespace Tandem.Infrastructure"));
     }
 
     [Fact]
@@ -94,6 +127,7 @@ public sealed class ProjectBoundaryTests
     {
         SourceLines("src/Tandem.Delivery")
             .Concat(SourceLines("samples/Tandem.Sample.Debate"))
+            .Concat(SourceLines("samples/Tandem.Sample.Support"))
             .Should()
             .NotContain(line => line.Contains("Microsoft.Agents", StringComparison.Ordinal));
     }
@@ -114,7 +148,14 @@ public sealed class ProjectBoundaryTests
     [Fact]
     public void AuthoredSteps_UseDunetAndGeneratedSelectors()
     {
-        foreach (var root in new[] { "src/Tandem.Delivery", "samples/Tandem.Sample.Debate" })
+        foreach (
+            var root in new[]
+            {
+                "src/Tandem.Delivery",
+                "samples/Tandem.Sample.Debate",
+                "samples/Tandem.Sample.Support",
+            }
+        )
         {
             var source = string.Join('\n', SourceLines(root));
             source.Should().Contain("using Dunet;");
@@ -135,7 +176,9 @@ public sealed class ProjectBoundaryTests
         source.Should().Contain("sessionPolicy: ReviewerPolicies.StartFreshForEachCandidate");
 
         var debate = string.Join('\n', SourceLines("samples/Tandem.Sample.Debate"));
-        debate.Should().Contain("SessionPolicy:");
+        debate.Should().Contain(".WithSessionPolicy(");
+        var support = string.Join('\n', SourceLines("samples/Tandem.Sample.Support"));
+        support.Should().Contain(".WithSessionPolicy(");
     }
 
     [Fact]
@@ -145,6 +188,21 @@ public sealed class ProjectBoundaryTests
         source.Should().Contain("_builder.AddEdge");
         source.Should().NotContain("_routes");
         source.Should().NotContain("RouteDefinition");
+    }
+
+    [Fact]
+    public void PublicTandemApi_ExposesNoMafTypes()
+    {
+        var leaks = typeof(Pipeline)
+            .Assembly.GetExportedTypes()
+            .SelectMany(PublicSurfaceTypes)
+            .Where(type => type.Assembly.GetName().Name?.StartsWith("Microsoft.Agents") == true)
+            .Select(type => type.FullName)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        leaks.Should().BeEmpty();
     }
 
     [Fact]
@@ -189,4 +247,100 @@ public sealed class ProjectBoundaryTests
                 )
             )
             .SelectMany(File.ReadLines);
+
+    private static IEnumerable<Type> PublicSurfaceTypes(Type type)
+    {
+        yield return type;
+
+        if (type.BaseType is { } baseType)
+        {
+            foreach (var candidate in Expand(baseType))
+            {
+                yield return candidate;
+            }
+        }
+
+        foreach (var contract in type.GetInterfaces())
+        {
+            foreach (var candidate in Expand(contract))
+            {
+                yield return candidate;
+            }
+        }
+
+        foreach (
+            var parameter in type.GetGenericArguments()
+                .Where(argument => argument.IsGenericParameter)
+        )
+        {
+            foreach (var constraint in parameter.GetGenericParameterConstraints())
+            {
+                foreach (var candidate in Expand(constraint))
+                {
+                    yield return candidate;
+                }
+            }
+        }
+
+        foreach (
+            var memberType in type.GetConstructors()
+                .SelectMany(constructor =>
+                    constructor.GetParameters().Select(parameter => parameter.ParameterType)
+                )
+                .Concat(type.GetMethods().Select(method => method.ReturnType))
+                .Concat(
+                    type.GetMethods()
+                        .SelectMany(method =>
+                            method.GetParameters().Select(parameter => parameter.ParameterType)
+                        )
+                )
+                .Concat(type.GetProperties().Select(property => property.PropertyType))
+                .Concat(type.GetEvents().Select(@event => @event.EventHandlerType!))
+                .Concat(type.GetFields().Select(field => field.FieldType))
+                .Where(candidate => candidate is not null)
+        )
+        {
+            foreach (var candidate in Expand(memberType))
+            {
+                yield return candidate;
+            }
+        }
+
+        foreach (var method in type.GetMethods())
+        {
+            foreach (
+                var parameter in method
+                    .GetGenericArguments()
+                    .Where(argument => argument.IsGenericParameter)
+            )
+            {
+                foreach (var constraint in parameter.GetGenericParameterConstraints())
+                {
+                    foreach (var candidate in Expand(constraint))
+                    {
+                        yield return candidate;
+                    }
+                }
+            }
+        }
+    }
+
+    private static IEnumerable<Type> Expand(Type type)
+    {
+        yield return type;
+        if (type.HasElementType && type.GetElementType() is { } element)
+        {
+            foreach (var candidate in Expand(element))
+            {
+                yield return candidate;
+            }
+        }
+        foreach (var argument in type.GetGenericArguments())
+        {
+            foreach (var candidate in Expand(argument))
+            {
+                yield return candidate;
+            }
+        }
+    }
 }

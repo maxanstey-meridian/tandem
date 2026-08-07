@@ -3,7 +3,6 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Extensions.AI;
 using Tandem.Domain;
-using Tandem.Infrastructure.Composition;
 
 namespace Tandem.Tests.Composition;
 
@@ -34,7 +33,14 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
         Directory.CreateDirectory(_tandemHome);
 
         var composition = new DeliveryComposition(
-            new DeliveryStepsFactory(_tandemHome, _ => new FakeChatClient(), _ => MakeProfile())
+            new DeliveryStepsFactory(
+                new AgentRuntime(_tandemHome, null),
+                _ => new FakeChatClient(),
+                _ => MakeProfile(),
+                new DeliveryDiffAcquisition(new GitProcess()),
+                new WorkspacePreparation(new GitProcess()),
+                new GitProcess()
+            )
         );
         _workflow = PipelineMafBridge.GetWorkflow(composition.Build(new PipelineBuildContext()));
     }
@@ -64,7 +70,14 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
     public void PublicInspection_ReflectsTheExecutableWorkflowSemantics()
     {
         var inspection = new DeliveryComposition(
-            new DeliveryStepsFactory(_tandemHome, _ => new FakeChatClient(), _ => MakeProfile())
+            new DeliveryStepsFactory(
+                new AgentRuntime(_tandemHome, null),
+                _ => new FakeChatClient(),
+                _ => MakeProfile(),
+                new DeliveryDiffAcquisition(new GitProcess()),
+                new WorkspacePreparation(new GitProcess()),
+                new GitProcess()
+            )
         )
             .Build(new PipelineBuildContext())
             .Inspect();

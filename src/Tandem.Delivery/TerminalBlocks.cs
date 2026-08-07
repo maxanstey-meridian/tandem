@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Tandem.Domain;
 
-namespace Tandem.Infrastructure.Blocks;
+namespace Tandem.Delivery;
 
 public sealed class CompleteBlock
 {

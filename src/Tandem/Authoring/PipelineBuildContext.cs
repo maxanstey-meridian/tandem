@@ -1,9 +1,6 @@
-using Microsoft.Agents.AI;
-using Tandem.Infrastructure.Projection;
-
 namespace Tandem;
 
 public sealed record PipelineBuildContext(
-    Action<string, Guid, AgentResponseUpdate>? AgentUpdate = null,
+    Action<string, Guid, AgentUpdate>? AgentUpdate = null,
     IBlockExecutionObserver? ExecutionObserver = null
 );

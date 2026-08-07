@@ -54,6 +54,15 @@ public static class PipelineNodes
 
     public static PipelineNodeDescriptor RequestPort<TRequest, TResponse>(string id) =>
         new RequestPortPipelineNodeDescriptor<TRequest, TResponse>(id);
+
+    public static PipelineRequest<TState, TRequest, TResponse> Request<TState, TRequest, TResponse>(
+        string requestStepId,
+        string portId,
+        string resumeStepId,
+        Func<PipelineMessage<TState>, TRequest> createRequest,
+        Func<PipelineMessage<TState>, TResponse, PipelineMessage<TState>> applyResponse,
+        IBlockExecutionObserver? observer = null
+    ) => new(requestStepId, portId, resumeStepId, createRequest, applyResponse, observer);
 }
 
 internal sealed class DelegatePipelineNodeDescriptor<TInput, TOutput>(

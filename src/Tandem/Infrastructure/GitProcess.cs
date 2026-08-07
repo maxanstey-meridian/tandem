@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace Tandem.Infrastructure;
+namespace Tandem.Git;
 
 public sealed record GitResult(int ExitCode, string Stdout, string Stderr, bool TimedOut);
 

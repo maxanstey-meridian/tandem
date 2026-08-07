@@ -44,5 +44,6 @@
         <ProjectReference Include="..\..\src\Tandem\Tandem.csproj" />
         <ProjectReference Include="..\..\src\Tandem.Delivery\Tandem.Delivery.csproj" />
         <ProjectReference Include="..\..\samples\Tandem.Sample.Debate\Tandem.Sample.Debate.csproj" />
+        <ProjectReference Include="..\..\samples\Tandem.Sample.Support\Tandem.Sample.Support.csproj" />
     </ItemGroup>
 </Project>

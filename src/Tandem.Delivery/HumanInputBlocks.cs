@@ -1,8 +1,7 @@
 using System.Text.Json;
 using Tandem.Domain;
-using Tandem.Infrastructure.Projection;
 
-namespace Tandem.Infrastructure.Blocks;
+namespace Tandem.Delivery;
 
 internal static class HumanQuestionBlock
 {

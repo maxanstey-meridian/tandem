@@ -3,7 +3,6 @@ using System.Text.Json.Serialization;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
 using Tandem.Domain;
-using Tandem.Infrastructure.Composition;
 
 namespace Tandem.Tests.Durable;
 
@@ -50,7 +49,7 @@ public sealed class HumanSuspensionProofTests
             );
 
             var stepsFactory = new DeliveryStepsFactory(
-                tandemHome,
+                new AgentRuntime(tandemHome, null),
                 _ => plannerClient,
                 _ => new ResolvedProfile(
                     "test",
@@ -61,7 +60,10 @@ public sealed class HumanSuspensionProofTests
                     128000,
                     4096,
                     80
-                )
+                ),
+                new DeliveryDiffAcquisition(new GitProcess()),
+                new WorkspacePreparation(new GitProcess()),
+                new GitProcess()
             );
 
             var delivery = stepsFactory.Create(new PipelineBuildContext());
@@ -193,7 +195,7 @@ public sealed class HumanSuspensionProofTests
 
     private static async Task InitializeRepositoryAsync(string repositoryPath)
     {
-        var git = new Tandem.Infrastructure.GitProcess();
+        var git = new GitProcess();
         await git.RunAsync(
             repositoryPath,
             ["init", "--initial-branch=main"],

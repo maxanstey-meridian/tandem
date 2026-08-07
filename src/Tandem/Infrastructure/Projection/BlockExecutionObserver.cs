@@ -5,31 +5,7 @@ using Tandem.Domain;
 
 namespace Tandem.Infrastructure.Projection;
 
-public interface IBlockExecutionObserver
-{
-    public ValueTask StartedAsync(string blockId, CancellationToken cancellationToken);
-
-    public ValueTask CompletedAsync<TInput, TOutput>(
-        string blockId,
-        TInput input,
-        TOutput output,
-        TimeSpan duration,
-        CancellationToken cancellationToken
-    );
-}
-
-public interface ICommandOutputObserver
-{
-    public ValueTask CommandOutputAsync(
-        string blockId,
-        string command,
-        string output,
-        int exitCode,
-        CancellationToken cancellationToken
-    );
-}
-
-public sealed class ObservedExecutor<TInput, TOutput>(
+internal sealed class ObservedExecutor<TInput, TOutput>(
     string blockId,
     Executor<TInput, TOutput> inner,
     IBlockExecutionObserver observer

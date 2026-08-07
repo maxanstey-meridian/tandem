@@ -5,7 +5,7 @@ using Microsoft.Agents.AI;
 
 namespace Tandem.Infrastructure;
 
-public sealed class BomlessFileSystemAgentFileStore(string rootPath) : AgentFileStore
+internal sealed class BomlessFileSystemAgentFileStore(string rootPath) : AgentFileStore
 {
     private static readonly UTF8Encoding _utf8WithoutBom = new(
         encoderShouldEmitUTF8Identifier: false

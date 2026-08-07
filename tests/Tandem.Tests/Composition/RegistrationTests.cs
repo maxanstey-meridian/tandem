@@ -1,14 +1,10 @@
 using System.Collections;
 using System.Reflection;
 using FluentAssertions;
-using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Tandem.Actions;
 using Tandem.Domain;
-using Tandem.Infrastructure;
-using Tandem.Infrastructure.Composition;
-using Tandem.Infrastructure.Lifecycle;
-using Tandem.Infrastructure.Projection;
 
 namespace Tandem.Tests.Composition;
 
@@ -40,6 +36,33 @@ public sealed class RegistrationTests : IDisposable
     }
 
     [Fact]
+    public void AgentRuntime_RequiresExplicitSessionPolicyBeforeBuild()
+    {
+        var builder = new AgentRuntime(_home, null)
+            .Create<TestState>("classify", "support", "Classify the ticket.", new FakeChatClient())
+            .WithMessage(pipeline => pipeline.State.Message);
+
+        var act = () => builder.Build();
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*session policy*");
+    }
+
+    [Fact]
+    public void AgentRuntime_BuildsWithoutWorkspaceCapability()
+    {
+        var operation = new AgentRuntime(_home, null)
+            .Create<TestState>("classify", "support", "Classify the ticket.", new FakeChatClient())
+            .WithMessage(pipeline => pipeline.State.Message)
+            .WithSessionPolicy(_ => new AgentSessionDecision(
+                AgentSessionAction.Reset,
+                "Classify independently."
+            ))
+            .Build();
+
+        operation.Should().NotBeNull();
+    }
+
+    [Fact]
     public async Task ConcurrentBuilds_FromOneDiRoot_IsolateContextsAndReuseStableDependencies()
     {
         Directory.CreateDirectory(_home);
@@ -53,8 +76,8 @@ public sealed class RegistrationTests : IDisposable
             new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true }
         );
         var composition = provider.GetRequiredService<DeliveryComposition>();
-        Action<string, Guid, AgentResponseUpdate> firstUpdate = (_, _, _) => { };
-        Action<string, Guid, AgentResponseUpdate> secondUpdate = (_, _, _) => { };
+        Action<string, Guid, AgentUpdate> firstUpdate = (_, _, _) => { };
+        Action<string, Guid, AgentUpdate> secondUpdate = (_, _, _) => { };
         var firstObserver = new RecordingObserver();
         var secondObserver = new RecordingObserver();
 
@@ -132,6 +155,8 @@ public sealed class RegistrationTests : IDisposable
 
         public void Dispose() { }
     }
+
+    private sealed record TestState(string Message);
 
     private sealed class RecordingObserver : IBlockExecutionObserver, ICommandOutputObserver
     {

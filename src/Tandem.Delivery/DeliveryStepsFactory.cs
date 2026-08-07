@@ -1,65 +1,65 @@
 using Microsoft.Extensions.AI;
 using Tandem.Domain;
-using Tandem.Infrastructure.Blocks;
-using Tandem.Infrastructure.Lifecycle;
-using Tandem.Infrastructure.Projection;
+using Tandem.Git;
 
-namespace Tandem.Infrastructure.Composition;
+namespace Tandem.Delivery;
 
 public sealed class DeliveryStepsFactory(
-    string tandemHome,
-    Func<string, IChatClient> chatClientFactory,
+    AgentRuntime agentRuntime,
+    Func<string, IChatClient> chatClients,
     Func<string, ResolvedProfile> profileResolver,
-    string? tandemExePath = null
+    DeliveryDiffAcquisition diffAcquisition,
+    WorkspacePreparation workspacePreparation,
+    GitProcess git
 )
 {
     public DeliverySteps Create(PipelineBuildContext context)
     {
-        var executor = CreateAgentBlock(
+        var executor = CreateAgent(
             BlockIds.Executor,
             "implementation",
-            DeliveryComposition.ExecutorInstructions,
-            DeliveryComposition.LifecycleToolsFor(BlockIds.Executor),
+            DeliveryPrompts.ExecutorInstructions,
+            DeliveryPolicies.LifecycleToolsFor(BlockIds.Executor),
             context,
-            toolInterceptor: DeliveryComposition.CreateMutationGate(),
-            turnPolicy: DeliveryComposition.CreateExecutorTurnPolicy(),
+            toolInterceptor: DeliveryPolicies.CreateMutationGate(),
+            turnPolicy: DeliveryPolicies.CreateExecutorTurnPolicy(),
             sessionPolicy: ExecutorPolicies.ContinueWorkingSession,
             teardownPolicy: ExecutorPolicies.ReleaseSessionAfterAcceptedReport
         );
-        var planner = CreateAgentBlock(
+        var planner = CreateAgent(
             BlockIds.Planner,
             "planning",
-            DeliveryComposition.PlannerInstructions,
-            DeliveryComposition.LifecycleToolsFor(BlockIds.Planner),
+            DeliveryPrompts.PlannerInstructions,
+            DeliveryPolicies.LifecycleToolsFor(BlockIds.Planner),
             context,
             PlannerDecisionPolicy.Parse,
-            structuredOutputAcceptance: DeliveryComposition.CreatePlannerGroundingPolicy(),
+            structuredOutputAcceptance: DeliveryPolicies.CreatePlannerGroundingPolicy(),
             structuredOutputCorrectionRequiredToolName: "file_access_read",
-            configureChatOptions: DeliveryComposition.ConfigurePlannerChatOptions,
+            configureChatOptions: DeliveryPolicies.ConfigurePlannerChatOptions,
             sessionPolicy: PlannerPolicies.ContinueConsultation
         );
-        var reviewer = CreateAgentBlock(
+        var reviewer = CreateAgent(
             BlockIds.Reviewer,
             "review",
-            DeliveryComposition.ReviewerInstructions,
-            DeliveryComposition.LifecycleToolsFor(BlockIds.Reviewer),
+            DeliveryPrompts.ReviewerInstructions,
+            DeliveryPolicies.LifecycleToolsFor(BlockIds.Reviewer),
             context,
             ReviewDecisionPolicy.Parse,
-            messageAugmentation: DeliveryComposition.CreateDiffAugmentation(),
-            structuredOutputAcceptance: DeliveryComposition.CreateReviewerGroundingPolicy(),
+            messageAugmentation: DeliveryPolicies.CreateDiffAugmentation(diffAcquisition),
+            structuredOutputAcceptance: DeliveryPolicies.CreateReviewerGroundingPolicy(),
             structuredOutputCorrectionRequiredToolName: "file_access_read",
-            configureChatOptions: DeliveryComposition.ConfigureReviewerChatOptions,
+            configureChatOptions: DeliveryPolicies.ConfigureReviewerChatOptions,
             sessionPolicy: ReviewerPolicies.StartFreshForEachCandidate,
             teardownPolicy: ReviewerPolicies.TeardownAfterDecision
         );
 
         return new DeliverySteps(
-            new PrepareWorkspaceStage(new PrepareWorkspaceBlock()),
+            new PrepareWorkspaceStage(new PrepareWorkspaceBlock(workspacePreparation)),
             new ExecutorAgent(executor),
             new PlannerAgent(planner),
-            new CaptureCandidateStage(new CaptureCandidateBlock()),
+            new CaptureCandidateStage(new CaptureCandidateBlock(git)),
             new VerificationStage(
-                new VerificationBlock(context.ExecutionObserver as ICommandOutputObserver)
+                new VerificationBlock(git, context.ExecutionObserver as ICommandOutputObserver)
             ),
             new ReviewerAgent(reviewer),
             new CompleteRunStage(new CompleteBlock()),
@@ -70,7 +70,7 @@ public sealed class DeliveryStepsFactory(
         );
     }
 
-    private AgentBlock<DeliveryState> CreateAgentBlock(
+    private AgentOperation<DeliveryState> CreateAgent(
         string blockId,
         string profileName,
         string instructions,
@@ -89,64 +89,93 @@ public sealed class DeliveryStepsFactory(
     )
     {
         var profile = profileResolver(profileName);
-        var checkpoint = DeliveryComposition.OwnsCheckpointPolicy(blockId)
+        var checkpoint = DeliveryPolicies.OwnsCheckpointPolicy(blockId)
             ? new CheckpointPolicy<DeliveryState>(
                 profile.ContextWindowTokens,
                 profile.MaxOutputTokens,
                 profile.CheckpointAtPercent,
                 "write_checkpoint",
                 OutcomeKinds.CheckpointWritten,
-                DeliveryComposition.CheckpointOnlyInstructions,
-                DeliveryComposition.BuildCheckpointUserMessage,
+                DeliveryPrompts.CheckpointOnlyInstructions,
+                DeliveryPrompts.BuildCheckpointUserMessage,
                 (state, _, payload) => state with { CheckpointPayload = payload }
             )
             : null;
 
-        var config = new AgentBlockConfig<DeliveryState>(
-            blockId,
-            profileName,
-            instructions,
-            lifecycleTools,
-            blockId switch
-            {
-                BlockIds.Planner => DeliveryComposition.BuildPlannerMessage,
-                BlockIds.Reviewer => DeliveryComposition.BuildReviewerMessage,
-                _ => DeliveryComposition.BuildExecutorMessage,
-            },
-            state => state.WorkspacePath,
-            state => DeliveryComposition.AllowsWorkspaceMutation(blockId, state),
-            structuredOutput,
-            checkpoint,
-            messageAugmentation,
-            turnPolicy,
-            structuredOutputAcceptance,
-            structuredOutputCorrectionRequiredToolName,
-            blockId == BlockIds.Executor
-                ? (state, kind, payload) =>
-                    kind == OutcomeKinds.ReportSubmitted
-                        ? state with
-                        {
-                            ImplementationReport = payload,
-                        }
-                        : state
-                : null,
-            LifecycleActionSetIdentity: lifecycleTools.Count > 0 || checkpoint is not null
-                ? DeliveryLifecycleActions.Identity
-                : null,
-            SessionPolicy: sessionPolicy,
-            ProfilePolicy: profilePolicy,
-            TeardownPolicy: teardownPolicy
-        );
+        var builder = agentRuntime
+            .Create<DeliveryState>(
+                blockId,
+                profileName,
+                instructions,
+                chatClients(profileName),
+                chatClients
+            )
+            .WithMessage(
+                blockId switch
+                {
+                    BlockIds.Planner => DeliveryPrompts.BuildPlannerMessage,
+                    BlockIds.Reviewer => DeliveryPrompts.BuildReviewerMessage,
+                    _ => DeliveryPrompts.BuildExecutorMessage,
+                }
+            )
+            .WithWorkspace(
+                state => state.WorkspacePath,
+                state => DeliveryPolicies.AllowsWorkspaceMutation(blockId, state),
+                toolInterceptor
+            )
+            .WithSessionPolicy(
+                sessionPolicy
+                    ?? throw new InvalidOperationException(
+                        $"Agent '{blockId}' must supply a session policy."
+                    )
+            );
 
-        return new AgentBlock<DeliveryState>(
-            config,
-            chatClientFactory(profileName),
-            tandemHome,
-            tandemExePath,
-            context.AgentUpdate,
-            toolInterceptor,
-            configureChatOptions,
-            chatClientFactory
-        );
+        if (structuredOutput is not null)
+        {
+            builder.WithStructuredOutput(
+                structuredOutput,
+                configureChatOptions,
+                structuredOutputAcceptance,
+                structuredOutputCorrectionRequiredToolName
+            );
+        }
+        if (messageAugmentation is not null)
+        {
+            builder.WithMessageAugmentation(messageAugmentation);
+        }
+        if (turnPolicy is not null)
+        {
+            builder.WithContinuationPolicy(turnPolicy);
+        }
+        if (profilePolicy is not null)
+        {
+            builder.WithProfilePolicy(profilePolicy);
+        }
+        if (teardownPolicy is not null)
+        {
+            builder.WithTeardownPolicy(teardownPolicy);
+        }
+        if (lifecycleTools.Count > 0 || checkpoint is not null)
+        {
+            builder.WithLifecycleActions(
+                DeliveryLifecycleActions.Identity,
+                lifecycleTools,
+                blockId == BlockIds.Executor
+                    ? (state, kind, payload) =>
+                        kind == OutcomeKinds.ReportSubmitted
+                            ? state with
+                            {
+                                ImplementationReport = payload,
+                            }
+                            : state
+                    : null
+            );
+        }
+        if (checkpoint is not null)
+        {
+            builder.WithCheckpoint(checkpoint);
+        }
+
+        return builder.Build(context);
     }
 }

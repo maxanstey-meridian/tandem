@@ -1,6 +1,4 @@
 using System.Text.Json;
-using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
 using Tandem.Domain;
 
 namespace Tandem.Infrastructure.Projection;
@@ -124,67 +122,57 @@ public sealed class RunEventProjector(
         );
     }
 
-    public async Task EmitAgentUpdateAsync(
-        AgentResponseUpdate update,
-        CancellationToken ct = default
-    )
+    public async Task EmitAgentUpdateAsync(AgentUpdate update, CancellationToken ct = default)
     {
-        foreach (var content in update.Contents)
+        switch (update)
         {
-            switch (content)
-            {
-                case TextReasoningContent reasoning:
-                    await EmitAsync(EventKinds.AgentReasoning, reasoning.Text, data: null, ct: ct);
-                    break;
-                case TextContent text:
-                    if (!string.IsNullOrEmpty(text.Text))
+            case AgentUpdate.Reasoning reasoning:
+                await EmitAsync(EventKinds.AgentReasoning, reasoning.Value, data: null, ct: ct);
+                break;
+            case AgentUpdate.Text text when !string.IsNullOrEmpty(text.Value):
+                await EmitAsync(EventKinds.AgentText, text.Value, data: null, ct: ct);
+                break;
+            case AgentUpdate.Usage usage:
+                var usageData = JsonSerializer.SerializeToElement(
+                    new
                     {
-                        await EmitAsync(EventKinds.AgentText, text.Text, data: null, ct: ct);
+                        inputTokens = usage.InputTokens,
+                        outputTokens = usage.OutputTokens,
+                        reasoningTokens = usage.ReasoningTokens,
+                        model = profile?.Model,
+                        contextWindowTokens = profile?.ContextWindowTokens,
                     }
-                    break;
-                case UsageContent usage:
-                    var usageData = JsonSerializer.SerializeToElement(
-                        new
-                        {
-                            inputTokens = usage.Details.InputTokenCount,
-                            outputTokens = usage.Details.OutputTokenCount,
-                            reasoningTokens = usage.Details.ReasoningTokenCount,
-                            model = profile?.Model,
-                            contextWindowTokens = profile?.ContextWindowTokens,
-                        }
-                    );
-                    await EmitAsync(EventKinds.AgentUsage, "usage", usageData, ct: ct);
-                    break;
-                case FunctionCallContent call:
-                    var description = DescribeToolCall(call.Name, call.Arguments);
-                    var callData = JsonSerializer.SerializeToElement(
-                        new
-                        {
-                            callId = call.CallId,
-                            name = call.Name,
-                            arguments = call.Arguments,
-                        }
-                    );
-                    await EmitAsync(EventKinds.ToolStarted, description, callData, ct: ct);
-                    break;
-                case FunctionResultContent result:
-                    var success = result.Exception is null;
-                    var resultData = JsonSerializer.SerializeToElement(
-                        new
-                        {
-                            callId = result.CallId,
-                            success,
-                            error = result.Exception?.Message,
-                        }
-                    );
-                    await EmitAsync(
-                        EventKinds.ToolCompleted,
-                        success ? "done" : "failed",
-                        resultData,
-                        ct: ct
-                    );
-                    break;
-            }
+                );
+                await EmitAsync(EventKinds.AgentUsage, "usage", usageData, ct: ct);
+                break;
+            case AgentUpdate.ToolStarted call:
+                var description = DescribeToolCall(call.Name, call.Arguments);
+                var callData = JsonSerializer.SerializeToElement(
+                    new
+                    {
+                        callId = call.CallId,
+                        name = call.Name,
+                        arguments = call.Arguments,
+                    }
+                );
+                await EmitAsync(EventKinds.ToolStarted, description, callData, ct: ct);
+                break;
+            case AgentUpdate.ToolCompleted result:
+                var resultData = JsonSerializer.SerializeToElement(
+                    new
+                    {
+                        callId = result.CallId,
+                        success = result.Succeeded,
+                        error = result.Error,
+                    }
+                );
+                await EmitAsync(
+                    EventKinds.ToolCompleted,
+                    result.Succeeded ? "done" : "failed",
+                    resultData,
+                    ct: ct
+                );
+                break;
         }
     }
 
@@ -223,6 +211,21 @@ public sealed class RunEventProjector(
         var truncated =
             normalized.Length <= maxLength ? normalized : normalized[..maxLength] + "...";
         return $"{name}: {truncated}";
+    }
+
+    private static string DescribeToolCall(string name, JsonElement arguments)
+    {
+        if (
+            !name.StartsWith("file_access_", StringComparison.Ordinal)
+            || arguments.ValueKind != JsonValueKind.Object
+            || !arguments.TryGetProperty("path", out var path)
+            || path.ValueKind != JsonValueKind.String
+        )
+        {
+            return name;
+        }
+
+        return $"{name} {path.GetString()}";
     }
 
     private async Task EmitAsync(

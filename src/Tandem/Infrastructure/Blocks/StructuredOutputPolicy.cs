@@ -2,7 +2,7 @@ using System.Text.Json;
 using FluentValidation;
 using Tandem.Domain;
 
-namespace Tandem.Infrastructure.Blocks;
+namespace Tandem;
 
 public static class StructuredOutputPolicy
 {

@@ -4,7 +4,6 @@ using FluentAssertions;
 using Microsoft.Extensions.AI;
 using Tandem.Domain;
 using Tandem.Infrastructure.Blocks;
-using Tandem.Infrastructure.Composition;
 
 namespace Tandem.Tests.Infrastructure;
 
@@ -301,7 +300,7 @@ public sealed class StructuredOutputTests
         resumed = JsonSerializer.Deserialize<PipelineMessage<DeliveryState>>(persisted)!;
 
         resumed.State.ReviewerHumanAnswer.Should().Be("Keep public behavior.");
-        DeliveryComposition
+        DeliveryPrompts
             .BuildReviewerMessage(resumed)
             .Should()
             .Contain("Human answer for this review:")

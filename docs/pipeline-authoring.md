@@ -9,11 +9,15 @@ Delivery in [`src/Tandem.Delivery`](../src/Tandem.Delivery) is the complete
 production example. [`samples/Tandem.Sample.Debate`](../samples/Tandem.Sample.Debate)
 is the external-consumer proof: it references Tandem, has no Delivery dependency,
 and imports no MAF namespaces.
+[`samples/Tandem.Sample.Support`](../samples/Tandem.Sample.Support) proves a
+materially different journey: agent classification and resolution, an injected
+deterministic account lookup, and a typed durable customer-reply handoff with no
+workspace or file tools.
 
 ## Author Journey
 
 1. Reference `Tandem`, add `Tandem.Generators` as an analyzer, and reference
-   `Dunet`. Use the [Debate project](../samples/Tandem.Sample.Debate/Tandem.Sample.Debate.csproj)
+   `Dunet`. Use the [Support project](../samples/Tandem.Sample.Support/Tandem.Sample.Support.csproj)
    as the project-reference example until packages are published.
 2. Define one immutable, serializable `<Name>State` containing durable lifecycle
    facts, never services, framework contexts, or a mutable state bag.
@@ -36,6 +40,111 @@ and imports no MAF namespaces.
     lifecycle actions. Do not scan assemblies.
 11. Test semantic inspection, state serialization, action validation/replay/
     conflict, in-process execution, and durable closed-generic execution.
+
+## Agent Operations
+
+`[PipelineStage]` makes a class executable and routable. It does not infer that a
+class is model-backed. Configure model execution explicitly at the pipeline's
+composition root with the DI-owned `AgentRuntime`:
+
+```csharp
+var classify = agentRuntime
+    .Create<SupportState>(
+        id: "classify",
+        profile: "support",
+        instructions: SupportPrompts.Classify,
+        chatClient: supportClient)
+    .WithMessage(pipeline => pipeline.State.Ticket)
+    .WithStructuredOutput(SupportPolicies.ParseClassification)
+    .WithSessionPolicy(SupportPolicies.StartFresh)
+    .Build(context);
+```
+
+The four constructor arguments answer the basic operational questions directly:
+
+- `id` is the stable durable identity and should match the authored step;
+- `profile` names the model policy recorded for the invocation;
+- `instructions` define the agent's role; and
+- `chatClient` is the `Microsoft.Extensions.AI.IChatClient` supplied by the host.
+
+`WithMessage` projects the latest typed pipeline message into the user message.
+Every agent must select a session policy before `Build`; Tandem does not infer
+whether a role should retain or reset context.
+
+Optional capabilities are explicit:
+
+```csharp
+.WithWorkspace(...)
+.WithStructuredOutput(...)
+.WithLifecycleActions(...)
+.WithCheckpoint(...)
+.WithContinuationPolicy(...)
+.WithMessageAugmentation(...)
+.WithProfilePolicy(...)
+.WithTeardownPolicy(...)
+```
+
+Workspace access is absent by default. Adding `WithWorkspace` enables MAF Harness
+file tools for that agent; its mutation predicate decides whether write tools are
+available for the current state. Non-file agents need no workspace property.
+
+The authored agent receives `AgentOperation<TState>` and maps its semantic
+outcome into the agent's Dunet result union:
+
+```csharp
+[PipelineStage("classify")]
+public sealed partial class ClassifyAgent(AgentOperation<SupportState> operation)
+{
+    [Union]
+    public partial record ClassifyResult
+    {
+        public partial record Categorized(
+            SupportState State,
+            PipelineRuntime Runtime,
+            BlockOutcome Outcome);
+    }
+
+    public async ValueTask<ClassifyResult> ExecuteAsync(
+        PipelineMessage<SupportState> pipeline,
+        CancellationToken cancellationToken)
+    {
+        var result = await operation.RunAsync(pipeline, cancellationToken);
+        return new ClassifyResult.Categorized(
+            result.State,
+            result.Runtime,
+            result.LatestOutcome!);
+    }
+}
+```
+
+Tandem owns model-loop execution, session persistence, usage, lifecycle receipt
+replay, and runtime bookkeeping. The pipeline owns prompts, capabilities,
+structured-output validation, state changes, and the meaning of each result.
+
+## Durable Request Handoffs
+
+Use `PipelineNodes.Request` when execution must leave the process and later resume
+with a typed response:
+
+```csharp
+var customerReply = PipelineNodes.Request<
+    SupportState,
+    CustomerQuestion,
+    CustomerReply
+>(
+    requestStepId: "support-ask-customer",
+    portId: "CustomerReply",
+    resumeStepId: "support-apply-reply",
+    createRequest: SupportPolicies.BuildCustomerQuestion,
+    applyResponse: SupportPolicies.ApplyCustomerReply);
+```
+
+The returned handoff exposes `Request`, `Port`, and `Resume` nodes for composition.
+Tandem preserves and restores the complete `PipelineMessage<SupportState>` around
+the port. Userland owns only the pure request projection and response state
+transition; it does not use execution contexts, checkpoint scopes, or JSON
+storage. The compiled Support sample demonstrates in-process and durable
+suspension/resumption.
 
 ## Minimal Real Pipeline
 

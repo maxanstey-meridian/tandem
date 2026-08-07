@@ -1,10 +1,13 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Tandem.Actions;
 using Tandem.Application;
 using Tandem.Domain;
+using Tandem.Git;
+using Tandem.Infrastructure;
 
-namespace Tandem.Infrastructure;
+namespace Tandem;
 
 public sealed record TandemEnvironment(string Home, string? ExecutablePath = null);
 
@@ -68,11 +71,15 @@ public static class TandemRegistration
         services.AddSingleton<ChatClientBuilder>();
         services.TryAddSingleton<ITandemChatClients, TandemChatClients>();
         services.TryAddSingleton(_ => new TandemEnvironment(TandemHomeResolver.Resolve()));
-        services.TryAddSingleton(sp => new Lifecycle.LifecycleActionSetRegistry(
-            sp.GetServices<Lifecycle.LifecycleActionSetRegistration>().ToArray()
+        services.TryAddSingleton(sp =>
+        {
+            var environment = sp.GetRequiredService<TandemEnvironment>();
+            return new AgentRuntime(environment.Home, environment.ExecutablePath);
+        });
+        services.TryAddSingleton(sp => new LifecycleActionSetRegistry(
+            sp.GetServices<LifecycleActionSetRegistration>().ToArray()
         ));
         services.AddSingleton<RunSetup>();
-        services.AddSingleton<WorkspacePreparation>();
         services.AddSingleton<GitProcess>();
         return services;
     }

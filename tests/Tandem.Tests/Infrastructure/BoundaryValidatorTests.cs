@@ -1,7 +1,4 @@
 using FluentAssertions;
-using Tandem.Domain;
-using Tandem.Infrastructure.Blocks;
-using Tandem.Infrastructure.Lifecycle.Validators;
 
 namespace Tandem.Tests.Infrastructure;
 

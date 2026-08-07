@@ -1,9 +1,8 @@
 using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
-using Tandem.Domain;
-using Tandem.Infrastructure.Lifecycle.Validators;
+using Tandem.Actions;
 
-namespace Tandem.Infrastructure.Lifecycle;
+namespace Tandem.Delivery;
 
 public static class DeliveryLifecycleActions
 {

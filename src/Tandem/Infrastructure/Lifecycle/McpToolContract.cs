@@ -1,6 +1,6 @@
 using FluentValidation;
 
-namespace Tandem.Infrastructure.Lifecycle;
+namespace Tandem.Actions;
 
 public sealed record McpToolContract(
     string Name,

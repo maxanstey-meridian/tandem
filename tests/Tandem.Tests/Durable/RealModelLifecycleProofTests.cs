@@ -9,7 +9,6 @@ using Microsoft.Extensions.Hosting;
 using Tandem.Application;
 using Tandem.Domain;
 using Tandem.Infrastructure;
-using Tandem.Infrastructure.Composition;
 
 namespace Tandem.Tests.Durable;
 
@@ -48,20 +47,19 @@ public sealed class RealModelLifecycleProofTests
         var tandemExePath = ResolveTandemExePath();
         var composition = new DeliveryComposition(
             new DeliveryStepsFactory(
-                tandemHome,
+                new AgentRuntime(tandemHome, tandemExePath),
                 chatClientFactory.Build,
                 chatClientFactory.ResolveProfile,
-                tandemExePath
+                new DeliveryDiffAcquisition(new GitProcess()),
+                new WorkspacePreparation(new GitProcess()),
+                new GitProcess()
             )
         );
         var reasoningUpdates = 0;
         var pipeline = composition.Build(
             new PipelineBuildContext(
                 (_, _, update) =>
-                    Interlocked.Add(
-                        ref reasoningUpdates,
-                        update.Contents.OfType<TextReasoningContent>().Count()
-                    )
+                    Interlocked.Add(ref reasoningUpdates, update is AgentUpdate.Reasoning ? 1 : 0)
             )
         );
         var workflow = PipelineMafBridge.GetWorkflow(pipeline);

@@ -4,6 +4,7 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
+using Tandem.Actions;
 using Tandem.Domain;
 using Tandem.Infrastructure.Blocks;
 using Tandem.Infrastructure.Lifecycle;
@@ -209,9 +210,9 @@ public sealed class LifecycleMcpTests
             fixture.TandemExePath,
             onUpdate: (_, _, update) =>
             {
-                foreach (var result in update.Contents.OfType<FunctionResultContent>())
+                if (update is AgentUpdate.ToolCompleted result)
                 {
-                    toolResults.Add(result.Result?.ToString() ?? "");
+                    toolResults.Add(result.Result ?? "");
                 }
             }
         );
@@ -805,7 +806,7 @@ public sealed class LifecycleMcpTests
             fixture.TandemHome,
             fixture.TandemExePath
         );
-        var capture = new CaptureCandidateBlock();
+        var capture = new CaptureCandidateBlock(new GitProcess());
 
         var executorBinding = executor.BindExecutor();
         var captureBinding = new CaptureCandidateTestExecutor(capture).BindExecutor();
@@ -1054,8 +1055,8 @@ public sealed class LifecycleMcpTests
         {
             if (
                 context.State.MutationAuthorized
-                || !invocation.Function.Name.StartsWith("file_access_", StringComparison.Ordinal)
-                || invocation.Function.Name == "file_access_read"
+                || !invocation.Name.StartsWith("file_access_", StringComparison.Ordinal)
+                || invocation.Name == "file_access_read"
             )
             {
                 return ValueTask.FromResult<ToolInterceptionResult?>(null);
@@ -1090,9 +1091,9 @@ public sealed class LifecycleMcpTests
             fixture.TandemExePath,
             onUpdate: (_, _, update) =>
             {
-                foreach (var result in update.Contents.OfType<FunctionResultContent>())
+                if (update is AgentUpdate.ToolCompleted result)
                 {
-                    toolResults.Add(result.Result?.ToString() ?? "");
+                    toolResults.Add(result.Result ?? "");
                 }
             },
             toolInterceptor: interceptor

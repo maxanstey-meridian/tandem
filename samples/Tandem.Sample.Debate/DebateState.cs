@@ -2,7 +2,6 @@ namespace Tandem.Sample.Debate;
 
 public sealed record DebateState(
     string Question,
-    string WorkspacePath,
     IReadOnlyList<DebateArgument> Arguments,
     int Round,
     DebateVerdict? Verdict

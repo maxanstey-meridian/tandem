@@ -1,7 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
-using Tandem.Infrastructure.Lifecycle;
+using Tandem.Actions;
+using Tandem.Git;
 
-namespace Tandem.Infrastructure.Composition;
+namespace Tandem.Delivery;
 
 public static class DeliveryRegistration
 {
@@ -13,15 +14,18 @@ public static class DeliveryRegistration
                 DeliveryLifecycleActions.Register
             )
         );
+        services.AddSingleton<WorkspacePreparation>();
+        services.AddSingleton<DeliveryDiffAcquisition>();
         services.AddSingleton<DeliveryStepsFactory>(sp =>
         {
             var clients = sp.GetRequiredService<ITandemChatClients>();
-            var environment = sp.GetRequiredService<TandemEnvironment>();
             return new DeliveryStepsFactory(
-                environment.Home,
+                sp.GetRequiredService<AgentRuntime>(),
                 clients.Build,
                 clients.ResolveProfile,
-                environment.ExecutablePath
+                sp.GetRequiredService<DeliveryDiffAcquisition>(),
+                sp.GetRequiredService<WorkspacePreparation>(),
+                sp.GetRequiredService<GitProcess>()
             );
         });
         services.AddSingleton<DeliveryComposition>();

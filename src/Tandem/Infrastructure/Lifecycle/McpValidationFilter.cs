@@ -3,7 +3,7 @@ using FluentValidation;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
-namespace Tandem.Infrastructure.Lifecycle;
+namespace Tandem.Actions;
 
 public sealed class McpValidationFilter(McpToolContractRegistry registry)
 {

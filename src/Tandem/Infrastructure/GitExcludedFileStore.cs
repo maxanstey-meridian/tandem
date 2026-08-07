@@ -4,7 +4,7 @@ using Microsoft.Agents.AI;
 
 namespace Tandem.Infrastructure;
 
-public sealed class GitExcludedFileStore(AgentFileStore inner) : AgentFileStore
+internal sealed class GitExcludedFileStore(AgentFileStore inner) : AgentFileStore
 {
     public override Task WriteAsync(
         string path,

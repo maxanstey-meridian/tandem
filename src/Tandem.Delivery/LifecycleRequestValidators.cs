@@ -1,7 +1,6 @@
 using FluentValidation;
-using Tandem.Domain;
 
-namespace Tandem.Infrastructure.Lifecycle.Validators;
+namespace Tandem.Delivery;
 
 public sealed class AskPlannerRequestValidator : AbstractValidator<AskPlannerRequest>
 {

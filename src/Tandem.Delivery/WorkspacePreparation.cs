@@ -1,7 +1,8 @@
 using System.Text.RegularExpressions;
 using Tandem.Domain;
+using Tandem.Git;
 
-namespace Tandem.Infrastructure;
+namespace Tandem.Delivery;
 
 public sealed record WorkspacePreparationResult(string PinnedBaseSha, string WorkspacePath);
 
@@ -14,9 +15,8 @@ public sealed class WorkspacePreparationException : Exception
         : base(message, inner) { }
 }
 
-public sealed class WorkspacePreparation(GitProcess? git = null)
+public sealed class WorkspacePreparation(GitProcess git)
 {
-    private readonly GitProcess _git = git ?? new GitProcess();
     private static readonly Regex _shaRegex = new(
         "^[0-9a-f]{40}$|^[0-9a-f]{64}$",
         RegexOptions.Compiled
@@ -52,7 +52,7 @@ public sealed class WorkspacePreparation(GitProcess? git = null)
 
     private async Task<string> PinBaseAsync(Packet packet, CancellationToken ct)
     {
-        var result = await _git.RunAsync(
+        var result = await git.RunAsync(
             packet.Repository,
             ["rev-parse", "--verify", $"{packet.Base}^{{commit}}"],
             ct
@@ -85,7 +85,7 @@ public sealed class WorkspacePreparation(GitProcess? git = null)
 
     private async Task CloneAsync(Packet packet, string workspacePath, CancellationToken ct)
     {
-        var result = await _git.RunAsync(
+        var result = await git.RunAsync(
             null,
             ["clone", "--no-local", "--no-checkout", packet.Repository, workspacePath],
             ct
@@ -108,7 +108,7 @@ public sealed class WorkspacePreparation(GitProcess? git = null)
 
     private async Task CheckoutAsync(string workspacePath, string sha, CancellationToken ct)
     {
-        var result = await _git.RunAsync(
+        var result = await git.RunAsync(
             null,
             ["-C", workspacePath, "checkout", "--detach", sha],
             ct
@@ -129,7 +129,7 @@ public sealed class WorkspacePreparation(GitProcess? git = null)
 
     private async Task RemoveOriginAsync(string workspacePath, CancellationToken ct)
     {
-        var result = await _git.RunAsync(
+        var result = await git.RunAsync(
             null,
             ["-C", workspacePath, "remote", "remove", "origin"],
             ct
@@ -150,7 +150,7 @@ public sealed class WorkspacePreparation(GitProcess? git = null)
 
     private async Task VerifyHeadAsync(string workspacePath, string pinnedSha, CancellationToken ct)
     {
-        var result = await _git.RunAsync(null, ["-C", workspacePath, "rev-parse", "HEAD"], ct);
+        var result = await git.RunAsync(null, ["-C", workspacePath, "rev-parse", "HEAD"], ct);
 
         if (result.TimedOut)
         {

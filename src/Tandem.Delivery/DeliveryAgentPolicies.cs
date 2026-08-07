@@ -1,6 +1,6 @@
 using Tandem.Domain;
 
-namespace Tandem.Infrastructure.Composition;
+namespace Tandem.Delivery;
 
 internal static class ExecutorPolicies
 {

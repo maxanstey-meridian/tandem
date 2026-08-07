@@ -2,12 +2,10 @@ using System.Diagnostics;
 using System.Text.Json;
 using Tandem.Domain;
 
-namespace Tandem.Infrastructure.Blocks;
+namespace Tandem.Delivery;
 
-public sealed class PrepareWorkspaceBlock(WorkspacePreparation? preparation = null)
+public sealed class PrepareWorkspaceBlock(WorkspacePreparation preparation)
 {
-    private readonly WorkspacePreparation _preparation = preparation ?? new WorkspacePreparation();
-
     public async ValueTask<PipelineMessage<DeliveryState>> ExecuteAsync(
         PipelineMessage<DeliveryState> message,
         CancellationToken cancellationToken
@@ -17,7 +15,7 @@ public sealed class PrepareWorkspaceBlock(WorkspacePreparation? preparation = nu
         var ctx = message.State;
         var runDir = Path.GetDirectoryName(ctx.WorkspacePath)!;
 
-        var prep = await _preparation.PrepareAsync(
+        var prep = await preparation.PrepareAsync(
             ctx.Packet,
             runDir,
             ctx.WorkspacePath,

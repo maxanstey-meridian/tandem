@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Tandem.Domain;
+namespace Tandem.Delivery;
 
 public sealed record PlannerDecision(
     PlannerDecisionValue Decision,

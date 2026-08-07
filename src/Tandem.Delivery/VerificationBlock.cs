@@ -1,11 +1,12 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Tandem.Domain;
-using Tandem.Infrastructure.Projection;
+using Tandem.Git;
 
-namespace Tandem.Infrastructure.Blocks;
+namespace Tandem.Delivery;
 
 public sealed class VerificationBlock(
+    GitProcess git,
     ICommandOutputObserver? outputObserver = null,
     TimeSpan? commandTimeout = null
 )
@@ -179,13 +180,12 @@ public sealed class VerificationBlock(
         );
     }
 
-    private static async Task<VerificationResult> RejectCandidateMutationAsync(
+    private async Task<VerificationResult> RejectCandidateMutationAsync(
         VerificationResult result,
         DeliveryState state,
         CancellationToken cancellationToken
     )
     {
-        var git = new GitProcess();
         var head = await git.RunAsync(
             state.WorkspacePath,
             ["rev-parse", "HEAD"],

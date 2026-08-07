@@ -1,6 +1,5 @@
 using Dunet;
 using Tandem.Domain;
-using Tandem.Infrastructure.Blocks;
 
 namespace Tandem.Sample.Debate;
 
@@ -27,18 +26,11 @@ public sealed partial class OpenDebateStage
     ) => ValueTask.FromResult<OpenResult>(new OpenResult.Opened(pipeline.State));
 }
 
-public abstract class DebateAgentStage(AgentBlock<DebateState> operation)
+[PipelineStage(ProposerAgent.StepId)]
+public sealed partial class ProposerAgent(AgentOperation<DebateState> operation)
 {
-    protected ValueTask<PipelineMessage<DebateState>> ExecuteAgentAsync(
-        PipelineMessage<DebateState> pipeline,
-        CancellationToken cancellationToken
-    ) => operation.ExecuteAsync(pipeline, cancellationToken);
-}
+    public const string StepId = "proposer";
 
-[PipelineStage("proposer")]
-public sealed partial class ProposerAgent(AgentBlock<DebateState> operation)
-    : DebateAgentStage(operation)
-{
     [Union(EnableImplicitConversions = false)]
     public partial record ProposerResult
     {
@@ -54,15 +46,16 @@ public sealed partial class ProposerAgent(AgentBlock<DebateState> operation)
         CancellationToken cancellationToken
     )
     {
-        var result = await ExecuteAgentAsync(pipeline, cancellationToken);
+        var result = await operation.RunAsync(pipeline, cancellationToken);
         return new ProposerResult.Proposed(result.State, result.Runtime, result.LatestOutcome!);
     }
 }
 
-[PipelineStage("critic")]
-public sealed partial class CriticAgent(AgentBlock<DebateState> operation)
-    : DebateAgentStage(operation)
+[PipelineStage(CriticAgent.StepId)]
+public sealed partial class CriticAgent(AgentOperation<DebateState> operation)
 {
+    public const string StepId = "critic";
+
     [Union(EnableImplicitConversions = false)]
     public partial record CriticResult
     {
@@ -84,17 +77,18 @@ public sealed partial class CriticAgent(AgentBlock<DebateState> operation)
         CancellationToken cancellationToken
     )
     {
-        var result = await ExecuteAgentAsync(pipeline, cancellationToken);
+        var result = await operation.RunAsync(pipeline, cancellationToken);
         return result.LatestOutcome?.Kind == "debate.revision.requested"
             ? new CriticResult.RevisionRequested(result.State, result.Runtime, result.LatestOutcome)
             : new CriticResult.Accepted(result.State, result.Runtime, result.LatestOutcome!);
     }
 }
 
-[PipelineStage("judge")]
-public sealed partial class JudgeAgent(AgentBlock<DebateState> operation)
-    : DebateAgentStage(operation)
+[PipelineStage(JudgeAgent.StepId)]
+public sealed partial class JudgeAgent(AgentOperation<DebateState> operation)
 {
+    public const string StepId = "judge";
+
     [Union(EnableImplicitConversions = false)]
     public partial record JudgeResult
     {
@@ -110,7 +104,7 @@ public sealed partial class JudgeAgent(AgentBlock<DebateState> operation)
         CancellationToken cancellationToken
     )
     {
-        var result = await ExecuteAgentAsync(pipeline, cancellationToken);
+        var result = await operation.RunAsync(pipeline, cancellationToken);
         return new JudgeResult.VerdictSubmitted(
             result.State,
             result.Runtime,

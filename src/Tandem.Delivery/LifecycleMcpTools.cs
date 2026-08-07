@@ -2,9 +2,9 @@ using System.ComponentModel;
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
-using Tandem.Domain;
+using Tandem.Actions;
 
-namespace Tandem.Infrastructure.Lifecycle;
+namespace Tandem.Delivery;
 
 [McpServerToolType]
 public sealed class LifecycleMcpTools(

@@ -1,8 +1,6 @@
 using System.Diagnostics;
 using FluentAssertions;
 using Tandem.Domain;
-using Tandem.Infrastructure;
-using Tandem.Infrastructure.Blocks;
 
 namespace Tandem.Tests.Infrastructure;
 
@@ -31,7 +29,10 @@ public sealed class DeliveryBlockFailureTests
     public async Task Verification_RecordsActualIndexAndInternalTimeoutEvidence()
     {
         using var temp = TempDir.Create();
-        var block = new VerificationBlock(commandTimeout: TimeSpan.FromMilliseconds(100));
+        var block = new VerificationBlock(
+            new GitProcess(),
+            commandTimeout: TimeSpan.FromMilliseconds(100)
+        );
         var message = CreateMessage(temp.Path, ["true", "true", "true", "true", "sleep 30"]);
         message = message with { State = message.State with { VerificationIndex = 4 } };
 
@@ -50,7 +51,10 @@ public sealed class DeliveryBlockFailureTests
     public async Task Verification_PropagatesCallerCancellation()
     {
         using var temp = TempDir.Create();
-        var block = new VerificationBlock(commandTimeout: TimeSpan.FromMinutes(1));
+        var block = new VerificationBlock(
+            new GitProcess(),
+            commandTimeout: TimeSpan.FromMinutes(1)
+        );
         var message = CreateMessage(temp.Path, ["sleep 30"]);
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
@@ -76,7 +80,10 @@ public sealed class DeliveryBlockFailureTests
         var message = CreateMessage(temp.Path, ["printf changed > tracked.txt"]);
         message = message with { State = message.State with { CandidateSha = head.Stdout.Trim() } };
 
-        var result = await new VerificationBlock().ExecuteAsync(message, CancellationToken.None);
+        var result = await new VerificationBlock(new GitProcess()).ExecuteAsync(
+            message,
+            CancellationToken.None
+        );
 
         result.LatestOutcome!.Kind.Should().Be(OutcomeKinds.CommandFailed);
         result.State.VerificationResults.Single().Stderr.Should().Contain("must be read-only");

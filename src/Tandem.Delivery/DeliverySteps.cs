@@ -1,8 +1,7 @@
 using Dunet;
 using Tandem.Domain;
-using Tandem.Infrastructure.Blocks;
 
-namespace Tandem.Infrastructure.Composition;
+namespace Tandem.Delivery;
 
 public sealed record DeliverySteps(
     PrepareWorkspaceStage PrepareWorkspace,
@@ -136,17 +135,8 @@ public sealed partial class FailRunStage(FailedBlock operation)
     }
 }
 
-public abstract class DeliveryAgentStage(AgentBlock<DeliveryState> operation)
-{
-    protected async ValueTask<PipelineMessage<DeliveryState>> ExecuteAgentAsync(
-        PipelineMessage<DeliveryState> pipeline,
-        CancellationToken cancellationToken
-    ) => await operation.ExecuteAsync(pipeline, cancellationToken);
-}
-
 [PipelineStage(BlockIds.Executor)]
-public sealed partial class ExecutorAgent(AgentBlock<DeliveryState> operation)
-    : DeliveryAgentStage(operation)
+public sealed partial class ExecutorAgent(AgentOperation<DeliveryState> operation)
 {
     [Union(EnableImplicitConversions = false)]
     public partial record ExecutorResult
@@ -181,7 +171,7 @@ public sealed partial class ExecutorAgent(AgentBlock<DeliveryState> operation)
         CancellationToken cancellationToken
     )
     {
-        var result = await ExecuteAgentAsync(pipeline, cancellationToken);
+        var result = await operation.RunAsync(pipeline, cancellationToken);
         return result.LatestOutcome?.Kind switch
         {
             OutcomeKinds.PlannerRequested => new ExecutorResult.PlannerRequested(
@@ -205,8 +195,7 @@ public sealed partial class ExecutorAgent(AgentBlock<DeliveryState> operation)
 }
 
 [PipelineStage(BlockIds.Planner)]
-public sealed partial class PlannerAgent(AgentBlock<DeliveryState> operation)
-    : DeliveryAgentStage(operation)
+public sealed partial class PlannerAgent(AgentOperation<DeliveryState> operation)
 {
     [Union(EnableImplicitConversions = false)]
     public partial record PlannerResult
@@ -241,7 +230,7 @@ public sealed partial class PlannerAgent(AgentBlock<DeliveryState> operation)
         CancellationToken cancellationToken
     )
     {
-        var result = await ExecuteAgentAsync(pipeline, cancellationToken);
+        var result = await operation.RunAsync(pipeline, cancellationToken);
         return result.LatestOutcome?.Kind switch
         {
             OutcomeKinds.PlannerProceed or OutcomeKinds.PlannerProceedWithConstraints =>
@@ -262,8 +251,7 @@ public sealed partial class PlannerAgent(AgentBlock<DeliveryState> operation)
 }
 
 [PipelineStage(BlockIds.Reviewer)]
-public sealed partial class ReviewerAgent(AgentBlock<DeliveryState> operation)
-    : DeliveryAgentStage(operation)
+public sealed partial class ReviewerAgent(AgentOperation<DeliveryState> operation)
 {
     [Union(EnableImplicitConversions = false)]
     public partial record ReviewerResult
@@ -298,7 +286,7 @@ public sealed partial class ReviewerAgent(AgentBlock<DeliveryState> operation)
         CancellationToken cancellationToken
     )
     {
-        var result = await ExecuteAgentAsync(pipeline, cancellationToken);
+        var result = await operation.RunAsync(pipeline, cancellationToken);
         return result.LatestOutcome?.Kind switch
         {
             OutcomeKinds.ReviewAccepted => new ReviewerResult.Accepted(

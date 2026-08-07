@@ -1,14 +1,11 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Tandem.Actions;
 using Tandem.Domain;
-using Tandem.Infrastructure.Blocks;
-using Tandem.Infrastructure.Lifecycle;
 
 namespace Tandem.Sample.Debate;
 
 public sealed record DebateOptions(
-    string TandemHome,
-    string ExecutablePath,
     IChatClient ProposerClient,
     IChatClient CriticClient,
     IChatClient JudgeClient
@@ -31,65 +28,83 @@ public static class DebateRegistration
         );
         services.AddSingleton<OpenDebateStage>();
         services.AddSingleton<CompleteDebateStage>();
-        services.AddSingleton(new ProposerAgent(CreateProposer(options)));
-        services.AddSingleton(new CriticAgent(CreateCritic(options)));
-        services.AddSingleton(new JudgeAgent(CreateJudge(options)));
+        services.AddSingleton(sp => new ProposerAgent(
+            CreateProposer(sp.GetRequiredService<AgentRuntime>(), options)
+        ));
+        services.AddSingleton(sp => new CriticAgent(
+            CreateCritic(sp.GetRequiredService<AgentRuntime>(), options)
+        ));
+        services.AddSingleton(sp => new JudgeAgent(
+            CreateJudge(sp.GetRequiredService<AgentRuntime>(), options)
+        ));
         services.AddSingleton<DebateSteps>();
         services.AddSingleton<DebateComposition>();
         return services;
     }
 
-    private static AgentBlock<DebateState> CreateProposer(DebateOptions options) =>
-        CreateStructured("proposer", options.ProposerClient, DebatePolicies.ParseProposal, options);
+    private static AgentOperation<DebateState> CreateProposer(
+        AgentRuntime agentRuntime,
+        DebateOptions options
+    ) =>
+        CreateStructured(
+            agentRuntime,
+            ProposerAgent.StepId,
+            options.ProposerClient,
+            DebatePolicies.ParseProposal,
+            chat => chat.ResponseFormat = ChatResponseFormat.ForJsonSchema<ProposalDecision>()
+        );
 
-    private static AgentBlock<DebateState> CreateCritic(DebateOptions options) =>
-        CreateStructured("critic", options.CriticClient, DebatePolicies.ParseCritique, options);
+    private static AgentOperation<DebateState> CreateCritic(
+        AgentRuntime agentRuntime,
+        DebateOptions options
+    ) =>
+        CreateStructured(
+            agentRuntime,
+            CriticAgent.StepId,
+            options.CriticClient,
+            DebatePolicies.ParseCritique,
+            chat => chat.ResponseFormat = ChatResponseFormat.ForJsonSchema<CritiqueDecision>()
+        );
 
-    private static AgentBlock<DebateState> CreateStructured(
+    private static AgentOperation<DebateState> CreateStructured(
+        AgentRuntime agentRuntime,
         string id,
         IChatClient client,
         StructuredOutputParser<DebateState> parser,
-        DebateOptions options
+        Action<ChatOptions> configureChatOptions
     ) =>
-        new(
-            new AgentBlockConfig<DebateState>(
+        agentRuntime
+            .Create<DebateState>(
                 id,
                 id,
                 $"Act as the debate {id} and return structured JSON.",
-                [],
-                pipeline => $"Question: {pipeline.State.Question}; round: {pipeline.State.Round}",
-                state => state.WorkspacePath,
-                _ => false,
-                StructuredOutput: parser,
-                SessionPolicy: DebatePolicies.RetainRevisionContext
-            ),
-            client,
-            options.TandemHome,
-            options.ExecutablePath,
-            configureChatOptions: chat =>
-                chat.ResponseFormat =
-                    id == "proposer"
-                        ? ChatResponseFormat.ForJsonSchema<ProposalDecision>()
-                        : ChatResponseFormat.ForJsonSchema<CritiqueDecision>()
-        );
+                client
+            )
+            .WithMessage(pipeline =>
+                $"Question: {pipeline.State.Question}; round: {pipeline.State.Round}"
+            )
+            .WithStructuredOutput(parser, configureChatOptions)
+            .WithSessionPolicy(DebatePolicies.RetainRevisionContext)
+            .Build();
 
-    private static AgentBlock<DebateState> CreateJudge(DebateOptions options) =>
-        new(
-            new AgentBlockConfig<DebateState>(
-                "judge",
-                "judge",
+    private static AgentOperation<DebateState> CreateJudge(
+        AgentRuntime agentRuntime,
+        DebateOptions options
+    ) =>
+        agentRuntime
+            .Create<DebateState>(
+                JudgeAgent.StepId,
+                JudgeAgent.StepId,
                 "Judge the accepted argument and submit a verdict.",
+                options.JudgeClient
+            )
+            .WithMessage(pipeline => $"Judge: {pipeline.State.Question}")
+            .WithLifecycleActions(
+                LifecycleIdentity,
                 [SubmitVerdictAction.ToolName],
-                pipeline => $"Judge: {pipeline.State.Question}",
-                state => state.WorkspacePath,
-                _ => false,
-                ReceiptTransition: DebatePolicies.ApplyVerdict,
-                LifecycleActionSetIdentity: LifecycleIdentity,
-                SessionPolicy: DebatePolicies.StartJudgeFresh,
-                TeardownPolicy: DebatePolicies.ReleaseJudgeAfterVerdict
-            ),
-            options.JudgeClient,
-            options.TandemHome,
-            options.ExecutablePath
-        );
+                DebatePolicies.ApplyVerdict
+            )
+            .WithSessionPolicy(DebatePolicies.StartJudgeFresh)
+            .WithTeardownPolicy(DebatePolicies.ReleaseJudgeAfterVerdict)
+            .Build();
 }

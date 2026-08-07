@@ -22,7 +22,7 @@ public sealed class ClosedGenericMessageProofTests
             .Build();
         var input = new PipelineMessage<DebateState>(
             PipelineRuntime.Create(Guid.CreateVersion7()),
-            new DebateState("Question", "/tmp", [], 0, null)
+            new DebateState("Question", [], 0, null)
         );
         var runId = "closed-generic-" + Guid.NewGuid().ToString("N");
 

@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
+using Tandem.Actions;
 using Tandem.Domain;
 using Tandem.Infrastructure.Lifecycle;
 
@@ -11,12 +12,12 @@ using Tandem.Infrastructure.Lifecycle;
 
 namespace Tandem.Infrastructure.Blocks;
 
-public sealed class AgentBlock<TState>(
+internal sealed class AgentBlock<TState>(
     AgentBlockConfig<TState> config,
     IChatClient chatClient,
     string tandemHome,
     string? tandemExePath = null,
-    Action<string, Guid, AgentResponseUpdate>? onUpdate = null,
+    Action<string, Guid, AgentUpdate>? onUpdate = null,
     ToolInterceptor<TState>? toolInterceptor = null,
     Action<ChatOptions>? configureChatOptions = null,
     Func<string, IChatClient>? chatClientFactory = null
@@ -94,9 +95,11 @@ public sealed class AgentBlock<TState>(
 
             var collector = new ToolOutcomeCollector();
 
-            var fileStore = new GitExcludedFileStore(
-                new BomlessFileSystemAgentFileStore(config.WorkspacePath(message.State))
-            );
+            AgentFileStore? fileStore = config.WorkspacePath is null
+                ? null
+                : new GitExcludedFileStore(
+                    new BomlessFileSystemAgentFileStore(config.WorkspacePath(message.State))
+                );
 
             var instructions = isCheckpointOnly
                 ? config.Checkpoint!.Instructions
@@ -161,7 +164,7 @@ public sealed class AgentBlock<TState>(
                         }
                     }
 
-                    onUpdate?.Invoke(config.BlockId, runtime.RunId, update);
+                    PublishUpdates(runtime.RunId, update);
                 }
 
                 turnSw.Stop();
@@ -357,7 +360,11 @@ public sealed class AgentBlock<TState>(
 
             if (!isLifecycle && toolInterceptor is not null)
             {
-                var interception = await toolInterceptor(message, ficContext, ct);
+                var interception = await toolInterceptor(
+                    message,
+                    new ToolInvocation(ficContext.Function.Name),
+                    ct
+                );
                 if (interception is ToolInterceptionResult.Blocked blocked)
                 {
                     return blocked.Message;
@@ -572,7 +579,7 @@ public sealed class AgentBlock<TState>(
     }
 
     private HarnessAgent CreateAgent(
-        AgentFileStore fileStore,
+        AgentFileStore? fileStore,
         string instructions,
         IReadOnlyList<AITool> tools,
         PipelineMessage<TState> message,
@@ -615,7 +622,9 @@ public sealed class AgentBlock<TState>(
                 DisableCompaction = true,
                 MaximumIterationsPerRequest = 999,
                 FileAccessStore = fileStore,
-                FileAccessProviderOptions = ResolveAccessOptions(message, isCheckpointOnly),
+                FileAccessProviderOptions = fileStore is null
+                    ? null
+                    : ResolveAccessOptions(message, isCheckpointOnly),
             }
         );
 
@@ -650,7 +659,7 @@ public sealed class AgentBlock<TState>(
             };
         }
 
-        var allowMutation = config.AllowMutation(message.State);
+        var allowMutation = config.AllowMutation?.Invoke(message.State) == true;
 
         return new FileAccessProviderOptions
         {
@@ -661,6 +670,44 @@ public sealed class AgentBlock<TState>(
     }
 
     private static JsonElement EmptyPayload() => JsonSerializer.SerializeToElement(new { });
+
+    private void PublishUpdates(Guid runId, AgentResponseUpdate update)
+    {
+        if (onUpdate is null)
+        {
+            return;
+        }
+
+        foreach (var content in update.Contents)
+        {
+            AgentUpdate? semantic = content switch
+            {
+                TextReasoningContent reasoning => new AgentUpdate.Reasoning(reasoning.Text),
+                TextContent text => new AgentUpdate.Text(text.Text),
+                UsageContent usage => new AgentUpdate.Usage(
+                    usage.Details.InputTokenCount,
+                    usage.Details.OutputTokenCount,
+                    usage.Details.ReasoningTokenCount
+                ),
+                FunctionCallContent call => new AgentUpdate.ToolStarted(
+                    call.CallId,
+                    call.Name,
+                    JsonSerializer.SerializeToElement(call.Arguments)
+                ),
+                FunctionResultContent result => new AgentUpdate.ToolCompleted(
+                    result.CallId,
+                    result.Result?.ToString(),
+                    result.Exception?.Message
+                ),
+                _ => null,
+            };
+
+            if (semantic is not null)
+            {
+                onUpdate(config.BlockId, runId, semantic);
+            }
+        }
+    }
 
     private TState ApplyReceipt(TState state, string kind, JsonElement payload) =>
         config.ReceiptTransition is null ? state : config.ReceiptTransition(state, kind, payload);

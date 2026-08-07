@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using FluentAssertions;
 using Tandem.Domain;
-using Tandem.Infrastructure;
 
 namespace Tandem.Tests.Infrastructure;
 

@@ -7,7 +7,7 @@ using Tandem.Domain;
 
 namespace Tandem.Infrastructure;
 
-public sealed class ImplementationBlockExecutor : Executor<RunContext, BlockResult>
+internal sealed class ImplementationBlockExecutor : Executor<RunContext, BlockResult>
 {
     private const int TurnTimeoutMs = 600_000;
     private readonly Func<ResolvedProfile, IChatClient> _chatClientFactory;

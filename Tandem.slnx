@@ -7,6 +7,7 @@
     </Folder>
     <Folder Name="/samples/">
         <Project Path="samples/Tandem.Sample.Debate/Tandem.Sample.Debate.csproj" />
+        <Project Path="samples/Tandem.Sample.Support/Tandem.Sample.Support.csproj" />
     </Folder>
     <Folder Name="/tests/">
         <Project Path="tests/Tandem.Tests/Tandem.Tests.csproj" />

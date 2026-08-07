@@ -2,14 +2,14 @@ using System.Text.Json;
 
 namespace Tandem.Domain;
 
-public sealed record AgentBlockConfig<TState>(
+internal sealed record AgentBlockConfig<TState>(
     string BlockId,
     string ProfileName,
     string SystemInstructions,
     IReadOnlyList<string> LifecycleActionNames,
     Func<PipelineMessage<TState>, string> UserMessage,
-    Func<TState, string> WorkspacePath,
-    Func<TState, bool> AllowMutation,
+    Func<TState, string>? WorkspacePath,
+    Func<TState, bool>? AllowMutation,
     StructuredOutputParser<TState>? StructuredOutput = null,
     CheckpointPolicy<TState>? Checkpoint = null,
     MessageAugmentation<TState>? MessageAugmentation = null,
@@ -93,6 +93,8 @@ public abstract record ToolInterceptionResult
     public sealed record Blocked(string Message) : ToolInterceptionResult;
 }
 
+public sealed record ToolInvocation(string Name);
+
 public sealed record CheckpointPolicy<TState>(
     int ContextWindowTokens,
     int MaxOutputTokens,
@@ -139,6 +141,6 @@ public delegate TState ReceiptStateTransition<TState>(
 
 public delegate ValueTask<ToolInterceptionResult?> ToolInterceptor<TState>(
     PipelineMessage<TState> message,
-    Microsoft.Extensions.AI.FunctionInvocationContext invocationContext,
+    ToolInvocation invocation,
     CancellationToken cancellationToken
 );

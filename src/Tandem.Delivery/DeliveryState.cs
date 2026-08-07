@@ -1,6 +1,7 @@
 using System.Text.Json;
+using Tandem.Domain;
 
-namespace Tandem.Domain;
+namespace Tandem.Delivery;
 
 public sealed record DeliveryState(
     Packet Packet,

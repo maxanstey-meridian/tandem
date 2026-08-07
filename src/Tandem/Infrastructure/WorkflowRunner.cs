@@ -3,7 +3,7 @@ using Tandem.Domain;
 
 namespace Tandem.Infrastructure;
 
-public sealed class WorkflowRunner
+internal sealed class WorkflowRunner
 {
     public async Task<BlockResult> RunAsync(
         RunContext context,

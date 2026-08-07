@@ -2,7 +2,6 @@ using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows;
 using Tandem.Domain;
-using Tandem.Infrastructure.Blocks;
 using Tandem.Infrastructure.Projection;
 
 namespace Tandem.Tests.Infrastructure;

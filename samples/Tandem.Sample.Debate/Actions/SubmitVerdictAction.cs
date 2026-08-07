@@ -2,7 +2,7 @@ using System.ComponentModel;
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
-using Tandem.Infrastructure.Lifecycle;
+using Tandem.Actions;
 
 namespace Tandem.Sample.Debate;
 
