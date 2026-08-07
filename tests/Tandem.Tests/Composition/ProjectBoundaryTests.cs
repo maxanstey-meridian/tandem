@@ -236,6 +236,25 @@ public sealed class ProjectBoundaryTests
             .Select(parameter => parameter.ParameterType)
             .Should()
             .NotContain(typeof(IServiceCollection));
+        typeof(IGeneratedPipelineStep<DeliveryState, string>)
+            .GetInterfaces()
+            .Should()
+            .Contain(typeof(IPipelineNode<DeliveryState>));
+
+        var pipelineMethods = typeof(PipelineBuilder<DeliveryState>).GetMethods(
+            BindingFlags.Public | BindingFlags.Instance
+        );
+        pipelineMethods
+            .Single(method => method.Name == nameof(PipelineBuilder<DeliveryState>.Build))
+            .GetParameters()
+            .Single()
+            .ParameterType.Should()
+            .Be(typeof(IPipelineNode<DeliveryState>[]));
+        pipelineMethods
+            .Single(method => method.Name == "RouteWithContext")
+            .GetParameters()[1]
+            .ParameterType.Should()
+            .Be(typeof(IPipelineNode<DeliveryState>));
 
         var ordinaryMethods = typeof(AgentBuilder<>).GetMethods(
             BindingFlags.Public | BindingFlags.Instance

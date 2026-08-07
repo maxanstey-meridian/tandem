@@ -243,7 +243,9 @@ internal sealed class PipelineExecutionContext(IWorkflowContext context) : IPipe
 }
 
 [EditorBrowsable(EditorBrowsableState.Never)]
-public interface IGeneratedPipelineStep<TState, TResult> : IPipelineStep<TResult>;
+public interface IGeneratedPipelineStep<TState, TResult>
+    : IPipelineNode<TState>,
+        IPipelineStep<TResult>;
 
 [EditorBrowsable(EditorBrowsableState.Never)]
 public interface IStandardOutcomePipelineStep<TState>
@@ -885,7 +887,7 @@ public sealed class PipelineBuilder<TState>
 
     public PipelineBuilder<TState> RouteWithContext<TTargetResult>(
         Func<PipelineMessage<TState>, bool> when,
-        IPipelineNode from,
+        IPipelineNode<TState> from,
         IGeneratedPipelineStep<TState, TTargetResult> to,
         string label
     )
@@ -902,7 +904,7 @@ public sealed class PipelineBuilder<TState>
         return this;
     }
 
-    public Pipeline Build(params IPipelineNode[] outputs)
+    public Pipeline Build(params IPipelineNode<TState>[] outputs)
     {
         var outputBindings = outputs.Select(Bind).ToArray();
 
