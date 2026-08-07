@@ -18,7 +18,8 @@ public sealed class AgentBlock<TState>(
     string? tandemExePath = null,
     Action<string, Guid, AgentResponseUpdate>? onUpdate = null,
     ToolInterceptor<TState>? toolInterceptor = null,
-    Action<ChatOptions>? configureChatOptions = null
+    Action<ChatOptions>? configureChatOptions = null,
+    Func<string, IChatClient>? chatClientFactory = null
 ) : Executor<PipelineMessage<TState>, PipelineMessage<TState>>(config.BlockId)
 {
     private static readonly TimeSpan _turnTimeout = TimeSpan.FromMinutes(10);
@@ -34,57 +35,63 @@ public sealed class AgentBlock<TState>(
         PipelineMessage<TState> message,
         IWorkflowContext context,
         CancellationToken cancellationToken
+    ) => await ExecuteAsync(message, cancellationToken);
+
+    public async ValueTask<PipelineMessage<TState>> ExecuteAsync(
+        PipelineMessage<TState> message,
+        CancellationToken cancellationToken
     )
     {
         var blockSw = Stopwatch.StartNew();
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(_turnTimeout);
 
-        var runtime = message.Runtime;
+        var runtime = ApplyPreInvocationPolicies(message);
+        message = message with { Runtime = runtime };
         var invocationId = runtime.NextInvocationId(config.BlockId);
+        await PersistProfileDecisionAsync(runtime, cts.Token);
 
         var existingReceipt = await _receiptStore.ReadAsync(runtime.RunId, invocationId, cts.Token);
         if (existingReceipt is not null)
         {
+            runtime = await RecoverReceiptSessionAsync(runtime, invocationId, cts.Token);
+            message = message with { Runtime = runtime };
             blockSw.Stop();
-            return ApplyAcceptedReceipt(runtime, message.State, existingReceipt, blockSw.Elapsed);
+            return ApplyAcceptedReceipt(message, existingReceipt, blockSw.Elapsed);
         }
 
         var isCheckpointOnly = ShouldRunCheckpointOnly(runtime);
+        var requiresLifecycleActions = isCheckpointOnly || config.LifecycleActionNames.Count > 0;
+        if (
+            requiresLifecycleActions && string.IsNullOrWhiteSpace(config.LifecycleActionSetIdentity)
+        )
+        {
+            throw new InvalidOperationException(
+                $"Agent '{config.BlockId}' must explicitly select a lifecycle action set."
+            );
+        }
 
         var lifecycleTools = Array.Empty<AITool>();
         LifecycleMcpClient? mcpClient = null;
-        if (isCheckpointOnly)
-        {
-            mcpClient = new LifecycleMcpClient(
-                tandemHome,
-                _tandemExePath,
-                runtime.RunId,
-                config.BlockId,
-                invocationId,
-                config.McpServerName
-            );
-            lifecycleTools = (
-                await mcpClient.ListToolsAsync([config.Checkpoint!.ToolName], cts.Token)
-            ).ToArray();
-        }
-        else if (config.LifecycleToolNames.Count > 0)
-        {
-            mcpClient = new LifecycleMcpClient(
-                tandemHome,
-                _tandemExePath,
-                runtime.RunId,
-                config.BlockId,
-                invocationId,
-                config.McpServerName
-            );
-            lifecycleTools = (
-                await mcpClient.ListToolsAsync(config.LifecycleToolNames, cts.Token)
-            ).ToArray();
-        }
 
         try
         {
+            if (requiresLifecycleActions)
+            {
+                mcpClient = new LifecycleMcpClient(
+                    tandemHome,
+                    _tandemExePath,
+                    runtime.RunId,
+                    config.BlockId,
+                    invocationId,
+                    config.LifecycleActionSetIdentity!
+                );
+                var actionNames = isCheckpointOnly
+                    ? new[] { config.Checkpoint!.ToolName }
+                    : config.LifecycleActionNames;
+                lifecycleTools = (await mcpClient.ListToolsAsync(actionNames, cts.Token)).ToArray();
+            }
+
             var collector = new ToolOutcomeCollector();
 
             var fileStore = new GitExcludedFileStore(
@@ -262,6 +269,7 @@ public sealed class AgentBlock<TState>(
                 agent,
                 session,
                 runtimeAfterUsage,
+                invocationId,
                 cts.Token
             );
 
@@ -344,8 +352,8 @@ public sealed class AgentBlock<TState>(
         invokingClient.FunctionInvoker = async (ficContext, ct) =>
         {
             var isLifecycle =
-                config.LifecycleToolNames.Contains(ficContext.Function.Name)
-                || ficContext.Function.Name == "write_checkpoint";
+                config.LifecycleActionNames.Contains(ficContext.Function.Name)
+                || ficContext.Function.Name == config.Checkpoint?.ToolName;
 
             if (!isLifecycle && toolInterceptor is not null)
             {
@@ -513,7 +521,7 @@ public sealed class AgentBlock<TState>(
                 new BlockOutcome(
                     "agent.failed",
                     config.BlockId,
-                    "Checkpoint-only mode: model did not call write_checkpoint.",
+                    $"Checkpoint-only mode: model did not call {config.Checkpoint!.ToolName}.",
                     EmptyPayload()
                 )
             );
@@ -534,7 +542,7 @@ public sealed class AgentBlock<TState>(
             );
         }
 
-        return ApplyAcceptedReceipt(runtime, state, receipt);
+        return ApplyAcceptedReceipt(new PipelineMessage<TState>(runtime, state), receipt);
     }
 
     private async Task<PipelineMessage<TState>> ResolveLifecycleReceiptAsync(
@@ -560,7 +568,7 @@ public sealed class AgentBlock<TState>(
             );
         }
 
-        return ApplyAcceptedReceipt(runtime, state, receipt);
+        return ApplyAcceptedReceipt(new PipelineMessage<TState>(runtime, state), receipt);
     }
 
     private HarnessAgent CreateAgent(
@@ -585,7 +593,12 @@ public sealed class AgentBlock<TState>(
         }
 
         var agent = new HarnessAgent(
-            chatClient,
+            chatClientFactory is null
+                ? chatClient
+                : chatClientFactory(
+                    message.Runtime.AgentProfiles.GetValueOrDefault(config.BlockId)?.ProfileName
+                        ?? config.ProfileName
+                ),
             new HarnessAgentOptions
             {
                 Id = config.BlockId,
@@ -653,8 +666,7 @@ public sealed class AgentBlock<TState>(
         config.ReceiptTransition is null ? state : config.ReceiptTransition(state, kind, payload);
 
     private PipelineMessage<TState> ApplyAcceptedReceipt(
-        PipelineRuntime runtime,
-        TState state,
+        PipelineMessage<TState> message,
         LifecycleReceipt receipt,
         TimeSpan duration = default
     )
@@ -662,42 +674,94 @@ public sealed class AgentBlock<TState>(
         var isCheckpoint =
             config.Checkpoint is { } checkpoint && receipt.Kind == checkpoint.OutcomeKind;
         var updatedRuntime = isCheckpoint
-            ? runtime.WithoutSession(config.BlockId).WithoutUsage(config.BlockId)
-            : runtime;
+            ? message.Runtime.WithoutSession(config.BlockId).WithoutUsage(config.BlockId)
+            : message.Runtime;
+        if (isCheckpoint)
+        {
+            DeletePersistedSession(message.Runtime.RunId);
+        }
         var updatedState = isCheckpoint
-            ? config.Checkpoint!.Transition(state, receipt.Kind, receipt.Payload)
-            : ApplyReceipt(state, receipt.Kind, receipt.Payload);
+            ? config.Checkpoint!.Transition(message.State, receipt.Kind, receipt.Payload)
+            : ApplyReceipt(message.State, receipt.Kind, receipt.Payload);
+        var outcome = new BlockOutcome(
+            receipt.Kind,
+            config.BlockId,
+            receipt.Summary,
+            receipt.Payload,
+            duration
+        );
+        if (config.TeardownPolicy is { } teardownPolicy)
+        {
+            var teardown = teardownPolicy(message with { Runtime = updatedRuntime }, outcome);
+            if (teardown.ReleaseSession)
+            {
+                updatedRuntime = updatedRuntime.WithoutSession(config.BlockId);
+                DeletePersistedSession(message.Runtime.RunId);
+            }
+            if (teardown.ReleaseUsage)
+            {
+                updatedRuntime = updatedRuntime.WithoutUsage(config.BlockId);
+            }
+        }
 
         return new PipelineMessage<TState>(
             updatedRuntime.IncrementInvocations(config.BlockId),
             updatedState,
-            new BlockOutcome(
-                receipt.Kind,
-                config.BlockId,
-                receipt.Summary,
-                receipt.Payload,
-                duration
-            )
+            outcome
         );
+    }
+
+    private PipelineRuntime ApplyPreInvocationPolicies(PipelineMessage<TState> message)
+    {
+        if (config.SessionPolicy is null)
+        {
+            throw new InvalidOperationException(
+                $"Agent '{config.BlockId}' must explicitly select a session policy."
+            );
+        }
+
+        var runtime = message.Runtime;
+        var session = config.SessionPolicy(message);
+        if (session.Action is AgentSessionAction.Reset or AgentSessionAction.Teardown)
+        {
+            runtime = runtime.WithoutSession(config.BlockId).WithoutUsage(config.BlockId);
+            DeletePersistedSession(runtime.RunId);
+        }
+
+        var profile =
+            config.ProfilePolicy?.Invoke(message)
+            ?? new AgentProfileDecision(config.ProfileName, "Configured agent profile.");
+        return runtime.WithProfile(config.BlockId, profile);
     }
 
     private async Task<PipelineRuntime> PersistSessionAsync(
         HarnessAgent agent,
         AgentSession session,
         PipelineRuntime runtime,
+        string invocationId,
         CancellationToken ct
     )
     {
         var serialized = await agent.SerializeSessionAsync(session, cancellationToken: ct);
-        var json = JsonSerializer.Serialize(serialized);
+        var persistedSession = new PersistedAgentSession(invocationId, serialized);
+        var json = JsonSerializer.Serialize(persistedSession);
 
         var sessionPath = GetSessionPath(runtime.RunId, config.BlockId);
         Directory.CreateDirectory(Path.GetDirectoryName(sessionPath)!);
-        await File.WriteAllTextAsync(sessionPath, json, ct);
+        var tempPath = $"{sessionPath}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await File.WriteAllTextAsync(tempPath, json, ct);
+            File.Move(tempPath, sessionPath, overwrite: true);
+        }
+        finally
+        {
+            File.Delete(tempPath);
+        }
 
         return runtime.WithSession(
             config.BlockId,
-            JsonSerializer.SerializeToElement(new { stored = true })
+            JsonSerializer.SerializeToElement(new { invocationId })
         );
     }
 
@@ -708,19 +772,121 @@ public sealed class AgentBlock<TState>(
     )
     {
         var sessionPath = GetSessionPath(runtime.RunId, config.BlockId);
-        if (runtime.AgentSessions.ContainsKey(config.BlockId) && File.Exists(sessionPath))
+        if (
+            TryGetSessionInvocationId(runtime, out var invocationId)
+            && await ReadPersistedSessionAsync(sessionPath, ct) is { } persistedSession
+            && persistedSession.InvocationId == invocationId
+        )
         {
-            var json = await File.ReadAllTextAsync(sessionPath, ct);
-            var serialized = JsonSerializer.Deserialize<JsonElement>(json);
-            return await agent.DeserializeSessionAsync(serialized, cancellationToken: ct);
+            return await agent.DeserializeSessionAsync(
+                persistedSession.Session,
+                cancellationToken: ct
+            );
         }
 
+        DeletePersistedSession(runtime.RunId);
         return await agent.CreateSessionAsync(ct);
+    }
+
+    private async Task<PipelineRuntime> RecoverReceiptSessionAsync(
+        PipelineRuntime runtime,
+        string invocationId,
+        CancellationToken ct
+    )
+    {
+        var persistedSession = await ReadPersistedSessionAsync(
+            GetSessionPath(runtime.RunId, config.BlockId),
+            ct
+        );
+        if (persistedSession?.InvocationId == invocationId)
+        {
+            return runtime.WithSession(
+                config.BlockId,
+                JsonSerializer.SerializeToElement(new { invocationId })
+            );
+        }
+
+        DeletePersistedSession(runtime.RunId);
+        return runtime.WithoutSession(config.BlockId);
+    }
+
+    private static async Task<PersistedAgentSession?> ReadPersistedSessionAsync(
+        string path,
+        CancellationToken ct
+    )
+    {
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(path, ct);
+            return JsonSerializer.Deserialize<PersistedAgentSession>(json);
+        }
+        catch (FileNotFoundException)
+        {
+            return null;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private bool TryGetSessionInvocationId(PipelineRuntime runtime, out string? invocationId)
+    {
+        invocationId = null;
+        return runtime.AgentSessions.TryGetValue(config.BlockId, out var marker)
+            && marker.ValueKind == JsonValueKind.Object
+            && marker.TryGetProperty("invocationId", out var value)
+            && value.ValueKind == JsonValueKind.String
+            && (invocationId = value.GetString()) is not null;
     }
 
     private string GetSessionPath(Guid runId, string blockId) =>
         Path.Combine(tandemHome, "runs", runId.ToString("N"), "sessions", $"{blockId}.json");
+
+    private void DeletePersistedSession(Guid runId)
+    {
+        var sessionPath = GetSessionPath(runId, config.BlockId);
+        var directory = Path.GetDirectoryName(sessionPath)!;
+        if (!Directory.Exists(directory))
+        {
+            return;
+        }
+
+        File.Delete(sessionPath);
+        foreach (
+            var tempPath in Directory.EnumerateFiles(directory, $"{config.BlockId}.json.*.tmp")
+        )
+        {
+            File.Delete(tempPath);
+        }
+    }
+
+    private async Task PersistProfileDecisionAsync(PipelineRuntime runtime, CancellationToken ct)
+    {
+        var decision =
+            runtime.AgentProfiles.GetValueOrDefault(config.BlockId)
+            ?? throw new InvalidOperationException(
+                $"Agent '{config.BlockId}' did not produce a profile decision."
+            );
+        var directory = Path.Combine(tandemHome, "runs", runtime.RunId.ToString("N"), "profiles");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, $"{config.BlockId}.json");
+        var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
+        await File.WriteAllTextAsync(tempPath, JsonSerializer.Serialize(decision), ct);
+        File.Move(tempPath, path, overwrite: true);
+    }
 }
+
+internal sealed record PersistedAgentSession(string InvocationId, JsonElement Session);
 
 internal sealed class ToolOutcomeCollector
 {

@@ -1,19 +1,19 @@
 using System.Diagnostics;
 using System.Text.Json;
-using Microsoft.Agents.AI.Workflows;
 using Tandem.Domain;
 using Tandem.Infrastructure.Projection;
 
 namespace Tandem.Infrastructure.Blocks;
 
-public sealed class VerificationBlock(ICommandOutputObserver? outputObserver = null)
-    : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>(BlockIds.Verify)
+public sealed class VerificationBlock(
+    ICommandOutputObserver? outputObserver = null,
+    TimeSpan? commandTimeout = null
+)
 {
-    private static readonly TimeSpan _commandTimeout = TimeSpan.FromMinutes(10);
+    private readonly TimeSpan _commandTimeout = commandTimeout ?? TimeSpan.FromMinutes(10);
 
-    public override async ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
-        PipelineMessage<SimpleV1State> message,
-        IWorkflowContext context,
+    public async ValueTask<PipelineMessage<DeliveryState>> ExecuteAsync(
+        PipelineMessage<DeliveryState> message,
         CancellationToken cancellationToken
     )
     {
@@ -26,7 +26,7 @@ public sealed class VerificationBlock(ICommandOutputObserver? outputObserver = n
             var allPassed = ctx.VerificationResults.All(r => r.ExitCode == 0);
             var finalKind = allPassed ? OutcomeKinds.CommandPassed : OutcomeKinds.CommandFailed;
             blockSw.Stop();
-            return new PipelineMessage<SimpleV1State>(
+            return new PipelineMessage<DeliveryState>(
                 message.Runtime,
                 ctx,
                 new BlockOutcome(
@@ -40,7 +40,16 @@ public sealed class VerificationBlock(ICommandOutputObserver? outputObserver = n
         }
 
         var command = commands[ctx.VerificationIndex];
-        var result = await RunCommandAsync(command, ctx.WorkspacePath, cancellationToken);
+        var result = await RunCommandAsync(
+            ctx.VerificationIndex,
+            command,
+            ctx.WorkspacePath,
+            cancellationToken
+        );
+        if (result.ExitCode == 0)
+        {
+            result = await RejectCandidateMutationAsync(result, ctx, cancellationToken);
+        }
         if (outputObserver is not null)
         {
             var output = string.Join(
@@ -77,7 +86,7 @@ public sealed class VerificationBlock(ICommandOutputObserver? outputObserver = n
         );
 
         blockSw.Stop();
-        return new PipelineMessage<SimpleV1State>(
+        return new PipelineMessage<DeliveryState>(
             message.Runtime,
             updatedContext,
             new BlockOutcome(
@@ -90,7 +99,8 @@ public sealed class VerificationBlock(ICommandOutputObserver? outputObserver = n
         );
     }
 
-    private static async Task<VerificationResult> RunCommandAsync(
+    private async Task<VerificationResult> RunCommandAsync(
+        int index,
         string command,
         string workspacePath,
         CancellationToken cancellationToken
@@ -125,12 +135,14 @@ public sealed class VerificationBlock(ICommandOutputObserver? outputObserver = n
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
 
+        var timedOut = false;
         try
         {
             await process.WaitForExitAsync(cts.Token);
         }
         catch (OperationCanceledException)
         {
+            timedOut = !cancellationToken.IsCancellationRequested;
             try
             {
                 process.Kill(entireProcessTree: true);
@@ -142,8 +154,75 @@ public sealed class VerificationBlock(ICommandOutputObserver? outputObserver = n
         sw.Stop();
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
+        cancellationToken.ThrowIfCancellationRequested();
 
-        return new VerificationResult(0, command, process.ExitCode, stdout, stderr, sw.Elapsed);
+        if (timedOut)
+        {
+            stderr = string.Join(
+                Environment.NewLine,
+                new[]
+                {
+                    stderr,
+                    $"Command timed out after {_commandTimeout.TotalSeconds:0.###} seconds.",
+                }.Where(value => !string.IsNullOrWhiteSpace(value))
+            );
+        }
+
+        return new VerificationResult(
+            index,
+            command,
+            timedOut ? -1 : process.ExitCode,
+            stdout,
+            stderr,
+            sw.Elapsed,
+            timedOut
+        );
+    }
+
+    private static async Task<VerificationResult> RejectCandidateMutationAsync(
+        VerificationResult result,
+        DeliveryState state,
+        CancellationToken cancellationToken
+    )
+    {
+        var git = new GitProcess();
+        var head = await git.RunAsync(
+            state.WorkspacePath,
+            ["rev-parse", "HEAD"],
+            cancellationToken
+        );
+        var status = await git.RunAsync(
+            state.WorkspacePath,
+            ["status", "--porcelain"],
+            cancellationToken
+        );
+        var candidateUnchanged =
+            head.ExitCode == 0
+            && status.ExitCode == 0
+            && string.Equals(
+                head.Stdout.Trim(),
+                state.CandidateSha,
+                StringComparison.OrdinalIgnoreCase
+            )
+            && string.IsNullOrWhiteSpace(status.Stdout);
+        if (candidateUnchanged)
+        {
+            return result;
+        }
+
+        var evidence = string.Join(
+            Environment.NewLine,
+            new[]
+            {
+                result.Stderr,
+                "Verification modified the captured candidate. Verification commands must be read-only.",
+                head.ExitCode == 0
+                    ? $"HEAD: {head.Stdout.Trim()}"
+                    : $"git rev-parse failed: {head.Stderr}",
+                status.ExitCode == 0 ? status.Stdout : $"git status failed: {status.Stderr}",
+            }.Where(value => !string.IsNullOrWhiteSpace(value))
+        );
+        return result with { ExitCode = -1, Stderr = evidence };
     }
 
     private static (string FileName, string[] Args) BuildProcessStart(string command)

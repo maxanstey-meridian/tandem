@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Tandem.Domain;
 
-public sealed record SimpleV1State(
+public sealed record DeliveryState(
     Packet Packet,
     string PinnedBaseSha,
     string WorkspacePath,
@@ -18,7 +18,7 @@ public sealed record SimpleV1State(
     RunStatus Status
 )
 {
-    public static SimpleV1State Create(Packet packet, string pinnedBaseSha, string workspacePath) =>
+    public static DeliveryState Create(Packet packet, string pinnedBaseSha, string workspacePath) =>
         new(
             packet,
             pinnedBaseSha,

@@ -11,13 +11,13 @@ namespace Tandem.Tests.Composition;
 /// These are substitutes for block operations, not a fake workflow runtime.
 /// </summary>
 internal sealed class ScriptedOutcomeBlock
-    : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>
+    : Executor<PipelineMessage<DeliveryState>, PipelineMessage<DeliveryState>>
 {
-    public ConcurrentQueue<PipelineMessage<SimpleV1State>> ReceivedMessages { get; } = new();
+    public ConcurrentQueue<PipelineMessage<DeliveryState>> ReceivedMessages { get; } = new();
 
-    private readonly Func<SimpleV1State, BlockOutcome> _outcomeFactory;
+    private readonly Func<DeliveryState, BlockOutcome> _outcomeFactory;
 
-    public ScriptedOutcomeBlock(string blockId, Func<SimpleV1State, BlockOutcome> outcomeFactory)
+    public ScriptedOutcomeBlock(string blockId, Func<DeliveryState, BlockOutcome> outcomeFactory)
         : base(blockId)
     {
         _outcomeFactory = outcomeFactory;
@@ -37,8 +37,8 @@ internal sealed class ScriptedOutcomeBlock
             )
         ) { }
 
-    public override ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
-        PipelineMessage<SimpleV1State> message,
+    public override ValueTask<PipelineMessage<DeliveryState>> HandleAsync(
+        PipelineMessage<DeliveryState> message,
         IWorkflowContext context,
         CancellationToken cancellationToken
     )
@@ -56,13 +56,13 @@ internal sealed class ScriptedOutcomeBlock
 /// incoming context (e.g. for inspecting verification index progression).
 /// </summary>
 internal sealed class RecordingBlock
-    : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>
+    : Executor<PipelineMessage<DeliveryState>, PipelineMessage<DeliveryState>>
 {
-    public ConcurrentQueue<PipelineMessage<SimpleV1State>> ReceivedMessages { get; } = new();
+    public ConcurrentQueue<PipelineMessage<DeliveryState>> ReceivedMessages { get; } = new();
 
-    private readonly Func<SimpleV1State, BlockOutcome> _outcomeFactory;
+    private readonly Func<DeliveryState, BlockOutcome> _outcomeFactory;
 
-    public RecordingBlock(string blockId, Func<SimpleV1State, BlockOutcome> outcomeFactory)
+    public RecordingBlock(string blockId, Func<DeliveryState, BlockOutcome> outcomeFactory)
         : base(blockId)
     {
         _outcomeFactory = outcomeFactory;
@@ -79,8 +79,8 @@ internal sealed class RecordingBlock
             )
         ) { }
 
-    public override ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
-        PipelineMessage<SimpleV1State> message,
+    public override ValueTask<PipelineMessage<DeliveryState>> HandleAsync(
+        PipelineMessage<DeliveryState> message,
         IWorkflowContext context,
         CancellationToken cancellationToken
     )
@@ -98,12 +98,12 @@ internal sealed class RecordingBlock
 /// based on the current verification index, recording the order of commands.
 /// </summary>
 internal sealed class ScriptedVerificationBlock
-    : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>
+    : Executor<PipelineMessage<DeliveryState>, PipelineMessage<DeliveryState>>
 {
     public ConcurrentQueue<int> InvokedIndices { get; } = new();
 
     private readonly bool[] _results;
-    private readonly Func<SimpleV1State, BlockOutcome> _outcomeFactory;
+    private readonly Func<DeliveryState, BlockOutcome> _outcomeFactory;
 
     public ScriptedVerificationBlock(params bool[] results)
         : base(BlockIds.Verify)
@@ -125,8 +125,8 @@ internal sealed class ScriptedVerificationBlock
         };
     }
 
-    public override ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
-        PipelineMessage<SimpleV1State> message,
+    public override ValueTask<PipelineMessage<DeliveryState>> HandleAsync(
+        PipelineMessage<DeliveryState> message,
         IWorkflowContext context,
         CancellationToken cancellationToken
     )
@@ -146,7 +146,8 @@ internal sealed class ScriptedVerificationBlock
                         passed ? 0 : 1,
                         "",
                         "",
-                        TimeSpan.Zero
+                        TimeSpan.Zero,
+                        false
                     )
                 )
                 .ToList(),

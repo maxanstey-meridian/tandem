@@ -2,17 +2,20 @@
 
 ## Architecture
 
-Tandem has seven runtime concepts:
+Tandem is the engine, Delivery is the flagship first-party pipeline, and custom
+pipelines are unprivileged consumers. The runtime vocabulary is:
 
-- **Block**: one reusable operation.
+- **Step**: one executable pipeline operation.
+- **Stage**: one deterministic step.
+- **Agent**: one model-backed step.
 - **State**: composition-owned durable lifecycle facts.
 - **Runtime**: composition-neutral session, usage, invocation, and run bookkeeping.
 - **Outcome**: the result emitted by a block.
 - **Condition**: a predicate over the typed pipeline message and latest outcome.
 - **Route**: an ordered condition and destination pair.
-- **Prompt**: instructions contributed to an agent block.
+- **Prompt**: instructions contributed to an agent step.
 
-The execution cycle is: run a block, persist its observations and outcome,
+The execution cycle is: run a step, persist its observations and result,
 evaluate its routes in order, then run the first matching destination, suspend,
 or complete.
 
@@ -26,7 +29,7 @@ Keep these ownership boundaries explicit:
   policy, structured mappings, and explicitly registered MCP terminal set.
 - Reusable execution uses `PipelineMessage<TState>`; core must not add a universal
   lifecycle state interface or state bag.
-- Blocks own operations, not orchestration.
+- Steps own operations, not orchestration.
 - Durable context records facts; it does not hide routing logic.
 - Microsoft Agent Framework owns workflow execution, durability, sessions,
   model loops, tool dispatch, and workflow events.
@@ -62,6 +65,24 @@ Treat all model-authored data as untrusted boundary input.
 
 Generic boundary infrastructure must resolve behavior through registration. Do
 not add tool-name switches or duplicate semantic validation inside handlers.
+
+## Naming Grammar
+
+Use a semantic name followed by one role suffix: `Agent`, `Stage`, `Port`,
+`Action`, `Policies`, `Prompts`, `Decision`, `Composition`, `Steps`, `Result`,
+`State`, or `Registration`. Examples include `ReviewerAgent`,
+`VerificationStage`, `HumanInputPort`, `SubmitReportAction`,
+`DeliveryComposition`, and `DeliverySteps`.
+
+Every authored step returns a nested Dunet `<Name>Result` union. Do not introduce
+pipeline-wide string outcomes, a Tandem union implementation, or vague `Manager`,
+`Service`, `Processor`, `Handler`, `Provider`, or `Helper` names where a precise
+pipeline role exists.
+
+Composition is the complete route map. Route calls immediately add real MAF edges
+and never retain route descriptors, a graph AST, staged route state, or a parallel
+renderer. Inspection reflects the built MAF workflow and delegates Mermaid/DOT
+export to MAF.
 
 ## Composition Test
 

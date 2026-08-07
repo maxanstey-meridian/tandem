@@ -25,7 +25,8 @@ public sealed record VerificationResult(
     int ExitCode,
     string Stdout,
     string Stderr,
-    TimeSpan Elapsed
+    TimeSpan Elapsed,
+    bool TimedOut
 );
 
 public sealed class VerificationResultJsonConverter : JsonConverter<VerificationResult>
@@ -44,7 +45,8 @@ public sealed class VerificationResultJsonConverter : JsonConverter<Verification
             root.GetProperty("exitCode").GetInt32(),
             root.GetProperty("stdout").GetString() ?? "",
             root.GetProperty("stderr").GetString() ?? "",
-            TimeSpan.FromMilliseconds(root.GetProperty("elapsedMs").GetDouble())
+            TimeSpan.FromMilliseconds(root.GetProperty("elapsedMs").GetDouble()),
+            root.GetProperty("timedOut").GetBoolean()
         );
     }
 
@@ -61,6 +63,7 @@ public sealed class VerificationResultJsonConverter : JsonConverter<Verification
         writer.WriteString("stdout", value.Stdout);
         writer.WriteString("stderr", value.Stderr);
         writer.WriteNumber("elapsedMs", value.Elapsed.TotalMilliseconds);
+        writer.WriteBoolean("timedOut", value.TimedOut);
         writer.WriteEndObject();
     }
 }

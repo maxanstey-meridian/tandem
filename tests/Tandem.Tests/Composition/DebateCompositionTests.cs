@@ -1,12 +1,17 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Agents.AI.Workflows;
+using Microsoft.DurableTask.Client;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol.Protocol;
 using Tandem.Domain;
-using Tandem.Infrastructure.Blocks;
+using Tandem.Infrastructure;
 using Tandem.Infrastructure.Lifecycle;
-using Tandem.Infrastructure.Projection;
+using Tandem.Sample.Debate;
+using Tandem.Tests.Durable;
 using Tandem.Tests.Infrastructure;
 
 namespace Tandem.Tests.Composition;
@@ -14,451 +19,268 @@ namespace Tandem.Tests.Composition;
 public sealed class DebateCompositionTests
 {
     [Fact]
-    public async Task Debate_UsesTypedState_RevisionLoop_McpVerdict_AndRuntimeBookkeeping()
+    public async Task Debate_ExecutesRevisionLoopAndReceiptReplayThroughPublicAuthoringSurface()
     {
         using var fixture = await LifecycleFixture.CreateAsync();
-        var order = new List<string>();
-        var proposerClient = new ScriptedChatClient(
-            order,
-            "proposer",
-            Text("{\"text\":\"Initial case\"}"),
-            Text("{\"text\":\"Revised case\"}")
-        );
-        var criticClient = new ScriptedChatClient(
-            order,
-            "critic",
-            Text("{\"accepted\":false,\"critique\":\"Address the counterexample\"}"),
-            Text("{\"accepted\":true,\"critique\":\"The revision resolves it\"}")
-        );
-        var judgeClient = new ScriptedChatClient(
-            order,
-            "judge",
-            Tool(
-                "verdict-1",
-                "submit_verdict",
-                new Dictionary<string, object?>
-                {
-                    ["verdict"] = "Affirmed",
-                    ["reason"] = "The revised argument survived criticism.",
-                }
-            )
-        );
+        var clients = ScriptedClients.Create();
+        var pipeline = Build(fixture, clients);
+        var input = Input(fixture);
+        await WriteVerdictReceiptAsync(fixture, input);
 
-        var workflow = BuildWorkflow(
-            fixture,
-            proposerClient,
-            criticClient,
-            judgeClient,
-            out var graphIds
-        );
-        var input = new PipelineMessage<DebateState>(
-            PipelineRuntime.Create(fixture.RunId),
-            new DebateState("Should typed composition own lifecycle state?", [], 0, null)
-        );
+        var output = await RunAsync(pipeline, input);
 
-        var output = await RunAsync(workflow, input);
-
-        order.Should().Equal("proposer", "critic", "proposer", "critic", "judge");
+        clients.Order.Should().Equal("proposer", "critic", "proposer", "critic");
+        clients
+            .Judge.CallCount.Should()
+            .Be(0, "the accepted receipt is replayed before a model call");
         output.State.Round.Should().Be(2);
         output.State.Arguments.Select(argument => argument.Text).Should().Contain("Revised case");
-        output
-            .State.Verdict.Should()
-            .Be(new Verdict("Affirmed", "The revised argument survived criticism."));
+        output.State.Verdict.Should().Be(new DebateVerdict("Affirmed", "Already accepted."));
         output.Runtime.InvocationCounts.Should().ContainKeys("proposer", "critic", "judge");
         output.Runtime.InvocationCounts["proposer"].Should().Be(2);
         output.Runtime.InvocationCounts["critic"].Should().Be(2);
         output.Runtime.InvocationCounts["judge"].Should().Be(1);
-        output.Runtime.AgentSessions.Should().ContainKeys("proposer", "critic", "judge");
-        output.Runtime.AgentUsage.Should().ContainKeys("proposer", "critic", "judge");
-        graphIds.Should().BeEquivalentTo("proposer", "critic", "judge", "complete");
-        workflow.ReflectEdges().Keys.Should().BeEquivalentTo("proposer", "critic", "judge");
+        output.Runtime.AgentSessions.Should().ContainKeys("proposer", "critic");
+        output.Runtime.AgentSessions.Should().NotContainKey("judge");
+        output.Runtime.AgentUsage.Should().ContainKeys("proposer", "critic");
+        output.Runtime.AgentUsage.Should().NotContainKey("judge");
+        output.Runtime.AgentProfiles.Should().ContainKeys("proposer", "critic", "judge");
     }
 
     [Fact]
-    public async Task InvalidStructuredOutput_FailsClosedWithoutChangingDebateState()
+    public async Task DebateAction_DetectsConflictingAcceptedVerdict()
     {
         using var fixture = await LifecycleFixture.CreateAsync();
-        var client = new ScriptedChatClient(
-            [],
-            "proposer",
-            Text("not json"),
-            Text("still invalid")
-        );
-        var block = CreateStructuredBlock(
-            "proposer",
-            fixture,
-            client,
-            ParseProposal,
-            "Propose an argument."
-        );
-        var input = new PipelineMessage<DebateState>(
-            PipelineRuntime.Create(fixture.RunId),
-            new DebateState("Question", [], 0, null)
+        var invocationId = $"{fixture.RunId:N}--judge--1";
+        var action = new SubmitVerdictAction(
+            new LifecycleReceiptStore(fixture.TandemHome),
+            new LifecycleToolContext(fixture.RunId, "judge", invocationId)
         );
 
-        var output = await block.HandleAsync(
-            input,
-            new NoOpWorkflowContext(),
-            CancellationToken.None
-        );
+        var accepted = await action.SubmitAsync("Affirmed", "First", CancellationToken.None);
+        var conflict = await action.SubmitAsync("Rejected", "Second", CancellationToken.None);
 
-        output.LatestOutcome!.Kind.Should().Be("agent.failed");
-        output.State.Should().Be(input.State);
-        client.CallCount.Should().Be(2);
+        accepted.IsError.Should().BeFalse();
+        conflict.IsError.Should().BeTrue();
+        ((TextContentBlock)conflict.Content.Single())
+            .Text.Should()
+            .Contain("conflicting lifecycle outcome");
+    }
+
+    [Fact]
+    public async Task Debate_InspectionAndSerializationExposeOnlyPublicSemanticData()
+    {
+        using var fixture = await LifecycleFixture.CreateAsync();
+        var pipeline = Build(fixture, ScriptedClients.Create());
+        var inspection = pipeline.Inspect();
+        var input = Input(fixture);
+        var json = JsonSerializer.Serialize(input);
+        var roundTrip = JsonSerializer.Deserialize<PipelineMessage<DebateState>>(json);
+
+        inspection.Name.Should().Be("debate");
+        inspection.StartStepId.Should().Be("open");
+        inspection
+            .StepIds.Should()
+            .BeEquivalentTo("open", "proposer", "critic", "judge", "complete");
+        inspection.Ports.Should().BeEmpty();
+        inspection.OutputStepIds.Should().Equal("complete");
+        inspection.Routes.Should().HaveCount(5);
+        inspection
+            .Routes.Should()
+            .OnlyContain(route =>
+                inspection.StepIds.Contains(route.SourceId)
+                && inspection.StepIds.Contains(route.TargetId)
+            );
+        inspection.Routes.Should().OnlyContain(route => route.Conditional);
+        inspection.Mermaid.Should().StartWith("flowchart").And.Contain("revision requested");
+        inspection.Dot.Should().StartWith("digraph");
+        roundTrip.Should().BeEquivalentTo(input);
+    }
+
+    [Fact]
+    public async Task AddDebate_RegistersCompositionAndActionSetExplicitly()
+    {
+        using var fixture = await LifecycleFixture.CreateAsync();
+        var clients = ScriptedClients.Create();
+        var services = new ServiceCollection();
+        services.AddTandem().AddDebate(Options(fixture, clients));
+        await using var provider = services.BuildServiceProvider();
+
+        provider
+            .GetRequiredService<DebateComposition>()
+            .Build()
+            .Inspect()
+            .Name.Should()
+            .Be("debate");
+        provider
+            .GetRequiredService<LifecycleActionSetRegistry>()
+            .Register(DebateRegistration.LifecycleIdentity, new ServiceCollection())
+            .Should()
+            .NotBeNull();
     }
 
     [Theory]
-    [InlineData("{\"text\":null}")]
+    [InlineData("not json")]
     [InlineData("{\"text\":\"   \"}")]
-    public async Task SemanticallyInvalidProposal_FailsClosedWithoutChangingDebateState(string json)
+    public void ProposalTransition_FailsClosedForInvalidModelOutput(string response)
     {
-        using var fixture = await LifecycleFixture.CreateAsync();
-        var client = new ScriptedChatClient([], "proposer", Text(json), Text(json));
-        var block = CreateStructuredBlock(
-            "proposer",
-            fixture,
-            client,
-            ParseProposal,
-            "Propose an argument."
-        );
         var input = new PipelineMessage<DebateState>(
-            PipelineRuntime.Create(fixture.RunId),
-            new DebateState("Question", [], 0, null)
+            PipelineRuntime.Create(Guid.CreateVersion7()),
+            new DebateState("Question", "/tmp", [], 0, null)
         );
 
-        var output = await block.HandleAsync(
-            input,
-            new NoOpWorkflowContext(),
-            CancellationToken.None
-        );
+        var result = DebatePolicies.ParseProposal(response, input);
 
-        output.LatestOutcome!.Kind.Should().Be("agent.failed");
-        output.State.Should().Be(input.State);
+        result.Success.Should().BeFalse();
+        result.Outcome.Should().BeNull();
+        input.State.Round.Should().Be(0);
+        input.State.Arguments.Should().BeEmpty();
     }
 
     [Theory]
     [InlineData("{\"accepted\":true,\"critique\":null}")]
     [InlineData("{\"accepted\":false,\"critique\":\" \"}")]
-    public async Task SemanticallyInvalidCritique_FailsClosedWithoutChangingDebateState(string json)
+    public void CritiqueTransition_FailsClosedForInvalidModelOutput(string response)
     {
-        using var fixture = await LifecycleFixture.CreateAsync();
-        var client = new ScriptedChatClient([], "critic", Text(json), Text(json));
-        var block = CreateStructuredBlock("critic", fixture, client, ParseCritique, "Critique.");
         var input = new PipelineMessage<DebateState>(
-            PipelineRuntime.Create(fixture.RunId),
-            new DebateState("Question", [new Argument("proposer", "Case")], 1, null)
+            PipelineRuntime.Create(Guid.CreateVersion7()),
+            new DebateState("Question", "/tmp", [new DebateArgument("proposer", "Case")], 1, null)
         );
 
-        var output = await block.HandleAsync(
-            input,
-            new NoOpWorkflowContext(),
-            CancellationToken.None
-        );
+        var result = DebatePolicies.ParseCritique(response, input);
 
-        output.LatestOutcome!.Kind.Should().Be("agent.failed");
-        output.State.Should().Be(input.State);
+        result.Success.Should().BeFalse();
+        result.Outcome.Should().BeNull();
+        input.State.Arguments.Should().ContainSingle();
     }
 
-    [Fact]
-    public async Task AcceptedVerdictReceipt_ReplaySkipsModel_AndAppliesTransitionOnce()
+    internal static Pipeline Build(LifecycleFixture fixture, ScriptedClients clients)
     {
-        using var fixture = await LifecycleFixture.CreateAsync();
-        var input = new PipelineMessage<DebateState>(
+        var services = new ServiceCollection();
+        services.AddTandem().AddDebate(Options(fixture, clients));
+        using var provider = services.BuildServiceProvider();
+        return provider.GetRequiredService<DebateComposition>().Build();
+    }
+
+    internal static PipelineMessage<DebateState> Input(LifecycleFixture fixture) =>
+        new(
             PipelineRuntime.Create(fixture.RunId),
-            new DebateState("Question", [], 1, null)
+            new DebateState(
+                "Should typed composition own lifecycle state?",
+                fixture.WorkspacePath,
+                [],
+                0,
+                null
+            )
         );
-        var invocationId = input.Runtime.NextInvocationId("judge");
-        var payload = JsonSerializer.SerializeToElement(
-            new { verdict = "Affirmed", reason = "Already accepted." }
-        );
+
+    internal static async Task WriteVerdictReceiptAsync(
+        LifecycleFixture fixture,
+        PipelineMessage<DebateState> input
+    ) =>
         await new LifecycleReceiptStore(fixture.TandemHome).WriteAsync(
             fixture.RunId,
-            invocationId,
+            input.Runtime.NextInvocationId("judge"),
             "judge",
-            "debate.verdict.submitted",
+            SubmitVerdictAction.OutcomeKind,
             "Verdict submitted: Affirmed",
-            payload,
-            CancellationToken.None
-        );
-        var client = new ScriptedChatClient([], "judge", Text("must not execute"));
-        var judge = CreateJudge(fixture, client);
-
-        var output = await judge.HandleAsync(
-            input,
-            new NoOpWorkflowContext(),
-            CancellationToken.None
-        );
-
-        client.CallCount.Should().Be(0);
-        output.State.Verdict.Should().Be(new Verdict("Affirmed", "Already accepted."));
-        output.Runtime.InvocationCounts["judge"].Should().Be(1);
-    }
-
-    [Fact]
-    public async Task ObservedExecutor_ReportsOutcomeFromDebateMessage()
-    {
-        var outcome = new BlockOutcome(
-            "debate.proposed",
-            "proposer",
-            "Case",
-            JsonSerializer.SerializeToElement(new { text = "Case" })
-        );
-        var output = new PipelineMessage<DebateState>(
-            PipelineRuntime.Create(Guid.CreateVersion7()),
-            new DebateState("Question", [], 0, null),
-            outcome
-        );
-        var observer = new RecordingObserver();
-        var executor = new ObservedExecutor<
-            PipelineMessage<DebateState>,
-            PipelineMessage<DebateState>
-        >("proposer", new ReturningExecutor(output), observer);
-
-        await executor.HandleAsync(output, new NoOpWorkflowContext(), CancellationToken.None);
-
-        observer.Outcome.Should().BeSameAs(outcome);
-    }
-
-    private static Workflow BuildWorkflow(
-        LifecycleFixture fixture,
-        IChatClient proposerClient,
-        IChatClient criticClient,
-        IChatClient judgeClient,
-        out IReadOnlyCollection<string> graphIds
-    )
-    {
-        var proposer = CreateStructuredBlock(
-            "proposer",
-            fixture,
-            proposerClient,
-            ParseProposal,
-            "Propose."
-        );
-        var critic = CreateStructuredBlock(
-            "critic",
-            fixture,
-            criticClient,
-            ParseCritique,
-            "Critique."
-        );
-        var judge = CreateJudge(fixture, judgeClient);
-        var complete = new DebateCompleteBlock();
-        var proposerBinding = proposer.BindExecutor();
-        var criticBinding = critic.BindExecutor();
-        var judgeBinding = judge.BindExecutor();
-        var completeBinding = complete.BindExecutor();
-        var workflow = new WorkflowBuilder(proposerBinding)
-            .WithName("debate-proof")
-            .AddEdge<PipelineMessage<DebateState>>(
-                proposerBinding,
-                criticBinding,
-                condition: null,
-                idempotent: false
-            )
-            .AddEdge<PipelineMessage<DebateState>>(
-                criticBinding,
-                proposerBinding,
-                message => message!.LatestOutcome?.Kind == "debate.revision.requested"
-            )
-            .AddEdge<PipelineMessage<DebateState>>(
-                criticBinding,
-                judgeBinding,
-                message => message!.LatestOutcome?.Kind == "debate.critique.accepted"
-            )
-            .AddEdge<PipelineMessage<DebateState>>(
-                judgeBinding,
-                completeBinding,
-                message => message!.LatestOutcome?.Kind == "debate.verdict.submitted"
-            )
-            .WithOutputFrom(completeBinding)
-            .Build();
-        graphIds = workflow.ReflectExecutors().Keys.ToArray();
-        return workflow;
-    }
-
-    private static AgentBlock<DebateState> CreateStructuredBlock(
-        string id,
-        LifecycleFixture fixture,
-        IChatClient client,
-        StructuredOutputParser<DebateState> parser,
-        string instructions
-    ) =>
-        new(
-            new AgentBlockConfig<DebateState>(
-                id,
-                id,
-                instructions,
-                [],
-                message => $"Question: {message.State.Question}; round: {message.State.Round}",
-                _ => fixture.WorkspacePath,
-                _ => false,
-                StructuredOutput: parser
+            JsonSerializer.SerializeToElement(
+                new { verdict = "Affirmed", reason = "Already accepted." }
             ),
-            client,
+            CancellationToken.None
+        );
+
+    private static DebateOptions Options(LifecycleFixture fixture, ScriptedClients clients) =>
+        new(
             fixture.TandemHome,
             fixture.TandemExePath,
-            configureChatOptions: options =>
-                options.ResponseFormat =
-                    id == "proposer"
-                        ? ChatResponseFormat.ForJsonSchema<ProposalTerminal>()
-                        : ChatResponseFormat.ForJsonSchema<CritiqueTerminal>()
+            clients.Proposer,
+            clients.Critic,
+            clients.Judge
         );
-
-    private static AgentBlock<DebateState> CreateJudge(
-        LifecycleFixture fixture,
-        IChatClient client
-    ) =>
-        new(
-            new AgentBlockConfig<DebateState>(
-                "judge",
-                "judge",
-                "Judge the debate and submit the verdict.",
-                ["submit_verdict"],
-                message => $"Judge: {message.State.Question}",
-                _ => fixture.WorkspacePath,
-                _ => false,
-                ReceiptTransition: (state, kind, payload) =>
-                    kind == "debate.verdict.submitted"
-                        ? state with
-                        {
-                            Verdict = new Verdict(
-                                payload.GetProperty("verdict").GetString()!,
-                                payload.GetProperty("reason").GetString()!
-                            ),
-                        }
-                        : state,
-                McpServerName: "debate"
-            ),
-            client,
-            fixture.TandemHome,
-            fixture.TandemExePath
-        );
-
-    private static StructuredOutputResult<DebateState> ParseProposal(
-        string text,
-        PipelineMessage<DebateState> message
-    ) =>
-        Parse(
-            text,
-            root =>
-            {
-                var proposal = root.GetProperty("text").GetString();
-                if (string.IsNullOrWhiteSpace(proposal))
-                {
-                    throw new InvalidOperationException("Proposal text must not be blank.");
-                }
-                var argument = new Argument("proposer", proposal);
-                var state = message.State with
-                {
-                    Arguments = [.. message.State.Arguments, argument],
-                    Round = message.State.Round + 1,
-                };
-                return new StructuredOutcome<DebateState>(
-                    "debate.proposed",
-                    argument.Text,
-                    root,
-                    state
-                );
-            }
-        );
-
-    private static StructuredOutputResult<DebateState> ParseCritique(
-        string text,
-        PipelineMessage<DebateState> message
-    ) =>
-        Parse(
-            text,
-            root =>
-            {
-                var accepted = root.GetProperty("accepted").GetBoolean();
-                var critiqueText = root.GetProperty("critique").GetString();
-                if (string.IsNullOrWhiteSpace(critiqueText))
-                {
-                    throw new InvalidOperationException("Critique must not be blank.");
-                }
-                var critique = new Argument("critic", critiqueText);
-                return new StructuredOutcome<DebateState>(
-                    accepted ? "debate.critique.accepted" : "debate.revision.requested",
-                    critique.Text,
-                    root,
-                    message.State with
-                    {
-                        Arguments = [.. message.State.Arguments, critique],
-                    }
-                );
-            }
-        );
-
-    private static StructuredOutputResult<DebateState> Parse(
-        string text,
-        Func<JsonElement, StructuredOutcome<DebateState>> map
-    )
-    {
-        try
-        {
-            var root = JsonSerializer.Deserialize<JsonElement>(text);
-            return new StructuredOutputResult<DebateState>(map(root), [], text, root);
-        }
-        catch (Exception exception)
-            when (exception is JsonException or KeyNotFoundException or InvalidOperationException)
-        {
-            return new StructuredOutputResult<DebateState>(
-                null,
-                [new StructuredOutputProblem("$", exception.Message)],
-                text
-            );
-        }
-    }
 
     private static async Task<PipelineMessage<DebateState>> RunAsync(
-        Workflow workflow,
+        Pipeline pipeline,
         PipelineMessage<DebateState> input
     )
     {
         await using var run = await InProcessExecution.RunStreamingAsync(
-            workflow,
+            PipelineMafBridge.GetWorkflow(pipeline),
             input,
             input.Runtime.RunId.ToString("N"),
             CancellationToken.None
         );
         PipelineMessage<DebateState>? output = null;
-        await foreach (var @event in run.WatchStreamAsync(CancellationToken.None))
+        await foreach (var evt in run.WatchStreamAsync(CancellationToken.None))
         {
             if (
-                @event is WorkflowOutputEvent workflowOutput
+                evt is WorkflowOutputEvent workflowOutput
                 && workflowOutput.Is<PipelineMessage<DebateState>>()
             )
             {
                 output = workflowOutput.As<PipelineMessage<DebateState>>();
             }
-            else if (@event is WorkflowErrorEvent error)
+            else if (evt is WorkflowErrorEvent error)
             {
                 throw error.Exception ?? new InvalidOperationException("Debate workflow failed.");
+            }
+            else if (evt is ExecutorFailedEvent failed)
+            {
+                throw failed.Data ?? new InvalidOperationException("Debate executor failed.");
             }
         }
         return output ?? throw new InvalidOperationException("Debate produced no output.");
     }
 
-    private static ChatResponse Text(string text) =>
-        new(new ChatMessage(ChatRole.Assistant, [new TextContent(text)]));
-
-    private static ChatResponse Tool(
-        string id,
-        string name,
-        IDictionary<string, object?> arguments
-    ) =>
-        new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent(id, name, arguments)]))
+    internal sealed class ScriptedClients
+    {
+        private ScriptedClients(
+            List<string> order,
+            ScriptedChatClient proposer,
+            ScriptedChatClient critic,
+            ScriptedChatClient judge
+        )
         {
-            FinishReason = ChatFinishReason.ToolCalls,
-        };
+            Order = order;
+            Proposer = proposer;
+            Critic = critic;
+            Judge = judge;
+        }
 
-    private sealed class ScriptedChatClient(
+        public List<string> Order { get; }
+        public ScriptedChatClient Proposer { get; }
+        public ScriptedChatClient Critic { get; }
+        public ScriptedChatClient Judge { get; }
+
+        public static ScriptedClients Create()
+        {
+            var order = new List<string>();
+            return new ScriptedClients(
+                order,
+                new ScriptedChatClient(
+                    order,
+                    "proposer",
+                    "{\"text\":\"Initial case\"}",
+                    "{\"text\":\"Revised case\"}"
+                ),
+                new ScriptedChatClient(
+                    order,
+                    "critic",
+                    "{\"accepted\":false,\"critique\":\"Revise\"}",
+                    "{\"accepted\":true,\"critique\":\"Accepted\"}"
+                ),
+                new ScriptedChatClient(order, "judge", "must not execute")
+            );
+        }
+    }
+
+    internal sealed class ScriptedChatClient(
         List<string> order,
         string name,
-        params ChatResponse[] responses
+        params string[] responses
     ) : IChatClient
     {
-        private readonly Queue<ChatResponse> _responses = new(responses);
+        private readonly Queue<string> _responses = new(responses);
         public int CallCount { get; private set; }
 
         public Task<ChatResponse> GetResponseAsync(
@@ -475,7 +297,9 @@ public sealed class DebateCompositionTests
         {
             CallCount++;
             order.Add(name);
-            var response = _responses.Dequeue();
+            var response = new ChatResponse(
+                new ChatMessage(ChatRole.Assistant, [new TextContent(_responses.Dequeue())])
+            );
             foreach (var update in response.ToChatResponseUpdates())
             {
                 yield return update;
@@ -487,58 +311,38 @@ public sealed class DebateCompositionTests
 
         public void Dispose() { }
     }
-
-    private sealed class DebateCompleteBlock()
-        : Executor<PipelineMessage<DebateState>, PipelineMessage<DebateState>>("complete")
-    {
-        public override ValueTask<PipelineMessage<DebateState>> HandleAsync(
-            PipelineMessage<DebateState> message,
-            IWorkflowContext context,
-            CancellationToken cancellationToken
-        ) => ValueTask.FromResult(message);
-    }
-
-    private sealed class ReturningExecutor(PipelineMessage<DebateState> output)
-        : Executor<PipelineMessage<DebateState>, PipelineMessage<DebateState>>("inner")
-    {
-        public override ValueTask<PipelineMessage<DebateState>> HandleAsync(
-            PipelineMessage<DebateState> message,
-            IWorkflowContext context,
-            CancellationToken cancellationToken
-        ) => ValueTask.FromResult(output);
-    }
-
-    private sealed class RecordingObserver : IBlockExecutionObserver
-    {
-        public BlockOutcome? Outcome { get; private set; }
-
-        public ValueTask StartedAsync(string blockId, CancellationToken cancellationToken) =>
-            ValueTask.CompletedTask;
-
-        public ValueTask CompletedAsync(
-            string blockId,
-            BlockOutcome? outcome,
-            TimeSpan duration,
-            CancellationToken cancellationToken
-        )
-        {
-            Outcome = outcome;
-            return ValueTask.CompletedTask;
-        }
-    }
 }
 
-public sealed record DebateState(
-    string Question,
-    IReadOnlyList<Argument> Arguments,
-    int Round,
-    Verdict? Verdict
-);
+[Collection("Durable Task Scheduler")]
+public sealed class DebateDurableCompositionTests
+{
+    [Fact]
+    public async Task Debate_ExecutesDurablyAsClosedGenericPipelineMessage()
+    {
+        DtsFixture.EnsureReachable();
+        using var fixture = await LifecycleFixture.CreateAsync();
+        var clients = DebateCompositionTests.ScriptedClients.Create();
+        var pipeline = DebateCompositionTests.Build(fixture, clients);
+        var input = DebateCompositionTests.Input(fixture);
+        await DebateCompositionTests.WriteVerdictReceiptAsync(fixture, input);
+        var workflow = PipelineMafBridge.GetWorkflow(pipeline);
+        var runId = "debate-durable-" + Guid.NewGuid().ToString("N");
 
-public sealed record Argument(string Speaker, string Text);
+        await using var host = await DurableHost.StartAsync(options =>
+            options.AddWorkflow(workflow)
+        );
+        var run = (IAwaitableWorkflowRun)await host.WorkflowClient.RunAsync(workflow, input, runId);
+        var output = await run.WaitForCompletionAsync<PipelineMessage<DebateState>>();
+        var instance = await host.DurableTaskClient.WaitForInstanceCompletionAsync(
+            runId,
+            getInputsAndOutputs: true,
+            CancellationToken.None
+        );
 
-public sealed record Verdict(string Value, string Reason);
-
-public sealed record ProposalTerminal(string Text);
-
-public sealed record CritiqueTerminal(bool Accepted, string Critique);
+        output.Should().NotBeNull();
+        output!.State.Verdict.Should().Be(new DebateVerdict("Affirmed", "Already accepted."));
+        output.GetType().Should().Be<PipelineMessage<DebateState>>();
+        instance!.RuntimeStatus.Should().Be(OrchestrationRuntimeStatus.Completed);
+        instance.SerializedOutput.Should().Contain("Already accepted.");
+    }
+}

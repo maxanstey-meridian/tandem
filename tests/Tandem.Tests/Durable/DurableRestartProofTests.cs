@@ -6,7 +6,7 @@ using Tandem.Domain;
 namespace Tandem.Tests.Durable;
 
 /// <summary>
-/// Durable restart proof (plan 02 lines 1002-1014). Start simple-v1, let prepare
+/// Durable restart proof (plan 02 lines 1002-1014). Start delivery, let prepare
 /// and executor complete, stop the host before the next block completes, restart
 /// with the same workflow definition and stable block IDs, verify the existing
 /// durable run continues and already completed blocks are not repeated, verify
@@ -16,14 +16,14 @@ namespace Tandem.Tests.Durable;
 public sealed class DurableRestartProofTests
 {
     [Fact]
-    public async Task RestartedHost_ResumesSimpleV1_WithoutRepeatingCompletedBlocks()
+    public async Task RestartedHost_ResumesDelivery_WithoutRepeatingCompletedBlocks()
     {
         DtsFixture.EnsureReachable();
 
         using var runDirectory = new TemporaryDirectory();
         var invocationLogPath = Path.Combine(runDirectory.Path, "invocations.txt");
 
-        var workflow = BuildSimpleV1DeterministicWorkflow(
+        var workflow = BuildDeliveryDeterministicWorkflow(
             invocationLogPath,
             "durable-restart-proof"
         );
@@ -40,9 +40,9 @@ public sealed class DurableRestartProofTests
             Constraints: [],
             ImplementationContext: ""
         );
-        var initialMessage = new PipelineMessage<SimpleV1State>(
+        var initialMessage = new PipelineMessage<DeliveryState>(
             PipelineRuntime.Create(Guid.CreateVersion7()),
-            SimpleV1State.Create(packet, "abc123", "/tmp/test-ws")
+            DeliveryState.Create(packet, "abc123", "/tmp/test-ws")
         );
 
         await using (
@@ -56,7 +56,7 @@ public sealed class DurableRestartProofTests
         }
 
         // Restart with the same workflow definition and stable block IDs.
-        var restartedWorkflow = BuildSimpleV1DeterministicWorkflow(
+        var restartedWorkflow = BuildDeliveryDeterministicWorkflow(
             invocationLogPath,
             "durable-restart-proof"
         );
@@ -93,11 +93,11 @@ public sealed class DurableRestartProofTests
     }
 
     /// <summary>
-    /// Builds a simple-v1-shaped deterministic workflow. The planner blocks forever
+    /// Builds a delivery-shaped deterministic workflow. The planner blocks forever
     /// on its first invocation (to allow host shutdown mid-run), then returns a
     /// proceed decision on subsequent invocations.
     /// </summary>
-    private static Workflow BuildSimpleV1DeterministicWorkflow(
+    private static Workflow BuildDeliveryDeterministicWorkflow(
         string invocationLogPath,
         string workflowName
     )
@@ -146,22 +146,22 @@ public sealed class DurableRestartProofTests
 
         return new WorkflowBuilder(prepareB)
             .WithName(workflowName)
-            .AddEdge<PipelineMessage<SimpleV1State>>(
+            .AddEdge<PipelineMessage<DeliveryState>>(
                 prepareB,
                 executorB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
             )
-            .AddEdge<PipelineMessage<SimpleV1State>>(
+            .AddEdge<PipelineMessage<DeliveryState>>(
                 prepareB,
                 failedB,
                 m => m!.LatestOutcome?.Kind != OutcomeKinds.WorkspacePrepared
             )
-            .AddEdge<PipelineMessage<SimpleV1State>>(
+            .AddEdge<PipelineMessage<DeliveryState>>(
                 executorB,
                 plannerB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.PlannerRequested
             )
-            .AddEdge<PipelineMessage<SimpleV1State>>(
+            .AddEdge<PipelineMessage<DeliveryState>>(
                 executorB,
                 failedB,
                 m =>
@@ -169,42 +169,42 @@ public sealed class DurableRestartProofTests
                     && m!.LatestOutcome?.Kind != OutcomeKinds.ReportSubmitted
                     && m!.LatestOutcome?.Kind != OutcomeKinds.CheckpointWritten
             )
-            .AddEdge<PipelineMessage<SimpleV1State>>(
+            .AddEdge<PipelineMessage<DeliveryState>>(
                 plannerB,
                 executor2B,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.PlannerProceed
             )
-            .AddEdge<PipelineMessage<SimpleV1State>>(
+            .AddEdge<PipelineMessage<DeliveryState>>(
                 plannerB,
                 failedB,
                 m => m!.LatestOutcome?.Kind != OutcomeKinds.PlannerProceed
             )
-            .AddEdge<PipelineMessage<SimpleV1State>>(
+            .AddEdge<PipelineMessage<DeliveryState>>(
                 executor2B,
                 captureB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReportSubmitted
             )
-            .AddEdge<PipelineMessage<SimpleV1State>>(
+            .AddEdge<PipelineMessage<DeliveryState>>(
                 executor2B,
                 failedB,
                 m => m!.LatestOutcome?.Kind != OutcomeKinds.ReportSubmitted
             )
-            .AddEdge<PipelineMessage<SimpleV1State>>(
+            .AddEdge<PipelineMessage<DeliveryState>>(
                 captureB,
                 reviewerB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
             )
-            .AddEdge<PipelineMessage<SimpleV1State>>(
+            .AddEdge<PipelineMessage<DeliveryState>>(
                 captureB,
                 failedB,
                 m => m!.LatestOutcome?.Kind != OutcomeKinds.CandidateCaptured
             )
-            .AddEdge<PipelineMessage<SimpleV1State>>(
+            .AddEdge<PipelineMessage<DeliveryState>>(
                 reviewerB,
                 completeB,
                 m => m!.LatestOutcome?.Kind == OutcomeKinds.ReviewAccepted
             )
-            .AddEdge<PipelineMessage<SimpleV1State>>(
+            .AddEdge<PipelineMessage<DeliveryState>>(
                 reviewerB,
                 failedB,
                 m => m!.LatestOutcome?.Kind != OutcomeKinds.ReviewAccepted
@@ -231,7 +231,7 @@ public sealed class DurableRestartProofTests
     }
 
     private sealed class LoggingBlock
-        : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>
+        : Executor<PipelineMessage<DeliveryState>, PipelineMessage<DeliveryState>>
     {
         private readonly string _logPath;
         private readonly string _outcomeKind;
@@ -243,8 +243,8 @@ public sealed class DurableRestartProofTests
             _outcomeKind = outcomeKind;
         }
 
-        public override ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
-            PipelineMessage<SimpleV1State> message,
+        public override ValueTask<PipelineMessage<DeliveryState>> HandleAsync(
+            PipelineMessage<DeliveryState> message,
             IWorkflowContext context,
             CancellationToken cancellationToken
         )
@@ -266,10 +266,10 @@ public sealed class DurableRestartProofTests
     /// The transition is controlled by a file marker.
     /// </summary>
     private sealed class BlockingPlannerBlock(string logPath)
-        : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>(BlockIds.Planner)
+        : Executor<PipelineMessage<DeliveryState>, PipelineMessage<DeliveryState>>(BlockIds.Planner)
     {
-        public override async ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
-            PipelineMessage<SimpleV1State> message,
+        public override async ValueTask<PipelineMessage<DeliveryState>> HandleAsync(
+            PipelineMessage<DeliveryState> message,
             IWorkflowContext context,
             CancellationToken cancellationToken
         )

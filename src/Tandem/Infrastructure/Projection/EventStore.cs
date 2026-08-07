@@ -32,6 +32,53 @@ public sealed class EventStore(string runDirectory)
         }
     }
 
+    public async Task<RunEvent> AppendProjectedAsync(
+        Guid runId,
+        string blockId,
+        string kind,
+        Func<string, RunEvent> createEvent,
+        CancellationToken ct = default
+    )
+    {
+        await _writeLock.WaitAsync(ct);
+        try
+        {
+            var prefix = $"{runId:N}--{blockId}--{kind}--";
+            var sequence = 0;
+            if (File.Exists(_path))
+            {
+                foreach (var line in File.ReadLines(_path))
+                {
+                    if (string.IsNullOrWhiteSpace(line))
+                    {
+                        continue;
+                    }
+
+                    var existing = JsonSerializer.Deserialize<RunEvent>(line, _jsonOptions);
+                    if (
+                        existing is not null
+                        && existing.EventId.StartsWith(prefix, StringComparison.Ordinal)
+                        && int.TryParse(existing.EventId.AsSpan(prefix.Length), out var candidate)
+                    )
+                    {
+                        sequence = Math.Max(sequence, candidate);
+                    }
+                }
+            }
+
+            var evt = createEvent($"{prefix}{sequence + 1}");
+            var serialized = JsonSerializer.Serialize(evt, _jsonOptions);
+            await using var writer = new StreamWriter(_path, append: true, _utf8WithoutBom);
+            await writer.WriteLineAsync(serialized);
+            await writer.FlushAsync(ct);
+            return evt;
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
     public async Task AppendRangeAsync(
         IReadOnlyList<RunEvent> events,
         CancellationToken ct = default

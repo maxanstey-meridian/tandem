@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
 using Tandem.Domain;
@@ -87,7 +88,7 @@ public sealed class StructuredOutputTests
                 + "\"humanQuestion\":null}"
         );
         var client = new ScriptedChatClient(validProceed, validProceed);
-        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<SimpleV1State>(
+        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(
             result => result.Outcome?.Kind == OutcomeKinds.PlannerProceed,
             correction: "Inspect the repository before approving."
         );
@@ -129,7 +130,7 @@ public sealed class StructuredOutputTests
             ),
             validProceed
         );
-        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<SimpleV1State>(
+        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(
             result => result.Outcome?.Kind == OutcomeKinds.PlannerProceed,
             name => name.StartsWith("file_access_read", StringComparison.Ordinal)
         );
@@ -163,7 +164,7 @@ public sealed class StructuredOutputTests
             validProceed,
             validProceed
         );
-        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<SimpleV1State>(
+        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(
             result => result.Outcome?.Kind == OutcomeKinds.PlannerProceed,
             name => name.StartsWith("file_access_read", StringComparison.Ordinal)
         );
@@ -188,12 +189,12 @@ public sealed class StructuredOutputTests
                 + "\"humanQuestion\":null}",
             CreateContext("/tmp")
         );
-        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<SimpleV1State>(result =>
+        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(result =>
             result.Outcome?.Kind == OutcomeKinds.PlannerProceed
         );
 
         var problems = policy(
-            new StructuredOutputAcceptanceObservation<SimpleV1State>(
+            new StructuredOutputAcceptanceObservation<DeliveryState>(
                 CreateContext("/tmp"),
                 parsed,
                 new HashSet<string> { "file_access_read" },
@@ -213,13 +214,13 @@ public sealed class StructuredOutputTests
                 + "\"humanQuestion\":null}",
             CreateContext("/tmp")
         );
-        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<SimpleV1State>(
+        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(
             result => result.Outcome?.Kind == OutcomeKinds.PlannerProceed,
             name => name.StartsWith("file_access_read", StringComparison.Ordinal)
         );
 
         var problems = policy(
-            new StructuredOutputAcceptanceObservation<SimpleV1State>(
+            new StructuredOutputAcceptanceObservation<DeliveryState>(
                 CreateContext("/tmp"),
                 parsed,
                 new HashSet<string> { "submit_report" },
@@ -238,12 +239,12 @@ public sealed class StructuredOutputTests
                 + "\"constraints\":[],\"evidenceUsed\":[],\"humanQuestion\":null}",
             CreateContext("/tmp")
         );
-        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<SimpleV1State>(result =>
+        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(result =>
             result.Candidate is PlannerDecision { Decision: PlannerDecisionValue.Proceed }
         );
 
         var problems = policy(
-            new StructuredOutputAcceptanceObservation<SimpleV1State>(
+            new StructuredOutputAcceptanceObservation<DeliveryState>(
                 CreateContext("/tmp"),
                 parsed,
                 new HashSet<string>(),
@@ -280,7 +281,7 @@ public sealed class StructuredOutputTests
     }
 
     [Fact]
-    public void ReviewerHumanAnswer_IsDurableAndIncludedInResumedPrompt()
+    public void PersistedReviewerHumanAnswer_IsRestoredIntoPromptAndClearedAfterDecision()
     {
         var context = CreateContext("/tmp") with
         {
@@ -296,8 +297,11 @@ public sealed class StructuredOutputTests
             new HumanAnswer("Keep public behavior.")
         );
 
+        var persisted = JsonSerializer.Serialize(resumed);
+        resumed = JsonSerializer.Deserialize<PipelineMessage<DeliveryState>>(persisted)!;
+
         resumed.State.ReviewerHumanAnswer.Should().Be("Keep public behavior.");
-        SimpleV1Composition
+        DeliveryComposition
             .BuildReviewerMessage(resumed)
             .Should()
             .Contain("Human answer for this review:")
@@ -322,13 +326,13 @@ public sealed class StructuredOutputTests
         json.Should().Be("{\"rationale\":\"Use {value}\"}");
     }
 
-    private static AgentBlock<SimpleV1State> CreatePlannerBlock(
+    private static AgentBlock<DeliveryState> CreatePlannerBlock(
         string tandemHome,
         IChatClient client,
-        StructuredOutputAcceptancePolicy<SimpleV1State>? acceptance = null
+        StructuredOutputAcceptancePolicy<DeliveryState>? acceptance = null
     ) =>
         new(
-            new AgentBlockConfig<SimpleV1State>(
+            new AgentBlockConfig<DeliveryState>(
                 BlockIds.Planner,
                 "planning",
                 "Return a planner decision.",
@@ -337,13 +341,17 @@ public sealed class StructuredOutputTests
                 state => state.WorkspacePath,
                 _ => false,
                 StructuredOutput: PlannerDecisionPolicy.Parse,
-                StructuredOutputAcceptance: acceptance
+                StructuredOutputAcceptance: acceptance,
+                SessionPolicy: _ => new AgentSessionDecision(
+                    AgentSessionAction.Continue,
+                    "Planner fixture policy."
+                )
             ),
             client,
             tandemHome
         );
 
-    private static PipelineMessage<SimpleV1State> CreateContext(string workspacePath)
+    private static PipelineMessage<DeliveryState> CreateContext(string workspacePath)
     {
         var packet = new Packet(
             "structured-output",
@@ -354,9 +362,9 @@ public sealed class StructuredOutputTests
             [],
             ""
         );
-        return new PipelineMessage<SimpleV1State>(
+        return new PipelineMessage<DeliveryState>(
             PipelineRuntime.Create(Guid.CreateVersion7()),
-            SimpleV1State.Create(packet, "abc123", workspacePath)
+            DeliveryState.Create(packet, "abc123", workspacePath)
         );
     }
 

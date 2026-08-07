@@ -48,8 +48,8 @@ public sealed class DurablePlannerHandoffTests
                 )
             );
 
-            var executor = new AgentBlock<SimpleV1State>(
-                new AgentBlockConfig<SimpleV1State>(
+            var executor = new AgentBlock<DeliveryState>(
+                new AgentBlockConfig<DeliveryState>(
                     BlockIds.Executor,
                     "implementation",
                     "Ask the planner for guidance.",
@@ -57,7 +57,7 @@ public sealed class DurablePlannerHandoffTests
                     _ => "Ask the planner for guidance.",
                     state => state.WorkspacePath,
                     _ => false,
-                    TurnPolicy: new AgentTurnPolicy<SimpleV1State>(
+                    TurnPolicy: new AgentTurnPolicy<DeliveryState>(
                         1,
                         (observation, _) =>
                             ValueTask.FromResult<AgentTurnDirective?>(
@@ -65,14 +65,19 @@ public sealed class DurablePlannerHandoffTests
                                     ? new AgentTurnDirective("Call ask_planner now.", "ask_planner")
                                     : null
                             )
+                    ),
+                    LifecycleActionSetIdentity: "delivery",
+                    SessionPolicy: _ => new AgentSessionDecision(
+                        AgentSessionAction.Continue,
+                        "Executor fixture."
                     )
                 ),
                 executorClient,
                 tandemHome,
                 ResolveTandemExePath()
             );
-            var planner = new AgentBlock<SimpleV1State>(
-                new AgentBlockConfig<SimpleV1State>(
+            var planner = new AgentBlock<DeliveryState>(
+                new AgentBlockConfig<DeliveryState>(
                     BlockIds.Planner,
                     "planning",
                     "Return the planner decision as JSON.",
@@ -80,7 +85,11 @@ public sealed class DurablePlannerHandoffTests
                     _ => "Return the planner decision as JSON.",
                     state => state.WorkspacePath,
                     _ => false,
-                    StructuredOutput: ParsePlannerDecision
+                    StructuredOutput: ParsePlannerDecision,
+                    SessionPolicy: _ => new AgentSessionDecision(
+                        AgentSessionAction.Continue,
+                        "Planner fixture."
+                    )
                 ),
                 plannerClient,
                 tandemHome,
@@ -92,12 +101,12 @@ public sealed class DurablePlannerHandoffTests
             var plannerBinding = planner.BindExecutor();
             var workflow = new WorkflowBuilder(executorBinding)
                 .WithName("durable-agent-planner-roundtrip")
-                .AddEdge<PipelineMessage<SimpleV1State>>(
+                .AddEdge<PipelineMessage<DeliveryState>>(
                     executorBinding,
                     plannerBinding,
                     message => message!.LatestOutcome?.Kind == OutcomeKinds.PlannerRequested
                 )
-                .AddEdge<PipelineMessage<SimpleV1State>>(
+                .AddEdge<PipelineMessage<DeliveryState>>(
                     plannerBinding,
                     executorBinding,
                     message =>
@@ -116,9 +125,9 @@ public sealed class DurablePlannerHandoffTests
                 [],
                 ""
             );
-            var message = new PipelineMessage<SimpleV1State>(
+            var message = new PipelineMessage<DeliveryState>(
                 PipelineRuntime.Create(Guid.CreateVersion7()),
-                SimpleV1State.Create(packet, "abc123", workspacePath)
+                DeliveryState.Create(packet, "abc123", workspacePath)
             );
             var runId = "agent-planner-roundtrip-" + Guid.NewGuid().ToString("N");
 
@@ -156,9 +165,9 @@ public sealed class DurablePlannerHandoffTests
         }
     }
 
-    private static StructuredOutputResult<SimpleV1State> ParsePlannerDecision(
+    private static StructuredOutputResult<DeliveryState> ParsePlannerDecision(
         string assistantText,
-        PipelineMessage<SimpleV1State> message
+        PipelineMessage<DeliveryState> message
     )
     {
         var options = new JsonSerializerOptions
@@ -167,8 +176,8 @@ public sealed class DurablePlannerHandoffTests
             Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
         };
         var decision = JsonSerializer.Deserialize<PlannerDecision>(assistantText, options)!;
-        return new StructuredOutputResult<SimpleV1State>(
-            new StructuredOutcome<SimpleV1State>(
+        return new StructuredOutputResult<DeliveryState>(
+            new StructuredOutcome<DeliveryState>(
                 OutcomeKinds.PlannerProceedWithConstraints,
                 decision.Rationale,
                 JsonSerializer.SerializeToElement(decision, options),
@@ -257,11 +266,11 @@ public sealed class DurablePlannerHandoffTests
                 "..",
                 "..",
                 "src",
-                "Tandem",
+                "Tandem.Tool",
                 "bin",
                 "Debug",
                 "net10.0",
-                "Tandem"
+                "Tandem.Tool"
             )
         );
         return File.Exists(candidate)

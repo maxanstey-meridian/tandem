@@ -1,6 +1,8 @@
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Agents.AI.Workflows;
 using Tandem.Domain;
+using Tandem.Infrastructure.Blocks;
 using Tandem.Infrastructure.Projection;
 
 namespace Tandem.Tests.Infrastructure;
@@ -170,6 +172,7 @@ public sealed class RunProjectionStoreTests
             var projection = RunProjection.Initial(
                 Guid.CreateVersion7(),
                 "durable-run-123",
+                "delivery",
                 "/path/to/packet.md",
                 "/path/to/repo",
                 "/path/to/workspace"
@@ -179,7 +182,7 @@ public sealed class RunProjectionStoreTests
 
             var read = store.Read();
             read.Should().NotBeNull();
-            read!.Status.Should().Be(RunStatus.Running);
+            read!.Status.Should().Be(Tandem.Domain.RunStatus.Running);
             read.DurableRunId.Should().Be("durable-run-123");
             read.PacketPath.Should().Be("/path/to/packet.md");
         }
@@ -202,17 +205,17 @@ public sealed class RunProjectionStoreTests
             var store = new RunProjectionStore(dir);
             var runId = Guid.CreateVersion7();
 
-            await store.WriteAsync(RunProjection.Initial(runId, "dr-1", "p", "r", "w"));
+            await store.WriteAsync(RunProjection.Initial(runId, "dr-1", "delivery", "p", "r", "w"));
             await store.WriteAsync(
-                RunProjection.Initial(runId, "dr-1", "p", "r", "w") with
+                RunProjection.Initial(runId, "dr-1", "delivery", "p", "r", "w") with
                 {
-                    Status = RunStatus.Ready,
+                    Status = Tandem.Domain.RunStatus.Ready,
                     CandidateSha = "abc123",
                 }
             );
 
             var read = store.Read();
-            read!.Status.Should().Be(RunStatus.Ready);
+            read!.Status.Should().Be(Tandem.Domain.RunStatus.Ready);
             read.CandidateSha.Should().Be("abc123");
         }
         finally
@@ -234,7 +237,7 @@ public sealed class RunProjectionStoreTests
             var store = new RunProjectionStore(dir);
 
             await store.WriteAsync(
-                RunProjection.Initial(Guid.CreateVersion7(), "dr-1", "p", "r", "w")
+                RunProjection.Initial(Guid.CreateVersion7(), "dr-1", "delivery", "p", "r", "w")
             );
 
             File.Exists(Path.Combine(dir, "run.json.tmp")).Should().BeFalse();
@@ -272,7 +275,94 @@ public sealed class RunProjectionStoreTests
 public sealed class RunEventProjectorTests
 {
     [Fact]
-    public void DescribeToolCall_ShowsPlannerQuestionAndFilePath()
+    public async Task HumanQuestionStage_OutputProjectsPendingHumanRequest()
+    {
+        var (eventStore, observer, cleanup) = CreateObserver();
+        try
+        {
+            var stage = new HumanQuestionStage(observer);
+            var binding = stage.Descriptor.Bind();
+            var workflow = new WorkflowBuilder(binding)
+                .WithName("human-question-projection")
+                .WithOutputFrom(binding)
+                .Build();
+            var message = CreateMessage(
+                new BlockOutcome(
+                    "human-input-required",
+                    BlockIds.Planner,
+                    "question",
+                    JsonSerializer.SerializeToElement(
+                        new { humanQuestion = "Which pattern?", reason = "ambiguous" }
+                    )
+                )
+            );
+
+            await RunAsync<PipelineMessage<DeliveryState>, HumanQuestion>(workflow, message);
+
+            var model = DashboardReducer.FromEvents(await eventStore.ReadAllAsync());
+            model
+                .PendingHumanRequest.Should()
+                .BeEquivalentTo(
+                    new HumanRequestView(BlockIds.Planner, "Which pattern?", "ambiguous")
+                );
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    [Fact]
+    public async Task ApplyHumanAnswerStage_OutputProjectsHumanAnswered()
+    {
+        var (eventStore, observer, cleanup) = CreateObserver();
+        try
+        {
+            var savedMessage = CreateMessage(
+                new BlockOutcome(
+                    "human-input-required",
+                    BlockIds.Reviewer,
+                    "question",
+                    JsonSerializer.SerializeToElement(new { })
+                )
+            );
+            var seed = new SaveHumanInputExecutor(savedMessage).BindExecutor();
+            var stage = new ApplyHumanAnswerStage(observer);
+            var apply = stage.Descriptor.Bind();
+            var workflow = new WorkflowBuilder(seed)
+                .WithName("human-answer-projection")
+                .AddEdge(seed, apply)
+                .WithOutputFrom(apply)
+                .Build();
+
+            await RunAsync<HumanAnswer, PipelineMessage<DeliveryState>>(
+                workflow,
+                new HumanAnswer("Use ports")
+            );
+
+            var events = await eventStore.ReadAllAsync();
+            events.Should().ContainSingle(evt => evt.Kind == EventKinds.HumanAnswered);
+            var model = DashboardReducer.FromEvents([
+                RunEvent.Create(
+                    BlockIds.HumanQuestion,
+                    EventKinds.HumanRequested,
+                    "question",
+                    JsonSerializer.SerializeToElement(
+                        new HumanQuestion(BlockIds.Reviewer, "Review?", "unclear")
+                    )
+                ),
+                .. events,
+            ]);
+            model.PendingHumanRequest.Should().BeNull();
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    [Fact]
+    public void DescribeToolCall_UsesCompositionNeutralNameAndFilePath()
     {
         RunEventProjector
             .DescribeToolCall(
@@ -284,15 +374,7 @@ public sealed class RunEventProjectorTests
                 }
             )
             .Should()
-            .Be(
-                """
-                ask_planner:
-                {
-                  "question": "Should markComplete reuse TodoStore.add?",
-                  "proposedApproach": "Use `markComplete` — preserve signatures."
-                }
-                """
-            );
+            .Be("ask_planner");
 
         RunEventProjector
             .DescribeToolCall(
@@ -404,6 +486,111 @@ public sealed class RunEventProjectorTests
             {
                 Directory.Delete(dir, recursive: true);
             }
+        }
+    }
+
+    [Fact]
+    public async Task EventIds_ContinueAfterFreshProjector()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "tandem-proj-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var eventStore = new EventStore(dir);
+            var runId = Guid.CreateVersion7();
+
+            await new RunEventProjector(runId, "executor", eventStore).EmitBlockStartedAsync();
+            await new RunEventProjector(runId, "executor", eventStore).EmitBlockStartedAsync();
+
+            var events = await eventStore.ReadAllAsync();
+            events.Should().HaveCount(2);
+            events.Select(e => e.EventId).Should().OnlyHaveUniqueItems();
+            events[1].EventId.Should().EndWith("--2");
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    private static (
+        EventStore Store,
+        RunEventBlockExecutionObserver Observer,
+        Action Cleanup
+    ) CreateObserver()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "tandem-human-proj-" + Guid.NewGuid().ToString("N")
+        );
+        Directory.CreateDirectory(directory);
+        var store = new EventStore(directory);
+        var runId = Guid.CreateVersion7();
+        var projectors = new Dictionary<string, RunEventProjector>();
+        RunEventProjector Projector(string blockId) =>
+            projectors.TryGetValue(blockId, out var projector)
+                ? projector
+                : projectors[blockId] = new RunEventProjector(runId, blockId, store);
+        return (
+            store,
+            new RunEventBlockExecutionObserver(Projector),
+            () => Directory.Delete(directory, true)
+        );
+    }
+
+    private static PipelineMessage<DeliveryState> CreateMessage(BlockOutcome outcome) =>
+        new(
+            PipelineRuntime.Create(Guid.CreateVersion7()),
+            DeliveryState.Create(
+                new Packet("test", "/tmp/repo", "main", [], [], [], ""),
+                "abc123",
+                "/tmp/workspace"
+            ),
+            outcome
+        );
+
+    private static async Task<TOutput> RunAsync<TInput, TOutput>(Workflow workflow, TInput input)
+        where TInput : notnull
+    {
+        await using var run = await InProcessExecution.RunStreamingAsync(
+            workflow,
+            input,
+            Guid.NewGuid().ToString("N"),
+            CancellationToken.None
+        );
+        await foreach (var evt in run.WatchStreamAsync(CancellationToken.None))
+        {
+            if (evt is WorkflowOutputEvent output)
+            {
+                if (output.Is<TOutput>())
+                {
+                    return output.As<TOutput>()!;
+                }
+            }
+        }
+
+        throw new InvalidOperationException("Workflow completed without output.");
+    }
+
+    private sealed class SaveHumanInputExecutor(PipelineMessage<DeliveryState> message)
+        : Executor<HumanAnswer, HumanAnswer>("save-human-input")
+    {
+        public override async ValueTask<HumanAnswer> HandleAsync(
+            HumanAnswer input,
+            IWorkflowContext context,
+            CancellationToken cancellationToken
+        )
+        {
+            await context.QueueStateUpdateAsync(
+                message.Runtime.RunId.ToString("N"),
+                JsonSerializer.Serialize(message),
+                "HumanInput",
+                cancellationToken
+            );
+            return input;
         }
     }
 }

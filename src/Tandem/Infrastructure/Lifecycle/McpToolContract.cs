@@ -18,7 +18,7 @@ public sealed class McpToolContractRegistry(IEnumerable<McpToolContract> contrac
         _contracts.TryGetValue(name, out contract!);
 }
 
-internal static class McpToolContractFactory
+public static class McpToolContractFactory
 {
     public static McpToolContract Create<TRequest, TValidator>(string name)
         where TValidator : IValidator<TRequest> =>

@@ -11,7 +11,8 @@ public interface IOutcomeBearingMessage
 public sealed record PipelineMessage<TState>(
     PipelineRuntime Runtime,
     TState State,
-    BlockOutcome? LatestOutcome = null
+    BlockOutcome? LatestOutcome = null,
+    PipelineResult? LatestResult = null
 ) : IOutcomeBearingMessage
 {
     public PipelineMessage<TState> WithOutcome(BlockOutcome outcome) =>
@@ -21,11 +22,14 @@ public sealed record PipelineMessage<TState>(
         };
 }
 
+public sealed record PipelineResult(string StepId, string CaseId, JsonElement Payload);
+
 public sealed record PipelineRuntime(
     Guid RunId,
     IReadOnlyDictionary<string, JsonElement> AgentSessions,
     IReadOnlyDictionary<string, AgentUsage> AgentUsage,
-    IReadOnlyDictionary<string, int> InvocationCounts
+    IReadOnlyDictionary<string, int> InvocationCounts,
+    IReadOnlyDictionary<string, AgentProfileDecision> AgentProfiles
 )
 {
     public static PipelineRuntime Create(Guid runId) =>
@@ -33,7 +37,8 @@ public sealed record PipelineRuntime(
             runId,
             new Dictionary<string, JsonElement>(),
             new Dictionary<string, AgentUsage>(),
-            new Dictionary<string, int>()
+            new Dictionary<string, int>(),
+            new Dictionary<string, AgentProfileDecision>()
         );
 
     public string NextInvocationId(string blockId) =>
@@ -77,6 +82,15 @@ public sealed record PipelineRuntime(
             AgentUsage = AgentUsage
                 .Where(kvp => kvp.Key != blockId)
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
+        };
+
+    public PipelineRuntime WithProfile(string blockId, AgentProfileDecision decision) =>
+        this with
+        {
+            AgentProfiles = new Dictionary<string, AgentProfileDecision>(AgentProfiles)
+            {
+                [blockId] = decision,
+            },
         };
 }
 

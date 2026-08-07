@@ -9,9 +9,10 @@ public interface IBlockExecutionObserver
 {
     public ValueTask StartedAsync(string blockId, CancellationToken cancellationToken);
 
-    public ValueTask CompletedAsync(
+    public ValueTask CompletedAsync<TInput, TOutput>(
         string blockId,
-        BlockOutcome? outcome,
+        TInput input,
+        TOutput output,
         TimeSpan duration,
         CancellationToken cancellationToken
     );
@@ -45,8 +46,7 @@ public sealed class ObservedExecutor<TInput, TOutput>(
         var output = await inner.HandleAsync(input, context, cancellationToken);
         stopwatch.Stop();
 
-        var outcome = output is IOutcomeBearingMessage message ? message.LatestOutcome : null;
-        await observer.CompletedAsync(Id, outcome, stopwatch.Elapsed, cancellationToken);
+        await observer.CompletedAsync(Id, input, output, stopwatch.Elapsed, cancellationToken);
         return output;
     }
 }
@@ -58,13 +58,27 @@ public sealed class RunEventBlockExecutionObserver(Func<string, RunEventProjecto
     public async ValueTask StartedAsync(string blockId, CancellationToken cancellationToken) =>
         await projectorFactory(blockId).EmitBlockStartedAsync(cancellationToken);
 
-    public async ValueTask CompletedAsync(
+    public async ValueTask CompletedAsync<TInput, TOutput>(
         string blockId,
-        BlockOutcome? outcome,
+        TInput input,
+        TOutput output,
         TimeSpan duration,
         CancellationToken cancellationToken
     )
     {
+        if (output is HumanQuestion question)
+        {
+            await projectorFactory(blockId).EmitHumanRequestedAsync(question, cancellationToken);
+        }
+
+        if (input is HumanAnswer answer && output is IOutcomeBearingMessage answeredMessage)
+        {
+            var sourceBlockId = ReadString(answeredMessage.LatestOutcome?.Payload, "sourceBlockId");
+            await projectorFactory(blockId)
+                .EmitHumanAnsweredAsync(sourceBlockId ?? "unknown", answer.Text, cancellationToken);
+        }
+
+        var outcome = output is IOutcomeBearingMessage message ? message.LatestOutcome : null;
         var completed = outcome is null
             ? new BlockOutcome(
                 EventKinds.BlockCompleted,
@@ -79,6 +93,13 @@ public sealed class RunEventBlockExecutionObserver(Func<string, RunEventProjecto
             };
         await projectorFactory(blockId).EmitBlockCompletedAsync(completed, cancellationToken);
     }
+
+    private static string? ReadString(JsonElement? payload, string name) =>
+        payload is { ValueKind: JsonValueKind.Object } value
+        && value.TryGetProperty(name, out var property)
+        && property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
 
     public async ValueTask CommandOutputAsync(
         string blockId,

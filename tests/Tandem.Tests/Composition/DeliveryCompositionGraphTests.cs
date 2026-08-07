@@ -9,7 +9,7 @@ namespace Tandem.Tests.Composition;
 
 /// <summary>
 /// Slice A characterization (PLAN.md) of the production
-/// <see cref="SimpleV1Composition"/> workflow as built by MAF's
+/// <see cref="DeliveryComposition"/> workflow as built by MAF's
 /// <c>WorkflowBuilder</c>. Assertions target only the public MAF reflection
 /// (<see cref="Workflow.ReflectExecutors"/>, <see cref="Workflow.ReflectPorts"/>,
 /// <see cref="Workflow.ReflectEdges"/>) and visualization
@@ -18,14 +18,14 @@ namespace Tandem.Tests.Composition;
 /// production code. Slice D will extend this test to prove labelled edge
 /// overloads leave the durable graph identity unchanged.
 /// </summary>
-public sealed class SimpleV1CompositionGraphTests : IDisposable
+public sealed class DeliveryCompositionGraphTests : IDisposable
 {
     private const string HumanInputPortId = "HumanInput";
 
     private readonly string _tandemHome;
     private readonly Workflow _workflow;
 
-    public SimpleV1CompositionGraphTests()
+    public DeliveryCompositionGraphTests()
     {
         _tandemHome = Path.Combine(
             Path.GetTempPath(),
@@ -33,12 +33,10 @@ public sealed class SimpleV1CompositionGraphTests : IDisposable
         );
         Directory.CreateDirectory(_tandemHome);
 
-        var composition = new SimpleV1Composition(
-            _tandemHome,
-            _ => new FakeChatClient(),
-            _ => MakeProfile()
+        var composition = new DeliveryComposition(
+            new DeliveryStepsFactory(_tandemHome, _ => new FakeChatClient(), _ => MakeProfile())
         );
-        _workflow = composition.Build();
+        _workflow = PipelineMafBridge.GetWorkflow(composition.Build(new PipelineBuildContext()));
     }
 
     public void Dispose()
@@ -52,7 +50,7 @@ public sealed class SimpleV1CompositionGraphTests : IDisposable
     [Fact]
     public void Workflow_Name_And_Start_ArePreserved()
     {
-        _workflow.Name.Should().Be("simple-v1");
+        _workflow.Name.Should().Be("delivery");
         _workflow.StartExecutorId.Should().Be(BlockIds.Prepare);
         _workflow
             .Description.Should()
@@ -60,6 +58,46 @@ public sealed class SimpleV1CompositionGraphTests : IDisposable
                 "Plan, implement, verify, and review a software change.",
                 "Slice D adds the lifecycle description via WithDescription"
             );
+    }
+
+    [Fact]
+    public void PublicInspection_ReflectsTheExecutableWorkflowSemantics()
+    {
+        var inspection = new DeliveryComposition(
+            new DeliveryStepsFactory(_tandemHome, _ => new FakeChatClient(), _ => MakeProfile())
+        )
+            .Build(new PipelineBuildContext())
+            .Inspect();
+
+        inspection.Name.Should().Be("delivery");
+        inspection.StartStepId.Should().Be(BlockIds.Prepare);
+        inspection.OutputStepIds.Should().Equal(BlockIds.Complete, BlockIds.Failed);
+        inspection.StepIds.Should().HaveCount(11);
+        inspection.Routes.Should().HaveCount(26);
+        inspection
+            .Routes.Should()
+            .Contain(route =>
+                route.SourceId == BlockIds.HumanQuestion
+                && route.TargetId == HumanInputPortId
+                && !route.Conditional
+            );
+        inspection
+            .Routes.SelectMany(route => new[] { route.SourceId, route.TargetId })
+            .Should()
+            .BeSubsetOf(inspection.StepIds);
+        inspection
+            .Ports.Should()
+            .ContainSingle()
+            .Which.Should()
+            .Be(
+                new PipelinePortInspection(
+                    HumanInputPortId,
+                    "Tandem.Domain.HumanQuestion",
+                    "Tandem.Domain.HumanAnswer"
+                )
+            );
+        inspection.Mermaid.Should().StartWith("flowchart").And.Contain("workspace prepared");
+        inspection.Dot.Should().StartWith("digraph");
     }
 
     [Fact]
@@ -350,7 +388,7 @@ public sealed class SimpleV1CompositionGraphTests : IDisposable
                 var hasCondition = info is DirectEdgeInfo direct
                     ? direct.HasCondition
                     : throw new InvalidOperationException(
-                        "Only DirectEdge kinds are expected in SimpleV1Composition."
+                        "Only DirectEdge kinds are expected in DeliveryComposition."
                     );
 
                 list.Add(new EdgeTuple(source, sink, hasCondition));

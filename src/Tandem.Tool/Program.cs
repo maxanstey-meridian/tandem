@@ -52,13 +52,15 @@ var publishCommand = new Command("publish", "Publish a Ready candidate as a loca
     debugOption,
 };
 
-var lifecycleCommand = new Command("simple-v1", "Host SimpleV1 MCP tools over stdio")
+var actionSetArgument = new Argument<string>("action-set")
 {
-    Hidden = true,
+    Description = "Explicitly registered lifecycle action set identity.",
 };
-var debateCommand = new Command("debate", "Host Debate MCP tools over stdio") { Hidden = true };
-
-var mcpCommand = new Command("mcp") { lifecycleCommand, debateCommand };
+var mcpCommand = new Command("mcp", "Host a registered lifecycle action set over stdio")
+{
+    actionSetArgument,
+};
+mcpCommand.Hidden = true;
 
 var rootCommand = new RootCommand("Tandem — agentic pipeline runner")
 {
@@ -157,25 +159,15 @@ static (string Home, Guid RunId, string BlockId, string InvocationId) ReadMcpCon
     return (tandemHome, Guid.Parse(runId), blockId, invocationId);
 }
 
-lifecycleCommand.SetAction(
+mcpCommand.SetAction(
     async (ParseResult parseResult, CancellationToken cancellationToken) =>
     {
         var context = ReadMcpContext();
-        await LifecycleMcpHost.RunSimpleV1Async(
-            context.Home,
-            context.RunId,
-            context.BlockId,
-            context.InvocationId,
-            cancellationToken
-        );
-        return 0;
-    }
-);
-debateCommand.SetAction(
-    async (ParseResult parseResult, CancellationToken cancellationToken) =>
-    {
-        var context = ReadMcpContext();
-        await LifecycleMcpHost.RunDebateAsync(
+        await using var provider = BuildDeliveryServices(context.Home, config: null);
+        var actionSets = provider.GetRequiredService<LifecycleActionSetRegistry>();
+        await LifecycleMcpHost.RunAsync(
+            actionSets,
+            parseResult.GetRequiredValue(actionSetArgument),
             context.Home,
             context.RunId,
             context.BlockId,
@@ -214,16 +206,24 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
         return 1;
     }
 
-    var chatClientFactory = new ChatClientBuilderFactory(config);
+    await using var provider = BuildDeliveryServices(tandemHome, config);
+    var chatClients = provider.GetRequiredService<ITandemChatClients>();
     var runPaths = new RunSetup().Create(tandemHome);
-
-    var composition = new SimpleV1Composition(
-        tandemHome,
-        chatClientFactory.Build,
-        chatClientFactory.ResolveProfile
-    );
+    var composition = provider.GetRequiredService<DeliveryComposition>();
 
     var eventStore = new EventStore(runPaths.RunDirectory);
+    var runId = runPaths.RunId.ToString("N");
+    await new RunProjectionStore(runPaths.RunDirectory).WriteAsync(
+        RunProjection.Initial(
+            runPaths.RunId,
+            runId,
+            DeliveryLifecycleActions.Identity,
+            packetPath,
+            packet.Repository,
+            runPaths.WorkspacePath
+        ),
+        cancellationToken
+    );
     var runProjectors = new Dictionary<string, RunEventProjector>();
     RunEventProjector GetProjector(string blockId)
     {
@@ -239,7 +239,7 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
                 runPaths.RunId,
                 blockId,
                 eventStore,
-                profile: chatClientFactory.ResolveProfile(profileName)
+                profile: chatClients.ResolveProfile(profileName)
             );
             runProjectors[blockId] = p;
         }
@@ -248,22 +248,25 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
 
     var renderer = new StreamRenderer();
     var interactive = !Console.IsInputRedirected && !Console.IsOutputRedirected;
-    var workflow = composition.Build(
-        (blockId, updateRunId, update) =>
-        {
-            if (updateRunId == runPaths.RunId)
+    var pipeline = composition.Build(
+        new Tandem.PipelineBuildContext(
+            (blockId, updateRunId, update) =>
             {
-                if (!interactive)
+                if (updateRunId == runPaths.RunId)
                 {
-                    renderer.RenderUpdate(update);
+                    if (!interactive)
+                    {
+                        renderer.RenderUpdate(update);
+                    }
+                    GetProjector(blockId).EmitAgentUpdateAsync(update).GetAwaiter().GetResult();
                 }
-                GetProjector(blockId).EmitAgentUpdateAsync(update).GetAwaiter().GetResult();
-            }
-        },
-        new RunEventBlockExecutionObserver(GetProjector)
+            },
+            new RunEventBlockExecutionObserver(GetProjector)
+        )
     );
+    var workflow = Tandem.PipelineMafBridge.GetWorkflow(pipeline);
 
-    var implProfile = chatClientFactory.ResolveProfile("implementation");
+    var implProfile = chatClients.ResolveProfile("implementation");
     if (!interactive)
     {
         Console.WriteLine($"Run:       {runPaths.RunId}");
@@ -272,9 +275,9 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
         Console.WriteLine();
     }
 
-    var initialMessage = new PipelineMessage<SimpleV1State>(
+    var initialMessage = new PipelineMessage<DeliveryState>(
         PipelineRuntime.Create(runPaths.RunId),
-        SimpleV1State.Create(packet, "", runPaths.WorkspacePath)
+        DeliveryState.Create(packet, "", runPaths.WorkspacePath)
     );
 
     await new RunEventProjector(runPaths.RunId, "", eventStore).EmitRunStartedAsync(
@@ -286,19 +289,7 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
         Environment.GetEnvironmentVariable("TANDEM_DTS_CONNECTION_STRING")
         ?? "Endpoint=http://localhost:8080;TaskHub=tandem-cli;Authentication=None";
 
-    var runId = runPaths.RunId.ToString("N");
     var connectionString = baseConnectionString;
-
-    await new RunProjectionStore(runPaths.RunDirectory).WriteAsync(
-        RunProjection.Initial(
-            runPaths.RunId,
-            runId,
-            packetPath,
-            packet.Repository,
-            runPaths.WorkspacePath
-        ),
-        cancellationToken
-    );
 
     try
     {
@@ -347,7 +338,7 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
                 async () =>
                 {
                     var final = await ((IAwaitableWorkflowRun)run).WaitForCompletionAsync<
-                        PipelineMessage<SimpleV1State>
+                        PipelineMessage<DeliveryState>
                     >(cancellationToken);
                     renderer.RenderTerminalMessage(final);
 
@@ -373,6 +364,7 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
                         var projection = new RunProjection(
                             runPaths.RunId,
                             runId,
+                            DeliveryLifecycleActions.Identity,
                             packetPath,
                             packet.Repository,
                             final.State.Status,
@@ -531,12 +523,17 @@ static async Task<int> AttachAsync(string runIdArg, bool debug, CancellationToke
         return 1;
     }
 
-    var chatClientFactory = new ChatClientBuilderFactory(config);
-    var composition = new SimpleV1Composition(
-        tandemHome,
-        chatClientFactory.Build,
-        chatClientFactory.ResolveProfile
-    );
+    if (projection.CompositionIdentity != DeliveryLifecycleActions.Identity)
+    {
+        Console.Error.WriteLine(
+            $"Error: Composition '{projection.CompositionIdentity}' is not registered by this host."
+        );
+        return 1;
+    }
+
+    await using var provider = BuildDeliveryServices(tandemHome, config);
+    var chatClients = provider.GetRequiredService<ITandemChatClients>();
+    var composition = provider.GetRequiredService<DeliveryComposition>();
 
     var eventStore = new EventStore(runDir);
     var runProjectors = new Dictionary<string, RunEventProjector>();
@@ -554,7 +551,7 @@ static async Task<int> AttachAsync(string runIdArg, bool debug, CancellationToke
                 projection.RunId,
                 blockId,
                 eventStore,
-                profile: chatClientFactory.ResolveProfile(profileName)
+                profile: chatClients.ResolveProfile(profileName)
             );
             runProjectors[blockId] = projector;
         }
@@ -563,16 +560,19 @@ static async Task<int> AttachAsync(string runIdArg, bool debug, CancellationToke
 
     // Workflow must be registered so MAF recognizes the workflow type
     // when the Durable Task worker reconnects to the existing orchestration.
-    var workflow = composition.Build(
-        (blockId, updateRunId, update) =>
-        {
-            if (updateRunId == projection.RunId)
+    var pipeline = composition.Build(
+        new Tandem.PipelineBuildContext(
+            (blockId, updateRunId, update) =>
             {
-                GetProjector(blockId).EmitAgentUpdateAsync(update).GetAwaiter().GetResult();
-            }
-        },
-        new RunEventBlockExecutionObserver(GetProjector)
+                if (updateRunId == projection.RunId)
+                {
+                    GetProjector(blockId).EmitAgentUpdateAsync(update).GetAwaiter().GetResult();
+                }
+            },
+            new RunEventBlockExecutionObserver(GetProjector)
+        )
     );
+    var workflow = Tandem.PipelineMafBridge.GetWorkflow(pipeline);
 
     var baseConnectionString =
         Environment.GetEnvironmentVariable("TANDEM_DTS_CONNECTION_STRING")
@@ -605,6 +605,30 @@ static async Task<int> AttachAsync(string runIdArg, bool debug, CancellationToke
         {
             var durableTaskClient = host.Services.GetRequiredService<DurableTaskClient>();
 
+            var completionTask = Task.Run(
+                async () =>
+                {
+                    var completed = await durableTaskClient.WaitForInstanceCompletionAsync(
+                        projection.DurableRunId,
+                        getInputsAndOutputs: true,
+                        cancellationToken
+                    );
+                    var final = completed?.ReadOutputAs<PipelineMessage<DeliveryState>>();
+                    if (final is not null)
+                    {
+                        await PersistTerminalProjectionAsync(
+                            runDir,
+                            projection,
+                            final,
+                            eventStore,
+                            cancellationToken
+                        );
+                    }
+                    return final;
+                },
+                cancellationToken
+            );
+
             Console.WriteLine($"Attaching to run: {runIdArg}");
             Console.WriteLine($"Durable run ID:   {projection.DurableRunId}");
             Console.WriteLine($"Workspace:        {projection.WorkspacePath}");
@@ -624,7 +648,16 @@ static async Task<int> AttachAsync(string runIdArg, bool debug, CancellationToke
                 onDetach: () => Task.CompletedTask
             );
 
-            await dashboard.RunAsync(null, cancellationToken);
+            var dashboardTask = dashboard.RunAsync(null, cancellationToken);
+            var completedTask = await Task.WhenAny(dashboardTask, completionTask);
+            if (completedTask == completionTask && completionTask.IsFaulted)
+            {
+                await completionTask;
+            }
+            if (!dashboardTask.IsCompleted)
+            {
+                await dashboardTask;
+            }
         }
         finally
         {
@@ -643,6 +676,54 @@ static async Task<int> AttachAsync(string runIdArg, bool debug, CancellationToke
     }
 
     return 0;
+}
+
+static ServiceProvider BuildDeliveryServices(string tandemHome, TandemConfig? config)
+{
+    var services = new ServiceCollection();
+    services.AddSingleton(new TandemEnvironment(tandemHome, Environment.ProcessPath));
+    if (config is not null)
+    {
+        services.AddSingleton(config);
+    }
+    services.AddTandem().AddDelivery();
+    return services.BuildServiceProvider();
+}
+
+static async Task PersistTerminalProjectionAsync(
+    string runDirectory,
+    RunProjection projection,
+    PipelineMessage<DeliveryState> final,
+    EventStore eventStore,
+    CancellationToken cancellationToken
+)
+{
+    var projector = new RunEventProjector(projection.RunId, "", eventStore);
+    switch (final.State.Status)
+    {
+        case Tandem.Domain.RunStatus.Ready:
+            await projector.EmitRunReadyAsync(final.State.CandidateSha, cancellationToken);
+            break;
+        case Tandem.Domain.RunStatus.Failed:
+            await projector.EmitRunFailedAsync(
+                final.LatestOutcome?.Summary ?? "unknown",
+                cancellationToken
+            );
+            break;
+    }
+
+    await new RunProjectionStore(runDirectory).WriteAsync(
+        projection with
+        {
+            Status = final.State.Status,
+            ActiveBlockId = null,
+            PinnedBaseSha = final.State.PinnedBaseSha,
+            CandidateSha = final.State.CandidateSha,
+            PendingHumanRequest = null,
+            UpdatedAt = DateTimeOffset.UtcNow,
+        },
+        cancellationToken
+    );
 }
 
 static async Task<int> PublishAsync(
@@ -941,7 +1022,7 @@ file sealed class StreamRenderer
     private readonly StringBuilder _agent = new();
     private readonly StringBuilder _reasoning = new();
     private readonly Dictionary<string, string> _toolNames = new();
-    private PipelineMessage<SimpleV1State>? _finalMessage;
+    private PipelineMessage<DeliveryState>? _finalMessage;
 
     public Tandem.Domain.RunStatus? TerminalStatus => _finalMessage?.State.Status;
 
@@ -953,9 +1034,9 @@ file sealed class StreamRenderer
                 RenderUpdate(updateEvent.Update);
                 break;
             case WorkflowOutputEvent outputEvent:
-                if (outputEvent.Is<PipelineMessage<SimpleV1State>>())
+                if (outputEvent.Is<PipelineMessage<DeliveryState>>())
                 {
-                    var msg = outputEvent.As<PipelineMessage<SimpleV1State>>();
+                    var msg = outputEvent.As<PipelineMessage<DeliveryState>>();
                     RenderTerminalBlockTransition(msg);
                 }
                 break;
@@ -964,7 +1045,7 @@ file sealed class StreamRenderer
         return Task.CompletedTask;
     }
 
-    public void RenderTerminalMessage(PipelineMessage<SimpleV1State>? msg)
+    public void RenderTerminalMessage(PipelineMessage<DeliveryState>? msg)
     {
         if (msg is null)
         {
@@ -974,7 +1055,7 @@ file sealed class StreamRenderer
         RenderTerminalBlockTransition(msg);
     }
 
-    private void RenderTerminalBlockTransition(PipelineMessage<SimpleV1State>? msg)
+    private void RenderTerminalBlockTransition(PipelineMessage<DeliveryState>? msg)
     {
         if (msg?.LatestOutcome is { } outcome)
         {

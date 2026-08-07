@@ -1,15 +1,14 @@
 using System.Text.Json;
-using Microsoft.Agents.AI.Workflows;
 using Tandem.Domain;
+using Tandem.Infrastructure.Projection;
 
 namespace Tandem.Infrastructure.Blocks;
 
-public sealed class HumanQuestionBlock()
-    : Executor<PipelineMessage<SimpleV1State>, HumanQuestion>(BlockIds.HumanQuestion)
+internal static class HumanQuestionBlock
 {
-    public override async ValueTask<HumanQuestion> HandleAsync(
-        PipelineMessage<SimpleV1State> message,
-        IWorkflowContext context,
+    public static async ValueTask<HumanQuestion> ExecuteAsync(
+        PipelineMessage<DeliveryState> message,
+        IPipelineExecutionContext context,
         CancellationToken cancellationToken
     )
     {
@@ -38,12 +37,11 @@ public sealed class HumanQuestionBlock()
             : null;
 }
 
-public sealed class ApplyHumanAnswerBlock()
-    : Executor<HumanAnswer, PipelineMessage<SimpleV1State>>(BlockIds.ApplyHumanAnswer)
+public static class ApplyHumanAnswerBlock
 {
-    public override async ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
+    public static async ValueTask<PipelineMessage<DeliveryState>> ExecuteAsync(
         HumanAnswer answer,
-        IWorkflowContext context,
+        IPipelineExecutionContext context,
         CancellationToken cancellationToken
     )
     {
@@ -63,7 +61,7 @@ public sealed class ApplyHumanAnswerBlock()
             return Failure("Saved pipeline message was empty.");
         }
 
-        var message = JsonSerializer.Deserialize<PipelineMessage<SimpleV1State>>(json);
+        var message = JsonSerializer.Deserialize<PipelineMessage<DeliveryState>>(json);
         if (message is null)
         {
             return Failure("Failed to deserialize saved pipeline message.");
@@ -72,8 +70,8 @@ public sealed class ApplyHumanAnswerBlock()
         return Apply(message, answer);
     }
 
-    internal static PipelineMessage<SimpleV1State> Apply(
-        PipelineMessage<SimpleV1State> message,
+    public static PipelineMessage<DeliveryState> Apply(
+        PipelineMessage<DeliveryState> message,
         HumanAnswer answer
     )
     {
@@ -84,7 +82,7 @@ public sealed class ApplyHumanAnswerBlock()
             ReviewerHumanAnswer = sourceBlockId == BlockIds.Reviewer ? answer.Text : null,
             Status = Tandem.Domain.RunStatus.Running,
         };
-        return new PipelineMessage<SimpleV1State>(
+        return new PipelineMessage<DeliveryState>(
             message.Runtime,
             state,
             new BlockOutcome(
@@ -96,10 +94,10 @@ public sealed class ApplyHumanAnswerBlock()
         );
     }
 
-    private static PipelineMessage<SimpleV1State> Failure(string summary) =>
+    private static PipelineMessage<DeliveryState> Failure(string summary) =>
         new(
             PipelineRuntime.Create(Guid.Empty),
-            SimpleV1State.Create(new Packet("empty", "/tmp", "main", [], [], [], ""), "", "") with
+            DeliveryState.Create(new Packet("empty", "/tmp", "main", [], [], [], ""), "", "") with
             {
                 Status = Tandem.Domain.RunStatus.Failed,
             },
@@ -110,4 +108,41 @@ public sealed class ApplyHumanAnswerBlock()
                 JsonSerializer.SerializeToElement(new { })
             )
         );
+}
+
+public sealed class HumanQuestionStage(IBlockExecutionObserver? observer = null) : IPipelineNode
+{
+    public string Id => BlockIds.HumanQuestion;
+
+    public PipelineNodeDescriptor Descriptor { get; } =
+        PipelineNodes.Stage<PipelineMessage<DeliveryState>, HumanQuestion>(
+            BlockIds.HumanQuestion,
+            HumanQuestionBlock.ExecuteAsync,
+            observer
+        );
+}
+
+public sealed class HumanInputPort : IPipelineNode
+{
+    public string Id => "HumanInput";
+
+    public PipelineNodeDescriptor Descriptor { get; } =
+        PipelineNodes.RequestPort<HumanQuestion, HumanAnswer>("HumanInput");
+}
+
+public sealed class ApplyHumanAnswerStage(IBlockExecutionObserver? observer = null) : IPipelineNode
+{
+    public string Id => BlockIds.ApplyHumanAnswer;
+
+    public PipelineNodeDescriptor Descriptor { get; } =
+        PipelineNodes.Stage<HumanAnswer, PipelineMessage<DeliveryState>>(
+            BlockIds.ApplyHumanAnswer,
+            ApplyHumanAnswerBlock.ExecuteAsync,
+            observer
+        );
+
+    internal static PipelineMessage<DeliveryState> Apply(
+        PipelineMessage<DeliveryState> message,
+        HumanAnswer answer
+    ) => ApplyHumanAnswerBlock.Apply(message, answer);
 }

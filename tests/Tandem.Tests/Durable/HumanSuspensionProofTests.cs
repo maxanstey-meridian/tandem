@@ -27,7 +27,9 @@ public sealed class HumanSuspensionProofTests
             "tandem-human-suspend-" + Guid.NewGuid().ToString("N")
         );
         var workspacePath = Path.Combine(tandemHome, "workspace");
-        Directory.CreateDirectory(workspacePath);
+        var repositoryPath = Path.Combine(tandemHome, "repository");
+        Directory.CreateDirectory(repositoryPath);
+        await InitializeRepositoryAsync(repositoryPath);
 
         try
         {
@@ -39,10 +41,15 @@ public sealed class HumanSuspensionProofTests
                     "{\"decision\":\"NeedsHuman\",\"rationale\":\"Need human input.\","
                         + "\"constraints\":[],\"evidenceUsed\":[\"packet outcome\"],"
                         + "\"humanQuestion\":\"Should I proceed?\"}"
+                ),
+                MakeTextResponse(
+                    "{\"decision\":\"NeedsHuman\",\"rationale\":\"Need confirmation.\","
+                        + "\"constraints\":[],\"evidenceUsed\":[\"human answer\"],"
+                        + "\"humanQuestion\":\"Confirm once more?\"}"
                 )
             );
 
-            var composition = new SimpleV1Composition(
+            var stepsFactory = new DeliveryStepsFactory(
                 tandemHome,
                 _ => plannerClient,
                 _ => new ResolvedProfile(
@@ -57,11 +64,44 @@ public sealed class HumanSuspensionProofTests
                 )
             );
 
-            var workflow = composition.Build();
+            var delivery = stepsFactory.Create(new PipelineBuildContext());
+            var pipeline = TandemWorkflow
+                .Start(at: delivery.Planner, name: "delivery-human-resume-proof")
+                .Route(
+                    on: delivery.Planner.Result.NeedsHuman,
+                    to: delivery.HumanQuestion,
+                    label: "needs human"
+                )
+                .Route(on: delivery.Planner.Result.Stop, to: delivery.FailRun, label: "stop")
+                .Route(
+                    on: delivery.Planner.Result.Unexpected,
+                    to: delivery.FailRun,
+                    label: "unexpected outcome"
+                )
+                .Route(
+                    from: delivery.HumanQuestion,
+                    to: delivery.HumanInput,
+                    label: "request human input"
+                )
+                .Route(
+                    from: delivery.HumanInput,
+                    to: delivery.ApplyHumanAnswer,
+                    label: "answer received"
+                )
+                .Route(
+                    when: message =>
+                        message.LatestOutcome?.Payload.GetProperty("sourceBlockId").GetString()
+                        == BlockIds.Planner,
+                    from: delivery.ApplyHumanAnswer,
+                    to: delivery.Planner,
+                    label: "answer for planner"
+                )
+                .Build(delivery.FailRun);
+            var workflow = PipelineMafBridge.GetWorkflow(pipeline);
 
             var packet = new Packet(
                 "test-packet",
-                "/tmp/repo",
+                repositoryPath,
                 "main",
                 [new Outcome("outcome", "Do the thing.")],
                 [],
@@ -69,9 +109,9 @@ public sealed class HumanSuspensionProofTests
                 ""
             );
             var runId = Guid.CreateVersion7();
-            var message = new PipelineMessage<SimpleV1State>(
+            var message = new PipelineMessage<DeliveryState>(
                 PipelineRuntime.Create(runId),
-                SimpleV1State.Create(packet, "abc123", workspacePath) with
+                DeliveryState.Create(packet, "abc123", workspacePath) with
                 {
                     MutationAuthorized = false,
                     PlannerDecision = null,
@@ -86,56 +126,49 @@ public sealed class HumanSuspensionProofTests
 
             var durableRunId = "human-suspend-" + Guid.NewGuid().ToString("N");
 
-            await using var host = await DurableHost.StartAsync(options =>
-                options.AddWorkflow(workflow)
-            );
-
-            // Start the workflow. The planner will emit needs_human, which
-            // routes to human-question, which routes to the request port,
-            // which suspends.
-            await host.WorkflowClient.RunAsync(workflow, message, durableRunId);
-
-            // Poll until the workflow is no longer running (should be pending).
-            object? instance = null;
-            for (var i = 0; i < 60; i++)
+            await using (
+                var host = await DurableHost.StartAsync(options => options.AddWorkflow(workflow))
+            )
             {
-                instance = await host.DurableTaskClient.GetInstanceAsync(
-                    durableRunId,
-                    getInputsAndOutputs: false,
-                    CancellationToken.None
-                );
-                if (instance is not null)
+                await host.WorkflowClient.RunAsync(workflow, message, durableRunId);
+                for (var i = 0; i < 60 && plannerClient.InvocationCount < 1; i++)
                 {
-                    break;
+                    await Task.Delay(250, CancellationToken.None);
                 }
-                await Task.Delay(500, CancellationToken.None);
+                plannerClient.InvocationCount.Should().Be(1);
             }
 
-            instance.Should().NotBeNull("the workflow must reach a suspended state");
-
-            // Send the human answer via RaiseEventAsync.
             var answer = new HumanAnswer("Use the existing pattern.");
             var serialized = JsonSerializer.Serialize(answer, _jsonOptions);
 
-            await host.DurableTaskClient.RaiseEventAsync(
+            await using var restartedHost = await DurableHost.StartAsync(options =>
+                options.AddWorkflow(workflow)
+            );
+            await restartedHost.DurableTaskClient.RaiseEventAsync(
                 durableRunId,
                 "HumanInput",
                 serialized,
                 CancellationToken.None
             );
 
-            // The workflow should resume. The planner will be called again
-            // with the answer. Our scripted planner still returns NeedsHuman,
-            // so the workflow will suspend again. That's fine — we've proven
-            // the resume worked.
+            for (var i = 0; i < 60 && plannerClient.InvocationCount < 2; i++)
+            {
+                await Task.Delay(250, CancellationToken.None);
+            }
 
-            // Wait briefly for the resume to process.
-            await Task.Delay(2000, CancellationToken.None);
+            plannerClient.InvocationCount.Should().Be(2, "resume must reinvoke the planner");
+            plannerClient
+                .UserMessages.Last()
+                .Should()
+                .Contain(
+                    "Use the existing pattern.",
+                    "the restored durable reviewer/planner state must reach the resumed invocation"
+                );
 
             // The workflow should be active again (either pending from the
             // second planner call, or processing).
             // We just verify it didn't fail.
-            var completed = await host.DurableTaskClient.GetInstanceAsync(
+            var completed = await restartedHost.DurableTaskClient.GetInstanceAsync(
                 durableRunId,
                 getInputsAndOutputs: false,
                 CancellationToken.None
@@ -158,15 +191,47 @@ public sealed class HumanSuspensionProofTests
             ModelId = "test-model",
         };
 
+    private static async Task InitializeRepositoryAsync(string repositoryPath)
+    {
+        var git = new Tandem.Infrastructure.GitProcess();
+        await git.RunAsync(
+            repositoryPath,
+            ["init", "--initial-branch=main"],
+            CancellationToken.None
+        );
+        await File.WriteAllTextAsync(
+            Path.Combine(repositoryPath, "README.md"),
+            "# Durable human resume fixture\n"
+        );
+        await git.RunAsync(repositoryPath, ["add", "README.md"], CancellationToken.None);
+        await git.RunAsync(
+            repositoryPath,
+            [
+                "-c",
+                "user.name=Tandem Tests",
+                "-c",
+                "user.email=tandem-tests@localhost",
+                "commit",
+                "-m",
+                "fixture",
+            ],
+            CancellationToken.None
+        );
+    }
+
     private sealed class ScriptedChatClient(params ChatResponse[] responses) : IChatClient
     {
         private readonly Queue<ChatResponse> _responses = new(responses);
+
+        public int InvocationCount { get; private set; }
+
+        public List<string> UserMessages { get; } = [];
 
         public Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages,
             ChatOptions? options = null,
             CancellationToken cancellationToken = default
-        ) => Task.FromResult(Dequeue());
+        ) => Task.FromResult(RecordAndDequeue(messages));
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages,
@@ -175,7 +240,7 @@ public sealed class HumanSuspensionProofTests
                 CancellationToken cancellationToken = default
         )
         {
-            foreach (var update in Dequeue().ToChatResponseUpdates())
+            foreach (var update in RecordAndDequeue(messages).ToChatResponseUpdates())
             {
                 yield return update;
             }
@@ -190,5 +255,20 @@ public sealed class HumanSuspensionProofTests
             _responses.Count > 0
                 ? _responses.Dequeue()
                 : throw new InvalidOperationException("ScriptedChatClient exhausted.");
+
+        private ChatResponse RecordAndDequeue(IEnumerable<ChatMessage> messages)
+        {
+            InvocationCount++;
+            UserMessages.Add(
+                string.Join(
+                    "\n",
+                    messages
+                        .Where(message => message.Role == ChatRole.User)
+                        .SelectMany(message => message.Contents.OfType<TextContent>())
+                        .Select(content => content.Text)
+                )
+            );
+            return Dequeue();
+        }
     }
 }

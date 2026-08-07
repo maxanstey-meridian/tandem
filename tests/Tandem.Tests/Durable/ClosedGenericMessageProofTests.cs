@@ -3,7 +3,7 @@ using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.DurableTask.Client;
 using Tandem.Domain;
-using Tandem.Tests.Composition;
+using Tandem.Sample.Debate;
 
 namespace Tandem.Tests.Durable;
 
@@ -15,14 +15,14 @@ public sealed class ClosedGenericMessageProofTests
     {
         DtsFixture.EnsureReachable();
         var terminal = new TinyDebateTerminal();
-        var binding = terminal.BindExecutor();
+        var binding = new TinyDebateTerminalExecutor(terminal).BindExecutor();
         var workflow = new WorkflowBuilder(binding)
             .WithName("closed-generic-debate-proof")
             .WithOutputFrom(binding)
             .Build();
         var input = new PipelineMessage<DebateState>(
             PipelineRuntime.Create(Guid.CreateVersion7()),
-            new DebateState("Question", [], 0, null)
+            new DebateState("Question", "/tmp", [], 0, null)
         );
         var runId = "closed-generic-" + Guid.NewGuid().ToString("N");
 
@@ -41,27 +41,35 @@ public sealed class ClosedGenericMessageProofTests
         instance!.RuntimeStatus.Should().Be(OrchestrationRuntimeStatus.Completed);
         output.Should().NotBeNull();
         output!.GetType().Should().Be<PipelineMessage<DebateState>>();
-        output.State.Verdict.Should().Be(new Verdict("Affirmed", "durable verdict"));
+        output.State.Verdict.Should().Be(new DebateVerdict("Affirmed", "durable verdict"));
         instance.SerializedOutput.Should().Contain("durable verdict");
         instance.SerializedOutput.Should().Contain("Question");
     }
 
-    private sealed class TinyDebateTerminal()
-        : Executor<PipelineMessage<DebateState>, PipelineMessage<DebateState>>("tiny-terminal")
+    private sealed class TinyDebateTerminal
     {
-        public override ValueTask<PipelineMessage<DebateState>> HandleAsync(
+        public ValueTask<PipelineMessage<DebateState>> ExecuteAsync(
             PipelineMessage<DebateState> message,
-            IWorkflowContext context,
-            CancellationToken cancellationToken
+            CancellationToken _
         ) =>
             ValueTask.FromResult(
                 message with
                 {
                     State = message.State with
                     {
-                        Verdict = new Verdict("Affirmed", "durable verdict"),
+                        Verdict = new DebateVerdict("Affirmed", "durable verdict"),
                     },
                 }
             );
+    }
+
+    private sealed class TinyDebateTerminalExecutor(TinyDebateTerminal terminal)
+        : Executor<PipelineMessage<DebateState>, PipelineMessage<DebateState>>("tiny-terminal")
+    {
+        public override ValueTask<PipelineMessage<DebateState>> HandleAsync(
+            PipelineMessage<DebateState> message,
+            IWorkflowContext context,
+            CancellationToken cancellationToken
+        ) => terminal.ExecuteAsync(message, cancellationToken);
     }
 }

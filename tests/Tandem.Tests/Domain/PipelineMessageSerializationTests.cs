@@ -7,7 +7,7 @@ namespace Tandem.Tests.Domain;
 public sealed class PipelineMessageSerializationTests
 {
     [Fact]
-    public void FullyPopulatedSimpleV1Message_RoundTripsAsClosedGenericType()
+    public void FullyPopulatedDeliveryMessage_RoundTripsAsClosedGenericType()
     {
         var runId = Guid.CreateVersion7();
         var plannerDecision = new PlannerDecision(
@@ -31,7 +31,7 @@ public sealed class PipelineMessageSerializationTests
             ["No dependencies."],
             "Context"
         );
-        var state = SimpleV1State.Create(packet, "base-sha", "/workspace") with
+        var state = DeliveryState.Create(packet, "base-sha", "/workspace") with
         {
             MutationAuthorized = true,
             PlannerDecision = plannerDecision,
@@ -40,13 +40,13 @@ public sealed class PipelineMessageSerializationTests
             VerificationIndex = 1,
             VerificationResults =
             [
-                new VerificationResult(0, "task test", 0, "ok", "", TimeSpan.FromSeconds(2)),
+                new VerificationResult(0, "task test", 0, "ok", "", TimeSpan.FromSeconds(2), false),
             ],
             CheckpointPayload = JsonSerializer.SerializeToElement(new { next = "finish" }),
             ImplementationReport = JsonSerializer.SerializeToElement(new { summary = "done" }),
             Status = RunStatus.Ready,
         };
-        var message = new PipelineMessage<SimpleV1State>(
+        var message = new PipelineMessage<DeliveryState>(
             runtime,
             state,
             new BlockOutcome(
@@ -59,7 +59,7 @@ public sealed class PipelineMessageSerializationTests
         );
 
         var json = JsonSerializer.Serialize(message);
-        var roundTrip = JsonSerializer.Deserialize<PipelineMessage<SimpleV1State>>(json);
+        var roundTrip = JsonSerializer.Deserialize<PipelineMessage<DeliveryState>>(json);
 
         roundTrip.Should().NotBeNull();
         roundTrip!.Runtime.RunId.Should().Be(runId);

@@ -6,44 +6,13 @@ namespace Tandem.Infrastructure.Lifecycle;
 
 public sealed class LifecycleMcpHost
 {
-    public static Task RunSimpleV1Async(
+    public static async Task RunAsync(
+        LifecycleActionSetRegistry actionSets,
+        string actionSetIdentity,
         string tandemHome,
         Guid runId,
         string blockId,
         string invocationId,
-        CancellationToken cancellationToken
-    ) =>
-        RunAsync(
-            tandemHome,
-            runId,
-            blockId,
-            invocationId,
-            services => services.AddSimpleV1McpTools(),
-            cancellationToken
-        );
-
-    public static Task RunDebateAsync(
-        string tandemHome,
-        Guid runId,
-        string blockId,
-        string invocationId,
-        CancellationToken cancellationToken
-    ) =>
-        RunAsync(
-            tandemHome,
-            runId,
-            blockId,
-            invocationId,
-            services => services.AddDebateMcpTools(),
-            cancellationToken
-        );
-
-    private static async Task RunAsync(
-        string tandemHome,
-        Guid runId,
-        string blockId,
-        string invocationId,
-        Func<IServiceCollection, IMcpServerBuilder> registerTools,
         CancellationToken cancellationToken
     )
     {
@@ -54,14 +23,53 @@ public sealed class LifecycleMcpHost
             consoleLogOptions.LogToStandardErrorThreshold = LogLevel.Warning;
         });
 
-        registerTools(builder.Services).WithStdioServerTransport();
+        actionSets.Register(actionSetIdentity, builder.Services).WithStdioServerTransport();
 
         builder.Services.AddSingleton(new LifecycleReceiptStore(tandemHome));
         builder.Services.AddSingleton(new LifecycleToolContext(runId, blockId, invocationId));
 
-        var host = builder.Build();
+        using var host = builder.Build();
         await host.RunAsync(cancellationToken);
     }
 }
 
 public sealed record LifecycleToolContext(Guid RunId, string BlockId, string InvocationId);
+
+public sealed record LifecycleActionSetRegistration(
+    string Identity,
+    Func<IServiceCollection, IMcpServerBuilder> Register
+);
+
+public sealed class LifecycleActionSetRegistry
+{
+    private readonly IReadOnlyDictionary<string, LifecycleActionSetRegistration> _registrations;
+
+    public LifecycleActionSetRegistry(params LifecycleActionSetRegistration[] registrations)
+    {
+        ArgumentNullException.ThrowIfNull(registrations);
+        if (registrations.Any(registration => string.IsNullOrWhiteSpace(registration.Identity)))
+        {
+            throw new ArgumentException(
+                "Lifecycle action set identities must not be blank.",
+                nameof(registrations)
+            );
+        }
+        _registrations = registrations.ToDictionary(
+            registration => registration.Identity,
+            StringComparer.Ordinal
+        );
+    }
+
+    public IMcpServerBuilder Register(string identity, IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        if (!_registrations.TryGetValue(identity, out var registration))
+        {
+            throw new InvalidOperationException(
+                $"Lifecycle action set '{identity}' is not registered."
+            );
+        }
+
+        return registration.Register(services);
+    }
+}

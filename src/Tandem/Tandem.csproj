@@ -1,6 +1,5 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
-        <OutputType>Exe</OutputType>
         <TargetFramework>net10.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
@@ -13,6 +12,7 @@
 
     <ItemGroup>
         <PackageReference Include="FluentValidation" Version="12.1.1" />
+        <PackageReference Include="Dunet" Version="1.16.2" />
         <PackageReference
             Include="Microsoft.Agents.AI.DurableTask"
             Version="1.16.0-preview.260730.1"
@@ -31,7 +31,13 @@
     </ItemGroup>
 
     <ItemGroup>
+        <ProjectReference
+            Include="..\Tandem.Generators\Tandem.Generators.csproj"
+            OutputItemType="Analyzer"
+            ReferenceOutputAssembly="false"
+        />
         <InternalsVisibleTo Include="Tandem.Tests" />
+        <InternalsVisibleTo Include="Tandem.Tool" />
         <EmbeddedResource Include="../../TANDEM.md" LogicalName="Tandem.TANDEM.md" />
     </ItemGroup>
 </Project>

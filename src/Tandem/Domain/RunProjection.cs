@@ -3,6 +3,7 @@ namespace Tandem.Domain;
 public sealed record RunProjection(
     Guid RunId,
     string DurableRunId,
+    string CompositionIdentity,
     string PacketPath,
     string RepositoryPath,
     RunStatus Status,
@@ -19,6 +20,7 @@ public sealed record RunProjection(
     public static RunProjection Initial(
         Guid runId,
         string durableRunId,
+        string compositionIdentity,
         string packetPath,
         string repositoryPath,
         string workspacePath
@@ -26,6 +28,7 @@ public sealed record RunProjection(
         new(
             runId,
             durableRunId,
+            compositionIdentity,
             packetPath,
             repositoryPath,
             RunStatus.Running,

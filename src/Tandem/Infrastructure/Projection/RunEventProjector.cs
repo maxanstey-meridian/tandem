@@ -1,4 +1,3 @@
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -14,8 +13,6 @@ public sealed class RunEventProjector(
     ResolvedProfile? profile = null
 )
 {
-    private int _eventSequence;
-
     public async Task EmitBlockStartedAsync(CancellationToken ct = default)
     {
         await EmitAsync(EventKinds.BlockStarted, $"Block {blockId} started", ct: ct);
@@ -69,7 +66,14 @@ public sealed class RunEventProjector(
         CancellationToken ct = default
     )
     {
-        var data = JsonSerializer.SerializeToElement(question);
+        var data = JsonSerializer.SerializeToElement(
+            new
+            {
+                sourceBlockId = question.SourceBlockId,
+                question = question.Question,
+                reason = question.Reason,
+            }
+        );
         await EmitAsync(
             EventKinds.HumanRequested,
             $"Human input requested from {question.SourceBlockId}: {question.Question}",
@@ -120,7 +124,7 @@ public sealed class RunEventProjector(
         );
     }
 
-    internal async Task EmitAgentUpdateAsync(
+    public async Task EmitAgentUpdateAsync(
         AgentResponseUpdate update,
         CancellationToken ct = default
     )
@@ -191,19 +195,6 @@ public sealed class RunEventProjector(
             return name;
         }
 
-        if (name == "ask_planner")
-        {
-            var json = JsonSerializer.Serialize(
-                arguments,
-                new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-                }
-            );
-            return $"{name}:\n{json}";
-        }
-
         var preferredKey = name switch
         {
             _ when name.StartsWith("file_access_", StringComparison.Ordinal) => "path",
@@ -241,10 +232,21 @@ public sealed class RunEventProjector(
         CancellationToken ct = default
     )
     {
-        var seq = Interlocked.Increment(ref _eventSequence);
-        var eventId = $"{runId:N}--{blockId}--{kind}--{seq}";
-        var evt = new RunEvent(eventId, DateTimeOffset.UtcNow, runId, blockId, kind, message, data);
-        await eventStore.AppendAsync(evt, ct);
+        var evt = await eventStore.AppendProjectedAsync(
+            runId,
+            blockId,
+            kind,
+            eventId => new RunEvent(
+                eventId,
+                DateTimeOffset.UtcNow,
+                runId,
+                blockId,
+                kind,
+                message,
+                data
+            ),
+            ct
+        );
         onEvent?.Invoke(evt);
     }
 }

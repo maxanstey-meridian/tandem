@@ -1,20 +1,15 @@
 using System.Diagnostics;
 using System.Text.Json;
-using Microsoft.Agents.AI.Workflows;
 using Tandem.Domain;
 
 namespace Tandem.Infrastructure.Blocks;
 
 public sealed class CaptureCandidateBlock(GitProcess? git = null)
-    : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>(
-        BlockIds.CaptureCandidate
-    )
 {
     private readonly GitProcess _git = git ?? new GitProcess();
 
-    public override async ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
-        PipelineMessage<SimpleV1State> message,
-        IWorkflowContext context,
+    public async ValueTask<PipelineMessage<DeliveryState>> ExecuteAsync(
+        PipelineMessage<DeliveryState> message,
         CancellationToken cancellationToken
     )
     {
@@ -22,8 +17,10 @@ public sealed class CaptureCandidateBlock(GitProcess? git = null)
         var ctx = message.State;
         var ws = ctx.WorkspacePath;
 
-        await _git.RunAsync(ws, ["add", "-A"], cancellationToken);
-        await _git.RunAsync(
+        var addResult = await _git.RunAsync(ws, ["add", "-A"], cancellationToken);
+        EnsureSucceeded("git add", addResult, cancellationToken);
+
+        var commitResult = await _git.RunAsync(
             ws,
             [
                 "-c",
@@ -37,8 +34,10 @@ public sealed class CaptureCandidateBlock(GitProcess? git = null)
             ],
             cancellationToken
         );
+        EnsureSucceeded("git commit", commitResult, cancellationToken);
 
         var revResult = await _git.RunAsync(ws, ["rev-parse", "HEAD"], cancellationToken);
+        EnsureSucceeded("git rev-parse", revResult, cancellationToken);
         var candidateSha = revResult.Stdout.Trim();
 
         var updatedContext = ctx with
@@ -50,7 +49,7 @@ public sealed class CaptureCandidateBlock(GitProcess? git = null)
 
         var payload = JsonSerializer.SerializeToElement(new { candidateSha });
         sw.Stop();
-        return new PipelineMessage<SimpleV1State>(
+        return new PipelineMessage<DeliveryState>(
             message.Runtime,
             updatedContext,
             new BlockOutcome(
@@ -60,6 +59,26 @@ public sealed class CaptureCandidateBlock(GitProcess? git = null)
                 payload,
                 sw.Elapsed
             )
+        );
+    }
+
+    private static void EnsureSucceeded(
+        string operation,
+        GitResult result,
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (result.ExitCode == 0 && !result.TimedOut)
+        {
+            return;
+        }
+
+        var evidence = string.IsNullOrWhiteSpace(result.Stderr)
+            ? result.Stdout.Trim()
+            : result.Stderr.Trim();
+        throw new InvalidOperationException(
+            $"{operation} failed (exit code {result.ExitCode}, timed out: {result.TimedOut}). {evidence}"
         );
     }
 }

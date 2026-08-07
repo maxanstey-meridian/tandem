@@ -1,6 +1,12 @@
 <Solution>
     <Folder Name="/src/">
+        <Project Path="src/Tandem.Generators/Tandem.Generators.csproj" />
+        <Project Path="src/Tandem.Delivery/Tandem.Delivery.csproj" />
+        <Project Path="src/Tandem.Tool/Tandem.Tool.csproj" />
         <Project Path="src/Tandem/Tandem.csproj" />
+    </Folder>
+    <Folder Name="/samples/">
+        <Project Path="samples/Tandem.Sample.Debate/Tandem.Sample.Debate.csproj" />
     </Folder>
     <Folder Name="/tests/">
         <Project Path="tests/Tandem.Tests/Tandem.Tests.csproj" />

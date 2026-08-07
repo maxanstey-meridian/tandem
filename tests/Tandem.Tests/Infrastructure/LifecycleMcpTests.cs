@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using Tandem.Domain;
 using Tandem.Infrastructure.Blocks;
@@ -11,6 +12,48 @@ namespace Tandem.Tests.Infrastructure;
 
 public sealed class LifecycleMcpTests
 {
+    private static AgentSessionDecision ContinueSession(PipelineMessage<DeliveryState> _) =>
+        new(AgentSessionAction.Continue, "Lifecycle fixture policy.");
+
+    [Fact]
+    public void ActionSetRegistry_ResolvesOnlyExplicitIdentity()
+    {
+        var deliverySelected = false;
+        var debateSelected = false;
+        var registry = new LifecycleActionSetRegistry(
+            new(
+                "delivery",
+                services =>
+                {
+                    deliverySelected = true;
+                    return services.AddMcpServer();
+                }
+            ),
+            new(
+                "debate",
+                services =>
+                {
+                    debateSelected = true;
+                    return services.AddMcpServer();
+                }
+            )
+        );
+
+        registry.Register(
+            "debate",
+            new Microsoft.Extensions.DependencyInjection.ServiceCollection()
+        );
+
+        debateSelected.Should().BeTrue();
+        deliverySelected.Should().BeFalse();
+        var act = () =>
+            registry.Register(
+                "unknown",
+                new Microsoft.Extensions.DependencyInjection.ServiceCollection()
+            );
+        act.Should().Throw<InvalidOperationException>().WithMessage("*not registered*");
+    }
+
     [Fact]
     public async Task ReceiptStore_ParallelCreateOrRead_PublishesExactlyOneReceipt()
     {
@@ -64,7 +107,8 @@ public sealed class LifecycleMcpTests
             fixture.TandemExePath,
             fixture.RunId,
             BlockIds.Executor,
-            "schema-probe"
+            "schema-probe",
+            DeliveryLifecycleActions.Identity
         );
 
         var tools = await client.ListToolsAsync(
@@ -93,6 +137,26 @@ public sealed class LifecycleMcpTests
             .GetString()
             .Should()
             .Be("string");
+    }
+
+    [Fact]
+    public async Task LifecycleTools_MissingRequestedTool_FailsImmediately()
+    {
+        using var fixture = await LifecycleFixture.CreateAsync();
+        await using var client = new LifecycleMcpClient(
+            fixture.TandemHome,
+            fixture.TandemExePath,
+            fixture.RunId,
+            BlockIds.Executor,
+            "missing-tool-probe",
+            DeliveryLifecycleActions.Identity
+        );
+
+        var act = () => client.ListToolsAsync(["not_registered"], CancellationToken.None);
+
+        await act.Should()
+            .ThrowAsync<InvalidOperationException>()
+            .WithMessage("*missing requested tool(s): not_registered*");
     }
 
     [Fact]
@@ -128,15 +192,17 @@ public sealed class LifecycleMcpTests
                 }
             )
         );
-        var block = new AgentBlock<SimpleV1State>(
-            new AgentBlockConfig<SimpleV1State>(
+        var block = new AgentBlock<DeliveryState>(
+            new AgentBlockConfig<DeliveryState>(
                 BlockIds.Executor,
                 "implementation",
                 "executor instructions",
                 ["ask_planner"],
                 _ => "test message",
                 state => state.WorkspacePath,
-                _ => false
+                _ => false,
+                LifecycleActionSetIdentity: "delivery",
+                SessionPolicy: ContinueSession
             ),
             script,
             fixture.TandemHome,
@@ -200,15 +266,17 @@ public sealed class LifecycleMcpTests
             MakeTextResponse("I tried to write after the lifecycle call.")
         );
 
-        var block = new AgentBlock<SimpleV1State>(
-            new AgentBlockConfig<SimpleV1State>(
+        var block = new AgentBlock<DeliveryState>(
+            new AgentBlockConfig<DeliveryState>(
                 BlockIds.Executor,
                 "implementation",
                 "executor instructions",
                 ["ask_planner", "submit_report", "write_checkpoint"],
                 _ => "test message",
                 state => state.WorkspacePath,
-                _ => false
+                _ => false,
+                LifecycleActionSetIdentity: "delivery",
+                SessionPolicy: ContinueSession
             ),
             script,
             fixture.TandemHome,
@@ -226,7 +294,7 @@ public sealed class LifecycleMcpTests
         );
 
         var events = new List<WorkflowEvent>();
-        PipelineMessage<SimpleV1State>? output = null;
+        PipelineMessage<DeliveryState>? output = null;
         Exception? failure = null;
         await foreach (var evt in runHandle.WatchStreamAsync(CancellationToken.None))
         {
@@ -239,9 +307,9 @@ public sealed class LifecycleMcpTests
             {
                 failure = failedEvent.Data;
             }
-            else if (evt is WorkflowOutputEvent oe && oe.Is<PipelineMessage<SimpleV1State>>())
+            else if (evt is WorkflowOutputEvent oe && oe.Is<PipelineMessage<DeliveryState>>())
             {
-                output = oe.As<PipelineMessage<SimpleV1State>>();
+                output = oe.As<PipelineMessage<DeliveryState>>();
             }
         }
 
@@ -326,19 +394,21 @@ public sealed class LifecycleMcpTests
             MakeTextResponse("This response must never be produced.")
         );
 
-        var block = new AgentBlock<SimpleV1State>(
-            new AgentBlockConfig<SimpleV1State>(
+        var block = new AgentBlock<DeliveryState>(
+            new AgentBlockConfig<DeliveryState>(
                 BlockIds.Executor,
                 "implementation",
                 "executor instructions",
                 ["ask_planner", "submit_report", "write_checkpoint"],
                 _ => "test message",
                 state => state.WorkspacePath,
-                _ => false
+                _ => false,
+                LifecycleActionSetIdentity: "delivery",
+                SessionPolicy: ContinueSession
             ),
             script,
             fixture.TandemHome,
-            fixture.TandemExePath
+            Path.Combine(fixture.TandemHome, "must-not-spawn")
         );
 
         var binding = block.BindExecutor();
@@ -351,12 +421,12 @@ public sealed class LifecycleMcpTests
             CancellationToken.None
         );
 
-        PipelineMessage<SimpleV1State>? output = null;
+        PipelineMessage<DeliveryState>? output = null;
         await foreach (var evt in runHandle.WatchStreamAsync(CancellationToken.None))
         {
-            if (evt is WorkflowOutputEvent oe && oe.Is<PipelineMessage<SimpleV1State>>())
+            if (evt is WorkflowOutputEvent oe && oe.Is<PipelineMessage<DeliveryState>>())
             {
-                output = oe.As<PipelineMessage<SimpleV1State>>();
+                output = oe.As<PipelineMessage<DeliveryState>>();
             }
         }
 
@@ -365,6 +435,225 @@ public sealed class LifecycleMcpTests
             .LatestOutcome!.Kind.Should()
             .Be(OutcomeKinds.PlannerRequested, "the seeded receipt must be returned");
         output.LatestOutcome.Summary.Should().Be("Pre-seeded receipt");
+    }
+
+    [Fact]
+    public async Task ExistingSubmitReportReceipt_AppliesTransition_WithoutModelOrProcess()
+    {
+        using var fixture = await LifecycleFixture.CreateAsync();
+        var message = CreateMessage(
+            fixture.RunId,
+            MakePacket(),
+            pinnedBaseSha: "abc123",
+            workspacePath: fixture.WorkspacePath
+        );
+        var payload = System.Text.Json.JsonSerializer.SerializeToElement(
+            new
+            {
+                summary = "implemented",
+                outcomes = new[] { "o1" },
+                evidence = new[] { "src/change.cs" },
+            }
+        );
+        var sessionPath = Path.Combine(
+            fixture.TandemHome,
+            "runs",
+            fixture.RunId.ToString("N"),
+            "sessions",
+            $"{BlockIds.Executor}.json"
+        );
+        Directory.CreateDirectory(Path.GetDirectoryName(sessionPath)!);
+        var invocationId = message.Runtime.NextInvocationId(BlockIds.Executor);
+        await File.WriteAllTextAsync(
+            sessionPath,
+            System.Text.Json.JsonSerializer.Serialize(
+                new
+                {
+                    invocationId,
+                    session = System.Text.Json.JsonSerializer.SerializeToElement(new { }),
+                }
+            )
+        );
+        await new LifecycleReceiptStore(fixture.TandemHome).WriteAsync(
+            fixture.RunId,
+            invocationId,
+            BlockIds.Executor,
+            OutcomeKinds.ReportSubmitted,
+            "Implemented",
+            payload,
+            CancellationToken.None
+        );
+        var block = new AgentBlock<DeliveryState>(
+            new AgentBlockConfig<DeliveryState>(
+                BlockIds.Executor,
+                "implementation",
+                "executor",
+                ["submit_report"],
+                _ => "must not execute",
+                state => state.WorkspacePath,
+                _ => false,
+                ReceiptTransition: (state, kind, acceptedPayload) =>
+                    kind == OutcomeKinds.ReportSubmitted
+                        ? state with
+                        {
+                            ImplementationReport = acceptedPayload,
+                        }
+                        : state,
+                LifecycleActionSetIdentity: "delivery",
+                SessionPolicy: ContinueSession,
+                ProfilePolicy: _ => new AgentProfileDecision("promoted", "Replay proof."),
+                TeardownPolicy: (_, _) =>
+                    new AgentTeardownDecision(true, true, "Accepted report closes session.")
+            ),
+            new ScriptedChatClient(MakeTextResponse("must not execute")),
+            fixture.TandemHome,
+            Path.Combine(fixture.TandemHome, "must-not-spawn")
+        );
+
+        var output = await block.ExecuteAsync(message, CancellationToken.None);
+
+        output.LatestOutcome!.Kind.Should().Be(OutcomeKinds.ReportSubmitted);
+        System
+            .Text.Json.JsonElement.DeepEquals(output.State.ImplementationReport!.Value, payload)
+            .Should()
+            .BeTrue();
+        output.Runtime.InvocationCounts[BlockIds.Executor].Should().Be(1);
+        output.Runtime.AgentProfiles[BlockIds.Executor].ProfileName.Should().Be("promoted");
+        var persistedProfile = await File.ReadAllTextAsync(
+            Path.Combine(
+                fixture.TandemHome,
+                "runs",
+                fixture.RunId.ToString("N"),
+                "profiles",
+                $"{BlockIds.Executor}.json"
+            )
+        );
+        persistedProfile.Should().Contain("promoted");
+        output.Runtime.AgentSessions.Should().NotContainKey(BlockIds.Executor);
+        output.Runtime.AgentUsage.Should().NotContainKey(BlockIds.Executor);
+        File.Exists(sessionPath).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ExistingReceipt_WithoutMatchingPersistedInvocation_DropsStaleSession()
+    {
+        using var fixture = await LifecycleFixture.CreateAsync();
+        var message = CreateMessage(
+            fixture.RunId,
+            MakePacket(),
+            pinnedBaseSha: "abc123",
+            workspacePath: fixture.WorkspacePath
+        );
+        message = message with
+        {
+            Runtime = message.Runtime.WithSession(
+                BlockIds.Executor,
+                System.Text.Json.JsonSerializer.SerializeToElement(
+                    new { invocationId = "prior-invocation" }
+                )
+            ),
+        };
+        var sessionPath = Path.Combine(
+            fixture.TandemHome,
+            "runs",
+            fixture.RunId.ToString("N"),
+            "sessions",
+            $"{BlockIds.Executor}.json"
+        );
+        Directory.CreateDirectory(Path.GetDirectoryName(sessionPath)!);
+        await File.WriteAllTextAsync(
+            sessionPath,
+            System.Text.Json.JsonSerializer.Serialize(
+                new
+                {
+                    invocationId = "prior-invocation",
+                    session = System.Text.Json.JsonSerializer.SerializeToElement(new { }),
+                }
+            )
+        );
+        var orphanTempPath = $"{sessionPath}.orphan.tmp";
+        await File.WriteAllTextAsync(orphanTempPath, "stale");
+        var invocationId = message.Runtime.NextInvocationId(BlockIds.Executor);
+        await new LifecycleReceiptStore(fixture.TandemHome).WriteAsync(
+            fixture.RunId,
+            invocationId,
+            BlockIds.Executor,
+            OutcomeKinds.PlannerRequested,
+            "Planner requested",
+            System.Text.Json.JsonSerializer.SerializeToElement(new { }),
+            CancellationToken.None
+        );
+        var block = new AgentBlock<DeliveryState>(
+            new AgentBlockConfig<DeliveryState>(
+                BlockIds.Executor,
+                "implementation",
+                "executor",
+                ["ask_planner"],
+                _ => "must not execute",
+                state => state.WorkspacePath,
+                _ => false,
+                LifecycleActionSetIdentity: "delivery",
+                SessionPolicy: ContinueSession
+            ),
+            new ScriptedChatClient(MakeTextResponse("must not execute")),
+            fixture.TandemHome,
+            Path.Combine(fixture.TandemHome, "must-not-spawn")
+        );
+
+        var output = await block.ExecuteAsync(message, CancellationToken.None);
+
+        output.LatestOutcome!.Kind.Should().Be(OutcomeKinds.PlannerRequested);
+        output.Runtime.AgentSessions.Should().NotContainKey(BlockIds.Executor);
+        File.Exists(sessionPath).Should().BeFalse();
+        File.Exists(orphanTempPath).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task LifecycleActions_RequireExplicitActionSetIdentity()
+    {
+        using var fixture = await LifecycleFixture.CreateAsync();
+        var message = CreateMessage(fixture.RunId, MakePacket(), "abc123", fixture.WorkspacePath);
+        message = message with
+        {
+            Runtime = message.Runtime.WithSession(
+                BlockIds.Executor,
+                System.Text.Json.JsonSerializer.SerializeToElement(true)
+            ),
+        };
+        var sessionPath = Path.Combine(
+            fixture.TandemHome,
+            "runs",
+            fixture.RunId.ToString("N"),
+            "sessions",
+            $"{BlockIds.Executor}.json"
+        );
+        Directory.CreateDirectory(Path.GetDirectoryName(sessionPath)!);
+        await File.WriteAllTextAsync(sessionPath, "{}");
+        var block = new AgentBlock<DeliveryState>(
+            new AgentBlockConfig<DeliveryState>(
+                BlockIds.Executor,
+                "implementation",
+                "executor",
+                ["ask_planner"],
+                _ => "message",
+                state => state.WorkspacePath,
+                _ => false,
+                SessionPolicy: _ => new AgentSessionDecision(
+                    AgentSessionAction.Reset,
+                    "Reset fixture session."
+                )
+            ),
+            new ScriptedChatClient(MakeTextResponse("must not execute")),
+            fixture.TandemHome,
+            fixture.TandemExePath
+        );
+
+        var act = () => block.ExecuteAsync(message, CancellationToken.None).AsTask();
+
+        await act.Should()
+            .ThrowAsync<InvalidOperationException>()
+            .WithMessage("*must explicitly select a lifecycle action set*");
+        File.Exists(sessionPath).Should().BeFalse();
     }
 
     [Fact]
@@ -377,13 +666,32 @@ public sealed class LifecycleMcpTests
             pinnedBaseSha: "abc123",
             workspacePath: fixture.WorkspacePath
         );
+        var invocationId = message.Runtime.NextInvocationId(BlockIds.Executor);
         var runtime = message
             .Runtime.WithSession(
                 BlockIds.Executor,
-                System.Text.Json.JsonSerializer.SerializeToElement(true)
+                System.Text.Json.JsonSerializer.SerializeToElement(new { invocationId })
             )
             .WithUsage(BlockIds.Executor, new AgentUsage(10, 5, 15, 100, 80, TimeSpan.Zero));
         message = message with { Runtime = runtime };
+        var sessionPath = Path.Combine(
+            fixture.TandemHome,
+            "runs",
+            fixture.RunId.ToString("N"),
+            "sessions",
+            $"{BlockIds.Executor}.json"
+        );
+        Directory.CreateDirectory(Path.GetDirectoryName(sessionPath)!);
+        await File.WriteAllTextAsync(
+            sessionPath,
+            System.Text.Json.JsonSerializer.Serialize(
+                new
+                {
+                    invocationId,
+                    session = System.Text.Json.JsonSerializer.SerializeToElement(new { }),
+                }
+            )
+        );
         var payload = System.Text.Json.JsonSerializer.SerializeToElement(
             new
             {
@@ -394,15 +702,15 @@ public sealed class LifecycleMcpTests
         );
         await new LifecycleReceiptStore(fixture.TandemHome).WriteAsync(
             fixture.RunId,
-            runtime.NextInvocationId(BlockIds.Executor),
+            invocationId,
             BlockIds.Executor,
             OutcomeKinds.CheckpointWritten,
             "Checkpoint written: saved",
             payload,
             CancellationToken.None
         );
-        var block = new AgentBlock<SimpleV1State>(
-            new AgentBlockConfig<SimpleV1State>(
+        var block = new AgentBlock<DeliveryState>(
+            new AgentBlockConfig<DeliveryState>(
                 BlockIds.Executor,
                 "implementation",
                 "executor",
@@ -410,7 +718,9 @@ public sealed class LifecycleMcpTests
                 _ => "message",
                 state => state.WorkspacePath,
                 _ => true,
-                Checkpoint: new CheckpointPolicy<SimpleV1State>(
+                LifecycleActionSetIdentity: "delivery",
+                SessionPolicy: ContinueSession,
+                Checkpoint: new CheckpointPolicy<DeliveryState>(
                     100,
                     10,
                     80,
@@ -440,6 +750,7 @@ public sealed class LifecycleMcpTests
         output.Runtime.AgentSessions.Should().NotContainKey(BlockIds.Executor);
         output.Runtime.AgentUsage.Should().NotContainKey(BlockIds.Executor);
         output.Runtime.InvocationCounts[BlockIds.Executor].Should().Be(1);
+        File.Exists(sessionPath).Should().BeFalse();
     }
 
     [Fact]
@@ -478,15 +789,17 @@ public sealed class LifecycleMcpTests
             MakeTextResponse("I tried to write after the lifecycle call.")
         );
 
-        var executor = new AgentBlock<SimpleV1State>(
-            new AgentBlockConfig<SimpleV1State>(
+        var executor = new AgentBlock<DeliveryState>(
+            new AgentBlockConfig<DeliveryState>(
                 BlockIds.Executor,
                 "implementation",
                 "executor instructions",
                 ["ask_planner", "submit_report", "write_checkpoint"],
                 _ => "test message",
                 state => state.WorkspacePath,
-                _ => false
+                _ => false,
+                LifecycleActionSetIdentity: "delivery",
+                SessionPolicy: ContinueSession
             ),
             script,
             fixture.TandemHome,
@@ -495,10 +808,10 @@ public sealed class LifecycleMcpTests
         var capture = new CaptureCandidateBlock();
 
         var executorBinding = executor.BindExecutor();
-        var captureBinding = capture.BindExecutor();
+        var captureBinding = new CaptureCandidateTestExecutor(capture).BindExecutor();
 
         var builder = new WorkflowBuilder(executorBinding);
-        builder = builder.AddEdge<PipelineMessage<SimpleV1State>>(
+        builder = builder.AddEdge<PipelineMessage<DeliveryState>>(
             executorBinding,
             captureBinding,
             msg => msg!.LatestOutcome?.Kind == OutcomeKinds.ReportSubmitted
@@ -514,7 +827,7 @@ public sealed class LifecycleMcpTests
         );
 
         var events = new List<WorkflowEvent>();
-        PipelineMessage<SimpleV1State>? output = null;
+        PipelineMessage<DeliveryState>? output = null;
         Exception? failure = null;
         await foreach (var evt in runHandle.WatchStreamAsync(CancellationToken.None))
         {
@@ -527,9 +840,9 @@ public sealed class LifecycleMcpTests
             {
                 failure = failedEvent.Data;
             }
-            else if (evt is WorkflowOutputEvent oe && oe.Is<PipelineMessage<SimpleV1State>>())
+            else if (evt is WorkflowOutputEvent oe && oe.Is<PipelineMessage<DeliveryState>>())
             {
-                output = oe.As<PipelineMessage<SimpleV1State>>();
+                output = oe.As<PipelineMessage<DeliveryState>>();
             }
         }
 
@@ -589,15 +902,17 @@ public sealed class LifecycleMcpTests
             )
         );
 
-        var block = new AgentBlock<SimpleV1State>(
-            new AgentBlockConfig<SimpleV1State>(
+        var block = new AgentBlock<DeliveryState>(
+            new AgentBlockConfig<DeliveryState>(
                 BlockIds.Executor,
                 "implementation",
                 "executor instructions",
                 ["ask_planner", "submit_report", "write_checkpoint"],
                 _ => "test message",
                 state => state.WorkspacePath,
-                _ => false
+                _ => false,
+                LifecycleActionSetIdentity: "delivery",
+                SessionPolicy: ContinueSession
             ),
             script,
             fixture.TandemHome,
@@ -662,7 +977,7 @@ public sealed class LifecycleMcpTests
             )
         );
 
-        var policy = new AgentTurnPolicy<SimpleV1State>(
+        var policy = new AgentTurnPolicy<DeliveryState>(
             1,
             (observation, _) =>
             {
@@ -675,8 +990,8 @@ public sealed class LifecycleMcpTests
                 );
             }
         );
-        var block = new AgentBlock<SimpleV1State>(
-            new AgentBlockConfig<SimpleV1State>(
+        var block = new AgentBlock<DeliveryState>(
+            new AgentBlockConfig<DeliveryState>(
                 BlockIds.Executor,
                 "implementation",
                 "executor instructions",
@@ -684,7 +999,9 @@ public sealed class LifecycleMcpTests
                 _ => "test message",
                 state => state.WorkspacePath,
                 _ => false,
-                TurnPolicy: policy
+                LifecycleActionSetIdentity: "delivery",
+                TurnPolicy: policy,
+                SessionPolicy: ContinueSession
             ),
             script,
             fixture.TandemHome,
@@ -733,7 +1050,7 @@ public sealed class LifecycleMcpTests
                 }
             )
         );
-        ToolInterceptor<SimpleV1State> interceptor = (context, invocation, _) =>
+        ToolInterceptor<DeliveryState> interceptor = (context, invocation, _) =>
         {
             if (
                 context.State.MutationAuthorized
@@ -748,15 +1065,15 @@ public sealed class LifecycleMcpTests
                 new ToolInterceptionResult.Blocked(warning)
             );
         };
-        var policy = new AgentTurnPolicy<SimpleV1State>(
+        var policy = new AgentTurnPolicy<DeliveryState>(
             1,
             (_, _) =>
                 ValueTask.FromResult<AgentTurnDirective?>(
                     new AgentTurnDirective("Call ask_planner now.", "ask_planner")
                 )
         );
-        var block = new AgentBlock<SimpleV1State>(
-            new AgentBlockConfig<SimpleV1State>(
+        var block = new AgentBlock<DeliveryState>(
+            new AgentBlockConfig<DeliveryState>(
                 BlockIds.Executor,
                 "implementation",
                 "executor instructions",
@@ -764,6 +1081,8 @@ public sealed class LifecycleMcpTests
                 _ => "test message",
                 state => state.WorkspacePath,
                 _ => false,
+                LifecycleActionSetIdentity: "delivery",
+                SessionPolicy: ContinueSession,
                 TurnPolicy: policy
             ),
             script,
@@ -801,15 +1120,15 @@ public sealed class LifecycleMcpTests
             MakeTextResponse("I inspected the repository."),
             MakeTextResponse("I am still describing the repository.")
         );
-        var policy = new AgentTurnPolicy<SimpleV1State>(
+        var policy = new AgentTurnPolicy<DeliveryState>(
             1,
             (_, _) =>
                 ValueTask.FromResult<AgentTurnDirective?>(
                     new AgentTurnDirective("Continue, but do not finish in prose.")
                 )
         );
-        var block = new AgentBlock<SimpleV1State>(
-            new AgentBlockConfig<SimpleV1State>(
+        var block = new AgentBlock<DeliveryState>(
+            new AgentBlockConfig<DeliveryState>(
                 BlockIds.Executor,
                 "implementation",
                 "executor instructions",
@@ -817,7 +1136,8 @@ public sealed class LifecycleMcpTests
                 _ => "test message",
                 state => state.WorkspacePath,
                 _ => false,
-                TurnPolicy: policy
+                TurnPolicy: policy,
+                SessionPolicy: ContinueSession
             ),
             script,
             fixture.TandemHome,
@@ -830,9 +1150,9 @@ public sealed class LifecycleMcpTests
         output.LatestOutcome.Summary.Should().Contain("2 model turn(s)");
     }
 
-    private static async Task<PipelineMessage<SimpleV1State>> RunBlockAsync(
-        AgentBlock<SimpleV1State> block,
-        PipelineMessage<SimpleV1State> message
+    private static async Task<PipelineMessage<DeliveryState>> RunBlockAsync(
+        AgentBlock<DeliveryState> block,
+        PipelineMessage<DeliveryState> message
     )
     {
         var binding = block.BindExecutor();
@@ -844,7 +1164,7 @@ public sealed class LifecycleMcpTests
             CancellationToken.None
         );
 
-        PipelineMessage<SimpleV1State>? output = null;
+        PipelineMessage<DeliveryState>? output = null;
         Exception? failure = null;
         await foreach (var evt in runHandle.WatchStreamAsync(CancellationToken.None))
         {
@@ -858,10 +1178,10 @@ public sealed class LifecycleMcpTests
             }
             else if (
                 evt is WorkflowOutputEvent outputEvent
-                && outputEvent.Is<PipelineMessage<SimpleV1State>>()
+                && outputEvent.Is<PipelineMessage<DeliveryState>>()
             )
             {
-                output = outputEvent.As<PipelineMessage<SimpleV1State>>();
+                output = outputEvent.As<PipelineMessage<DeliveryState>>();
             }
         }
 
@@ -869,7 +1189,7 @@ public sealed class LifecycleMcpTests
         return output ?? throw new InvalidOperationException("The block produced no output.");
     }
 
-    private static PipelineMessage<SimpleV1State> CreateMessage(
+    private static PipelineMessage<DeliveryState> CreateMessage(
         Guid runId,
         Packet packet,
         string pinnedBaseSha,
@@ -877,7 +1197,7 @@ public sealed class LifecycleMcpTests
     ) =>
         new(
             PipelineRuntime.Create(runId),
-            SimpleV1State.Create(packet, pinnedBaseSha, workspacePath)
+            DeliveryState.Create(packet, pinnedBaseSha, workspacePath)
         );
 
     private static Packet MakePacket() =>
@@ -988,6 +1308,18 @@ public sealed class LifecycleMcpTests
     }
 }
 
+internal sealed class CaptureCandidateTestExecutor(CaptureCandidateBlock operation)
+    : Executor<PipelineMessage<DeliveryState>, PipelineMessage<DeliveryState>>(
+        BlockIds.CaptureCandidate
+    )
+{
+    public override ValueTask<PipelineMessage<DeliveryState>> HandleAsync(
+        PipelineMessage<DeliveryState> message,
+        IWorkflowContext context,
+        CancellationToken cancellationToken
+    ) => operation.ExecuteAsync(message, cancellationToken);
+}
+
 internal sealed class LifecycleFixture : IDisposable
 {
     public string TandemHome { get; }
@@ -1090,11 +1422,11 @@ internal sealed class LifecycleFixture : IDisposable
                 "..",
                 "..",
                 "src",
-                "Tandem",
+                "Tandem.Tool",
                 "bin",
                 "Debug",
                 "net10.0",
-                "Tandem"
+                "Tandem.Tool"
             ),
         };
 

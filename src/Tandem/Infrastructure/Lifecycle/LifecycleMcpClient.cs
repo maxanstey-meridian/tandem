@@ -9,7 +9,7 @@ public sealed class LifecycleMcpClient(
     Guid runId,
     string blockId,
     string invocationId,
-    string serverName = "simple-v1"
+    string actionSetIdentity
 ) : IAsyncDisposable
 {
     private readonly string _runId = runId.ToString("N");
@@ -20,11 +20,16 @@ public sealed class LifecycleMcpClient(
         CancellationToken cancellationToken
     )
     {
+        if (_client is not null)
+        {
+            throw new InvalidOperationException("Lifecycle MCP client is already started.");
+        }
+
         var transport = new StdioClientTransport(
             new StdioClientTransportOptions
             {
                 Command = tandemExePath,
-                Arguments = ["mcp", serverName],
+                Arguments = ["mcp", actionSetIdentity],
                 EnvironmentVariables = new Dictionary<string, string?>
                 {
                     ["TANDEM_HOME"] = tandemHome,
@@ -38,14 +43,26 @@ public sealed class LifecycleMcpClient(
 
         _client = await McpClient.CreateAsync(transport, cancellationToken: cancellationToken);
         var allTools = await _client.ListToolsAsync(cancellationToken: cancellationToken);
-        return allTools.Where(t => enabledToolNames.Contains(t.Name)).Cast<AITool>().ToList();
+        var requested = enabledToolNames.ToHashSet(StringComparer.Ordinal);
+        var tools = allTools.Where(t => requested.Contains(t.Name)).ToList();
+        var missing = requested.Except(tools.Select(tool => tool.Name)).Order().ToArray();
+        if (missing.Length > 0)
+        {
+            throw new InvalidOperationException(
+                $"Lifecycle action set '{actionSetIdentity}' is missing requested tool(s): {string.Join(", ", missing)}."
+            );
+        }
+
+        return tools.Cast<AITool>().ToList();
     }
 
     public async ValueTask DisposeAsync()
     {
         if (_client is not null)
         {
-            await _client.DisposeAsync();
+            var client = _client;
+            _client = null;
+            await client.DisposeAsync();
         }
     }
 }

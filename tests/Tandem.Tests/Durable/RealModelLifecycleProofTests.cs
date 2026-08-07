@@ -15,7 +15,7 @@ namespace Tandem.Tests.Durable;
 
 /// <summary>
 /// Real-model lifecycle proof (plan 02 lines 1015-1031). Runs the full
-/// simple-v1 lifecycle against the real DTS emulator and a real model.
+/// delivery lifecycle against the real DTS emulator and a real model.
 ///
 /// prepare -> executor asks planner -> planner proceeds
 /// -> executor edits and submits report -> candidate captured
@@ -29,7 +29,7 @@ namespace Tandem.Tests.Durable;
 public sealed class RealModelLifecycleProofTests
 {
     [Fact]
-    public async Task SimpleV1_FullLifecycle_ReachesReady()
+    public async Task Delivery_FullLifecycle_ReachesReady()
     {
         DtsFixture.EnsureReachable();
         EnsureApiKeyAvailable();
@@ -46,20 +46,25 @@ public sealed class RealModelLifecycleProofTests
         var chatClientFactory = new RealChatClientFactory(config);
 
         var tandemExePath = ResolveTandemExePath();
-        var composition = new SimpleV1Composition(
-            tandemHome,
-            chatClientFactory.Build,
-            chatClientFactory.ResolveProfile,
-            tandemExePath
+        var composition = new DeliveryComposition(
+            new DeliveryStepsFactory(
+                tandemHome,
+                chatClientFactory.Build,
+                chatClientFactory.ResolveProfile,
+                tandemExePath
+            )
         );
         var reasoningUpdates = 0;
-        var workflow = composition.Build(
-            (_, _, update) =>
-                Interlocked.Add(
-                    ref reasoningUpdates,
-                    update.Contents.OfType<TextReasoningContent>().Count()
-                )
+        var pipeline = composition.Build(
+            new PipelineBuildContext(
+                (_, _, update) =>
+                    Interlocked.Add(
+                        ref reasoningUpdates,
+                        update.Contents.OfType<TextReasoningContent>().Count()
+                    )
+            )
         );
+        var workflow = PipelineMafBridge.GetWorkflow(pipeline);
 
         var runId = "real-model-" + Guid.NewGuid().ToString("N");
 
@@ -115,14 +120,14 @@ public sealed class RealModelLifecycleProofTests
             ImplementationContext: "Inspect the existing code in src/ before making changes."
         );
 
-        var initialMessage = new PipelineMessage<SimpleV1State>(
+        var initialMessage = new PipelineMessage<DeliveryState>(
             PipelineRuntime.Create(Guid.CreateVersion7()),
-            SimpleV1State.Create(packet, "", workspacePath)
+            DeliveryState.Create(packet, "", workspacePath)
         );
 
         var connectionString = DtsFixture.ConnectionString;
 
-        PipelineMessage<SimpleV1State>? pipelineOutput = null;
+        PipelineMessage<DeliveryState>? pipelineOutput = null;
 
         var host = Host.CreateDefaultBuilder()
             .ConfigureServices(services =>
@@ -149,7 +154,7 @@ public sealed class RealModelLifecycleProofTests
 
             try
             {
-                pipelineOutput = await run.WaitForCompletionAsync<PipelineMessage<SimpleV1State>>();
+                pipelineOutput = await run.WaitForCompletionAsync<PipelineMessage<DeliveryState>>();
             }
             catch (Exception ex)
             {
@@ -213,11 +218,11 @@ public sealed class RealModelLifecycleProofTests
                 "..",
                 "..",
                 "src",
-                "Tandem",
+                "Tandem.Tool",
                 "bin",
                 "Debug",
                 "net10.0",
-                "Tandem"
+                "Tandem.Tool"
             ),
         };
 

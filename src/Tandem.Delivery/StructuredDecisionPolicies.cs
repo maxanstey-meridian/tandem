@@ -12,9 +12,9 @@ public static class PlannerDecisionPolicy
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public static StructuredOutputResult<SimpleV1State> Parse(
+    public static StructuredOutputResult<DeliveryState> Parse(
         string response,
-        PipelineMessage<SimpleV1State> message
+        PipelineMessage<DeliveryState> message
     ) =>
         StructuredOutputPolicy.Parse(
             response,
@@ -24,9 +24,9 @@ public static class PlannerDecisionPolicy
             Map
         );
 
-    private static StructuredOutcome<SimpleV1State> Map(
+    private static StructuredOutcome<DeliveryState> Map(
         PlannerDecision decision,
-        PipelineMessage<SimpleV1State> message
+        PipelineMessage<DeliveryState> message
     )
     {
         var kind = decision.Decision switch
@@ -53,7 +53,7 @@ public static class PlannerDecisionPolicy
                 decision.Constraints.Count > 0 ? decision.Constraints : state.PlannerConstraints,
             MutationAuthorized = authorizesMutation || state.MutationAuthorized,
         };
-        return new StructuredOutcome<SimpleV1State>(
+        return new StructuredOutcome<DeliveryState>(
             kind,
             decision.Rationale,
             payload,
@@ -70,9 +70,9 @@ public static class ReviewDecisionPolicy
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public static StructuredOutputResult<SimpleV1State> Parse(
+    public static StructuredOutputResult<DeliveryState> Parse(
         string response,
-        PipelineMessage<SimpleV1State> message
+        PipelineMessage<DeliveryState> message
     ) =>
         StructuredOutputPolicy.Parse(
             response,
@@ -84,9 +84,9 @@ public static class ReviewDecisionPolicy
             Map
         );
 
-    private static StructuredOutcome<SimpleV1State> Map(
+    private static StructuredOutcome<DeliveryState> Map(
         ReviewDecision decision,
-        PipelineMessage<SimpleV1State> message
+        PipelineMessage<DeliveryState> message
     )
     {
         var kind = decision.Decision switch
@@ -99,7 +99,7 @@ public static class ReviewDecisionPolicy
             ),
         };
         var payload = JsonSerializer.SerializeToElement(decision, _jsonOptions);
-        return new StructuredOutcome<SimpleV1State>(
+        return new StructuredOutcome<DeliveryState>(
             kind,
             decision.Summary,
             payload,

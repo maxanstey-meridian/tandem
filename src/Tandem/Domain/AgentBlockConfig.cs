@@ -6,7 +6,7 @@ public sealed record AgentBlockConfig<TState>(
     string BlockId,
     string ProfileName,
     string SystemInstructions,
-    IReadOnlyList<string> LifecycleToolNames,
+    IReadOnlyList<string> LifecycleActionNames,
     Func<PipelineMessage<TState>, string> UserMessage,
     Func<TState, string> WorkspacePath,
     Func<TState, bool> AllowMutation,
@@ -17,7 +17,35 @@ public sealed record AgentBlockConfig<TState>(
     StructuredOutputAcceptancePolicy<TState>? StructuredOutputAcceptance = null,
     string? StructuredOutputCorrectionRequiredToolName = null,
     ReceiptStateTransition<TState>? ReceiptTransition = null,
-    string McpServerName = "simple-v1"
+    string? LifecycleActionSetIdentity = null,
+    AgentSessionPolicy<TState>? SessionPolicy = null,
+    AgentProfilePolicy<TState>? ProfilePolicy = null,
+    AgentTeardownPolicy<TState>? TeardownPolicy = null
+);
+
+public enum AgentSessionAction
+{
+    Continue,
+    Reset,
+    Teardown,
+}
+
+public sealed record AgentSessionDecision(AgentSessionAction Action, string Reason);
+
+public sealed record AgentProfileDecision(string ProfileName, string Reason);
+
+public sealed record AgentTeardownDecision(bool ReleaseSession, bool ReleaseUsage, string Reason)
+{
+    public static AgentTeardownDecision None(string reason) => new(false, false, reason);
+}
+
+public delegate AgentSessionDecision AgentSessionPolicy<TState>(PipelineMessage<TState> message);
+
+public delegate AgentProfileDecision AgentProfilePolicy<TState>(PipelineMessage<TState> message);
+
+public delegate AgentTeardownDecision AgentTeardownPolicy<TState>(
+    PipelineMessage<TState> message,
+    BlockOutcome outcome
 );
 
 public delegate ValueTask<string?> MessageAugmentation<TState>(

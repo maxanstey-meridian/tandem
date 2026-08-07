@@ -5,9 +5,11 @@ using Tandem.Infrastructure.Lifecycle.Validators;
 
 namespace Tandem.Infrastructure.Lifecycle;
 
-public static class LifecycleMcpRegistration
+public static class DeliveryLifecycleActions
 {
-    public static IMcpServerBuilder AddSimpleV1McpTools(this IServiceCollection services)
+    public const string Identity = "delivery";
+
+    public static IMcpServerBuilder Register(IServiceCollection services)
     {
         var contracts = new[]
         {

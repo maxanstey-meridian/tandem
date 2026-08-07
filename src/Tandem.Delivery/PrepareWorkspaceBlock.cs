@@ -1,18 +1,15 @@
 using System.Diagnostics;
 using System.Text.Json;
-using Microsoft.Agents.AI.Workflows;
 using Tandem.Domain;
 
 namespace Tandem.Infrastructure.Blocks;
 
 public sealed class PrepareWorkspaceBlock(WorkspacePreparation? preparation = null)
-    : Executor<PipelineMessage<SimpleV1State>, PipelineMessage<SimpleV1State>>(BlockIds.Prepare)
 {
     private readonly WorkspacePreparation _preparation = preparation ?? new WorkspacePreparation();
 
-    public override async ValueTask<PipelineMessage<SimpleV1State>> HandleAsync(
-        PipelineMessage<SimpleV1State> message,
-        IWorkflowContext context,
+    public async ValueTask<PipelineMessage<DeliveryState>> ExecuteAsync(
+        PipelineMessage<DeliveryState> message,
         CancellationToken cancellationToken
     )
     {
@@ -38,7 +35,7 @@ public sealed class PrepareWorkspaceBlock(WorkspacePreparation? preparation = nu
         );
 
         sw.Stop();
-        return new PipelineMessage<SimpleV1State>(
+        return new PipelineMessage<DeliveryState>(
             message.Runtime,
             updatedContext,
             new BlockOutcome(

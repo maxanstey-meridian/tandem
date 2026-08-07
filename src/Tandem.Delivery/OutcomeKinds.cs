@@ -17,7 +17,6 @@ public static class OutcomeKinds
     public const string ReviewChangesRequested = "review.changes_requested";
     public const string ReviewNeedsHuman = "review.needs_human";
     public const string RunReady = "run.ready";
-    public const string RunWaiting = "run.waiting";
     public const string RunFailed = "run.failed";
 }
 
@@ -30,7 +29,6 @@ public static class BlockIds
     public const string Verify = "verify";
     public const string Reviewer = "reviewer";
     public const string Complete = "complete";
-    public const string Waiting = "waiting";
     public const string Failed = "failed";
     public const string HumanQuestion = "human-question";
     public const string ApplyHumanAnswer = "apply-human-answer";
