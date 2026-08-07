@@ -21,96 +21,68 @@ implicit successor: every edge is declared with `Route`.
 ## Start With Songwriter
 
 [`samples/Tandem.Sample.Songwriter`](samples/Tandem.Sample.Songwriter) is the
-smallest complete authoring example. Its durable state is an immutable record,
-and its steps demonstrate three of the four inferred `ExecuteAsync` forms:
+smallest complete authoring example. Its durable state is an immutable record.
+A default declarative agent is already a typed pipeline step:
 
 ```csharp
-[PipelineStage(SongwriterAgent.StepId)]
-public sealed partial class SongwriterAgent(AgentOperation<SongwriterState> operation)
-{
-    // IDs are durable workflow identity, so the step and operation share one constant.
-    public const string StepId = "songwriter";
-
-    public async ValueTask<Outcome<SongwriterState>> ExecuteAsync(
-        SongwriterState state,
-        CancellationToken cancellationToken
-    ) => await operation.RunAsync(state, cancellationToken);
-}
+var songwriter = agents
+    .Create<SongwriterState>(
+        "songwriter",
+        "songwriter",
+        "Write or revise lyrics from the brief and current feedback.",
+        clients.Songwriter
+    )
+    .WithMessage(state =>
+        $"Brief: {state.Brief}\nLyrics: {state.Lyrics}\n"
+        + $"Lint: {state.LintFeedback}\nProofreader: {state.ProofreaderFeedback}"
+    )
+    .WithOutput(new SongDecisionValidator(), SongwriterPolicies.ApplySong)
+    .WithSessionPolicy(SongwriterPolicies.StartFresh)
+    .Build();
 ```
 
-Returning `Outcome<TState>` exposes Tandem's standard `Success` and `Failed`
-selectors. Songwriter follows only successful model execution; an unhandled
-failure ends the run as failed:
+`AgentDefinition<TState>` owns its ID, state type, standard `Outcome<TState>`
+execution, and typed `Success`/`Failed` selectors. No forwarding
+`[PipelineStage]` class is required. Songwriter follows only successful model
+execution; an unhandled failure ends the run as failed:
 
 ```csharp
-.Route(on: song.Songwriter.Result.Success, to: song.Lint, label: "song written")
+.Route(on: song.Songwriter.Success, to: song.Lint, label: "song written")
 ```
 
-The terminal step is even smaller:
+Successful terminals are SDK nodes rather than empty authored classes:
 
 ```csharp
-[PipelineStage(CompleteSongStage.StepId)]
-public sealed partial class CompleteSongStage
-{
-    public const string StepId = "complete";
-
-    public ValueTask ExecuteAsync(SongwriterState _, CancellationToken cancellationToken) =>
-        ValueTask.CompletedTask;
-}
+var complete = PipelineNodes.Complete<SongwriterState>("complete");
 ```
 
-Returning `ValueTask` preserves the current state and produces standard success.
-It also has no result selectors.
+The terminal preserves current state and produces standard success.
 
-Use a custom Dunet union only when the graph has semantic branches worth naming:
-
-```csharp
-[PipelineStage(ProofreaderAgent.StepId)]
-public sealed partial class ProofreaderAgent(AgentOperation<SongwriterState> operation)
-{
-    public const string StepId = "proofreader";
-
-    [Union(EnableImplicitConversions = false)]
-    public partial record ProofreaderResult
-    {
-        public partial record Accepted(SongwriterState State);
-        public partial record ChangesRequested(SongwriterState State);
-        public partial record Failed(SongwriterState State, FailureEvidence Failure);
-    }
-
-    public async ValueTask<ProofreaderResult> ExecuteAsync(
-        SongwriterState state,
-        CancellationToken cancellationToken
-    ) =>
-        await operation.RunAsync<ProofreaderResult>(
-            state,
-            result =>
-                result.Outcome.Kind == SongwriterPolicies.ProofAcceptedOutcome
-                    ? new ProofreaderResult.Accepted(result.State)
-                    : new ProofreaderResult.ChangesRequested(result.State),
-            // Model/runtime failure is not a request to revise valid proofreader feedback.
-            failure => new ProofreaderResult.Failed(state, failure),
-            cancellationToken
-        );
-}
-```
-
-Those cases generate only the corresponding typed selectors:
+Put semantic branch facts in durable state and route successful execution with a
+state predicate:
 
 ```csharp
-.Route(on: song.Proofreader.Result.Accepted, to: song.Complete, label: "proof accepted")
 .Route(
-    on: song.Proofreader.Result.ChangesRequested,
+    on: song.Proofreader.Success,
+    when: state => state.ProofreaderAccepted,
+    to: song.Complete,
+    label: "proof accepted"
+)
+.Route(
+    on: song.Proofreader.Success,
+    when: state => !state.ProofreaderAccepted,
     to: song.Songwriter,
     label: "changes requested"
 )
-.Route(on: song.Proofreader.Result.Failed, to: song.Failed, label: "agent failed")
+.Route(on: song.Proofreader.Failed, to: song.Failed, label: "agent failed")
 ```
 
 `song.Failed` is created with `PipelineNodes.Failed<SongwriterState>(...)`. It
 preserves the failure evidence and terminates with Tandem's failed disposition.
+Both completion and failure furniture expose `IPipelineNode<TState>`; ordinary
+samples and composition records do not use `IRawPipelineNode`.
 
-## Four Inferred Step Forms
+## Three Inferred Step Forms
 
 The source generator infers a step's authoring mode from its `ExecuteAsync`
 signature. There is no mode setting and no universal result-union requirement.
@@ -120,14 +92,14 @@ ValueTask ExecuteAsync(TState state, CancellationToken cancellationToken)
 ```
 
 Pass-through: preserves state, produces standard success, and exposes no
-`.Result` selectors.
+outcome selectors.
 
 ```csharp
 ValueTask<TState> ExecuteAsync(TState state, CancellationToken cancellationToken)
 ```
 
 State-updating: uses the returned state, produces standard success, and exposes
-no `.Result` selectors.
+no outcome selectors.
 
 ```csharp
 ValueTask<Outcome<TState>> ExecuteAsync(
@@ -151,17 +123,6 @@ public abstract record Outcome<TState>
 public sealed record FailureEvidence(string Code, string Summary, string? Detail = null);
 ```
 
-```csharp
-ValueTask<TCustomResult> ExecuteAsync(
-    TState state,
-    CancellationToken cancellationToken
-)
-```
-
-Custom result: `TCustomResult` is a nested Dunet union and exposes only its
-declared cases. Use this form for branching vocabulary such as `Accepted`,
-`ChangesRequested`, or `NeedsHuman`, not for routine success.
-
 A standard `Failed` result is recoverable pipeline data only when an unconditional
 route handles it or at least one conditional route matches its failed state. An
 unhandled `Failed` ends the run as failed. Exceptions are undeclared faults, and
@@ -169,8 +130,8 @@ cancellation remains cancellation; neither follows an ordinary output route.
 
 ## State-First Agents And Policies
 
-Agent construction is explicit and scoped to each pipeline build. Songwriter's
-compiled factory uses state-first callbacks throughout:
+Agent definitions are immutable application configuration registered once in DI.
+They use state-first callbacks throughout and capture no pipeline build or run:
 
 ```csharp
 agents
@@ -179,26 +140,16 @@ agents
         $"Brief: {state.Brief}\nLyrics: {state.Lyrics}\n"
         + $"Lint: {state.LintFeedback}\nProofreader: {state.ProofreaderFeedback}"
     )
-    .WithStructuredOutput(parser, configureChatOptions)
+    .WithOutput(new SongDecisionValidator(), SongwriterPolicies.ApplySong)
     .WithSessionPolicy(SongwriterPolicies.StartFresh)
-    .Build(context);
+    .Build();
 ```
 
-`WithMessage` receives `TState`. Structured-output parsers receive the assistant
-text and `TState`. Session, profile, workspace, and ordinary route predicates are
-also state-first. Tandem transports run identity, sessions, usage, invocation
-counts, profiles, outcomes, routing identity, and replay metadata internally.
-Ordinary user code does not copy an execution envelope.
-
-An agent can return Tandem's standard outcome directly:
-
-```csharp
-return await operation.RunAsync(state, cancellationToken);
-```
-
-Or it can map legitimate operation evidence into a custom semantic result, as the
-Songwriter proofreader does above. `OperationResult<TState>` exposes only `State`
-and `OperationOutcome`; it does not expose runtime bookkeeping.
+`WithMessage` receives `TState`; validated output application returns `TState`.
+Successful validated application produces canonical `Success`. Tandem transports
+run identity, sessions, usage, invocation counts, outcomes, and replay metadata
+internally. Ordinary user code cannot unwrap an agent operation or copy an
+execution envelope.
 
 ## Explicit Routing
 
@@ -209,13 +160,13 @@ allowed to continue:
 .Route(on: support.LoadAccount, to: support.Resolve, label: "account loaded")
 ```
 
-Use a result-specific route only when a standard or custom case controls the
-successor:
+Use canonical outcome selectors and state predicates when execution outcome or a
+domain fact controls the successor:
 
 ```csharp
-.Route(on: song.Lint.Result.Passed, to: song.Proofreader, label: "lint passed")
-.Route(on: song.Lint.Result.Failed, to: song.Songwriter, label: "lint failed")
-.Route(on: song.Songwriter.Result.Success, to: song.Lint, label: "song written")
+.Route(on: song.Lint, when: state => state.LintFeedback is null, to: song.Proofreader)
+.Route(on: song.Lint, when: state => state.LintFeedback is not null, to: song.Songwriter)
+.Route(on: song.Songwriter.Success, to: song.Lint, label: "song written")
 ```
 
 Normal predicates receive state:
@@ -223,29 +174,28 @@ Normal predicates receive state:
 ```csharp
 .Route(
     when: state => state.FinalDisposition == "closed",
-    from: support.CustomerReply.Resume,
+    from: support.CustomerReply,
     to: support.Close,
     label: "customer confirmed"
 )
 ```
 
-Do not mix unconditional and result-specific routes from one source: both would
+Do not mix unconditional and outcome-specific routes from one source: both would
 match the same output. Tandem rejects that accidental fan-out. Use
 `RouteWithContext` only when an advanced route genuinely requires the complete
 execution message.
 
-Raw request ports and advanced envelope-aware nodes implement `IRawPipelineNode`.
-Generated steps do not, so an untyped route cannot become a fallback that wires
-generated steps with incompatible state types.
+Request-port expansion and raw MAF nodes are internal. Generated steps and SDK
+furniture expose only typed `IPipelineNode<TState>` boundaries.
 
 ## Progressive Samples
 
 The public SDK is one progressive journey rather than separate basic and advanced
 programming models:
 
-- **Songwriter** proves pass-through and state-updating steps, semantic Dunet
-  branches, unconditional serial routes, and agent execution without workspace or
-  runtime plumbing.
+- **Songwriter** proves state-updating steps, state-owned semantic branches,
+  unconditional serial routes, and agent execution without workspace or runtime
+  plumbing.
 - **Support** adds consumer-owned account lookup, typed state transitions, and a
   durable typed customer request/response handoff.
 - **Debate** adds revision loops, explicit retained/reset sessions, a lifecycle
@@ -256,22 +206,19 @@ programming models:
 
 ### Durable Support Handoff
 
-Support constructs its request nodes with state-first transformations:
+Support declares one semantic interaction with state-first transformations:
 
 ```csharp
-var customerReply = PipelineNodes.Request<SupportState, CustomerQuestion, CustomerReply>(
-    SupportIds.AskCustomer,
+var customerReply = PipelineNodes.WaitFor<SupportState, CustomerQuestion, CustomerReply>(
     SupportIds.CustomerReply,
-    SupportIds.ApplyReply,
     SupportPolicies.BuildCustomerQuestion,
     SupportPolicies.ApplyCustomerReply
 );
 ```
 
-The returned `PipelineRequest<SupportState, CustomerQuestion, CustomerReply>`
-exposes `Request`, `Port`, and `Resume`. Tandem saves and restores the complete
-execution envelope around the port; Support only creates the typed request and
-applies the typed response to `SupportState`.
+Composition routes to and from that interaction. Tandem privately expands it to
+MAF's request, port, and resume executors, saving and restoring the complete
+execution envelope around suspension.
 
 ### Debate Sessions And Teardown
 
@@ -282,13 +229,13 @@ public static AgentSessionDecision RetainRevisionContext(DebateState _) =>
     new(AgentSessionAction.Continue, "Retain critic context across revision rounds.");
 ```
 
-Its judge teardown policy intentionally uses advanced block context:
+Its judge conversation policy intentionally uses advanced block evidence:
 
 ```csharp
-public static AgentTeardownDecision ReleaseJudgeAfterVerdict(
+public static AgentConversationDecision DiscardJudgeAfterVerdict(
     PipelineMessage<DebateState> _,
     BlockOutcome __
-) => new(true, true, "Release judge bookkeeping after an accepted verdict.");
+) => new(AgentConversationRetention.Discard, "The verdict closes the judge conversation.");
 ```
 
 ## Advanced Blocks
@@ -315,11 +262,11 @@ public sealed record BlockOutcome(
 );
 ```
 
-Delivery uses these APIs in custom workspace, candidate-capture, verification,
-terminal, and human-input blocks. Generated adapters preserve the active envelope
-when ordinary steps return only state or a semantic result. Advanced block code
-may use `PipelineOperation.RunAsync` to adapt a block execution into an authored
-custom result without manually copying runtime fields.
+Import `Tandem.Advanced` to opt into envelope-aware agent policies and operations.
+Delivery uses `PipelineOperation.RunStateAsync` and `RunOutcomeAsync` to preserve
+runtime updates without manually copying envelope fields. The public descriptor
+types hidden from IntelliSense are an opaque cross-assembly ABI used by generated
+code, not a node-authoring hierarchy.
 
 ## Inspect And Run
 
@@ -327,7 +274,7 @@ custom result without manually copying runtime fields.
 routes, conditions, request ports, and Mermaid/DOT diagrams:
 
 ```csharp
-var inspection = composition.Build(new PipelineBuildContext()).Inspect();
+var inspection = composition.Build().Inspect();
 Console.WriteLine(inspection.Mermaid);
 Console.WriteLine(inspection.Dot);
 ```

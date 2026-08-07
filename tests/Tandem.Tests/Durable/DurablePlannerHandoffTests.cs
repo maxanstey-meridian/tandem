@@ -104,7 +104,9 @@ public sealed class DurablePlannerHandoffTests
                 .AddEdge<PipelineMessage<DeliveryState>>(
                     executorBinding,
                     plannerBinding,
-                    message => message!.LatestOutcome?.Kind == OutcomeKinds.PlannerRequested
+                    message =>
+                        message!.LatestOutcome?.Kind
+                        == $"capability:{typeof(DeliveryState).FullName}:ask_planner"
                 )
                 .AddEdge<PipelineMessage<DeliveryState>>(
                     plannerBinding,

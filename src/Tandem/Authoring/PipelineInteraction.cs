@@ -1,27 +1,28 @@
 using System.Text.Json;
+using Tandem.Advanced;
 using Tandem.Domain;
 
 namespace Tandem;
 
-public sealed class PipelineRequest<TState, TRequest, TResponse>
+public sealed class PipelineInteraction<TState, TRequest, TResponse>
 {
-    internal PipelineRequest(
-        string requestStepId,
-        string portId,
-        string resumeStepId,
+    internal PipelineInteraction(
+        string id,
         Func<TState, TRequest> createRequest,
         Func<TState, TResponse, TState> applyResponse,
         IBlockExecutionObserver? observer
     )
     {
-        Request = new RequestStage(requestStepId, portId, createRequest, observer);
-        Port = new RequestPort(portId);
-        Resume = new ResumeStage(resumeStepId, portId, applyResponse, observer);
+        Id = id;
+        Request = new RequestStage($"{id}--request", id, createRequest, observer);
+        Port = new RequestPort(id);
+        Resume = new ResumeStage($"{id}--resume", id, applyResponse, observer);
     }
 
-    public IRawPipelineNode Request { get; }
-    public IRawPipelineNode Port { get; }
-    public IRawPipelineNode Resume { get; }
+    public string Id { get; }
+    internal IRawPipelineNode Request { get; }
+    internal IRawPipelineNode Port { get; }
+    internal IRawPipelineNode Resume { get; }
 
     private sealed class RequestStage : IRawPipelineNode
     {
@@ -33,7 +34,7 @@ public sealed class PipelineRequest<TState, TRequest, TResponse>
         )
         {
             Id = id;
-            Descriptor = PipelineNodes.Stage<PipelineMessage<TState>, TRequest>(
+            Descriptor = AdvancedPipelineNodes.Stage<PipelineMessage<TState>, TRequest>(
                 id,
                 async (pipeline, context, cancellationToken) =>
                 {
@@ -57,7 +58,7 @@ public sealed class PipelineRequest<TState, TRequest, TResponse>
     {
         public string Id => id;
         public PipelineNodeDescriptor Descriptor { get; } =
-            PipelineNodes.RequestPort<TRequest, TResponse>(id);
+            AdvancedPipelineNodes.RequestPort<TRequest, TResponse>(id);
     }
 
     private sealed class ResumeStage : IRawPipelineNode
@@ -70,7 +71,7 @@ public sealed class PipelineRequest<TState, TRequest, TResponse>
         )
         {
             Id = id;
-            Descriptor = PipelineNodes.Stage<TResponse, PipelineMessage<TState>>(
+            Descriptor = AdvancedPipelineNodes.Stage<TResponse, PipelineMessage<TState>>(
                 id,
                 async (response, context, cancellationToken) =>
                 {

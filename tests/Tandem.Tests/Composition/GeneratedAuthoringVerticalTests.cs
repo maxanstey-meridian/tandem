@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Dunet;
 using FluentAssertions;
 using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Agents.AI.Workflows;
@@ -17,7 +16,7 @@ public sealed class GeneratedAuthoringVerticalTests
         var complete = new CompleteStage();
         var pipeline = TandemWorkflow
             .Start(at: increment, name: "generated-authoring")
-            .Route(on: increment.Result.Incremented, to: complete, label: "incremented")
+            .Route(on: increment, to: complete, label: "incremented")
             .Build(complete);
         var input = new PipelineMessage<CounterState>(
             PipelineRuntime.Create(Guid.CreateVersion7()),
@@ -30,7 +29,7 @@ public sealed class GeneratedAuthoringVerticalTests
         output.Runtime.Should().BeSameAs(input.Runtime);
         output.LatestResult.Should().NotBeNull();
         output.LatestResult!.StepId.Should().Be("complete");
-        output.LatestResult.CaseId.Should().Be("Completed");
+        output.LatestResult.CaseId.Should().Be("Success");
         pipeline.Workflow.ReflectExecutors().Keys.Should().BeEquivalentTo("increment", "complete");
         pipeline.Workflow.ReflectEdges()["increment"].Should().ContainSingle();
 
@@ -66,7 +65,7 @@ public sealed class GeneratedAuthoringVerticalTests
         );
 
         output.State.Count.Should().Be(2);
-        typeof(StateCompleteStage).GetProperty("Result").Should().BeNull();
+        typeof(StateCompleteStage).GetProperty("Success").Should().BeNull();
         output.LatestOutcome!.Payload.ValueKind.Should().Be(JsonValueKind.Object);
         var json = () => JsonSerializer.Serialize(output);
         json.Should().NotThrow();
@@ -82,8 +81,8 @@ public sealed class GeneratedAuthoringVerticalTests
         var recovery = new RecoveryStage();
         var pipeline = TandemWorkflow
             .Start(at: outcome, name: "standard-outcome")
-            .Route(on: outcome.Result.Success, to: success, label: "success")
-            .Route(on: outcome.Result.Failed, to: recovery, label: "recover")
+            .Route(on: outcome.Success, to: success, label: "success")
+            .Route(on: outcome.Failed, to: recovery, label: "recover")
             .Build(success, recovery);
 
         var output = await RunAsync(
@@ -136,7 +135,7 @@ public sealed class GeneratedAuthoringVerticalTests
         var pipeline = TandemWorkflow
             .Start(at: outcome, name: "conditional-standard-failure")
             .Route(
-                on: outcome.Result.Failed,
+                on: outcome.Failed,
                 when: state => matches && state.Count == failedCount,
                 to: recovery,
                 label: "conditional recovery"
@@ -190,25 +189,11 @@ public sealed class GeneratedAuthoringVerticalTests
             .Start(at: outcome, name: "invalid-routes")
             .Route(on: outcome, to: complete, label: "all");
 
-        var act = () => builder.Route(on: outcome.Result.Success, to: complete, label: "success");
+        var act = () => builder.Route(on: outcome.Success, to: complete, label: "success");
 
         act.Should()
             .Throw<InvalidOperationException>()
-            .WithMessage("*cannot mix unconditional and result-specific*");
-    }
-
-    [Fact]
-    public void ResultCase_RejectsFabricatedCaseId()
-    {
-        var outcome = new StandardOutcomeStage(false);
-
-        var act = () =>
-            new ResultCase<CounterState, Outcome<CounterState>, Outcome<CounterState>.Failed>(
-                outcome,
-                "Success"
-            );
-
-        act.Should().Throw<ArgumentException>().WithMessage("*does not match case type*");
+            .WithMessage("*cannot mix unconditional and outcome-specific*");
     }
 
     private static async Task<PipelineMessage<CounterState>> RunAsync(
@@ -261,7 +246,7 @@ public sealed class GeneratedAuthoringDurableTests
         var complete = new CompleteStage();
         var pipeline = TandemWorkflow
             .Start(at: increment, name: "generated-authoring-durable")
-            .Route(on: increment.Result.Incremented, to: complete, label: "incremented")
+            .Route(on: increment, to: complete, label: "incremented")
             .Build(complete);
         var input = new PipelineMessage<CounterState>(
             PipelineRuntime.Create(Guid.CreateVersion7()),
@@ -283,7 +268,7 @@ public sealed class GeneratedAuthoringDurableTests
         output!.State.Count.Should().Be(2);
         output
             .LatestResult.Should()
-            .Be(new PipelineResult("complete", "Completed", output.LatestResult!.Payload));
+            .Be(new PipelineResult("complete", "Success", output.LatestResult!.Payload));
     }
 }
 
@@ -292,31 +277,15 @@ public sealed record CounterState(int Count);
 [PipelineStage("increment")]
 public sealed partial class IncrementStage
 {
-    [Union(EnableImplicitConversions = false)]
-    public partial record IncrementResult
-    {
-        public partial record Incremented(CounterState State);
-    }
-
-    public ValueTask<IncrementResult> ExecuteAsync(CounterState state, CancellationToken _) =>
-        ValueTask.FromResult<IncrementResult>(
-            new IncrementResult.Incremented(state with { Count = state.Count + 1 })
-        );
+    public ValueTask<CounterState> ExecuteAsync(CounterState state, CancellationToken _) =>
+        ValueTask.FromResult(state with { Count = state.Count + 1 });
 }
 
 [PipelineStage("complete")]
 public sealed partial class CompleteStage
 {
-    [Union(EnableImplicitConversions = false)]
-    public partial record CompleteResult
-    {
-        public partial record Completed(CounterState State);
-    }
-
-    public ValueTask<CompleteResult> ExecuteAsync(CounterState state, CancellationToken _) =>
-        ValueTask.FromResult<CompleteResult>(
-            new CompleteResult.Completed(state with { Count = state.Count + 1 })
-        );
+    public ValueTask<CounterState> ExecuteAsync(CounterState state, CancellationToken _) =>
+        ValueTask.FromResult(state with { Count = state.Count + 1 });
 }
 
 [PipelineStage("state-complete")]

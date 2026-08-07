@@ -12,138 +12,127 @@ public sealed class DeliveryComposition(DeliveryStepsFactory stepsFactory)
                 description: "Plan, implement, verify, and review a software change."
             )
             .Route(
-                on: delivery.PrepareWorkspace.Result.Prepared,
+                on: delivery.PrepareWorkspace.Success,
                 to: delivery.Executor,
                 label: "workspace prepared"
             )
             .Route(
-                on: delivery.PrepareWorkspace.Result.Unexpected,
+                on: delivery.PrepareWorkspace.Failed,
                 to: delivery.FailRun,
-                label: "unexpected outcome"
+                label: "workspace failed"
             )
             .Route(
-                on: delivery.Executor.Result.PlannerRequested,
+                on: delivery.Executor.Success,
+                when: state => state.LastExecutorAction == ExecutorAction.PlannerRequested,
                 to: delivery.Planner,
                 label: "planner requested"
             )
             .Route(
-                on: delivery.Executor.Result.ReportSubmitted,
+                on: delivery.Executor.Success,
+                when: state => state.LastExecutorAction == ExecutorAction.ReportSubmitted,
                 to: delivery.CaptureCandidate,
                 label: "report submitted"
             )
             .Route(
-                on: delivery.Executor.Result.CheckpointWritten,
+                on: delivery.Executor.Success,
+                when: state => state.LastExecutorAction == ExecutorAction.CheckpointWritten,
                 to: delivery.Executor,
                 label: "checkpoint written"
             )
+            .Route(on: delivery.Executor.Failed, to: delivery.FailRun, label: "agent failed")
             .Route(
-                on: delivery.Executor.Result.Unexpected,
-                to: delivery.FailRun,
-                label: "unexpected outcome"
-            )
-            .Route(on: delivery.Executor.Result.Failed, to: delivery.FailRun, label: "agent failed")
-            .Route(
-                on: delivery.Planner.Result.Proceed,
+                on: delivery.Planner.Success,
+                when: IsPlannerProceed,
                 to: delivery.Executor,
                 label: "proceed / proceed with constraints"
             )
             .Route(
-                on: delivery.Planner.Result.NeedsHuman,
-                to: delivery.HumanQuestion,
+                on: delivery.Planner.Success,
+                when: IsPlannerNeedsHuman,
+                to: delivery.HumanInput,
                 label: "needs human"
             )
-            .Route(on: delivery.Planner.Result.Stop, to: delivery.FailRun, label: "stop")
             .Route(
-                on: delivery.Planner.Result.Unexpected,
+                on: delivery.Planner.Success,
+                when: IsPlannerStop,
                 to: delivery.FailRun,
-                label: "unexpected outcome"
+                label: "stop"
             )
-            .Route(on: delivery.Planner.Result.Failed, to: delivery.FailRun, label: "agent failed")
+            .Route(on: delivery.Planner.Failed, to: delivery.FailRun, label: "agent failed")
             .Route(
-                on: delivery.CaptureCandidate.Result.Captured,
+                on: delivery.CaptureCandidate.Success,
                 when: HasVerificationCommands,
                 to: delivery.Verification,
                 label: "verification configured"
             )
             .Route(
-                on: delivery.CaptureCandidate.Result.Captured,
+                on: delivery.CaptureCandidate.Success,
                 when: NoVerificationCommands,
                 to: delivery.Reviewer,
                 label: "no verification configured"
             )
             .Route(
-                on: delivery.CaptureCandidate.Result.Unexpected,
+                on: delivery.CaptureCandidate.Failed,
                 to: delivery.FailRun,
-                label: "unexpected outcome"
+                label: "capture failed"
             )
             .Route(
-                on: delivery.Verification.Result.Passed,
-                when: HasRemainingCommands,
+                on: delivery.Verification.Success,
+                when: LatestCommandPassedAndCommandsRemain,
                 to: delivery.Verification,
                 label: "commands remain"
             )
             .Route(
-                on: delivery.Verification.Result.Passed,
-                when: AllCommandsComplete,
+                on: delivery.Verification.Success,
+                when: LatestCommandPassedAndAllComplete,
                 to: delivery.Reviewer,
                 label: "verification complete"
             )
             .Route(
-                on: delivery.Verification.Result.Failed,
+                on: delivery.Verification.Success,
+                when: LatestCommandFailed,
                 to: delivery.Executor,
                 label: "command failed"
             )
             .Route(
-                on: delivery.Verification.Result.Unexpected,
+                on: delivery.Verification.Failed,
                 to: delivery.FailRun,
-                label: "unexpected outcome"
+                label: "verification failed"
             )
             .Route(
-                on: delivery.Reviewer.Result.Accepted,
+                on: delivery.Reviewer.Success,
+                when: IsReviewAccepted,
                 to: delivery.CompleteRun,
                 label: "accepted"
             )
             .Route(
-                on: delivery.Reviewer.Result.ChangesRequested,
+                on: delivery.Reviewer.Success,
+                when: IsReviewChangesRequested,
                 to: delivery.Executor,
                 label: "changes requested"
             )
             .Route(
-                on: delivery.Reviewer.Result.NeedsHuman,
-                to: delivery.HumanQuestion,
+                on: delivery.Reviewer.Success,
+                when: IsReviewNeedsHuman,
+                to: delivery.HumanInput,
                 label: "needs human"
             )
-            .Route(
-                on: delivery.Reviewer.Result.Unexpected,
-                to: delivery.FailRun,
-                label: "unexpected outcome"
-            )
-            .Route(on: delivery.Reviewer.Result.Failed, to: delivery.FailRun, label: "agent failed")
-            .Route(
-                from: delivery.HumanQuestion,
-                to: delivery.HumanInput,
-                label: "request human input"
-            )
-            .Route(
-                from: delivery.HumanInput,
-                to: delivery.ApplyHumanAnswer,
-                label: "answer received"
-            )
+            .Route(on: delivery.Reviewer.Failed, to: delivery.FailRun, label: "agent failed")
             .Route(
                 when: IsPlannerHumanAnswer,
-                from: delivery.ApplyHumanAnswer,
+                from: delivery.HumanInput,
                 to: delivery.Planner,
                 label: "answer for planner"
             )
             .Route(
                 when: IsReviewerHumanAnswer,
-                from: delivery.ApplyHumanAnswer,
+                from: delivery.HumanInput,
                 to: delivery.Reviewer,
                 label: "answer for reviewer"
             )
             .Route(
                 when: IsUnknownHumanAnswer,
-                from: delivery.ApplyHumanAnswer,
+                from: delivery.HumanInput,
                 to: delivery.FailRun,
                 label: "unknown answer source"
             )
@@ -156,11 +145,37 @@ public sealed class DeliveryComposition(DeliveryStepsFactory stepsFactory)
     private static bool NoVerificationCommands(DeliveryState state) =>
         state.Packet.Verification.Count == 0;
 
-    private static bool HasRemainingCommands(DeliveryState state) =>
-        state.VerificationIndex < state.Packet.Verification.Count;
+    private static bool LatestCommandPassed(DeliveryState state) =>
+        state.VerificationResults.LastOrDefault()?.ExitCode == 0;
 
-    private static bool AllCommandsComplete(DeliveryState state) =>
-        state.VerificationIndex >= state.Packet.Verification.Count;
+    private static bool LatestCommandFailed(DeliveryState state) =>
+        state.VerificationResults.LastOrDefault()?.ExitCode is not (null or 0);
+
+    private static bool LatestCommandPassedAndCommandsRemain(DeliveryState state) =>
+        LatestCommandPassed(state) && state.VerificationIndex < state.Packet.Verification.Count;
+
+    private static bool LatestCommandPassedAndAllComplete(DeliveryState state) =>
+        LatestCommandPassed(state) && state.VerificationIndex >= state.Packet.Verification.Count;
+
+    private static bool IsPlannerProceed(DeliveryState state) =>
+        state.PlannerDecision?.Decision
+            is PlannerDecisionValue.Proceed
+                or PlannerDecisionValue.ProceedWithConstraints;
+
+    private static bool IsPlannerNeedsHuman(DeliveryState state) =>
+        state.PlannerDecision?.Decision == PlannerDecisionValue.NeedsHuman;
+
+    private static bool IsPlannerStop(DeliveryState state) =>
+        state.PlannerDecision?.Decision == PlannerDecisionValue.Stop;
+
+    private static bool IsReviewAccepted(DeliveryState state) =>
+        state.ReviewerDecision?.Decision == ReviewDecisionValue.Accept;
+
+    private static bool IsReviewChangesRequested(DeliveryState state) =>
+        state.ReviewerDecision?.Decision == ReviewDecisionValue.RequestChanges;
+
+    private static bool IsReviewNeedsHuman(DeliveryState state) =>
+        state.ReviewerDecision?.Decision == ReviewDecisionValue.NeedsHuman;
 
     private static bool IsPlannerHumanAnswer(DeliveryState state) =>
         state.HumanAnswerSourceBlockId == BlockIds.Planner;

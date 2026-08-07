@@ -1,5 +1,7 @@
+using System.Reflection;
 using System.Xml.Linq;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Tandem.Tests.Composition;
 
@@ -57,6 +59,14 @@ public sealed class ProjectBoundaryTests
         source.Should().NotContain("IPipelineExecutionContext");
         source.Should().NotContain("QueueStateUpdateAsync");
         source.Should().NotContain("ReadStateAsync");
+        source.Should().NotContain("PipelineBuildContext");
+        source.Should().NotContain("ChatOptions");
+        source.Should().NotContain("ChatResponseFormat");
+        source.Should().NotContain(".Request");
+        source.Should().NotContain(".Port");
+        source.Should().NotContain(".Resume");
+        source.Should().NotContain("IRawPipelineNode");
+        source.Should().NotContain("class ClassifyTicketAgent");
     }
 
     [Fact]
@@ -94,6 +104,14 @@ public sealed class ProjectBoundaryTests
         source.Should().NotContain(line => line.Contains("System.Reflection"));
         source.Should().NotContain(line => line.Contains("InternalsVisibleTo"));
         source.Should().NotContain(line => line.Contains("WorkspacePath"));
+        source.Should().NotContain(line => line.Contains("ModelContextProtocol"));
+        source.Should().NotContain(line => line.Contains("PipelineBuildContext"));
+        source.Should().NotContain(line => line.Contains("ChatOptions"));
+        source.Should().NotContain(line => line.Contains("ChatResponseFormat"));
+        source.Should().NotContain(line => line.Contains("ReleaseUsage"));
+        source.Should().NotContain(line => line.Contains("IRawPipelineNode"));
+        source.Should().NotContain(line => line.Contains("class ProposerAgent"));
+        source.Should().NotContain(line => line.Contains("class JudgeAgent"));
     }
 
     [Fact]
@@ -152,7 +170,7 @@ public sealed class ProjectBoundaryTests
     }
 
     [Fact]
-    public void AuthoredSteps_UseGeneratedAdaptersWithoutRequiringDunetForEveryStep()
+    public void AuthoredSteps_UseOnlyCanonicalGeneratedOutcomes()
     {
         foreach (
             var root in new[]
@@ -173,20 +191,66 @@ public sealed class ProjectBoundaryTests
         var songwriter = File.ReadAllText(
             Path("samples/Tandem.Sample.Songwriter/SongwriterSteps.cs")
         );
-        songwriter.Should().Contain("ValueTask<Outcome<SongwriterState>> ExecuteAsync(");
-        songwriter.Should().Contain("ValueTask ExecuteAsync(SongwriterState");
-        songwriter.Should().Contain("[Union");
+        songwriter.Should().Contain("AgentDefinition<SongwriterState> Songwriter");
+        songwriter.Should().NotContain("class SongwriterAgent");
+        songwriter.Should().NotContain("IRawPipelineNode");
+        File.ReadAllText(Path("samples/Tandem.Sample.Songwriter/SongwriterDefinitions.cs"))
+            .Should()
+            .Contain("PipelineNodes.Complete<SongwriterState>");
+        songwriter.Should().NotContain("[Union");
         File.ReadAllText(Path("samples/Tandem.Sample.Songwriter/SongwriterComposition.cs"))
             .Should()
-            .Contain(".Result.");
+            .NotContain(".Result.");
 
         var generator = File.ReadAllText(Path("src/Tandem.Generators/PipelineStepGenerator.cs"));
         generator.Should().Contain("GeneratedPassThroughStepDescriptor");
         generator.Should().Contain("GeneratedStateStepDescriptor");
         generator.Should().Contain("GeneratedOutcomeStepDescriptor");
-        generator.Should().Contain("GeneratedCustomStepDescriptor");
+        generator.Should().NotContain("GeneratedCustomStepDescriptor");
         generator.Should().NotContain("GetMembers(\"Runtime\")");
         generator.Should().NotContain("GetMembers(\"Outcome\")");
+
+        var deliverySteps = File.ReadAllText(Path("src/Tandem.Delivery/DeliverySteps.cs"));
+        deliverySteps.Should().Contain("IPipelineNode<DeliveryState> CompleteRun");
+        deliverySteps.Should().Contain("IPipelineNode<DeliveryState> FailRun");
+        deliverySteps.Should().NotContain("IRawPipelineNode");
+        deliverySteps.Should().NotContain("AdvancedPipelineNodes.Stage");
+    }
+
+    [Fact]
+    public void OrdinaryAgentAndNodeApi_HidesInfrastructureAuthoring()
+    {
+        var assembly = typeof(AgentRuntime).Assembly;
+        var exportedNames = assembly.GetExportedTypes().Select(type => type.Name).ToArray();
+
+        exportedNames.Should().NotContain("AgentOperation`1");
+        exportedNames.Should().NotContain("AgentOutput`1");
+        exportedNames.Should().NotContain("CapabilityReceipt");
+        exportedNames.Should().NotContain("IRawPipelineNode");
+        typeof(OperationResult<>).Namespace.Should().Be("Tandem.Advanced");
+        typeof(AgentDefinition<>).GetProperty("Operation").Should().BeNull();
+        typeof(AgentCapabilities)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Single(method => method.Name == nameof(AgentCapabilities.Create))
+            .GetParameters()
+            .Select(parameter => parameter.ParameterType)
+            .Should()
+            .NotContain(typeof(IServiceCollection));
+
+        var ordinaryMethods = typeof(AgentBuilder<>).GetMethods(
+            BindingFlags.Public | BindingFlags.Instance
+        );
+        ordinaryMethods
+            .Select(method => method.Name)
+            .Should()
+            .NotContain([
+                "WithMessageFromContext",
+                "WithStructuredOutput",
+                "WithLifecycleActions",
+                "WithCheckpoint",
+                "WithMessageAugmentation",
+                "WithContinuationPolicy",
+            ]);
     }
 
     [Fact]

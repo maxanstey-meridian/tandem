@@ -1,6 +1,6 @@
+using FluentValidation;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Tandem.Actions;
 
 namespace Tandem.Sample.Debate;
 
@@ -12,22 +12,39 @@ public sealed record DebateOptions(
 
 public static class DebateRegistration
 {
-    public const string LifecycleIdentity = "debate";
-
     public static IServiceCollection AddDebate(
         this IServiceCollection services,
         DebateOptions options
     )
     {
-        services.AddSingleton(
-            new LifecycleActionSetRegistration(
-                LifecycleIdentity,
-                actionServices => actionServices.AddMcpServer().WithTools<SubmitVerdictAction>()
+        var verdict = AgentCapabilities.Create<DebateState, SubmitVerdict>(
+            "submit_verdict",
+            "Submit the final debate verdict and end the judge turn.",
+            new SubmitVerdictValidator(),
+            request => $"Verdict submitted: {request.Verdict}",
+            DebatePolicies.ApplyVerdict
+        );
+        services.AddSingleton(verdict);
+        services.AddSingleton(options);
+        services.AddSingleton(sp =>
+            DebateDefinitions.Create(
+                sp.GetRequiredService<AgentRuntime>(),
+                sp.GetRequiredService<DebateOptions>(),
+                verdict
             )
         );
-        services.AddSingleton(options);
-        services.AddSingleton<DebateStepsFactory>();
         services.AddSingleton<DebateComposition>();
         return services;
+    }
+}
+
+public sealed record SubmitVerdict(string Verdict, string Reason);
+
+public sealed class SubmitVerdictValidator : AbstractValidator<SubmitVerdict>
+{
+    public SubmitVerdictValidator()
+    {
+        RuleFor(request => request.Verdict).NotEmpty();
+        RuleFor(request => request.Reason).NotEmpty();
     }
 }

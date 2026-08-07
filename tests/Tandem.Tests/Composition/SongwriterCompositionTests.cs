@@ -37,9 +37,7 @@ public sealed class SongwriterCompositionTests
                 )
             );
         await using var provider = services.BuildServiceProvider();
-        var pipeline = provider
-            .GetRequiredService<SongwriterComposition>()
-            .Build(new PipelineBuildContext());
+        var pipeline = provider.GetRequiredService<SongwriterComposition>().Build();
         var input = new PipelineMessage<SongwriterState>(
             PipelineRuntime.Create(Guid.CreateVersion7()),
             new SongwriterState("An optimistic song about rebuilding after a storm.")
@@ -54,7 +52,7 @@ public sealed class SongwriterCompositionTests
         output.State.Revision.Should().Be(3);
         output.State.LintFeedback.Should().BeNull();
         output.State.ProofreaderFeedback.Should().Be("Accepted.");
-        output.LatestResult!.StepId.Should().Be(CompleteSongStage.StepId);
+        output.LatestResult!.StepId.Should().Be("complete");
         output.LatestResult.CaseId.Should().Be("Success");
     }
 
@@ -73,9 +71,7 @@ public sealed class SongwriterCompositionTests
                 )
             );
         await using var provider = services.BuildServiceProvider();
-        var pipeline = provider
-            .GetRequiredService<SongwriterComposition>()
-            .Build(new PipelineBuildContext());
+        var pipeline = provider.GetRequiredService<SongwriterComposition>().Build();
         var input = new PipelineMessage<SongwriterState>(
             PipelineRuntime.Create(Guid.CreateVersion7()),
             new SongwriterState("A brief")
@@ -85,15 +81,10 @@ public sealed class SongwriterCompositionTests
 
         order.Should().Equal("songwriter", "proofreader", "proofreader");
         output.Disposition.Should().Be(PipelineRunDisposition.Failed);
-        output.LatestOutcome!.Kind.Should().Be("agent.failed");
-        output
-            .LatestOutcome.Payload.GetProperty("rawResponse")
-            .GetString()
-            .Should()
-            .Be("still not json");
+        output.LatestOutcome!.Kind.Should().Be(StandardOutcomeKinds.Failed);
         output.LatestResult!.CaseId.Should().Be("Failed");
         output
-            .LatestResult.Payload.Deserialize<ProofreaderAgent.ProofreaderResult.Failed>()!
+            .LatestResult.Payload.Deserialize<Outcome<SongwriterState>.Failed>()!
             .Failure.Detail.Should()
             .Contain("still not json");
     }

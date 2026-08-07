@@ -15,8 +15,10 @@ public sealed record DeliveryState(
     IReadOnlyList<VerificationResult> VerificationResults,
     JsonElement? CheckpointPayload,
     JsonElement? ImplementationReport,
+    ReviewDecision? ReviewerDecision,
     string? ReviewerHumanAnswer,
     string? HumanAnswerSourceBlockId,
+    ExecutorAction? LastExecutorAction,
     RunStatus Status
 )
 {
@@ -33,8 +35,17 @@ public sealed record DeliveryState(
             VerificationResults: [],
             CheckpointPayload: null,
             ImplementationReport: null,
+            ReviewerDecision: null,
             ReviewerHumanAnswer: null,
             HumanAnswerSourceBlockId: null,
+            LastExecutorAction: null,
             Status: RunStatus.Running
         );
+}
+
+public enum ExecutorAction
+{
+    PlannerRequested,
+    ReportSubmitted,
+    CheckpointWritten,
 }

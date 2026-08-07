@@ -7,13 +7,13 @@ internal static class ExecutorPolicies
     public static AgentSessionDecision ContinueWorkingSession(DeliveryState _) =>
         new(AgentSessionAction.Continue, "Retain implementation context across delivery loops.");
 
-    public static AgentTeardownDecision ReleaseSessionAfterAcceptedReport(
-        PipelineMessage<DeliveryState> _,
-        BlockOutcome outcome
+    public static AgentConversationDecision RetainUntilAcceptedReport(
+        PipelineMessage<DeliveryState> message,
+        BlockOutcome _
     ) =>
-        outcome.Kind == OutcomeKinds.ReportSubmitted
-            ? new(true, true, "The implementation report closes this working session.")
-            : AgentTeardownDecision.None("The executor still owns active delivery context.");
+        message.State.LastExecutorAction == ExecutorAction.ReportSubmitted
+            ? new(AgentConversationRetention.Discard, "The report closes this conversation.")
+            : new(AgentConversationRetention.Retain, "The delivery conversation remains active.");
 }
 
 internal static class PlannerPolicies
@@ -27,8 +27,9 @@ internal static class ReviewerPolicies
     public static AgentSessionDecision StartFreshForEachCandidate(DeliveryState _) =>
         new(AgentSessionAction.Reset, "Review each captured candidate independently.");
 
-    public static AgentTeardownDecision TeardownAfterDecision(
+    public static AgentConversationDecision DiscardAfterDecision(
         PipelineMessage<DeliveryState> _,
         BlockOutcome outcome
-    ) => new(true, true, $"Reviewer decision '{outcome.Kind}' is complete.");
+    ) =>
+        new(AgentConversationRetention.Discard, $"Reviewer decision '{outcome.Kind}' is complete.");
 }

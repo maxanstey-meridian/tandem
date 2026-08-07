@@ -20,35 +20,33 @@ public sealed class SupportCompositionTests
     {
         var input = Input();
 
-        var classification = SupportPolicies.ParseClassification(
-            "{\"category\":\"billing\"}",
-            input.State
+        var classification = SupportPolicies.ApplyClassification(
+            input.State,
+            new ClassificationDecision("billing")
         );
-        var classified = classification.Outcome!.UpdatedState!;
-        var resolution = SupportPolicies.ParseResolution(
-            "{\"proposedResolution\":\"The duplicate charge was reversed.\"}",
-            classified
+        var classified = classification;
+        var resolution = SupportPolicies.ApplyResolution(
+            classified,
+            new ResolutionDecision("The duplicate charge was reversed.")
         );
 
-        classification.Success.Should().BeTrue();
         classified.Category.Should().Be("billing");
         classified.AccountContext.Should().BeNull();
-        resolution.Success.Should().BeTrue();
-        resolution.Outcome!.UpdatedState!.ProposedResolution.Should().Contain("reversed");
+        resolution.ProposedResolution.Should().Contain("reversed");
     }
 
     [Theory]
-    [InlineData("not json")]
-    [InlineData("{\"category\":\" \"}")]
-    [InlineData("{\"wrong\":\"billing\"}")]
-    public void Classification_FailsClosedWithoutMutatingState(string response)
+    [InlineData("")]
+    [InlineData(" ")]
+    public void Classification_RejectsBlankCategory(string category)
     {
         var input = Input();
 
-        var result = SupportPolicies.ParseClassification(response, input.State);
+        var result = new ClassificationDecisionValidator().Validate(
+            new ClassificationDecision(category)
+        );
 
-        result.Success.Should().BeFalse();
-        result.Outcome.Should().BeNull();
+        result.IsValid.Should().BeFalse();
         input.State.Category.Should().BeNull();
     }
 
@@ -63,25 +61,23 @@ public sealed class SupportCompositionTests
         );
 
         inspection.Name.Should().Be("customer-support");
-        inspection.StartStepId.Should().Be(ClassifyTicketAgent.StepId);
+        inspection.StartStepId.Should().Be("support-classify");
         inspection
             .StepIds.Should()
             .BeEquivalentTo(
-                ClassifyTicketAgent.StepId,
+                "support-classify",
                 LoadAccountStage.StepId,
-                ResolveTicketAgent.StepId,
-                SupportIds.AskCustomer,
+                "support-resolve",
                 SupportIds.CustomerReply,
-                SupportIds.ApplyReply,
-                CloseTicketStage.StepId,
-                EscalateTicketStage.StepId,
+                "support-close",
+                "support-escalate",
                 "support-failed"
             );
-        inspection.Ports.Should().ContainSingle(port => port.Id == SupportIds.CustomerReply);
+        inspection.Ports.Should().BeEmpty();
         inspection
             .OutputStepIds.Should()
-            .Equal(CloseTicketStage.StepId, EscalateTicketStage.StepId, "support-failed");
-        inspection.Routes.Should().HaveCount(8);
+            .Equal("support-close", "support-escalate", "support-failed");
+        inspection.Routes.Should().HaveCount(6);
         roundTrip.Should().BeEquivalentTo(input);
         fixture.Provider.GetRequiredService<SupportComposition>().Should().NotBeNull();
         await Task.CompletedTask;
@@ -204,7 +200,7 @@ public sealed class SupportCompositionTests
             return new Fixture(
                 home,
                 provider,
-                provider.GetRequiredService<SupportComposition>().Build(new PipelineBuildContext()),
+                provider.GetRequiredService<SupportComposition>().Build(),
                 lookup
             );
         }
@@ -318,7 +314,7 @@ public sealed class SupportDurableCompositionTests
         output.State.CustomerId.Should().Be(input.State.CustomerId);
         output.State.CustomerReply.Should().Be("Confirmed fixed.");
         output.State.FinalDisposition.Should().Be("closed");
-        output.LatestResult!.StepId.Should().Be(CloseTicketStage.StepId);
+        output.LatestResult!.StepId.Should().Be("support-close");
         output.LatestResult.CaseId.Should().Be("Success");
         completed!.RuntimeStatus.Should().Be(OrchestrationRuntimeStatus.Completed);
     }

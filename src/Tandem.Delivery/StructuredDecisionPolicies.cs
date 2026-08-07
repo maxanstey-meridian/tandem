@@ -103,6 +103,7 @@ public static class ReviewDecisionPolicy
             payload,
             state with
             {
+                ReviewerDecision = decision,
                 ReviewerHumanAnswer = null,
                 HumanAnswerSourceBlockId = null,
             }

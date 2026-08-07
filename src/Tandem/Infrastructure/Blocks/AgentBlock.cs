@@ -58,7 +58,9 @@ internal sealed class AgentBlock<TState>(
             runtime = await RecoverReceiptSessionAsync(runtime, invocationId, cts.Token);
             message = message with { Runtime = runtime };
             blockSw.Stop();
-            return ApplyAcceptedReceipt(message, existingReceipt, blockSw.Elapsed);
+            return FinalizeConversation(
+                ApplyAcceptedReceipt(message, existingReceipt, blockSw.Elapsed)
+            );
         }
 
         var isCheckpointOnly = ShouldRunCheckpointOnly(runtime);
@@ -88,7 +90,7 @@ internal sealed class AgentBlock<TState>(
                     config.LifecycleActionSetIdentity!
                 );
                 var actionNames = isCheckpointOnly
-                    ? new[] { config.Checkpoint!.ToolName }
+                    ? new[] { config.Checkpoint!.Capability.ToolName }
                     : config.LifecycleActionNames;
                 lifecycleTools = (await mcpClient.ListToolsAsync(actionNames, cts.Token)).ToArray();
             }
@@ -294,7 +296,7 @@ internal sealed class AgentBlock<TState>(
                 return outcome;
             }
             var timedOutcome = outcome.LatestOutcome with { Duration = blockSw.Elapsed };
-            return outcome with { LatestOutcome = timedOutcome };
+            return FinalizeConversation(outcome with { LatestOutcome = timedOutcome });
         }
         finally
         {
@@ -356,7 +358,7 @@ internal sealed class AgentBlock<TState>(
         {
             var isLifecycle =
                 config.LifecycleActionNames.Contains(ficContext.Function.Name)
-                || ficContext.Function.Name == config.Checkpoint?.ToolName;
+                || ficContext.Function.Name == config.Checkpoint?.Capability.ToolName;
 
             if (!isLifecycle && toolInterceptor is not null)
             {
@@ -528,7 +530,7 @@ internal sealed class AgentBlock<TState>(
                 new BlockOutcome(
                     "agent.failed",
                     config.BlockId,
-                    $"Checkpoint-only mode: model did not call {config.Checkpoint!.ToolName}.",
+                    $"Checkpoint-only mode: model did not call {config.Checkpoint!.Capability.ToolName}.",
                     EmptyPayload()
                 )
             );
@@ -719,7 +721,8 @@ internal sealed class AgentBlock<TState>(
     )
     {
         var isCheckpoint =
-            config.Checkpoint is { } checkpoint && receipt.Kind == checkpoint.OutcomeKind;
+            config.Checkpoint is { } checkpoint
+            && receipt.Kind == checkpoint.Capability.ReceiptKind;
         var updatedRuntime = isCheckpoint
             ? message.Runtime.WithoutSession(config.BlockId).WithoutUsage(config.BlockId)
             : message.Runtime;
@@ -728,7 +731,7 @@ internal sealed class AgentBlock<TState>(
             DeletePersistedSession(message.Runtime.RunId);
         }
         var updatedState = isCheckpoint
-            ? config.Checkpoint!.Transition(message.State, receipt.Kind, receipt.Payload)
+            ? config.Checkpoint!.Capability.Transition(message.State, receipt.Kind, receipt.Payload)
             : ApplyReceipt(message.State, receipt.Kind, receipt.Payload);
         var outcome = new BlockOutcome(
             receipt.Kind,
@@ -737,25 +740,34 @@ internal sealed class AgentBlock<TState>(
             receipt.Payload,
             duration
         );
-        if (config.TeardownPolicy is { } teardownPolicy)
-        {
-            var teardown = teardownPolicy(message with { Runtime = updatedRuntime }, outcome);
-            if (teardown.ReleaseSession)
-            {
-                updatedRuntime = updatedRuntime.WithoutSession(config.BlockId);
-                DeletePersistedSession(message.Runtime.RunId);
-            }
-            if (teardown.ReleaseUsage)
-            {
-                updatedRuntime = updatedRuntime.WithoutUsage(config.BlockId);
-            }
-        }
-
         return new PipelineMessage<TState>(
             updatedRuntime.IncrementInvocations(config.BlockId),
             updatedState,
             outcome
         );
+    }
+
+    private PipelineMessage<TState> FinalizeConversation(PipelineMessage<TState> message)
+    {
+        if (config.ConversationPolicy is null || message.LatestOutcome is null)
+        {
+            return message;
+        }
+        var decision = config.ConversationPolicy(message, message.LatestOutcome);
+        if (decision.Retention == AgentConversationRetention.Retain)
+        {
+            return message;
+        }
+
+        DeletePersistedSession(message.Runtime.RunId);
+        DeletePersistedProfile(message.Runtime.RunId);
+        return message with
+        {
+            Runtime = message
+                .Runtime.WithoutSession(config.BlockId)
+                .WithoutUsage(config.BlockId)
+                .WithoutProfile(config.BlockId),
+        };
     }
 
     private PipelineRuntime ApplyPreInvocationPolicies(PipelineMessage<TState> message)
@@ -930,6 +942,21 @@ internal sealed class AgentBlock<TState>(
         var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
         await File.WriteAllTextAsync(tempPath, JsonSerializer.Serialize(decision), ct);
         File.Move(tempPath, path, overwrite: true);
+    }
+
+    private void DeletePersistedProfile(Guid runId)
+    {
+        var path = Path.Combine(
+            tandemHome,
+            "runs",
+            runId.ToString("N"),
+            "profiles",
+            $"{config.BlockId}.json"
+        );
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
     }
 }
 

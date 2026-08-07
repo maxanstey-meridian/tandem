@@ -43,6 +43,7 @@ public sealed class RealModelLifecycleProofTests
                 $"config at {Path.Combine(tandemHome, "config.json")} must define all three profiles"
             );
         var chatClientFactory = new RealChatClientFactory(config);
+        var capabilities = TestDeliveryCapabilities.Create();
 
         var tandemExePath = ResolveTandemExePath();
         var composition = new DeliveryComposition(
@@ -52,16 +53,20 @@ public sealed class RealModelLifecycleProofTests
                 chatClientFactory.ResolveProfile,
                 new DeliveryDiffAcquisition(new GitProcess()),
                 new WorkspacePreparation(new GitProcess()),
-                new GitProcess()
+                new GitProcess(),
+                capabilities.AskPlanner,
+                capabilities.SubmitReport,
+                capabilities.WriteCheckpoint
             )
         );
         var reasoningUpdates = 0;
-        var pipeline = composition.Build(
-            new PipelineBuildContext(
-                (_, _, update) =>
-                    Interlocked.Add(ref reasoningUpdates, update is AgentUpdate.Reasoning ? 1 : 0)
-            )
+        var runtimeRunId = Guid.CreateVersion7();
+        using var agentUpdates = AgentUpdates.Observe(
+            runtimeRunId,
+            (_, _, update) =>
+                Interlocked.Add(ref reasoningUpdates, update is AgentUpdate.Reasoning ? 1 : 0)
         );
+        var pipeline = composition.Build(new PipelineBuildContext());
         var workflow = PipelineMafBridge.GetWorkflow(pipeline);
 
         var runId = "real-model-" + Guid.NewGuid().ToString("N");
@@ -119,7 +124,7 @@ public sealed class RealModelLifecycleProofTests
         );
 
         var initialMessage = new PipelineMessage<DeliveryState>(
-            PipelineRuntime.Create(Guid.CreateVersion7()),
+            PipelineRuntime.Create(runtimeRunId),
             DeliveryState.Create(packet, "", workspacePath)
         );
 

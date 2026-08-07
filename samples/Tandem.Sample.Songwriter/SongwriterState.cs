@@ -5,7 +5,8 @@ public sealed record SongwriterState(
     string? Lyrics = null,
     string? LintFeedback = null,
     string? ProofreaderFeedback = null,
-    int Revision = 0
+    int Revision = 0,
+    bool? ProofreaderAccepted = null
 );
 
 public sealed record SongDecision(string Lyrics);

@@ -76,9 +76,37 @@ public static class TandemRegistration
             var environment = sp.GetRequiredService<TandemEnvironment>();
             return new AgentRuntime(environment.Home, environment.ExecutablePath);
         });
-        services.TryAddSingleton(sp => new LifecycleActionSetRegistry(
-            sp.GetServices<LifecycleActionSetRegistration>().ToArray()
-        ));
+        services.TryAddSingleton(sp =>
+        {
+            var capabilities = services
+                .Select(descriptor => descriptor.ImplementationInstance)
+                .OfType<IAgentCapabilityRegistration>()
+                .ToArray();
+            var identityCollision = capabilities
+                .GroupBy(capability => capability.Registration.Identity, StringComparer.Ordinal)
+                .FirstOrDefault(group =>
+                    group.Select(capability => capability.OwnerIdentity).Distinct().Count() > 1
+                );
+            if (identityCollision is not null)
+            {
+                throw new InvalidOperationException(
+                    $"Lifecycle action set identity '{identityCollision.Key}' is shared by multiple state types."
+                );
+            }
+            var duplicate = capabilities
+                .GroupBy(capability => (capability.Registration.Identity, capability.ToolName))
+                .FirstOrDefault(group => group.Count() > 1);
+            if (duplicate is not null)
+            {
+                throw new InvalidOperationException(
+                    $"Capability '{duplicate.Key.ToolName}' is registered more than once for action set '{duplicate.Key.Identity}'."
+                );
+            }
+            return new LifecycleActionSetRegistry([
+                .. sp.GetServices<LifecycleActionSetRegistration>(),
+                .. capabilities.Select(capability => capability.Registration),
+            ]);
+        });
         services.AddSingleton<RunSetup>();
         services.AddSingleton<GitProcess>();
         return services;

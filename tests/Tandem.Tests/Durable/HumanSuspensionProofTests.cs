@@ -48,6 +48,7 @@ public sealed class HumanSuspensionProofTests
                 )
             );
 
+            var capabilities = TestDeliveryCapabilities.Create();
             var stepsFactory = new DeliveryStepsFactory(
                 new AgentRuntime(tandemHome, null),
                 _ => plannerClient,
@@ -63,38 +64,31 @@ public sealed class HumanSuspensionProofTests
                 ),
                 new DeliveryDiffAcquisition(new GitProcess()),
                 new WorkspacePreparation(new GitProcess()),
-                new GitProcess()
+                new GitProcess(),
+                capabilities.AskPlanner,
+                capabilities.SubmitReport,
+                capabilities.WriteCheckpoint
             );
 
             var delivery = stepsFactory.Create(new PipelineBuildContext());
             var pipeline = TandemWorkflow
                 .Start(at: delivery.Planner, name: "delivery-human-resume-proof")
                 .Route(
-                    on: delivery.Planner.Result.NeedsHuman,
-                    to: delivery.HumanQuestion,
+                    on: delivery.Planner.Success,
+                    when: state =>
+                        state.PlannerDecision?.Decision == PlannerDecisionValue.NeedsHuman,
+                    to: delivery.HumanInput,
                     label: "needs human"
                 )
-                .Route(on: delivery.Planner.Result.Stop, to: delivery.FailRun, label: "stop")
                 .Route(
-                    on: delivery.Planner.Result.Unexpected,
+                    on: delivery.Planner.Success,
+                    when: state => state.PlannerDecision?.Decision == PlannerDecisionValue.Stop,
                     to: delivery.FailRun,
-                    label: "unexpected outcome"
+                    label: "stop"
                 )
                 .Route(
-                    from: delivery.HumanQuestion,
-                    to: delivery.HumanInput,
-                    label: "request human input"
-                )
-                .Route(
+                    when: state => state.HumanAnswerSourceBlockId == BlockIds.Planner,
                     from: delivery.HumanInput,
-                    to: delivery.ApplyHumanAnswer,
-                    label: "answer received"
-                )
-                .RouteWithContext(
-                    when: message =>
-                        message.LatestOutcome?.Payload.GetProperty("sourceBlockId").GetString()
-                        == BlockIds.Planner,
-                    from: delivery.ApplyHumanAnswer,
                     to: delivery.Planner,
                     label: "answer for planner"
                 )

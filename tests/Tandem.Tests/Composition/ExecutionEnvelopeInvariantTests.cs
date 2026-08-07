@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Dunet;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows;
 using Tandem.Domain;
@@ -32,7 +31,7 @@ public sealed class ExecutionEnvelopeInvariantTests
     }
 
     [Fact]
-    public async Task CustomResultAdaptation_PreservesOperationEnvelopeUpdates()
+    public async Task OutcomeAdaptation_PreservesOperationEnvelopeUpdates()
     {
         var input = Message(4, "custom");
         var operationOutcome = Outcome("custom-operation");
@@ -52,8 +51,8 @@ public sealed class ExecutionEnvelopeInvariantTests
         output.State.Count.Should().Be(5);
         output.Runtime.Should().BeSameAs(operationMessage.Runtime);
         output.Runtime.InvocationCounts["custom-operation"].Should().Be(1);
-        output.LatestOutcome.Should().BeSameAs(operationOutcome);
-        output.LatestResult!.CaseId.Should().Be("Adapted");
+        output.LatestOutcome!.Kind.Should().Be(StandardOutcomeKinds.Success);
+        output.LatestResult!.CaseId.Should().Be("Success");
     }
 
     [Fact]
@@ -301,19 +300,14 @@ public sealed partial class EnvelopeStateStage(PipelineMessage<EnvelopeState> op
 [PipelineStage("envelope-custom")]
 public sealed partial class EnvelopeCustomStage(PipelineMessage<EnvelopeState> operationMessage)
 {
-    [Union(EnableImplicitConversions = false)]
-    public partial record EnvelopeCustomResult
-    {
-        public partial record Adapted(EnvelopeState State);
-    }
-
-    public ValueTask<EnvelopeCustomResult> ExecuteAsync(
-        EnvelopeState _,
-        CancellationToken cancellationToken
+    public ValueTask<Outcome<EnvelopeState>> ExecuteAsync(
+        EnvelopeState state,
+        CancellationToken _
     ) =>
-        PipelineOperation.RunAsync(
-            () => ValueTask.FromResult(operationMessage),
-            result => (EnvelopeCustomResult)new EnvelopeCustomResult.Adapted(result.State)
+        PipelineOperation.RunOutcomeAsync(
+            state,
+            pipeline => ValueTask.FromResult(operationMessage),
+            result => new Outcome<EnvelopeState>.Success(result.State)
         );
 }
 

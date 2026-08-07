@@ -1,4 +1,5 @@
 using Microsoft.Extensions.AI;
+using Tandem.Advanced;
 using Tandem.Domain;
 using Tandem.Git;
 
@@ -10,7 +11,10 @@ public sealed class DeliveryStepsFactory(
     Func<string, ResolvedProfile> profileResolver,
     DeliveryDiffAcquisition diffAcquisition,
     WorkspacePreparation workspacePreparation,
-    GitProcess git
+    GitProcess git,
+    AgentCapability<DeliveryState> askPlanner,
+    AgentCapability<DeliveryState> submitReport,
+    AgentCapability<DeliveryState> writeCheckpoint
 )
 {
     public DeliverySteps Create(PipelineBuildContext context)
@@ -19,73 +23,80 @@ public sealed class DeliveryStepsFactory(
             BlockIds.Executor,
             "implementation",
             DeliveryPrompts.ExecutorInstructions,
-            DeliveryPolicies.LifecycleToolsFor(BlockIds.Executor),
-            context,
             toolInterceptor: DeliveryPolicies.CreateMutationGate(),
             turnPolicy: DeliveryPolicies.CreateExecutorTurnPolicy(),
             sessionPolicy: ExecutorPolicies.ContinueWorkingSession,
-            teardownPolicy: ExecutorPolicies.ReleaseSessionAfterAcceptedReport
+            conversationPolicy: ExecutorPolicies.RetainUntilAcceptedReport
         );
         var planner = CreateAgent(
             BlockIds.Planner,
             "planning",
             DeliveryPrompts.PlannerInstructions,
-            DeliveryPolicies.LifecycleToolsFor(BlockIds.Planner),
-            context,
             PlannerDecisionPolicy.Parse,
             structuredOutputAcceptance: DeliveryPolicies.CreatePlannerGroundingPolicy(),
             structuredOutputCorrectionRequiredToolName: "file_access_read",
-            configureChatOptions: DeliveryPolicies.ConfigurePlannerChatOptions,
             sessionPolicy: PlannerPolicies.ContinueConsultation
         );
         var reviewer = CreateAgent(
             BlockIds.Reviewer,
             "review",
             DeliveryPrompts.ReviewerInstructions,
-            DeliveryPolicies.LifecycleToolsFor(BlockIds.Reviewer),
-            context,
             ReviewDecisionPolicy.Parse,
             messageAugmentation: DeliveryPolicies.CreateDiffAugmentation(diffAcquisition),
             structuredOutputAcceptance: DeliveryPolicies.CreateReviewerGroundingPolicy(),
             structuredOutputCorrectionRequiredToolName: "file_access_read",
-            configureChatOptions: DeliveryPolicies.ConfigureReviewerChatOptions,
             sessionPolicy: ReviewerPolicies.StartFreshForEachCandidate,
-            teardownPolicy: ReviewerPolicies.TeardownAfterDecision
+            conversationPolicy: ReviewerPolicies.DiscardAfterDecision
         );
+
+        var complete = new CompleteBlock();
+        var failed = new FailedBlock();
 
         return new DeliverySteps(
             new PrepareWorkspaceStage(new PrepareWorkspaceBlock(workspacePreparation)),
-            new ExecutorAgent(executor),
-            new PlannerAgent(planner),
+            executor,
+            planner,
             new CaptureCandidateStage(new CaptureCandidateBlock(git)),
             new VerificationStage(
                 new VerificationBlock(git, context.ExecutionObserver as ICommandOutputObserver)
             ),
-            new ReviewerAgent(reviewer),
-            new CompleteRunStage(new CompleteBlock()),
-            new FailRunStage(new FailedBlock()),
-            new HumanQuestionStage(context.ExecutionObserver),
-            new HumanInputPort(),
-            new ApplyHumanAnswerStage(context.ExecutionObserver)
+            reviewer,
+            PipelineNodes.Complete<DeliveryState>(
+                BlockIds.Complete,
+                complete.Execute,
+                OutcomeKinds.RunReady,
+                "Run ready",
+                context.ExecutionObserver
+            ),
+            PipelineNodes.Failed<DeliveryState>(
+                BlockIds.Failed,
+                failed.Execute,
+                OutcomeKinds.RunFailed,
+                failed.Summarize,
+                context.ExecutionObserver
+            ),
+            PipelineNodes.WaitFor<DeliveryState, HumanQuestion, HumanAnswer>(
+                "HumanInput",
+                HumanInteraction.BuildQuestion,
+                HumanInteraction.ApplyAnswer,
+                context.ExecutionObserver
+            )
         );
     }
 
-    private AgentOperation<DeliveryState> CreateAgent(
+    private AgentDefinition<DeliveryState> CreateAgent(
         string blockId,
         string profileName,
         string instructions,
-        IReadOnlyList<string> lifecycleTools,
-        PipelineBuildContext context,
         StructuredOutputParser<DeliveryState>? structuredOutput = null,
         ToolInterceptor<DeliveryState>? toolInterceptor = null,
         MessageAugmentation<DeliveryState>? messageAugmentation = null,
         AgentTurnPolicy<DeliveryState>? turnPolicy = null,
         StructuredOutputAcceptancePolicy<DeliveryState>? structuredOutputAcceptance = null,
         string? structuredOutputCorrectionRequiredToolName = null,
-        Action<ChatOptions>? configureChatOptions = null,
         AgentSessionPolicy<DeliveryState>? sessionPolicy = null,
         AgentProfilePolicy<DeliveryState>? profilePolicy = null,
-        AgentTeardownPolicy<DeliveryState>? teardownPolicy = null
+        AgentConversationPolicy<DeliveryState>? conversationPolicy = null
     )
     {
         var profile = profileResolver(profileName);
@@ -94,11 +105,9 @@ public sealed class DeliveryStepsFactory(
                 profile.ContextWindowTokens,
                 profile.MaxOutputTokens,
                 profile.CheckpointAtPercent,
-                "write_checkpoint",
-                OutcomeKinds.CheckpointWritten,
+                writeCheckpoint,
                 DeliveryPrompts.CheckpointOnlyInstructions,
-                DeliveryPrompts.BuildCheckpointUserMessage,
-                (state, _, payload) => state with { CheckpointPayload = payload }
+                DeliveryPrompts.BuildCheckpointUserMessage
             )
             : null;
 
@@ -122,6 +131,12 @@ public sealed class DeliveryStepsFactory(
                     )
             );
 
+        if (blockId == BlockIds.Executor)
+        {
+            builder.WithCapability(askPlanner);
+            builder.WithCapability(submitReport);
+        }
+
         if (blockId == BlockIds.Planner)
         {
             builder.WithMessageFromContext(DeliveryPrompts.BuildPlannerMessage);
@@ -137,12 +152,22 @@ public sealed class DeliveryStepsFactory(
 
         if (structuredOutput is not null)
         {
-            builder.WithStructuredOutput(
-                structuredOutput,
-                configureChatOptions,
-                structuredOutputAcceptance,
-                structuredOutputCorrectionRequiredToolName
-            );
+            if (blockId == BlockIds.Planner)
+            {
+                builder.WithOutput<DeliveryState, PlannerDecision>(
+                    structuredOutput,
+                    structuredOutputAcceptance,
+                    structuredOutputCorrectionRequiredToolName
+                );
+            }
+            else
+            {
+                builder.WithOutput<DeliveryState, ReviewDecision>(
+                    structuredOutput,
+                    structuredOutputAcceptance,
+                    structuredOutputCorrectionRequiredToolName
+                );
+            }
         }
         if (messageAugmentation is not null)
         {
@@ -156,31 +181,15 @@ public sealed class DeliveryStepsFactory(
         {
             builder.WithProfilePolicy(profilePolicy);
         }
-        if (teardownPolicy is not null)
+        if (conversationPolicy is not null)
         {
-            builder.WithTeardownPolicy(teardownPolicy);
-        }
-        if (lifecycleTools.Count > 0 || checkpoint is not null)
-        {
-            builder.WithLifecycleActions(
-                DeliveryLifecycleActions.Identity,
-                lifecycleTools,
-                blockId == BlockIds.Executor
-                    ? (state, kind, payload) =>
-                        kind == OutcomeKinds.ReportSubmitted
-                            ? state with
-                            {
-                                ImplementationReport = payload,
-                            }
-                            : state
-                    : null
-            );
+            builder.WithConversationPolicy(conversationPolicy);
         }
         if (checkpoint is not null)
         {
             builder.WithCheckpoint(checkpoint);
         }
 
-        return builder.Build(context);
+        return builder.Build();
     }
 }

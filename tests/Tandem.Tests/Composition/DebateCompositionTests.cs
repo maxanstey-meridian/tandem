@@ -6,7 +6,6 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.DurableTask.Client;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using ModelContextProtocol.Protocol;
 using Tandem.Actions;
 using Tandem.Domain;
 using Tandem.Sample.Debate;
@@ -43,27 +42,8 @@ public sealed class DebateCompositionTests
         output.Runtime.AgentSessions.Should().NotContainKey("judge");
         output.Runtime.AgentUsage.Should().ContainKeys("proposer", "critic");
         output.Runtime.AgentUsage.Should().NotContainKey("judge");
-        output.Runtime.AgentProfiles.Should().ContainKeys("proposer", "critic", "judge");
-    }
-
-    [Fact]
-    public async Task DebateAction_DetectsConflictingAcceptedVerdict()
-    {
-        using var fixture = await LifecycleFixture.CreateAsync();
-        var invocationId = $"{fixture.RunId:N}--{JudgeAgent.StepId}--1";
-        var action = new SubmitVerdictAction(
-            new LifecycleReceiptStore(fixture.TandemHome),
-            new LifecycleToolContext(fixture.RunId, JudgeAgent.StepId, invocationId)
-        );
-
-        var accepted = await action.SubmitAsync("Affirmed", "First", CancellationToken.None);
-        var conflict = await action.SubmitAsync("Rejected", "Second", CancellationToken.None);
-
-        accepted.IsError.Should().BeFalse();
-        conflict.IsError.Should().BeTrue();
-        ((TextContentBlock)conflict.Content.Single())
-            .Text.Should()
-            .Contain("conflicting lifecycle outcome");
+        output.Runtime.AgentProfiles.Should().ContainKeys("proposer", "critic");
+        output.Runtime.AgentProfiles.Should().NotContainKey("judge");
     }
 
     [Fact]
@@ -109,49 +89,49 @@ public sealed class DebateCompositionTests
 
         provider
             .GetRequiredService<DebateComposition>()
-            .Build(new PipelineBuildContext())
+            .Build()
             .Inspect()
             .Name.Should()
             .Be("debate");
         provider
             .GetRequiredService<LifecycleActionSetRegistry>()
-            .Register(DebateRegistration.LifecycleIdentity, new ServiceCollection())
+            .Register("debate", new ServiceCollection())
             .Should()
             .NotBeNull();
     }
 
     [Theory]
-    [InlineData("not json")]
-    [InlineData("{\"text\":\"   \"}")]
-    public void ProposalTransition_FailsClosedForInvalidModelOutput(string response)
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ProposalTransition_RejectsBlankText(string text)
     {
         var input = new PipelineMessage<DebateState>(
             PipelineRuntime.Create(Guid.CreateVersion7()),
             new DebateState("Question", [], 0, null)
         );
 
-        var result = DebatePolicies.ParseProposal(response, input.State);
+        var result = new ProposalDecisionValidator().Validate(new ProposalDecision(text));
 
-        result.Success.Should().BeFalse();
-        result.Outcome.Should().BeNull();
+        result.IsValid.Should().BeFalse();
         input.State.Round.Should().Be(0);
         input.State.Arguments.Should().BeEmpty();
     }
 
     [Theory]
-    [InlineData("{\"accepted\":true,\"critique\":null}")]
-    [InlineData("{\"accepted\":false,\"critique\":\" \"}")]
-    public void CritiqueTransition_FailsClosedForInvalidModelOutput(string response)
+    [InlineData("")]
+    [InlineData(" ")]
+    public void CritiqueTransition_RejectsBlankCritique(string critique)
     {
         var input = new PipelineMessage<DebateState>(
             PipelineRuntime.Create(Guid.CreateVersion7()),
             new DebateState("Question", [new DebateArgument("proposer", "Case")], 1, null)
         );
 
-        var result = DebatePolicies.ParseCritique(response, input.State);
+        var result = new CritiqueDecisionValidator().Validate(
+            new CritiqueDecision(false, critique)
+        );
 
-        result.Success.Should().BeFalse();
-        result.Outcome.Should().BeNull();
+        result.IsValid.Should().BeFalse();
         input.State.Arguments.Should().ContainSingle();
     }
 
@@ -161,7 +141,7 @@ public sealed class DebateCompositionTests
         services.AddSingleton(new TandemEnvironment(fixture.TandemHome, fixture.TandemExePath));
         services.AddTandem().AddDebate(Options(clients));
         using var provider = services.BuildServiceProvider();
-        return provider.GetRequiredService<DebateComposition>().Build(new PipelineBuildContext());
+        return provider.GetRequiredService<DebateComposition>().Build();
     }
 
     internal static PipelineMessage<DebateState> Input(LifecycleFixture fixture) =>
@@ -177,11 +157,12 @@ public sealed class DebateCompositionTests
         await new LifecycleReceiptStore(fixture.TandemHome).WriteAsync(
             fixture.RunId,
             input.Runtime.NextInvocationId("judge"),
-            JudgeAgent.StepId,
-            SubmitVerdictAction.OutcomeKind,
+            "judge",
+            "capability:Tandem.Sample.Debate.DebateState:submit_verdict",
             "Verdict submitted: Affirmed",
             JsonSerializer.SerializeToElement(
-                new { verdict = "Affirmed", reason = "Already accepted." }
+                new SubmitVerdict("Affirmed", "Already accepted."),
+                JsonSerializerOptions.Web
             ),
             CancellationToken.None
         );

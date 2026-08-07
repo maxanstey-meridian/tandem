@@ -7,100 +7,14 @@ namespace Tandem.Tests.Composition;
 
 public sealed class PipelineStepGeneratorTests
 {
-    [Fact]
-    public void Generator_ReadsAuthoredUnionWithoutDunetGeneratedOutput()
-    {
-        const string source = """
-            using System;
-            using System.Threading;
-            using System.Threading.Tasks;
-
-            namespace Tandem
-            {
-                [AttributeUsage(AttributeTargets.Class)]
-                public sealed class PipelineStageAttribute(string id) : Attribute;
-                public sealed record ResultCase<TState, TResult, TCase>;
-                public interface IGeneratedPipelineStep<TState, TResult>;
-                public readonly struct GeneratedStepCompletion;
-                public static class PipelineResultPayload;
-            }
-
-            namespace Tandem.Domain
-            {
-                public sealed record PipelineMessage<TState>(TState State);
-            }
-
-            namespace Dunet
-            {
-                [AttributeUsage(AttributeTargets.Class)]
-                public sealed class UnionAttribute : Attribute;
-            }
-
-            namespace Consumer
-            {
-                using Dunet;
-                using Tandem;
-                using Tandem.Domain;
-
-                public sealed record State(int Count);
-
-                [PipelineStage("verification")]
-                public sealed partial class VerificationStage
-                {
-                    [Union]
-                    public partial record VerificationResult
-                    {
-                        public partial record Passed(State State);
-                        public partial record Failed(State State);
-                    }
-
-                    public ValueTask<VerificationResult> ExecuteAsync(
-                        State state,
-                        CancellationToken cancellationToken
-                    ) => throw new NotImplementedException();
-                }
-            }
-            """;
-        var syntaxTree = CSharpSyntaxTree.ParseText(source);
-        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
-            .Split(Path.PathSeparator)
-            .Select(path => MetadataReference.CreateFromFile(path));
-        var compilation = CSharpCompilation.Create(
-            "GeneratorProof",
-            [syntaxTree],
-            references,
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
-        );
-        GeneratorDriver driver = CSharpGeneratorDriver.Create(
-            new PipelineStepGenerator().AsSourceGenerator()
-        );
-
-        driver = driver.RunGenerators(compilation);
-        var result = driver.GetRunResult();
-
-        result.Diagnostics.Should().BeEmpty();
-        var generated = result.Results.Single().GeneratedSources.Single().SourceText.ToString();
-        generated.Should().Contain("public string Id => \"verification\"");
-        generated.Should().Contain("Passed =>");
-        generated.Should().Contain("Failed =>");
-        generated.Should().Contain("State = value.State");
-        generated.Should().Contain("GeneratedCustomStepDescriptor");
-        generated.Should().NotContain("IGeneratedPipelineNode");
-        generated.Should().NotContain("Microsoft.Agents");
-    }
-
     [Theory]
     [InlineData("public sealed class VerificationStage", "TANDEM001")]
-    [InlineData("public sealed partial class VerificationStage", "TANDEM002")]
+    [InlineData("public sealed partial class VerificationStage", "TANDEM001")]
     public void Generator_ReportsStableDiagnosticsForInvalidAuthoredContracts(
         string declaration,
         string diagnosticId
     )
     {
-        var cases =
-            diagnosticId == "TANDEM002"
-                ? "public partial record Passed(State Value);"
-                : "public partial record Passed(State State);";
         var source = $$"""
             using System;
             using System.Threading;
@@ -126,7 +40,7 @@ public sealed class PipelineStepGeneratorTests
                 {{declaration}}
                 {
                     [Union]
-                    public partial record VerificationResult { {{cases}} }
+                    public partial record VerificationResult { public partial record Passed(State State); }
                     public ValueTask<VerificationResult> ExecuteAsync(
                         State state,
                         CancellationToken cancellationToken
@@ -206,26 +120,13 @@ public sealed class PipelineStepGeneratorTests
                 public sealed class PipelineStageAttribute(string id) : Attribute;
             }
             namespace Tandem.Domain { public sealed record PipelineMessage<TState>(TState State); }
-            namespace Dunet
-            {
-                [AttributeUsage(AttributeTargets.Class)]
-                public sealed class UnionAttribute : Attribute;
-            }
             namespace Consumer
             {
-                using Dunet;
                 public sealed record State;
-                public sealed record Outcome;
                 [Tandem.PipelineStage("mixed")]
                 public sealed partial class MixedStage
                 {
-                    [Union]
-                    public partial record MixedResult
-                    {
-                        public partial record WithOutcome(State State, Outcome Outcome);
-                        public partial record WithoutOutcome(State State);
-                    }
-                    public ValueTask<MixedResult> ExecuteAsync(
+                    public ValueTask<State> ExecuteAsync(
                         State state,
                         CancellationToken cancellationToken
                     ) => throw new NotImplementedException();
@@ -238,9 +139,8 @@ public sealed class PipelineStepGeneratorTests
             .GeneratedSources.Single()
             .SourceText.ToString();
 
-        generated.Should().NotContain("LatestOutcome = value.Outcome");
-        generated.Should().NotContain("LatestOutcome = null");
-        generated.Should().NotContain("Runtime = value.Runtime");
+        generated.Should().Contain("GeneratedStateStepDescriptor");
+        generated.Should().NotContain("GeneratedCustomStepDescriptor");
     }
 
     [Theory]
@@ -285,7 +185,10 @@ public sealed class PipelineStepGeneratorTests
         result.Diagnostics.Should().BeEmpty();
         var generated = result.Results.Single().GeneratedSources.Single().SourceText.ToString();
         generated.Should().Contain(descriptor);
-        generated.Contains("public ResultRoutes Result").Should().Be(hasResultSelectors);
+        generated
+            .Contains("public global::Tandem.PipelineOutcomeSelector")
+            .Should()
+            .Be(hasResultSelectors);
         if (hasResultSelectors)
         {
             generated.Should().Contain("Success =>");

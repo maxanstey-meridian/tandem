@@ -13,6 +13,9 @@ namespace Tandem.Tests.Infrastructure;
 
 public sealed class LifecycleMcpTests
 {
+    private static string CapabilityKind(string name) =>
+        $"capability:{typeof(DeliveryState).FullName}:{name}";
+
     private static AgentSessionDecision ContinueSession(DeliveryState _) =>
         new(AgentSessionAction.Continue, "Lifecycle fixture policy.");
 
@@ -219,7 +222,7 @@ public sealed class LifecycleMcpTests
 
         var output = await RunBlockAsync(block, ctx);
 
-        output.LatestOutcome!.Kind.Should().Be(OutcomeKinds.PlannerRequested);
+        output.LatestOutcome!.Kind.Should().Be(CapabilityKind("ask_planner"));
         toolResults.Should().Contain(result => result.Contains("invalid ask_planner call"));
         toolResults.Should().Contain(result => result.Contains("proposedApproach"));
         var lifecycleDirectory = Path.Combine(
@@ -320,9 +323,7 @@ public sealed class LifecycleMcpTests
         }
 
         output.Should().NotBeNull("the block must produce a pipeline message");
-        output!
-            .LatestOutcome!.Kind.Should()
-            .Be(OutcomeKinds.PlannerRequested, "ask_planner should produce planner.requested");
+        output!.LatestOutcome!.Kind.Should().Be(CapabilityKind("ask_planner"));
 
         var receiptPath = Path.Combine(
             fixture.TandemHome,
@@ -333,7 +334,7 @@ public sealed class LifecycleMcpTests
         );
         File.Exists(receiptPath).Should().BeTrue("the receipt must be persisted");
         var receipt = await File.ReadAllTextAsync(receiptPath);
-        receipt.Should().Contain(OutcomeKinds.PlannerRequested);
+        receipt.Should().Contain(CapabilityKind("ask_planner"));
         receipt.Should().Contain("Should I add a README?");
 
         File.Exists(Path.Combine(fixture.WorkspacePath, "should-not-exist.txt"))
@@ -503,8 +504,11 @@ public sealed class LifecycleMcpTests
                 LifecycleActionSetIdentity: "delivery",
                 SessionPolicy: ContinueSession,
                 ProfilePolicy: _ => new AgentProfileDecision("promoted", "Replay proof."),
-                TeardownPolicy: (_, _) =>
-                    new AgentTeardownDecision(true, true, "Accepted report closes session.")
+                ConversationPolicy: (_, _) =>
+                    new AgentConversationDecision(
+                        AgentConversationRetention.Discard,
+                        "Accepted report closes session."
+                    )
             ),
             new ScriptedChatClient(MakeTextResponse("must not execute")),
             fixture.TandemHome,
@@ -519,17 +523,18 @@ public sealed class LifecycleMcpTests
             .Should()
             .BeTrue();
         output.Runtime.InvocationCounts[BlockIds.Executor].Should().Be(1);
-        output.Runtime.AgentProfiles[BlockIds.Executor].ProfileName.Should().Be("promoted");
-        var persistedProfile = await File.ReadAllTextAsync(
-            Path.Combine(
-                fixture.TandemHome,
-                "runs",
-                fixture.RunId.ToString("N"),
-                "profiles",
-                $"{BlockIds.Executor}.json"
+        output.Runtime.AgentProfiles.Should().NotContainKey(BlockIds.Executor);
+        File.Exists(
+                Path.Combine(
+                    fixture.TandemHome,
+                    "runs",
+                    fixture.RunId.ToString("N"),
+                    "profiles",
+                    $"{BlockIds.Executor}.json"
+                )
             )
-        );
-        persistedProfile.Should().Contain("promoted");
+            .Should()
+            .BeFalse();
         output.Runtime.AgentSessions.Should().NotContainKey(BlockIds.Executor);
         output.Runtime.AgentUsage.Should().NotContainKey(BlockIds.Executor);
         File.Exists(sessionPath).Should().BeFalse();
@@ -693,19 +698,29 @@ public sealed class LifecycleMcpTests
                 }
             )
         );
+        var checkpoint = AgentCapabilities.Create<DeliveryState, WriteCheckpointRequest>(
+            "write_checkpoint",
+            "Write a checkpoint.",
+            new WriteCheckpointRequestValidator(),
+            request => $"Checkpoint written: {request.Summary}",
+            (state, request) =>
+                state with
+                {
+                    CheckpointPayload = System.Text.Json.JsonSerializer.SerializeToElement(
+                        request,
+                        System.Text.Json.JsonSerializerOptions.Web
+                    ),
+                }
+        );
         var payload = System.Text.Json.JsonSerializer.SerializeToElement(
-            new
-            {
-                summary = "saved",
-                completed = Array.Empty<string>(),
-                next = new[] { "finish" },
-            }
+            new WriteCheckpointRequest("saved", [], ["finish"]),
+            System.Text.Json.JsonSerializerOptions.Web
         );
         await new LifecycleReceiptStore(fixture.TandemHome).WriteAsync(
             fixture.RunId,
             invocationId,
             BlockIds.Executor,
-            OutcomeKinds.CheckpointWritten,
+            checkpoint.ReceiptKind,
             "Checkpoint written: saved",
             payload,
             CancellationToken.None
@@ -715,25 +730,20 @@ public sealed class LifecycleMcpTests
                 BlockIds.Executor,
                 "implementation",
                 "executor",
-                ["write_checkpoint"],
+                [checkpoint.ToolName],
                 _ => "message",
                 state => state.WorkspacePath,
                 _ => true,
-                LifecycleActionSetIdentity: "delivery",
+                ReceiptTransition: checkpoint.Transition,
+                LifecycleActionSetIdentity: checkpoint.Identity,
                 SessionPolicy: ContinueSession,
                 Checkpoint: new CheckpointPolicy<DeliveryState>(
                     100,
                     10,
                     80,
-                    "write_checkpoint",
-                    OutcomeKinds.CheckpointWritten,
+                    checkpoint,
                     "checkpoint",
-                    _ => "checkpoint",
-                    (state, _, acceptedPayload) =>
-                        state with
-                        {
-                            CheckpointPayload = acceptedPayload,
-                        }
+                    _ => "checkpoint"
                 )
             ),
             new ScriptedChatClient(MakeTextResponse("must not execute")),
@@ -815,7 +825,7 @@ public sealed class LifecycleMcpTests
         builder = builder.AddEdge<PipelineMessage<DeliveryState>>(
             executorBinding,
             captureBinding,
-            msg => msg!.LatestOutcome?.Kind == OutcomeKinds.ReportSubmitted
+            msg => msg!.LatestOutcome?.Kind == CapabilityKind("submit_report")
         );
         builder = builder.WithOutputFrom(captureBinding);
         var workflow = builder.Build();
@@ -1011,7 +1021,7 @@ public sealed class LifecycleMcpTests
 
         var output = await RunBlockAsync(block, ctx);
 
-        output.LatestOutcome!.Kind.Should().Be(OutcomeKinds.PlannerRequested);
+        output.LatestOutcome!.Kind.Should().Be(CapabilityKind("ask_planner"));
         continuationAttempts.Should().Equal(0);
     }
 
@@ -1101,7 +1111,7 @@ public sealed class LifecycleMcpTests
 
         var output = await RunBlockAsync(block, ctx);
 
-        output.LatestOutcome!.Kind.Should().Be(OutcomeKinds.PlannerRequested);
+        output.LatestOutcome!.Kind.Should().Be(CapabilityKind("ask_planner"));
         File.Exists(Path.Combine(fixture.WorkspacePath, "blocked.txt")).Should().BeFalse();
         toolResults.Should().Contain(warning);
     }

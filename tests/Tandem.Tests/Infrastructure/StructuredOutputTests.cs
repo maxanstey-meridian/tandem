@@ -284,17 +284,31 @@ public sealed class StructuredOutputTests
     {
         var context = CreateContext("/tmp") with
         {
+            State = CreateContext("/tmp").State with
+            {
+                ReviewerDecision = new ReviewDecision(
+                    ReviewDecisionValue.NeedsHuman,
+                    "Human decision required",
+                    [],
+                    [],
+                    "Keep public behavior?"
+                ),
+            },
             LatestOutcome = new BlockOutcome(
                 OutcomeKinds.ReviewNeedsHuman,
                 BlockIds.Reviewer,
-                "Human decision required"
+                "Human decision required",
+                JsonSerializer.SerializeToElement(new { })
             ),
         };
 
-        var resumed = ApplyHumanAnswerBlock.Apply(
-            context,
-            new HumanAnswer("Keep public behavior.")
-        );
+        var resumed = context with
+        {
+            State = HumanInteraction.ApplyAnswer(
+                context.State,
+                new HumanAnswer("Keep public behavior.")
+            ),
+        };
 
         var persisted = JsonSerializer.Serialize(resumed);
         resumed = JsonSerializer.Deserialize<PipelineMessage<DeliveryState>>(persisted)!;

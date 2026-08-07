@@ -99,6 +99,14 @@ public sealed record PipelineRuntime(
                 [blockId] = decision,
             },
         };
+
+    public PipelineRuntime WithoutProfile(string blockId) =>
+        this with
+        {
+            AgentProfiles = AgentProfiles
+                .Where(kvp => kvp.Key != blockId)
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
+        };
 }
 
 public sealed record BlockOutcome(

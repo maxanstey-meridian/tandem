@@ -25,7 +25,5 @@ public interface IAccountLookup
 
 public static class SupportIds
 {
-    public const string AskCustomer = "support-ask-customer";
     public const string CustomerReply = "CustomerReply";
-    public const string ApplyReply = "support-apply-reply";
 }

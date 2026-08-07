@@ -20,7 +20,7 @@ internal sealed record AgentBlockConfig<TState>(
     string? LifecycleActionSetIdentity = null,
     AgentSessionPolicy<TState>? SessionPolicy = null,
     AgentProfilePolicy<TState>? ProfilePolicy = null,
-    AgentTeardownPolicy<TState>? TeardownPolicy = null,
+    AgentConversationPolicy<TState>? ConversationPolicy = null,
     AdvancedAgentMessage<TState>? ContextUserMessage = null
 );
 
@@ -35,10 +35,13 @@ public sealed record AgentSessionDecision(AgentSessionAction Action, string Reas
 
 public sealed record AgentProfileDecision(string ProfileName, string Reason);
 
-public sealed record AgentTeardownDecision(bool ReleaseSession, bool ReleaseUsage, string Reason)
+public enum AgentConversationRetention
 {
-    public static AgentTeardownDecision None(string reason) => new(false, false, reason);
+    Retain,
+    Discard,
 }
+
+public sealed record AgentConversationDecision(AgentConversationRetention Retention, string Reason);
 
 public delegate AgentSessionDecision AgentSessionPolicy<TState>(TState state);
 
@@ -46,7 +49,7 @@ public delegate AgentProfileDecision AgentProfilePolicy<TState>(TState state);
 
 public delegate string AdvancedAgentMessage<TState>(PipelineMessage<TState> message);
 
-public delegate AgentTeardownDecision AgentTeardownPolicy<TState>(
+public delegate AgentConversationDecision AgentConversationPolicy<TState>(
     PipelineMessage<TState> message,
     BlockOutcome outcome
 );
@@ -102,11 +105,9 @@ public sealed record CheckpointPolicy<TState>(
     int ContextWindowTokens,
     int MaxOutputTokens,
     int CheckpointAtPercent,
-    string ToolName,
-    string OutcomeKind,
+    AgentCapability<TState> Capability,
     string Instructions,
-    Func<PipelineMessage<TState>, string> UserMessage,
-    ReceiptStateTransition<TState> Transition
+    Func<PipelineMessage<TState>, string> UserMessage
 )
 {
     public int CheckpointAtTokens =>

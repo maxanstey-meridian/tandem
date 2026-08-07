@@ -4,7 +4,8 @@ public sealed record DebateState(
     string Question,
     IReadOnlyList<DebateArgument> Arguments,
     int Round,
-    DebateVerdict? Verdict
+    DebateVerdict? Verdict,
+    bool? CritiqueAccepted = null
 );
 
 public sealed record DebateArgument(string Speaker, string Text);

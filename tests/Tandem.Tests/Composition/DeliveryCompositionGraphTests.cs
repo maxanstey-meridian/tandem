@@ -33,7 +33,7 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
         Directory.CreateDirectory(_tandemHome);
 
         var composition = new DeliveryComposition(
-            new DeliveryStepsFactory(
+            CreateFactory(
                 new AgentRuntime(_tandemHome, null),
                 _ => new FakeChatClient(),
                 _ => MakeProfile(),
@@ -67,10 +67,28 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
     }
 
     [Fact]
+    public void DeliverySteps_ExposeStateSafeTerminalNodes()
+    {
+        typeof(DeliverySteps)
+            .GetProperty(nameof(DeliverySteps.CompleteRun))!
+            .PropertyType.Should()
+            .Be(typeof(IPipelineNode<DeliveryState>));
+        typeof(DeliverySteps)
+            .GetProperty(nameof(DeliverySteps.FailRun))!
+            .PropertyType.Should()
+            .Be(typeof(IPipelineNode<DeliveryState>));
+        typeof(DeliverySteps)
+            .Assembly.GetType("Tandem.Delivery.CompleteRunStage")
+            .Should()
+            .BeNull();
+        typeof(DeliverySteps).Assembly.GetType("Tandem.Delivery.FailRunStage").Should().BeNull();
+    }
+
+    [Fact]
     public void PublicInspection_ReflectsTheExecutableWorkflowSemantics()
     {
         var inspection = new DeliveryComposition(
-            new DeliveryStepsFactory(
+            CreateFactory(
                 new AgentRuntime(_tandemHome, null),
                 _ => new FakeChatClient(),
                 _ => MakeProfile(),
@@ -85,30 +103,20 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
         inspection.Name.Should().Be("delivery");
         inspection.StartStepId.Should().Be(BlockIds.Prepare);
         inspection.OutputStepIds.Should().Equal(BlockIds.Complete, BlockIds.Failed);
-        inspection.StepIds.Should().HaveCount(11);
-        inspection.Routes.Should().HaveCount(29);
+        inspection.StepIds.Should().HaveCount(9);
+        inspection.Routes.Should().HaveCount(22);
         inspection
             .Routes.Should()
             .Contain(route =>
-                route.SourceId == BlockIds.HumanQuestion
+                route.SourceId == BlockIds.Planner
                 && route.TargetId == HumanInputPortId
-                && !route.Conditional
+                && route.Conditional
             );
         inspection
             .Routes.SelectMany(route => new[] { route.SourceId, route.TargetId })
             .Should()
             .BeSubsetOf(inspection.StepIds);
-        inspection
-            .Ports.Should()
-            .ContainSingle()
-            .Which.Should()
-            .Be(
-                new PipelinePortInspection(
-                    HumanInputPortId,
-                    "Tandem.Domain.HumanQuestion",
-                    "Tandem.Domain.HumanAnswer"
-                )
-            );
+        inspection.Ports.Should().BeEmpty();
         inspection.Mermaid.Should().StartWith("flowchart").And.Contain("workspace prepared");
         inspection.Dot.Should().StartWith("digraph");
     }
@@ -128,7 +136,7 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
         var expectedLabels = new[]
         {
             "workspace prepared",
-            "unexpected outcome",
+            "workspace failed",
             "planner requested",
             "report submitted",
             "checkpoint written",
@@ -140,10 +148,11 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
             "commands remain",
             "verification complete",
             "command failed",
+            "capture failed",
+            "verification failed",
+            "agent failed",
             "accepted",
             "changes requested",
-            "request human input",
-            "answer received",
             "answer for planner",
             "answer for reviewer",
             "unknown answer source",
@@ -223,7 +232,7 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
 
         got.Count.Should()
             .Be(
-                29,
+                26,
                 "total edge count is a durable-sensitive invariant; a future cleanup must not silently reshape it"
             );
     }
@@ -241,11 +250,11 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
                 new Dictionary<string, int>
                 {
                     [BlockIds.Prepare] = 2,
-                    [BlockIds.Executor] = 5,
-                    [BlockIds.Planner] = 5,
+                    [BlockIds.Executor] = 4,
+                    [BlockIds.Planner] = 4,
                     [BlockIds.CaptureCandidate] = 3,
                     [BlockIds.Verify] = 4,
-                    [BlockIds.Reviewer] = 5,
+                    [BlockIds.Reviewer] = 4,
                     [BlockIds.HumanQuestion] = 1,
                     [HumanInputPortId] = 1,
                     [BlockIds.ApplyHumanAnswer] = 3,
@@ -468,12 +477,10 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
             new(BlockIds.Executor, BlockIds.CaptureCandidate, true),
             new(BlockIds.Executor, BlockIds.Executor, true),
             new(BlockIds.Executor, BlockIds.Failed, true),
-            new(BlockIds.Executor, BlockIds.Failed, true),
             // Planner success outcomes (Proceed | ProceedWithConstraints) share one physical edge.
             new(BlockIds.Planner, BlockIds.Executor, true),
             new(BlockIds.Planner, BlockIds.HumanQuestion, true),
-            // PlannerStop + catch-all are deliberately two distinct edges; both target failed.
-            new(BlockIds.Planner, BlockIds.Failed, true),
+            // Planner stop and canonical failure are distinct edges; both target failed.
             new(BlockIds.Planner, BlockIds.Failed, true),
             new(BlockIds.Planner, BlockIds.Failed, true),
             // capture
@@ -489,7 +496,6 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
             new(BlockIds.Reviewer, BlockIds.Complete, true),
             new(BlockIds.Reviewer, BlockIds.Executor, true),
             new(BlockIds.Reviewer, BlockIds.HumanQuestion, true),
-            new(BlockIds.Reviewer, BlockIds.Failed, true),
             new(BlockIds.Reviewer, BlockIds.Failed, true),
             // human suspension: question -> request port -> apply answer
             new(BlockIds.HumanQuestion, HumanInputPortId, false),
@@ -511,6 +517,29 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
             MaxOutputTokens: 32000,
             CheckpointAtPercent: 80
         );
+
+    private static DeliveryStepsFactory CreateFactory(
+        AgentRuntime runtime,
+        Func<string, IChatClient> clients,
+        Func<string, ResolvedProfile> profiles,
+        DeliveryDiffAcquisition diff,
+        WorkspacePreparation workspace,
+        GitProcess git
+    )
+    {
+        var capabilities = TestDeliveryCapabilities.Create();
+        return new DeliveryStepsFactory(
+            runtime,
+            clients,
+            profiles,
+            diff,
+            workspace,
+            git,
+            capabilities.AskPlanner,
+            capabilities.SubmitReport,
+            capabilities.WriteCheckpoint
+        );
+    }
 
     private sealed class FakeChatClient : IChatClient
     {

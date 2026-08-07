@@ -12,17 +12,6 @@ public sealed class DeliveryPolicyRegressionTests
 
         DeliveryPolicies.AllowsWorkspaceMutation(BlockIds.Planner, state).Should().BeFalse();
         DeliveryPolicies.AllowsWorkspaceMutation(BlockIds.Reviewer, state).Should().BeFalse();
-        DeliveryPolicies.LifecycleToolsFor(BlockIds.Planner).Should().BeEmpty();
-        DeliveryPolicies.LifecycleToolsFor(BlockIds.Reviewer).Should().BeEmpty();
-    }
-
-    [Fact]
-    public void Executor_ExposesItsCompleteLifecycleMutationSurface()
-    {
-        DeliveryPolicies
-            .LifecycleToolsFor(BlockIds.Executor)
-            .Should()
-            .Equal("ask_planner", "submit_report");
     }
 
     [Fact]

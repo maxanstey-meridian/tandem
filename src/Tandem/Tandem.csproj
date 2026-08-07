@@ -12,7 +12,6 @@
 
     <ItemGroup>
         <PackageReference Include="FluentValidation" Version="12.1.1" />
-        <PackageReference Include="Dunet" Version="1.16.2" />
         <PackageReference
             Include="Microsoft.Agents.AI.DurableTask"
             Version="1.16.0-preview.260730.1"

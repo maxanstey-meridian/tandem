@@ -1,37 +1,29 @@
+using System.ComponentModel;
+using System.Text.Json;
+using FluentValidation;
 using Microsoft.Extensions.AI;
 using Tandem.Domain;
 using Tandem.Infrastructure.Blocks;
 
 namespace Tandem;
 
-public sealed class AgentOperation<TState>
+internal sealed class AgentOperation<TState>
 {
     private const string AgentFailedOutcome = "agent.failed";
-    private readonly AgentBlock<TState> _runtime;
+    private readonly Func<
+        PipelineMessage<TState>,
+        CancellationToken,
+        ValueTask<PipelineMessage<TState>>
+    > _execute;
 
     internal AgentOperation(AgentBlock<TState> runtime)
-    {
-        _runtime = runtime;
-    }
+        : this(runtime.ExecuteAsync) { }
 
-    public async ValueTask<TResult> RunAsync<TResult>(
-        TState state,
-        Func<OperationResult<TState>, TResult> map,
-        Func<FailureEvidence, TResult> mapFailure,
-        CancellationToken cancellationToken
+    internal AgentOperation(
+        Func<PipelineMessage<TState>, CancellationToken, ValueTask<PipelineMessage<TState>>> execute
     )
     {
-        using var operation = PipelineExecutionEnvelope.BeginOperation<TState>();
-        var pipeline = PipelineExecutionEnvelope.Get(state);
-        var result = await _runtime.ExecuteAsync(pipeline, cancellationToken);
-        if (result.LatestOutcome?.Kind == AgentFailedOutcome)
-        {
-            result = result with { Disposition = PipelineRunDisposition.Failed };
-            PipelineExecutionEnvelope.Set(result);
-            return mapFailure(ToFailure(result.LatestOutcome));
-        }
-        PipelineExecutionEnvelope.Set(result);
-        return map(OperationResult<TState>.From(result));
+        _execute = execute;
     }
 
     public async ValueTask<Outcome<TState>> RunAsync(
@@ -41,7 +33,7 @@ public sealed class AgentOperation<TState>
     {
         using var operation = PipelineExecutionEnvelope.BeginOperation<TState>();
         var pipeline = PipelineExecutionEnvelope.Get(state);
-        var result = await _runtime.ExecuteAsync(pipeline, cancellationToken);
+        var result = await _execute(pipeline, cancellationToken);
         PipelineExecutionEnvelope.Set(result);
         return result.LatestOutcome?.Kind is StandardOutcomeKinds.Failed or AgentFailedOutcome
             ? new Outcome<TState>.Failed(result.State, ToFailure(result.LatestOutcome))
@@ -58,38 +50,22 @@ public sealed class AgentOperation<TState>
         );
 }
 
-public sealed record OperationResult<TState>(TState State, OperationOutcome Outcome)
+public sealed class AgentDefinition<TState> : IStandardOutcomePipelineStep<TState>
 {
-    internal static OperationResult<TState> From(PipelineMessage<TState> message)
-    {
-        var outcome =
-            message.LatestOutcome
-            ?? throw new InvalidOperationException("Agent execution produced no outcome.");
-        return new OperationResult<TState>(
-            message.State,
-            new OperationOutcome(outcome.Kind, outcome.Summary, outcome.Payload)
-        );
-    }
-}
+    private readonly GeneratedOutcomeStepDescriptor<TState> _descriptor;
 
-public sealed record OperationOutcome(
-    string Kind,
-    string Summary,
-    System.Text.Json.JsonElement Payload
-);
-
-public static class PipelineOperation
-{
-    public static async ValueTask<TResult> RunAsync<TState, TResult>(
-        Func<ValueTask<PipelineMessage<TState>>> execute,
-        Func<OperationResult<TState>, TResult> map
-    )
+    internal AgentDefinition(string id, AgentOperation<TState> operation)
     {
-        using var operation = PipelineExecutionEnvelope.BeginOperation<TState>();
-        var result = await execute();
-        PipelineExecutionEnvelope.Set(result);
-        return map(OperationResult<TState>.From(result));
+        Id = id;
+        _descriptor = new GeneratedOutcomeStepDescriptor<TState>(id, operation.RunAsync);
     }
+
+    public string Id { get; }
+
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public PipelineNodeDescriptor Descriptor => _descriptor;
+    public PipelineOutcomeSelector<TState> Success => new(this, failed: false);
+    public PipelineOutcomeSelector<TState> Failed => new(this, failed: true);
 }
 
 public sealed class AgentRuntime
@@ -136,7 +112,7 @@ public sealed class AgentBuilder<TState>
     private IReadOnlyList<string> _lifecycleActionNames = [];
     private AgentSessionPolicy<TState>? _sessionPolicy;
     private AgentProfilePolicy<TState>? _profilePolicy;
-    private AgentTeardownPolicy<TState>? _teardownPolicy;
+    private AgentConversationPolicy<TState>? _conversationPolicy;
     private ToolInterceptor<TState>? _toolInterceptor;
     private Action<ChatOptions>? _configureChatOptions;
 
@@ -168,7 +144,7 @@ public sealed class AgentBuilder<TState>
         return this;
     }
 
-    public AgentBuilder<TState> WithMessageFromContext(AdvancedAgentMessage<TState> message)
+    internal AgentBuilder<TState> ConfigureMessageFromContext(AdvancedAgentMessage<TState> message)
     {
         _contextMessage = message;
         return this;
@@ -180,7 +156,7 @@ public sealed class AgentBuilder<TState>
         return this;
     }
 
-    public AgentBuilder<TState> WithWorkspace(
+    internal AgentBuilder<TState> ConfigureWorkspace(
         Func<TState, string> path,
         Func<TState, bool> allowMutation,
         ToolInterceptor<TState>? toolInterceptor = null
@@ -192,7 +168,7 @@ public sealed class AgentBuilder<TState>
         return this;
     }
 
-    public AgentBuilder<TState> WithStructuredOutput(
+    internal AgentBuilder<TState> ConfigureStructuredOutput(
         StructuredOutputParser<TState> parser,
         Action<ChatOptions>? configureChatOptions = null,
         StructuredOutputAcceptancePolicy<TState>? acceptancePolicy = null,
@@ -206,38 +182,102 @@ public sealed class AgentBuilder<TState>
         return this;
     }
 
-    public AgentBuilder<TState> WithLifecycleActions(
-        string actionSetIdentity,
-        IReadOnlyList<string> actionNames,
-        ReceiptStateTransition<TState>? receiptTransition = null
+    public AgentBuilder<TState> WithOutput<TOutput>(
+        IValidator<TOutput> validator,
+        Func<TState, TOutput, TState> apply
     )
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(actionSetIdentity);
-        _lifecycleActionSetIdentity = actionSetIdentity;
-        _lifecycleActionNames = actionNames;
-        _receiptTransition = receiptTransition;
+        _structuredOutput = (response, state) =>
+            StructuredOutputPolicy.Parse(
+                response,
+                state,
+                JsonSerializerOptions.Web,
+                validator,
+                (output, current) =>
+                {
+                    return new StructuredOutcome<TState>(
+                        StandardOutcomeKinds.Success,
+                        "Succeeded",
+                        JsonSerializer.SerializeToElement(output, JsonSerializerOptions.Web),
+                        apply(current, output)
+                    );
+                }
+            );
+        _configureChatOptions = options =>
+            options.ResponseFormat = ChatResponseFormat.ForJsonSchema<TOutput>();
         return this;
     }
 
-    public AgentBuilder<TState> WithCheckpoint(CheckpointPolicy<TState> policy)
+    internal AgentBuilder<TState> ConfigureOutput<TOutput>(
+        StructuredOutputParser<TState> parser,
+        StructuredOutputAcceptancePolicy<TState>? acceptancePolicy = null,
+        string? correctionRequiredToolName = null
+    )
+    {
+        _structuredOutput = parser;
+        _structuredOutputAcceptance = acceptancePolicy;
+        _structuredOutputCorrectionRequiredToolName = correctionRequiredToolName;
+        _configureChatOptions = options =>
+            options.ResponseFormat = ChatResponseFormat.ForJsonSchema<TOutput>();
+        return this;
+    }
+
+    private void AddCapability(AgentCapability<TState> capability)
+    {
+        if (
+            _lifecycleActionSetIdentity is not null
+            && !string.Equals(
+                _lifecycleActionSetIdentity,
+                capability.Identity,
+                StringComparison.Ordinal
+            )
+        )
+        {
+            throw new InvalidOperationException(
+                "All capabilities on an agent must share one identity."
+            );
+        }
+        if (_lifecycleActionNames.Contains(capability.ToolName, StringComparer.Ordinal))
+        {
+            return;
+        }
+        _lifecycleActionSetIdentity = capability.Identity;
+        _lifecycleActionNames = [.. _lifecycleActionNames, capability.ToolName];
+        var current = _receiptTransition;
+        _receiptTransition = current is null
+            ? capability.Transition
+            : (state, kind, payload) =>
+                capability.Transition(current(state, kind, payload), kind, payload);
+    }
+
+    internal AgentBuilder<TState> ConfigureCapability(AgentCapability<TState> capability)
+    {
+        AddCapability(capability);
+        return this;
+    }
+
+    internal AgentBuilder<TState> ConfigureCheckpoint(CheckpointPolicy<TState> policy)
     {
         _checkpoint = policy;
+        AddCapability(policy.Capability);
         return this;
     }
 
-    public AgentBuilder<TState> WithMessageAugmentation(MessageAugmentation<TState> augmentation)
+    internal AgentBuilder<TState> ConfigureMessageAugmentation(
+        MessageAugmentation<TState> augmentation
+    )
     {
         _messageAugmentation = augmentation;
         return this;
     }
 
-    public AgentBuilder<TState> WithContinuationPolicy(AgentTurnPolicy<TState> policy)
+    internal AgentBuilder<TState> ConfigureContinuationPolicy(AgentTurnPolicy<TState> policy)
     {
         _turnPolicy = policy;
         return this;
     }
 
-    public AgentBuilder<TState> WithProfilePolicy(AgentProfilePolicy<TState> policy)
+    internal AgentBuilder<TState> ConfigureProfilePolicy(AgentProfilePolicy<TState> policy)
     {
         if (_chatClientFactory is null)
         {
@@ -250,13 +290,15 @@ public sealed class AgentBuilder<TState>
         return this;
     }
 
-    public AgentBuilder<TState> WithTeardownPolicy(AgentTeardownPolicy<TState> policy)
+    internal AgentBuilder<TState> ConfigureConversationPolicy(
+        AgentConversationPolicy<TState> policy
+    )
     {
-        _teardownPolicy = policy;
+        _conversationPolicy = policy;
         return this;
     }
 
-    public AgentOperation<TState> Build(PipelineBuildContext? context = null)
+    public AgentDefinition<TState> Build()
     {
         if (_message is null && _contextMessage is null)
         {
@@ -291,20 +333,23 @@ public sealed class AgentBuilder<TState>
             _lifecycleActionSetIdentity,
             _sessionPolicy,
             _profilePolicy,
-            _teardownPolicy,
+            _conversationPolicy,
             _contextMessage
         );
 
-        return new AgentOperation<TState>(
-            new AgentBlock<TState>(
-                config,
-                _chatClient,
-                _home,
-                _executablePath,
-                context?.AgentUpdate,
-                _toolInterceptor,
-                _configureChatOptions,
-                _chatClientFactory
+        return new AgentDefinition<TState>(
+            _id,
+            new AgentOperation<TState>(
+                new AgentBlock<TState>(
+                    config,
+                    _chatClient,
+                    _home,
+                    _executablePath,
+                    AgentUpdates.Publish,
+                    _toolInterceptor,
+                    _configureChatOptions,
+                    _chatClientFactory
+                )
             )
         );
     }

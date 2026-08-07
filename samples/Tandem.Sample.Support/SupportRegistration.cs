@@ -13,7 +13,13 @@ public static class SupportRegistration
     )
     {
         services.AddSingleton(options);
-        services.AddSingleton<SupportStepsFactory>();
+        services.AddSingleton(sp =>
+            SupportDefinitions.Create(
+                sp.GetRequiredService<AgentRuntime>(),
+                sp.GetRequiredService<SupportOptions>(),
+                sp.GetRequiredService<IAccountLookup>()
+            )
+        );
         services.AddSingleton<SupportComposition>();
         return services;
     }

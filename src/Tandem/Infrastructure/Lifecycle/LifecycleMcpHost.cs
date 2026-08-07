@@ -42,7 +42,10 @@ public sealed record LifecycleActionSetRegistration(
 
 public sealed class LifecycleActionSetRegistry
 {
-    private readonly IReadOnlyDictionary<string, LifecycleActionSetRegistration> _registrations;
+    private readonly IReadOnlyDictionary<
+        string,
+        IReadOnlyList<LifecycleActionSetRegistration>
+    > _registrations;
 
     public LifecycleActionSetRegistry(params LifecycleActionSetRegistration[] registrations)
     {
@@ -54,22 +57,30 @@ public sealed class LifecycleActionSetRegistry
                 nameof(registrations)
             );
         }
-        _registrations = registrations.ToDictionary(
-            registration => registration.Identity,
-            StringComparer.Ordinal
-        );
+        _registrations = registrations
+            .GroupBy(registration => registration.Identity, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<LifecycleActionSetRegistration>)group.ToArray(),
+                StringComparer.Ordinal
+            );
     }
 
     public IMcpServerBuilder Register(string identity, IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
-        if (!_registrations.TryGetValue(identity, out var registration))
+        if (!_registrations.TryGetValue(identity, out var registrations))
         {
             throw new InvalidOperationException(
                 $"Lifecycle action set '{identity}' is not registered."
             );
         }
 
-        return registration.Register(services);
+        IMcpServerBuilder? builder = null;
+        foreach (var registration in registrations)
+        {
+            builder = registration.Register(services);
+        }
+        return builder!;
     }
 }

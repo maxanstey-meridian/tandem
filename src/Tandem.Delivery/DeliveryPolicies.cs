@@ -1,16 +1,9 @@
-using Microsoft.Extensions.AI;
 using Tandem.Domain;
 
 namespace Tandem.Delivery;
 
 public static class DeliveryPolicies
 {
-    public static void ConfigurePlannerChatOptions(ChatOptions options) =>
-        options.ResponseFormat = ChatResponseFormat.ForJsonSchema<PlannerDecision>();
-
-    public static void ConfigureReviewerChatOptions(ChatOptions options) =>
-        options.ResponseFormat = ChatResponseFormat.ForJsonSchema<ReviewDecision>();
-
     public static StructuredOutputAcceptancePolicy<DeliveryState> CreatePlannerGroundingPolicy() =>
         StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(
             result =>
@@ -72,9 +65,6 @@ public static class DeliveryPolicies
         || name.StartsWith("file_access_delete", StringComparison.Ordinal)
         || name.StartsWith("file_access_move", StringComparison.Ordinal)
         || name.StartsWith("file_access_create", StringComparison.Ordinal);
-
-    public static IReadOnlyList<string> LifecycleToolsFor(string blockId) =>
-        blockId == BlockIds.Executor ? ["ask_planner", "submit_report"] : [];
 
     public static bool OwnsCheckpointPolicy(string blockId) => blockId == BlockIds.Executor;
 

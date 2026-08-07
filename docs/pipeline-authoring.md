@@ -19,13 +19,12 @@ Use the compiled examples in this order:
 
 ## Author Journey
 
-1. Reference `Tandem` and add `Tandem.Generators` as an analyzer. Reference
-   `Dunet` only when a step needs custom branch results.
+1. Reference `Tandem` and add `Tandem.Generators` as an analyzer.
 2. Define one immutable, serializable `<Name>State` containing durable facts,
    never services, framework contexts, or a mutable state bag.
 3. Implement each generated step as a partial class marked with
    `[PipelineStage("stable-id")]`.
-4. Give `ExecuteAsync` a `TState` and `CancellationToken`; select one of the four
+4. Give `ExecuteAsync` a `TState` and `CancellationToken`; select one of the three
    inferred return forms below.
 5. Configure agents per pipeline build with state-first prompts, parsers, and
    ordinary policies.
@@ -45,18 +44,11 @@ The generator recognizes exactly these ordinary signatures.
 ValueTask ExecuteAsync(TState state, CancellationToken cancellationToken)
 ```
 
-Completion preserves state and produces standard success. The generated step has
-no `.Result` selectors. Songwriter's compiled terminal is:
+Completion preserves state and produces standard success. Empty terminal classes
+are replaced by an SDK node:
 
 ```csharp
-[PipelineStage(CompleteSongStage.StepId)]
-public sealed partial class CompleteSongStage
-{
-    public const string StepId = "complete";
-
-    public ValueTask ExecuteAsync(SongwriterState _, CancellationToken cancellationToken) =>
-        ValueTask.CompletedTask;
-}
+var complete = PipelineNodes.Complete<SongwriterState>("complete");
 ```
 
 ### State-Updating
@@ -66,7 +58,7 @@ ValueTask<TState> ExecuteAsync(TState state, CancellationToken cancellationToken
 ```
 
 Completion replaces only durable state with the returned value and produces
-standard success. The generated step has no `.Result` selectors. Support's
+standard success. The generated step has no outcome selectors. Support's
 compiled deterministic stage is:
 
 ```csharp
@@ -128,19 +120,10 @@ with failed disposition and retains the failure evidence. Exceptions are
 undeclared execution faults. Cancellation is cancellation. Neither is a declared
 `Failed` result.
 
-### Custom Result
+### Domain Branches
 
-```csharp
-ValueTask<TCustomResult> ExecuteAsync(
-    TState state,
-    CancellationToken cancellationToken
-)
-```
-
-`TCustomResult` is an authored nested Dunet union. It replaces the standard
-authored result and exposes only its declared cases. Use custom Dunet only where
-the graph branches on meaningful domain vocabulary. Songwriter's compiled lint
-step is:
+Domain decisions are durable state facts, not additional step outcome types.
+Songwriter's lint step records its decision in state:
 
 ```csharp
 [PipelineStage(LintStage.StepId)]
@@ -148,96 +131,55 @@ public sealed partial class LintStage
 {
     public const string StepId = "lint";
 
-    [Union(EnableImplicitConversions = false)]
-    public partial record LintResult
-    {
-        public partial record Passed(SongwriterState State);
-        public partial record Failed(SongwriterState State);
-    }
-
-    public ValueTask<LintResult> ExecuteAsync(
+    public ValueTask<SongwriterState> ExecuteAsync(
         SongwriterState state,
         CancellationToken _
-    )
-    {
-        state = SongwriterPolicies.Lint(state);
-        return ValueTask.FromResult<LintResult>(
-            state.LintFeedback is null ? new LintResult.Passed(state) : new LintResult.Failed(state)
-        );
-    }
+    ) => ValueTask.FromResult(SongwriterPolicies.Lint(state));
 }
 ```
 
-`LintResult.Failed` is custom branch vocabulary, distinct from Tandem's standard
-`Outcome<TState>.Failed` and its unhandled-failure semantics.
+Composition branches on `LintFeedback`; standard `Failed` remains reserved for
+declared execution failure and its unhandled-failure semantics.
 
-## Agent Operations
+## Agent Definitions
 
 `[PipelineStage]` makes a class executable and routable; it does not imply model
-execution. Build an `AgentOperation<TState>` explicitly from the DI-owned
-`AgentRuntime`. Support's compiled classifier configuration is:
+execution. Build an agent definition from the DI-owned `AgentRuntime`. Support's
+compiled classifier configuration is:
 
 ```csharp
 var classifier = agentRuntime
     .Create<SupportState>(
-        ClassifyTicketAgent.StepId,
+        "support-classify",
         "support-classifier",
         SupportPrompts.Classifier,
         options.ClassifierClient
     )
     .WithMessage(SupportPrompts.ClassificationMessage)
-    .WithStructuredOutput(
-        SupportPolicies.ParseClassification,
-        chat => chat.ResponseFormat = ChatResponseFormat.ForJsonSchema<ClassificationDecision>()
-    )
+    .WithOutput(new ClassificationDecisionValidator(), SupportPolicies.ApplyClassification)
     .WithSessionPolicy(SupportPolicies.StartClassificationFresh)
-    .Build(context);
+    .Build();
 ```
+
+The returned `AgentDefinition<SupportState>` is directly composable and exposes
+`classifier.Success` and `classifier.Failed`. Do not add an authored
+`ExecuteAsync` class that only forwards model execution.
 
 The callbacks above are state-first:
 
 - `WithMessage` accepts `Func<TState, string>`.
-- `StructuredOutputParser<TState>` accepts assistant text and `TState`.
+- `WithOutput<T>` owns schema, deserialization, correction, and raw failure evidence.
 - `AgentSessionPolicy<TState>` accepts `TState`.
 - `WithWorkspace` accepts state-first path and mutation predicates.
 - ordinary `Route` predicates accept `Func<TState, bool>`.
 - durable request creation and response application are state-first.
 
-Agent construction is per pipeline build because observers and update callbacks
-are build-specific. DI owns stable clients and dependencies, not operations that
-capture an earlier `PipelineBuildContext`.
+Definitions are immutable DI-owned configuration. Tandem binds live updates by
+durable run ID during execution; definitions capture no pipeline build or run.
 
-An agent maps operation evidence into custom results only when branching needs
-it. Songwriter's compiled proofreader uses:
-
-```csharp
-return await operation.RunAsync<ProofreaderResult>(
-    state,
-    result =>
-        result.Outcome.Kind == SongwriterPolicies.ProofAcceptedOutcome
-            ? new ProofreaderResult.Accepted(result.State)
-            : new ProofreaderResult.ChangesRequested(result.State),
-    failure => new ProofreaderResult.Failed(state, failure),
-    cancellationToken
-);
-```
-
-The mapper receives `OperationResult<TState>`, whose public shape is:
-
-```csharp
-public sealed record OperationResult<TState>(TState State, OperationOutcome Outcome);
-
-public sealed record OperationOutcome(
-    string Kind,
-    string Summary,
-    JsonElement Payload
-);
-```
-
-It can interpret legitimate block evidence without receiving sessions, usage,
-profiles, invocation counts, or the complete execution envelope.
-The failure mapper is mandatory for custom agent results: infrastructure failure
-must remain distinct from a semantic branch such as `ChangesRequested`.
+Agent output transitions put semantic decisions in state. Infrastructure failure
+returns canonical `Failed`; composition does not reinterpret it as a domain branch
+such as `ChangesRequested`.
 
 ## Composition And Routing
 
@@ -254,15 +196,15 @@ It matches any produced output from that step, including a routed standard
 A result-specific route starts with a generated selector:
 
 ```csharp
-.Route(on: song.Lint.Result.Passed, to: song.Proofreader, label: "lint passed")
-.Route(on: song.Lint.Result.Failed, to: song.Songwriter, label: "lint failed")
+.Route(on: song.Lint, when: state => state.LintFeedback is null, to: song.Proofreader)
+.Route(on: song.Lint, when: state => state.LintFeedback is not null, to: song.Songwriter)
 ```
 
 A result-specific condition remains state-first:
 
 ```csharp
 .Route(
-    on: delivery.CaptureCandidate.Result.Captured,
+    on: delivery.CaptureCandidate.Success,
     when: HasVerificationCommands,
     to: delivery.Verification,
     label: "verification configured"
@@ -274,14 +216,14 @@ would match the same output and create accidental fan-out. Tandem rejects the
 mix. Multiple result cases and deliberately exclusive conditions for one case
 remain valid.
 
-Request and custom `IPipelineNode` edges use `from` because those nodes are not
-generated steps:
+Semantic interactions and custom `IPipelineNode` edges use `from` because those
+nodes are not generated steps:
 
 ```csharp
 .Route(
-    from: support.CustomerReply.Request,
-    to: support.CustomerReply.Port,
-    label: "wait for customer"
+    from: support.CustomerReply,
+    to: support.Close,
+    label: "customer confirmed"
 )
 ```
 
@@ -293,10 +235,8 @@ need `PipelineMessage<TState>`. Do not use it merely to read state.
 Support creates a typed request handoff with the compiled API:
 
 ```csharp
-var customerReply = PipelineNodes.Request<SupportState, CustomerQuestion, CustomerReply>(
-    SupportIds.AskCustomer,
+var customerReply = PipelineNodes.WaitFor<SupportState, CustomerQuestion, CustomerReply>(
     SupportIds.CustomerReply,
-    SupportIds.ApplyReply,
     SupportPolicies.BuildCustomerQuestion,
     SupportPolicies.ApplyCustomerReply
 );
@@ -309,17 +249,16 @@ Func<TState, TRequest> createRequest
 Func<TState, TResponse, TState> applyResponse
 ```
 
-The returned handoff exposes `Request`, `Port`, and `Resume`. Tandem persists and
-restores the complete execution envelope, applies the response state transition,
-and records resume evidence. Ordinary userland does not serialize or reconstruct
-`PipelineMessage<TState>`.
+Composition sees one semantic handoff. Tandem privately expands it into MAF's
+request, port, and resume executors, restores the execution envelope, applies the
+response transition, and records resume evidence.
 
 Support routes after resume with state-first predicates:
 
 ```csharp
 .Route(
     when: state => state.FinalDisposition == "closed",
-    from: support.CustomerReply.Resume,
+    from: support.CustomerReply,
     to: support.Close,
     label: "customer confirmed"
 )
@@ -357,10 +296,10 @@ state-first:
 public static AgentSessionDecision RetainRevisionContext(DebateState _) =>
     new(AgentSessionAction.Continue, "Retain critic context across revision rounds.");
 
-public static AgentTeardownDecision ReleaseJudgeAfterVerdict(
+public static AgentConversationDecision DiscardJudgeAfterVerdict(
     PipelineMessage<DebateState> _,
     BlockOutcome __
-) => new(true, true, "Release judge bookkeeping after an accepted verdict.");
+) => new(AgentConversationRetention.Discard, "The verdict closes the judge conversation.");
 ```
 
 Delivery is the acceptance consumer for the advanced layer. Its custom workspace,
@@ -368,16 +307,18 @@ candidate-capture, verification, terminal, and human-input blocks operate on the
 envelope because preserving or observing execution evidence is part of those
 blocks. Generated ordinary-step adapters still own envelope transport.
 
-`PipelineOperation.RunAsync` is available when an authored generated step adapts
-an advanced block into semantic routing. Delivery's workspace stage uses:
+`PipelineOperation.RunOutcomeAsync` is available after importing
+`Tandem.Advanced` when a generated step adapts an advanced block. Delivery's
+workspace stage uses:
 
 ```csharp
-return await PipelineOperation.RunAsync<DeliveryState, PrepareWorkspaceResult>(
-    () => operation.ExecuteAsync(pipeline, cancellationToken),
+return await PipelineOperation.RunOutcomeAsync(
+    state,
+    pipeline => operation.ExecuteAsync(pipeline, cancellationToken),
     result =>
         result.Outcome.Kind == OutcomeKinds.WorkspacePrepared
-            ? new PrepareWorkspaceResult.Prepared(result.State)
-            : new PrepareWorkspaceResult.Unexpected(result.State)
+            ? new Outcome<DeliveryState>.Success(result.State)
+            : new Outcome<DeliveryState>.Failed(result.State, failure)
 );
 ```
 
@@ -385,8 +326,8 @@ This is advanced block integration, not the default shape for ordinary stages.
 
 ## Progressive Capability Journey
 
-- Songwriter: simple state, pass-through/state-updating steps, agents, custom
-  branch results, unconditional routes, and a review loop.
+- Songwriter: simple state, state-updating steps, agents, state-owned branches,
+  unconditional routes, and a review loop.
 - Support: consumer-owned deterministic I/O and durable typed suspension/resume.
 - Debate: revision sessions, lifecycle actions and receipts, and evidence-aware
   teardown.
@@ -397,12 +338,38 @@ This is advanced block integration, not the default shape for ordinary stages.
 All four use the same generated steps, agent builder, typed state, and fluent
 composition model. Later examples add capabilities; they do not replace the API.
 
+A capability is declared and registered once. Authors provide its semantic tool
+name, typed request validation, summary, and typed state transition:
+
+```csharp
+var verdict = AgentCapabilities.Create<DebateState, SubmitVerdict>(
+    "submit_verdict",
+    "Submit the final verdict and end the judge turn.",
+    new SubmitVerdictValidator(),
+    request => $"Verdict submitted: {request.Verdict}",
+    DebatePolicies.ApplyVerdict
+);
+```
+
+`.WithCapability(verdict)` is available through `Tandem.Advanced`. Tandem owns
+action-set identity, receipt identity, payload serialization, persistence,
+transport, replay deserialization, and MCP registration. There is no separate
+capability registration or raw receipt transition API.
+
+Feature registration stores the immutable capability as application
+configuration (`services.AddSingleton(verdict)`). `AddTandem` discovers that
+configuration and builds the lifecycle transport registry internally.
+
+`PipelineNodeDescriptor` remains public only because generated partial classes
+compile in consumer assemblies. It is hidden from IntelliSense and is an opaque
+generated-code ABI; `IRawPipelineNode` and raw node factories are internal.
+
 ## Inspection
 
 Inspect the exact executable graph after building it:
 
 ```csharp
-var inspection = composition.Build(new PipelineBuildContext()).Inspect();
+var inspection = composition.Build().Inspect();
 Console.WriteLine(inspection.Mermaid);
 Console.WriteLine(inspection.Dot);
 ```

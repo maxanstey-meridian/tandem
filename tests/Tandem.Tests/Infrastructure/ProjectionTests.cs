@@ -274,13 +274,18 @@ public sealed class RunProjectionStoreTests
 public sealed class RunEventProjectorTests
 {
     [Fact]
-    public async Task HumanQuestionStage_OutputProjectsPendingHumanRequest()
+    public async Task HumanInteractionRequest_ProjectsPendingHumanRequest()
     {
         var (eventStore, observer, cleanup) = CreateObserver();
         try
         {
-            var stage = new HumanQuestionStage(observer);
-            var binding = stage.Descriptor.Bind();
+            var interaction = PipelineNodes.WaitFor<DeliveryState, HumanQuestion, HumanAnswer>(
+                "HumanInput",
+                HumanInteraction.BuildQuestion,
+                HumanInteraction.ApplyAnswer,
+                observer
+            );
+            var binding = interaction.Request.Descriptor.Bind();
             var workflow = new WorkflowBuilder(binding)
                 .WithName("human-question-projection")
                 .WithOutputFrom(binding)
@@ -295,6 +300,19 @@ public sealed class RunEventProjectorTests
                     )
                 )
             );
+            message = message with
+            {
+                State = message.State with
+                {
+                    PlannerDecision = new PlannerDecision(
+                        PlannerDecisionValue.NeedsHuman,
+                        "ambiguous",
+                        [],
+                        [],
+                        "Which pattern?"
+                    ),
+                },
+            };
 
             await RunAsync<PipelineMessage<DeliveryState>, HumanQuestion>(workflow, message);
 
@@ -312,7 +330,7 @@ public sealed class RunEventProjectorTests
     }
 
     [Fact]
-    public async Task ApplyHumanAnswerStage_OutputProjectsHumanAnswered()
+    public async Task HumanInteractionResume_ProjectsHumanAnswered()
     {
         var (eventStore, observer, cleanup) = CreateObserver();
         try
@@ -325,9 +343,27 @@ public sealed class RunEventProjectorTests
                     JsonSerializer.SerializeToElement(new { })
                 )
             );
+            savedMessage = savedMessage with
+            {
+                State = savedMessage.State with
+                {
+                    ReviewerDecision = new ReviewDecision(
+                        ReviewDecisionValue.NeedsHuman,
+                        "question",
+                        [],
+                        [],
+                        "Which pattern?"
+                    ),
+                },
+            };
             var seed = new SaveHumanInputExecutor(savedMessage).BindExecutor();
-            var stage = new ApplyHumanAnswerStage(observer);
-            var apply = stage.Descriptor.Bind();
+            var interaction = PipelineNodes.WaitFor<DeliveryState, HumanQuestion, HumanAnswer>(
+                "HumanInput",
+                HumanInteraction.BuildQuestion,
+                HumanInteraction.ApplyAnswer,
+                observer
+            );
+            var apply = interaction.Resume.Descriptor.Bind();
             var workflow = new WorkflowBuilder(seed)
                 .WithName("human-answer-projection")
                 .AddEdge(seed, apply)

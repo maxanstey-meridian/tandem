@@ -249,20 +249,20 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
 
     var renderer = new StreamRenderer();
     var interactive = !Console.IsInputRedirected && !Console.IsOutputRedirected;
+    using var agentUpdates = Tandem.AgentUpdates.Observe(
+        runPaths.RunId,
+        (blockId, _, update) =>
+        {
+            if (!interactive)
+            {
+                renderer.RenderUpdate(update);
+            }
+            GetProjector(blockId).EmitAgentUpdateAsync(update).GetAwaiter().GetResult();
+        }
+    );
     var pipeline = composition.Build(
         new Tandem.PipelineBuildContext(
-            (blockId, updateRunId, update) =>
-            {
-                if (updateRunId == runPaths.RunId)
-                {
-                    if (!interactive)
-                    {
-                        renderer.RenderUpdate(update);
-                    }
-                    GetProjector(blockId).EmitAgentUpdateAsync(update).GetAwaiter().GetResult();
-                }
-            },
-            new RunEventBlockExecutionObserver(GetProjector)
+            ExecutionObserver: new RunEventBlockExecutionObserver(GetProjector)
         )
     );
     var workflow = Tandem.PipelineMafBridge.GetWorkflow(pipeline);
@@ -561,16 +561,14 @@ static async Task<int> AttachAsync(string runIdArg, bool debug, CancellationToke
 
     // Workflow must be registered so MAF recognizes the workflow type
     // when the Durable Task worker reconnects to the existing orchestration.
+    using var agentUpdates = Tandem.AgentUpdates.Observe(
+        projection.RunId,
+        (blockId, _, update) =>
+            GetProjector(blockId).EmitAgentUpdateAsync(update).GetAwaiter().GetResult()
+    );
     var pipeline = composition.Build(
         new Tandem.PipelineBuildContext(
-            (blockId, updateRunId, update) =>
-            {
-                if (updateRunId == projection.RunId)
-                {
-                    GetProjector(blockId).EmitAgentUpdateAsync(update).GetAwaiter().GetResult();
-                }
-            },
-            new RunEventBlockExecutionObserver(GetProjector)
+            ExecutionObserver: new RunEventBlockExecutionObserver(GetProjector)
         )
     );
     var workflow = Tandem.PipelineMafBridge.GetWorkflow(pipeline);

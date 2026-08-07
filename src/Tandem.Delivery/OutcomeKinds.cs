@@ -30,6 +30,6 @@ public static class BlockIds
     public const string Reviewer = "reviewer";
     public const string Complete = "complete";
     public const string Failed = "failed";
-    public const string HumanQuestion = "human-question";
-    public const string ApplyHumanAnswer = "apply-human-answer";
+    public const string HumanQuestion = "HumanInput--request";
+    public const string ApplyHumanAnswer = "HumanInput--resume";
 }
