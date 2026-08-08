@@ -29,13 +29,11 @@ public static class DebateDefinitions
             agentRuntime
                 .Create<DebateState>(
                     "judge",
-                    "judge",
                     "Judge the accepted argument and submit a verdict.",
                     options.JudgeClient
                 )
                 .WithMessage(state => $"Judge: {state.Question}")
                 .WithCapability(verdict)
-                .WithSessionPolicy(DebatePolicies.StartJudgeFresh)
                 .WithConversationPolicy(DebatePolicies.DiscardJudgeAfterVerdict)
                 .Build(),
             PipelineNodes.Complete<DebateState>("complete"),
@@ -50,14 +48,9 @@ public static class DebateDefinitions
         AgentRuntime agentRuntime
     ) =>
         agentRuntime
-            .Create<DebateState>(
-                id,
-                id,
-                $"Act as the debate {id} and return structured JSON.",
-                client
-            )
+            .Create<DebateState>(id, $"Act as the debate {id} and return structured JSON.", client)
             .WithMessage(state => $"Question: {state.Question}; round: {state.Round}")
             .WithOutput(validator, apply)
-            .WithSessionPolicy(DebatePolicies.RetainRevisionContext)
+            .ContinueSession()
             .Build();
 }

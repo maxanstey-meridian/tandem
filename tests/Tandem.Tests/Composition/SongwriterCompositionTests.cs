@@ -16,7 +16,6 @@ public sealed class SongwriterCompositionTests
     {
         var order = new List<string>();
         var services = new ServiceCollection();
-        services.AddSingleton(new TandemEnvironment(Path.GetTempPath()));
         services
             .AddTandem()
             .AddSongwriter(
@@ -61,7 +60,6 @@ public sealed class SongwriterCompositionTests
     {
         var order = new List<string>();
         var services = new ServiceCollection();
-        services.AddSingleton(new TandemEnvironment(Path.GetTempPath()));
         services
             .AddTandem()
             .AddSongwriter(
@@ -84,13 +82,13 @@ public sealed class SongwriterCompositionTests
         output.LatestOutcome!.Kind.Should().Be(StandardOutcomeKinds.Failed);
         output.LatestResult!.CaseId.Should().Be("Failed");
         output
-            .LatestResult.Payload.Deserialize<Outcome<SongwriterState>.Failed>()!
-            .Failure.Detail.Should()
+            .LatestResult.Payload.Deserialize<FailureEvidence>()!
+            .Detail.Should()
             .Contain("still not json");
     }
 
     private static async Task<PipelineMessage<SongwriterState>> RunAsync(
-        Pipeline pipeline,
+        Pipeline<SongwriterState> pipeline,
         PipelineMessage<SongwriterState> input
     )
     {

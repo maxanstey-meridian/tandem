@@ -25,7 +25,7 @@ public sealed class StructuredOutputTests
                     + "\"humanQuestion\":null}"
             )
         );
-        var block = CreatePlannerBlock(directory.Path, client);
+        var block = CreatePlannerBlock(client);
         var context = CreateContext(directory.Path);
 
         var output = await block.HandleAsync(
@@ -64,7 +64,7 @@ public sealed class StructuredOutputTests
                 + "\"humanQuestion\":\"N/A\"}"
         );
         var client = new ScriptedChatClient(invalid, invalid);
-        var block = CreatePlannerBlock(directory.Path, client);
+        var block = CreatePlannerBlock(client);
 
         var output = await block.HandleAsync(
             CreateContext(directory.Path),
@@ -91,7 +91,7 @@ public sealed class StructuredOutputTests
             result => result.Outcome?.Kind == OutcomeKinds.PlannerProceed,
             correction: "Inspect the repository before approving."
         );
-        var block = CreatePlannerBlock(directory.Path, client, policy);
+        var block = CreatePlannerBlock(client, policy);
 
         var output = await block.HandleAsync(
             CreateContext(directory.Path),
@@ -133,7 +133,7 @@ public sealed class StructuredOutputTests
             result => result.Outcome?.Kind == OutcomeKinds.PlannerProceed,
             name => name.StartsWith("file_access_read", StringComparison.Ordinal)
         );
-        var block = CreatePlannerBlock(directory.Path, client, policy);
+        var block = CreatePlannerBlock(client, policy);
 
         var output = await block.HandleAsync(
             CreateContext(directory.Path),
@@ -167,7 +167,7 @@ public sealed class StructuredOutputTests
             result => result.Outcome?.Kind == OutcomeKinds.PlannerProceed,
             name => name.StartsWith("file_access_read", StringComparison.Ordinal)
         );
-        var block = CreatePlannerBlock(directory.Path, client, policy);
+        var block = CreatePlannerBlock(client, policy);
 
         var output = await block.HandleAsync(
             CreateContext(directory.Path),
@@ -194,7 +194,7 @@ public sealed class StructuredOutputTests
 
         var problems = policy(
             new StructuredOutputAcceptanceObservation<DeliveryState>(
-                CreateContext("/tmp"),
+                ToAgentContext(CreateContext("/tmp")),
                 parsed,
                 new HashSet<string> { "file_access_read" },
                 0
@@ -220,7 +220,7 @@ public sealed class StructuredOutputTests
 
         var problems = policy(
             new StructuredOutputAcceptanceObservation<DeliveryState>(
-                CreateContext("/tmp"),
+                ToAgentContext(CreateContext("/tmp")),
                 parsed,
                 new HashSet<string> { "submit_report" },
                 0
@@ -244,7 +244,7 @@ public sealed class StructuredOutputTests
 
         var problems = policy(
             new StructuredOutputAcceptanceObservation<DeliveryState>(
-                CreateContext("/tmp"),
+                ToAgentContext(CreateContext("/tmp")),
                 parsed,
                 new HashSet<string>(),
                 0
@@ -342,7 +342,6 @@ public sealed class StructuredOutputTests
     }
 
     private static AgentBlock<DeliveryState> CreatePlannerBlock(
-        string tandemHome,
         IChatClient client,
         StructuredOutputAcceptancePolicy<DeliveryState>? acceptance = null
     ) =>
@@ -355,15 +354,13 @@ public sealed class StructuredOutputTests
                 _ => "Review the supplied planner request.",
                 state => state.WorkspacePath,
                 _ => false,
-                StructuredOutput: PlannerDecisionPolicy.Parse,
-                StructuredOutputAcceptance: acceptance,
-                SessionPolicy: _ => new AgentSessionDecision(
-                    AgentSessionAction.Continue,
-                    "Planner fixture policy."
-                )
+                StructuredOutput: StructuredOutputDescriptors.Create(
+                    PlannerDecisionPolicy.Parse,
+                    acceptance
+                ),
+                ContinueSession: true
             ),
-            client,
-            tandemHome
+            client
         );
 
     private static PipelineMessage<DeliveryState> CreateContext(string workspacePath)
@@ -382,6 +379,23 @@ public sealed class StructuredOutputTests
             DeliveryState.Create(packet, "abc123", workspacePath)
         );
     }
+
+    private static AgentMessageContext<DeliveryState> ToAgentContext(
+        PipelineMessage<DeliveryState> message
+    ) =>
+        new(
+            message.Runtime.RunId,
+            message.State,
+            message.LatestOutcome is { } outcome
+                ? new AgentMessageOutcome(
+                    outcome.Kind,
+                    outcome.BlockId,
+                    outcome.Summary,
+                    outcome.Payload,
+                    outcome.Duration
+                )
+                : null
+        );
 
     private static ChatResponse Response(string text) =>
         new(new ChatMessage(ChatRole.Assistant, [new TextContent(text)]))

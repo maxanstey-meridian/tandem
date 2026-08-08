@@ -1,4 +1,4 @@
-using Tandem.Domain;
+using Tandem.Advanced;
 
 namespace Tandem.Delivery;
 
@@ -40,9 +40,9 @@ public static class DeliveryPolicies
         );
 
     public static ToolInterceptor<DeliveryState> CreateMutationGate() =>
-        (message, invocation, ct) =>
+        (context, invocation, ct) =>
         {
-            if (message.State.MutationAuthorized || !IsWorkspaceMutationTool(invocation.Name))
+            if (context.State.MutationAuthorized || !IsWorkspaceMutationTool(invocation.Name))
             {
                 return ValueTask.FromResult<ToolInterceptionResult?>(null);
             }
@@ -76,7 +76,7 @@ public static class DeliveryPolicies
             maxContinuationAttempts: 2,
             (observation, _) =>
                 ValueTask.FromResult<AgentTurnDirective?>(
-                    !observation.Message.State.MutationAuthorized
+                    !observation.Context.State.MutationAuthorized
                         ? new AgentTurnDirective(
                             """
                             Your previous response was not a lifecycle route. Continue the
@@ -101,9 +101,9 @@ public static class DeliveryPolicies
     public static MessageAugmentation<DeliveryState> CreateDiffAugmentation(
         DeliveryDiffAcquisition diffAcquisition
     ) =>
-        async (message, ct) =>
+        async (context, ct) =>
         {
-            var state = message.State;
+            var state = context.State;
             return state.CandidateSha is null || string.IsNullOrEmpty(state.PinnedBaseSha)
                 ? null
                 : await diffAcquisition.AcquireAsync(state, ct);

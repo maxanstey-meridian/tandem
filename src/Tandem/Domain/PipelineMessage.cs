@@ -3,19 +3,22 @@ using System.Text.Json.Serialization;
 
 namespace Tandem.Domain;
 
-public interface IOutcomeBearingMessage
+internal interface IOutcomeBearingMessage
 {
     public BlockOutcome? LatestOutcome { get; }
 }
 
-public sealed record PipelineMessage<TState>(
+internal sealed record PipelineMessage<TState>(
     PipelineRuntime Runtime,
     TState State,
     BlockOutcome? LatestOutcome = null,
     PipelineResult? LatestResult = null,
     PipelineRunDisposition? Disposition = null
-) : IOutcomeBearingMessage
+) : IOutcomeBearingMessage, IPipelineRunContextCarrier
 {
+    internal PipelineRunContext? RunContext { get; init; }
+    PipelineRunContext? IPipelineRunContextCarrier.RunContext => RunContext;
+
     public PipelineMessage<TState> WithOutcome(BlockOutcome outcome) =>
         this with
         {
@@ -23,7 +26,7 @@ public sealed record PipelineMessage<TState>(
         };
 }
 
-public sealed record PipelineResult(string StepId, string CaseId, JsonElement Payload);
+internal sealed record PipelineResult(string StepId, string CaseId, JsonElement Payload);
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum PipelineRunDisposition
@@ -31,12 +34,12 @@ public enum PipelineRunDisposition
     Failed,
 }
 
-public sealed record PipelineRuntime(
+internal sealed record PipelineRuntime(
     Guid RunId,
     IReadOnlyDictionary<string, JsonElement> AgentSessions,
     IReadOnlyDictionary<string, AgentUsage> AgentUsage,
     IReadOnlyDictionary<string, int> InvocationCounts,
-    IReadOnlyDictionary<string, AgentProfileDecision> AgentProfiles
+    IReadOnlyDictionary<string, AgentProfileSelection> AgentProfiles
 )
 {
     public static PipelineRuntime Create(Guid runId) =>
@@ -45,7 +48,7 @@ public sealed record PipelineRuntime(
             new Dictionary<string, JsonElement>(),
             new Dictionary<string, AgentUsage>(),
             new Dictionary<string, int>(),
-            new Dictionary<string, AgentProfileDecision>()
+            new Dictionary<string, AgentProfileSelection>()
         );
 
     public string NextInvocationId(string blockId) =>
@@ -91,10 +94,10 @@ public sealed record PipelineRuntime(
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
         };
 
-    public PipelineRuntime WithProfile(string blockId, AgentProfileDecision decision) =>
+    public PipelineRuntime WithProfile(string blockId, AgentProfileSelection decision) =>
         this with
         {
-            AgentProfiles = new Dictionary<string, AgentProfileDecision>(AgentProfiles)
+            AgentProfiles = new Dictionary<string, AgentProfileSelection>(AgentProfiles)
             {
                 [blockId] = decision,
             },
@@ -109,7 +112,7 @@ public sealed record PipelineRuntime(
         };
 }
 
-public sealed record BlockOutcome(
+internal sealed record BlockOutcome(
     string Kind,
     string BlockId,
     string Summary,
@@ -117,7 +120,7 @@ public sealed record BlockOutcome(
     TimeSpan Duration = default
 );
 
-public sealed record AgentUsage(
+internal sealed record AgentUsage(
     int CurrentInputTokens,
     int CurrentOutputTokens,
     int CurrentContextTokens,
@@ -125,12 +128,3 @@ public sealed record AgentUsage(
     int CheckpointAtTokens,
     TimeSpan LastModelCallDuration
 );
-
-[JsonConverter(typeof(JsonStringEnumConverter))]
-public enum RunStatus
-{
-    Running,
-    Ready,
-    WaitingForHuman,
-    Failed,
-}

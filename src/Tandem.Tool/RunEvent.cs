@@ -40,6 +40,8 @@ public static class EventKinds
     public const string RunStarted = "run.started";
     public const string RunReady = "run.ready";
     public const string RunFailed = "run.failed";
+    public const string RunFaulted = "run.faulted";
+    public const string RunCancelled = "run.cancelled";
     public const string RunPublished = "run.published";
     public const string BlockStarted = "block.started";
     public const string BlockCompleted = "block.completed";

@@ -1,13 +1,5 @@
 namespace Tandem.Domain;
 
-public sealed record RunContext(
-    Guid RunId,
-    Packet Packet,
-    string PinnedBaseSha,
-    string WorkspacePath,
-    ResolvedProfile Profile
-);
-
 public sealed record ResolvedProfile(
     string ProviderName,
     string BaseUrl,

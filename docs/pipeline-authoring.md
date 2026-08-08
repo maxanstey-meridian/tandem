@@ -2,9 +2,9 @@
 
 Tandem exposes one progressive authoring model over Microsoft Agent Framework.
 Pipeline packages own typed state, steps, prompts, policies, capabilities,
-semantic results, and explicit routes. Tandem generates adapters and owns the
-execution envelope, sessions, agent loops, tool dispatch, and live suspension
-without exposing MAF to consumers.
+semantic results, and explicit routes. Tandem generates adapters and owns its
+execution envelope and live suspension without exposing MAF to consumers. MAF
+owns orchestration, agent loops, sessions, and tool dispatch.
 
 Use the compiled examples in this order:
 
@@ -13,14 +13,14 @@ Use the compiled examples in this order:
 2. [`Tandem.Sample.Support`](../samples/Tandem.Sample.Support) for deterministic
    ports and typed request/response handoff.
 3. [`Tandem.Sample.Debate`](../samples/Tandem.Sample.Debate) for sessions,
-   lifecycle actions, receipts, and teardown.
+   local capabilities and teardown.
 4. [`Tandem.Delivery`](../src/Tandem.Delivery) for custom blocks, workspace,
    checkpoints, tools, observations, verification, and human handoff.
 
 ## Author Journey
 
 1. Reference `Tandem` and add `Tandem.Generators` as an analyzer.
-2. Define one immutable, serializable `<Name>State` containing lifecycle facts,
+2. Define one immutable `<Name>State` containing lifecycle facts,
    never services, framework contexts, or a mutable state bag.
 3. Implement each generated step as a partial class marked with
    `[PipelineStage("stable-id")]`.
@@ -31,7 +31,7 @@ Use the compiled examples in this order:
 6. Put executable instances in a DI-constructed `<Name>Steps` record or factory.
 7. Declare every successor in `<Name>Composition` with `Route`; fluent order does
    not imply edges.
-8. Test inspection, serialization, and real in-process execution for the
+8. Test inspection, typed state behavior, and real in-process execution for the
    capabilities the pipeline uses.
 
 ## Inferred ExecuteAsync Forms
@@ -151,13 +151,11 @@ compiled classifier configuration is:
 var classifier = agentRuntime
     .Create<SupportState>(
         "support-classify",
-        "support-classifier",
         SupportPrompts.Classifier,
         options.ClassifierClient
     )
     .WithMessage(SupportPrompts.ClassificationMessage)
     .WithOutput(new ClassificationDecisionValidator(), SupportPolicies.ApplyClassification)
-    .WithSessionPolicy(SupportPolicies.StartClassificationFresh)
     .Build();
 ```
 
@@ -169,7 +167,7 @@ The callbacks above are state-first:
 
 - `WithMessage` accepts `Func<TState, string>`.
 - `WithOutput<T>` owns schema, deserialization, correction, and raw failure evidence.
-- `AgentSessionPolicy<TState>` accepts `TState`.
+- agents start fresh by default; `.ContinueSession()` explicitly retains conversation.
 - `WithWorkspace` accepts state-first path and mutation predicates.
 - ordinary `Route` predicates accept `Func<TState, bool>`.
 - request creation and response application are state-first.
@@ -227,9 +225,6 @@ nodes are not generated steps:
 )
 ```
 
-`RouteWithContext` is the explicit advanced variant for predicates that genuinely
-need `PipelineMessage<TState>`. Do not use it merely to read state.
-
 ## Live Request Handoffs
 
 Support creates a typed request handoff with the compiled API:
@@ -268,45 +263,38 @@ Support routes after resume with state-first predicates:
 ## Advanced Block Authoring
 
 Ordinary steps, prompts, parsers, state transitions, and predicates use `TState`.
-Advanced block implementations and runtime policies may intentionally use
-`PipelineMessage<TState>` and `BlockOutcome` when execution evidence is their
-purpose. The current compiled core shapes are:
+Advanced block implementations and runtime policies use narrow Advanced-owned
+contexts. The complete execution envelope is internal. Custom operations use:
 
 ```csharp
-public sealed record PipelineMessage<TState>(
-    PipelineRuntime Runtime,
-    TState State,
-    BlockOutcome? LatestOutcome = null,
-    PipelineResult? LatestResult = null,
-    PipelineRunDisposition? Disposition = null
-);
+public sealed record PipelineOperationContext<TState>(/* run ID, state, latest outcome */);
 
-public sealed record BlockOutcome(
+public sealed record OperationOutcome(
     string Kind,
     string BlockId,
     string Summary,
     JsonElement Payload = default,
     TimeSpan Duration = default
 );
+
+public sealed record OperationResult<TState>(TState State, OperationOutcome Outcome);
 ```
 
 Debate demonstrates a narrow advanced policy while keeping ordinary policies
 state-first:
 
 ```csharp
-public static AgentSessionDecision RetainRevisionContext(DebateState _) =>
-    new(AgentSessionAction.Continue, "Retain critic context across revision rounds.");
+builder.ContinueSession();
 
 public static AgentConversationDecision DiscardJudgeAfterVerdict(
-    PipelineMessage<DebateState> _,
-    BlockOutcome __
-) => new(AgentConversationRetention.Discard, "The verdict closes the judge conversation.");
+    AgentMessageContext<DebateState> _,
+    AgentMessageOutcome __
+) => new(AgentConversationRetention.Discard);
 ```
 
 Delivery is the acceptance consumer for the advanced layer. Its custom workspace,
-candidate-capture, verification, terminal, and human-input blocks operate on the
-envelope because preserving or observing execution evidence is part of those
-blocks. Generated ordinary-step adapters still own envelope transport.
+candidate-capture, and verification blocks use `PipelineOperationContext<TState>`;
+generated adapters privately preserve the execution envelope.
 
 `PipelineOperation.RunOutcomeAsync` is available after importing
 `Tandem.Advanced` when a generated step adapts an advanced block. Delivery's
@@ -315,7 +303,7 @@ workspace stage uses:
 ```csharp
 return await PipelineOperation.RunOutcomeAsync(
     state,
-    pipeline => operation.ExecuteAsync(pipeline, cancellationToken),
+    context => operation.ExecuteAsync(context, cancellationToken),
     result =>
         result.Outcome.Kind == OutcomeKinds.WorkspacePrepared
             ? new Outcome<DeliveryState>.Success(result.State)
@@ -330,8 +318,7 @@ This is advanced block integration, not the default shape for ordinary stages.
 - Songwriter: simple state, state-updating steps, agents, state-owned branches,
   unconditional routes, and a review loop.
 - Support: consumer-owned deterministic I/O and typed live suspension/continuation.
-- Debate: revision sessions, lifecycle actions and receipts, and evidence-aware
-  teardown.
+- Debate: revision sessions, local typed capabilities, and evidence-aware teardown.
 - Delivery: custom blocks, workspace mutation policy, checkpoints, tools,
   observations, verification, planner/reviewer lifecycle outcomes, and human
   handoff.
@@ -352,14 +339,16 @@ var verdict = AgentCapabilities.Create<DebateState, SubmitVerdict>(
 );
 ```
 
-`.WithCapability(verdict)` is available through `Tandem.Advanced`. Tandem owns
-action-set identity, receipt identity, payload serialization, persistence,
-transport, replay deserialization, and MCP registration. There is no separate
-capability registration or raw receipt transition API.
+`.WithCapability(verdict)` is available through `Tandem.Advanced`. Tandem binds
+the attached descriptor as a local MAF `AIFunction` for each invocation and owns
+run, block, invocation, and capability identity plus atomic accepted-call
+ownership. Invalid calls do not transition state or terminate the turn.
 
-Feature registration stores the immutable capability as application
-configuration (`services.AddSingleton(verdict)`). `AddTandem` discovers that
-configuration and builds the lifecycle transport registry internally.
+Feature registration may store the immutable capability as application
+configuration (`services.AddSingleton(verdict)`), but execution follows direct
+attachment to the agent definition rather than DI discovery or transport
+registration. `CreateAsync` provides a post-validation acceptance seam for
+durable facts that must commit before state transition and routing.
 
 `PipelineNodeDescriptor` remains public only because generated partial classes
 compile in consumer assemblies. It is hidden from IntelliSense and is an opaque

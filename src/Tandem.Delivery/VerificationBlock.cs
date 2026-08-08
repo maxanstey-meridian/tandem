@@ -1,25 +1,21 @@
 using System.Diagnostics;
 using System.Text.Json;
-using Tandem.Domain;
+using Tandem.Advanced;
 using Tandem.Git;
 
 namespace Tandem.Delivery;
 
-public sealed class VerificationBlock(
-    GitProcess git,
-    ICommandOutputObserver? outputObserver = null,
-    TimeSpan? commandTimeout = null
-)
+public sealed class VerificationBlock(GitProcess git, TimeSpan? commandTimeout = null)
 {
     private readonly TimeSpan _commandTimeout = commandTimeout ?? TimeSpan.FromMinutes(10);
 
-    public async ValueTask<PipelineMessage<DeliveryState>> ExecuteAsync(
-        PipelineMessage<DeliveryState> message,
+    public async ValueTask<OperationResult<DeliveryState>> ExecuteAsync(
+        PipelineOperationContext<DeliveryState> context,
         CancellationToken cancellationToken
     )
     {
         var blockSw = Stopwatch.StartNew();
-        var ctx = message.State;
+        var ctx = context.State;
         var commands = ctx.Packet.Verification;
 
         if (ctx.VerificationIndex >= commands.Count)
@@ -27,10 +23,9 @@ public sealed class VerificationBlock(
             var allPassed = ctx.VerificationResults.All(r => r.ExitCode == 0);
             var finalKind = allPassed ? OutcomeKinds.CommandPassed : OutcomeKinds.CommandFailed;
             blockSw.Stop();
-            return new PipelineMessage<DeliveryState>(
-                message.Runtime,
+            return new OperationResult<DeliveryState>(
                 ctx,
-                new BlockOutcome(
+                new OperationOutcome(
                     finalKind,
                     BlockIds.Verify,
                     "All verification commands complete",
@@ -51,20 +46,17 @@ public sealed class VerificationBlock(
         {
             result = await RejectCandidateMutationAsync(result, ctx, cancellationToken);
         }
-        if (outputObserver is not null)
-        {
-            var output = string.Join(
-                Environment.NewLine,
-                new[] { result.Stdout, result.Stderr }.Where(value => !string.IsNullOrEmpty(value))
-            );
-            await outputObserver.CommandOutputAsync(
-                BlockIds.Verify,
-                command,
-                output,
-                result.ExitCode,
-                cancellationToken
-            );
-        }
+        var output = string.Join(
+            Environment.NewLine,
+            new[] { result.Stdout, result.Stderr }.Where(value => !string.IsNullOrEmpty(value))
+        );
+        await context.ObserveCommandOutputAsync(
+            BlockIds.Verify,
+            command,
+            output,
+            result.ExitCode,
+            cancellationToken
+        );
 
         var results = ctx.VerificationResults.Append(result).ToList();
         var passed = result.ExitCode == 0;
@@ -87,10 +79,9 @@ public sealed class VerificationBlock(
         );
 
         blockSw.Stop();
-        return new PipelineMessage<DeliveryState>(
-            message.Runtime,
+        return new OperationResult<DeliveryState>(
             updatedContext,
-            new BlockOutcome(
+            new OperationOutcome(
                 kind,
                 BlockIds.Verify,
                 passed ? "Command passed" : "Command failed",

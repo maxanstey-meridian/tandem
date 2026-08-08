@@ -1,5 +1,5 @@
 using System.Text.Json;
-using Tandem.Domain;
+using Tandem.Advanced;
 
 namespace Tandem.Delivery;
 
@@ -51,9 +51,9 @@ public static class DeliveryPrompts
             """;
     }
 
-    public static string BuildPlannerMessage(PipelineMessage<DeliveryState> message)
+    public static string BuildPlannerMessage(AgentMessageContext<DeliveryState> context)
     {
-        var state = message.State;
+        var state = context.State;
         var packet = state.Packet;
         var outcomes = string.Join(
             "\n",
@@ -63,7 +63,7 @@ public static class DeliveryPrompts
             packet.Constraints.Count > 0
                 ? string.Join("\n", packet.Constraints.Select(c => $"- {c}"))
                 : "(none)";
-        var request = message.LatestOutcome?.Payload.GetRawText() ?? "(no request provided)";
+        var request = context.LatestOutcome?.Payload.GetRawText() ?? "(no request provided)";
         var previous =
             state.PlannerConstraints.Count > 0
                 ? string.Join("\n", state.PlannerConstraints.Select(c => $"- {c}"))
@@ -159,15 +159,14 @@ public static class DeliveryPrompts
             """;
     }
 
-    internal static string BuildCheckpointUserMessage(PipelineMessage<DeliveryState> message)
-    {
-        var usage = message.Runtime.AgentUsage.GetValueOrDefault(BlockIds.Executor);
-        return $"""
-            Context window approaching limit: {usage?.CurrentContextTokens ?? 0} tokens used.
+    internal static string BuildCheckpointUserMessage(
+        AgentCheckpointContext<DeliveryState> context
+    ) =>
+        $"""
+            Context window approaching limit: {context.CurrentContextTokens} tokens used.
             Write a checkpoint of your current work state using the write_checkpoint tool.
             Call write_checkpoint now.
             """;
-    }
 
     private static string FormatVerificationResults(IReadOnlyList<VerificationResult> results) =>
         string.Join(

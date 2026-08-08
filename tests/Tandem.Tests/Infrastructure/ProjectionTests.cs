@@ -1,6 +1,5 @@
 using System.Text.Json;
 using FluentAssertions;
-using Microsoft.Agents.AI.Workflows;
 using Tandem.Domain;
 using Tandem.Infrastructure;
 using Tandem.Infrastructure.Projection;
@@ -181,7 +180,7 @@ public sealed class RunProjectionStoreTests
 
             var read = store.Read();
             read.Should().NotBeNull();
-            read!.Status.Should().Be(Tandem.Domain.RunStatus.Running);
+            read!.Status.Should().Be(Tandem.Delivery.RunStatus.Running);
             read.PacketPath.Should().Be("/path/to/packet.md");
         }
         finally
@@ -207,13 +206,13 @@ public sealed class RunProjectionStoreTests
             await store.WriteAsync(
                 RunProjection.Initial(runId, "delivery", "p", "r", "w") with
                 {
-                    Status = Tandem.Domain.RunStatus.Ready,
+                    Status = Tandem.Delivery.RunStatus.Ready,
                     CandidateSha = "abc123",
                 }
             );
 
             var read = store.Read();
-            read!.Status.Should().Be(Tandem.Domain.RunStatus.Ready);
+            read!.Status.Should().Be(Tandem.Delivery.RunStatus.Ready);
             read.CandidateSha.Should().Be("abc123");
         }
         finally
@@ -275,11 +274,14 @@ public sealed class RunEventProjectorTests
     [Fact]
     public async Task RegisteredHumanInteraction_ProjectsPendingHumanRequest()
     {
-        var (eventStore, observer, cleanup) = CreateObserver();
+        var (eventStore, cleanup) = CreateObserver();
         try
         {
             var question = new HumanQuestion(BlockIds.Planner, "Which pattern?", "ambiguous");
-            await using var broker = new InMemoryExternalRequestBroker(
+            var projected = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously
+            );
+            await using var observedBroker = new InMemoryExternalRequestBroker(
                 async (request, cancellationToken) =>
                 {
                     var pendingQuestion = request.Payload.Deserialize<HumanQuestion>()!;
@@ -288,10 +290,11 @@ public sealed class RunEventProjectorTests
                         request.PortId,
                         eventStore
                     ).EmitHumanRequestedAsync(pendingQuestion, cancellationToken);
+                    projected.SetResult();
                 }
             );
             using var cancellation = new CancellationTokenSource();
-            var wait = broker
+            var wait = observedBroker
                 .WaitAsync(
                     new PendingExternalRequest(
                         Guid.CreateVersion7(),
@@ -304,6 +307,7 @@ public sealed class RunEventProjectorTests
                     cancellation.Token
                 )
                 .AsTask();
+            await projected.Task;
 
             var model = DashboardReducer.FromEvents(await eventStore.ReadAllAsync());
             model
@@ -314,73 +318,6 @@ public sealed class RunEventProjectorTests
             await cancellation.CancelAsync();
             var act = async () => await wait;
             await act.Should().ThrowAsync<OperationCanceledException>();
-        }
-        finally
-        {
-            cleanup();
-        }
-    }
-
-    [Fact]
-    public async Task HumanInteractionResume_ProjectsHumanAnswered()
-    {
-        var (eventStore, observer, cleanup) = CreateObserver();
-        try
-        {
-            var savedMessage = CreateMessage(
-                new BlockOutcome(
-                    "human-input-required",
-                    BlockIds.Reviewer,
-                    "question",
-                    JsonSerializer.SerializeToElement(new { })
-                )
-            );
-            savedMessage = savedMessage with
-            {
-                State = savedMessage.State with
-                {
-                    ReviewerDecision = new ReviewDecision(
-                        ReviewDecisionValue.NeedsHuman,
-                        "question",
-                        [],
-                        [],
-                        "Which pattern?"
-                    ),
-                },
-            };
-            var seed = new SaveHumanInputExecutor(savedMessage).BindExecutor();
-            var interaction = PipelineNodes.WaitFor<DeliveryState, HumanQuestion, HumanAnswer>(
-                "HumanInput",
-                HumanInteraction.BuildQuestion,
-                HumanInteraction.ApplyAnswer,
-                observer
-            );
-            var apply = interaction.Resume.Descriptor.Bind();
-            var workflow = new WorkflowBuilder(seed)
-                .WithName("human-answer-projection")
-                .AddEdge(seed, apply)
-                .WithOutputFrom(apply)
-                .Build();
-
-            await RunAsync<HumanAnswer, PipelineMessage<DeliveryState>>(
-                workflow,
-                new HumanAnswer("Use ports")
-            );
-
-            var events = await eventStore.ReadAllAsync();
-            events.Should().ContainSingle(evt => evt.Kind == EventKinds.HumanAnswered);
-            var model = DashboardReducer.FromEvents([
-                RunEvent.Create(
-                    BlockIds.HumanQuestion,
-                    EventKinds.HumanRequested,
-                    "question",
-                    JsonSerializer.SerializeToElement(
-                        new HumanQuestion(BlockIds.Reviewer, "Review?", "unclear")
-                    )
-                ),
-                .. events,
-            ]);
-            model.PendingHumanRequest.Should().BeNull();
         }
         finally
         {
@@ -461,7 +398,7 @@ public sealed class RunEventProjectorTests
             var runId = Guid.CreateVersion7();
             var projector = new RunEventProjector(runId, "prepare", eventStore);
 
-            var outcome = new BlockOutcome(
+            var outcome = new PipelineRunOutcome(
                 OutcomeKinds.WorkspacePrepared,
                 "prepare",
                 "Workspace prepared",
@@ -543,11 +480,85 @@ public sealed class RunEventProjectorTests
         }
     }
 
-    private static (
-        EventStore Store,
-        RunEventBlockExecutionObserver Observer,
-        Action Cleanup
-    ) CreateObserver()
+    [Fact]
+    public async Task PipelineObserver_ProjectsCorrelatedHumanRequestAndAnswer()
+    {
+        var (eventStore, cleanup) = CreateObserver();
+        try
+        {
+            var runId = Guid.CreateVersion7();
+            var observer = new RunEventPipelineObserver(stepId => new RunEventProjector(
+                runId,
+                stepId,
+                eventStore
+            ));
+            var requestId = Guid.NewGuid().ToString("N");
+
+            await observer.ObserveAsync(
+                new PipelineInteractionRequested<HumanQuestion>(
+                    runId,
+                    "human-input",
+                    requestId,
+                    new HumanQuestion(BlockIds.Planner, "Which pattern?", "ambiguous")
+                ),
+                CancellationToken.None
+            );
+            await observer.ObserveAsync(
+                new PipelineInteractionAnswered<HumanAnswer>(
+                    runId,
+                    "human-input",
+                    requestId,
+                    new HumanAnswer("Use the existing pattern.")
+                ),
+                CancellationToken.None
+            );
+
+            var events = await eventStore.ReadAllAsync();
+            events
+                .Select(evt => evt.Kind)
+                .Should()
+                .Equal(EventKinds.HumanRequested, EventKinds.HumanAnswered);
+            events[1].Message.Should().Contain(BlockIds.Planner).And.NotContain("unknown");
+            DashboardReducer.FromEvents(events).PendingHumanRequest.Should().BeNull();
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    [Fact]
+    public async Task ToolCompletion_PreservesToolNameAndFailureEvidence()
+    {
+        var (eventStore, cleanup) = CreateObserver();
+        try
+        {
+            var projector = new RunEventProjector(Guid.CreateVersion7(), "executor", eventStore);
+            await projector.EmitAgentUpdateAsync(
+                new AgentUpdate.ToolStarted(
+                    "call-1",
+                    "file_access_write",
+                    JsonSerializer.SerializeToElement(new { path = "src/file.cs" })
+                )
+            );
+            await projector.EmitAgentUpdateAsync(
+                new AgentUpdate.ToolCompleted("call-1", null, "permission denied")
+            );
+
+            var completion = (await eventStore.ReadAllAsync()).Last();
+            completion.Data!.Value.GetProperty("name").GetString().Should().Be("file_access_write");
+            completion
+                .Message.Should()
+                .Contain("file_access_write")
+                .And.Contain("permission denied");
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    private static (EventStore Store, Action Cleanup) CreateObserver()
     {
         var directory = Path.Combine(
             Path.GetTempPath(),
@@ -555,69 +566,6 @@ public sealed class RunEventProjectorTests
         );
         Directory.CreateDirectory(directory);
         var store = new EventStore(directory);
-        var runId = Guid.CreateVersion7();
-        var projectors = new Dictionary<string, RunEventProjector>();
-        RunEventProjector Projector(string blockId) =>
-            projectors.TryGetValue(blockId, out var projector)
-                ? projector
-                : projectors[blockId] = new RunEventProjector(runId, blockId, store);
-        return (
-            store,
-            new RunEventBlockExecutionObserver(Projector),
-            () => Directory.Delete(directory, true)
-        );
-    }
-
-    private static PipelineMessage<DeliveryState> CreateMessage(BlockOutcome outcome) =>
-        new(
-            PipelineRuntime.Create(Guid.CreateVersion7()),
-            DeliveryState.Create(
-                new Packet("test", "/tmp/repo", "main", [], [], [], ""),
-                "abc123",
-                "/tmp/workspace"
-            ),
-            outcome
-        );
-
-    private static async Task<TOutput> RunAsync<TInput, TOutput>(Workflow workflow, TInput input)
-        where TInput : notnull
-    {
-        await using var run = await InProcessExecution.RunStreamingAsync(
-            workflow,
-            input,
-            Guid.NewGuid().ToString("N"),
-            CancellationToken.None
-        );
-        await foreach (var evt in run.WatchStreamAsync(CancellationToken.None))
-        {
-            if (evt is WorkflowOutputEvent output)
-            {
-                if (output.Is<TOutput>())
-                {
-                    return output.As<TOutput>()!;
-                }
-            }
-        }
-
-        throw new InvalidOperationException("Workflow completed without output.");
-    }
-
-    private sealed class SaveHumanInputExecutor(PipelineMessage<DeliveryState> message)
-        : Executor<HumanAnswer, HumanAnswer>("save-human-input")
-    {
-        public override async ValueTask<HumanAnswer> HandleAsync(
-            HumanAnswer input,
-            IWorkflowContext context,
-            CancellationToken cancellationToken
-        )
-        {
-            await context.QueueStateUpdateAsync(
-                message.Runtime.RunId.ToString("N"),
-                JsonSerializer.Serialize(message),
-                "HumanInput",
-                cancellationToken
-            );
-            return input;
-        }
+        return (store, () => Directory.Delete(directory, true));
     }
 }

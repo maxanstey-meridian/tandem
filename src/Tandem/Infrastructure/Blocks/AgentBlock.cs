@@ -4,9 +4,7 @@ using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
-using Tandem.Actions;
 using Tandem.Domain;
-using Tandem.Infrastructure.Lifecycle;
 
 #pragma warning disable MAAI001
 
@@ -15,22 +13,19 @@ namespace Tandem.Infrastructure.Blocks;
 internal sealed class AgentBlock<TState>(
     AgentBlockConfig<TState> config,
     IChatClient chatClient,
-    string tandemHome,
-    string? tandemExePath = null,
     Action<string, Guid, AgentUpdate>? onUpdate = null,
-    ToolInterceptor<TState>? toolInterceptor = null,
+    Func<PipelineMessage<TState>, string, CancellationToken, ValueTask<string?>>? toolInterceptor =
+        null,
     Action<ChatOptions>? configureChatOptions = null,
     Func<string, IChatClient>? chatClientFactory = null
-) : Executor<PipelineMessage<TState>, PipelineMessage<TState>>(config.BlockId)
+)
+    : Executor<PipelineMessage<TState>, PipelineMessage<TState>>(
+        config.BlockId,
+        options: null,
+        declareCrossRunShareable: true
+    )
 {
     private static readonly TimeSpan _turnTimeout = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan _mcpCallTimeout = TimeSpan.FromSeconds(30);
-
-    private readonly LifecycleReceiptStore _receiptStore = new(tandemHome);
-    private readonly string _tandemExePath =
-        tandemExePath
-        ?? Environment.ProcessPath
-        ?? throw new InvalidOperationException("Process path unavailable.");
 
     public override async ValueTask<PipelineMessage<TState>> HandleAsync(
         PipelineMessage<TState> message,
@@ -50,48 +45,32 @@ internal sealed class AgentBlock<TState>(
         var runtime = ApplyPreInvocationPolicies(message);
         message = message with { Runtime = runtime };
         var invocationId = runtime.NextInvocationId(config.BlockId);
-
-        var existingReceipt = await _receiptStore.ReadAsync(runtime.RunId, invocationId, cts.Token);
-        if (existingReceipt is not null)
-        {
-            blockSw.Stop();
-            return FinalizeConversation(
-                ApplyAcceptedReceipt(message, existingReceipt, blockSw.Elapsed)
-            );
-        }
-
         var isCheckpointOnly = ShouldRunCheckpointOnly(runtime);
-        var requiresLifecycleActions = isCheckpointOnly || config.LifecycleActionNames.Count > 0;
+        var selectedCapabilities = isCheckpointOnly
+            ? new[] { config.Checkpoint!.Capability }
+            : config.Capabilities;
+        var capabilityInvocation = new CapabilityInvocationState<TState>(
+            runtime.RunId,
+            config.BlockId,
+            invocationId,
+            message.State
+        );
+        var capabilityFunctions = selectedCapabilities
+            .Select(capability => capability.Bind(capabilityInvocation))
+            .ToArray();
         if (
-            requiresLifecycleActions && string.IsNullOrWhiteSpace(config.LifecycleActionSetIdentity)
+            config.WorkspacePath is not null
+            && capabilityFunctions.Any(tool =>
+                tool.Name.StartsWith("file_access_", StringComparison.Ordinal)
+            )
         )
         {
             throw new InvalidOperationException(
-                $"Agent '{config.BlockId}' must explicitly select a lifecycle action set."
+                $"Agent '{config.BlockId}' has a capability that collides with a Harness file tool."
             );
         }
 
-        var lifecycleTools = Array.Empty<AITool>();
-        LifecycleMcpClient? mcpClient = null;
-
-        try
         {
-            if (requiresLifecycleActions)
-            {
-                mcpClient = new LifecycleMcpClient(
-                    tandemHome,
-                    _tandemExePath,
-                    runtime.RunId,
-                    config.BlockId,
-                    invocationId,
-                    config.LifecycleActionSetIdentity!
-                );
-                var actionNames = isCheckpointOnly
-                    ? new[] { config.Checkpoint!.Capability.ToolName }
-                    : config.LifecycleActionNames;
-                lifecycleTools = (await mcpClient.ListToolsAsync(actionNames, cts.Token)).ToArray();
-            }
-
             var collector = new ToolOutcomeCollector();
 
             AgentFileStore? fileStore = config.WorkspacePath is null
@@ -103,7 +82,10 @@ internal sealed class AgentBlock<TState>(
             var instructions = isCheckpointOnly
                 ? config.Checkpoint!.Instructions
                 : config.SystemInstructions;
-            var tools = lifecycleTools.ToList();
+            var tools = capabilityFunctions.Cast<AITool>().ToList();
+            var boundCapabilityNames = capabilityFunctions
+                .Select(function => function.Name)
+                .ToHashSet(StringComparer.Ordinal);
             var agent = CreateAgent(
                 fileStore,
                 instructions,
@@ -111,11 +93,15 @@ internal sealed class AgentBlock<TState>(
                 message,
                 isCheckpointOnly,
                 requiredToolName: null,
-                collector: collector
+                collector: collector,
+                boundCapabilityNames: boundCapabilityNames
             );
             var session = await RestoreOrCreateSessionAsync(agent, runtime, cts.Token);
             var baseMessage = isCheckpointOnly
-                ? config.Checkpoint!.UserMessage(message)
+                ? config.Checkpoint!.UserMessage(
+                    message.State,
+                    runtime.AgentUsage.GetValueOrDefault(config.BlockId)?.CurrentContextTokens ?? 0
+                )
                 : config.ContextUserMessage?.Invoke(message) ?? config.UserMessage!(message.State);
 
             var augmentation = config.MessageAugmentation is not null
@@ -131,7 +117,7 @@ internal sealed class AgentBlock<TState>(
             var continuationAttempt = 0;
             var policyExhausted = false;
             var structuredAttempt = 0;
-            StructuredOutputResult<TState>? structuredResult = null;
+            AgentStructuredOutputResult<TState>? structuredResult = null;
             var structuredToolNames = new HashSet<string>(StringComparer.Ordinal);
 
             while (true)
@@ -163,7 +149,7 @@ internal sealed class AgentBlock<TState>(
                         }
                     }
 
-                    PublishUpdates(runtime.RunId, update);
+                    await PublishUpdatesAsync(message, runtime.RunId, update, cts.Token);
                 }
 
                 turnSw.Stop();
@@ -177,16 +163,17 @@ internal sealed class AgentBlock<TState>(
 
                 if (config.StructuredOutput is not null)
                 {
-                    structuredResult = config.StructuredOutput(turnText.ToString(), message.State);
-                    if (config.StructuredOutputAcceptance is not null)
+                    structuredResult = config.StructuredOutput.Parse(
+                        turnText.ToString(),
+                        message.State
+                    );
+                    if (config.StructuredOutput.Accept is not null)
                     {
-                        var problems = config.StructuredOutputAcceptance(
-                            new StructuredOutputAcceptanceObservation<TState>(
-                                message,
-                                structuredResult,
-                                structuredToolNames,
-                                structuredAttempt
-                            )
+                        var problems = config.StructuredOutput.Accept(
+                            message,
+                            structuredResult,
+                            structuredToolNames,
+                            structuredAttempt
                         );
                         if (problems.Count > 0)
                         {
@@ -206,7 +193,7 @@ internal sealed class AgentBlock<TState>(
                     userMessage = structuredResult.CorrectionPrompt();
                     if (
                         !string.IsNullOrWhiteSpace(
-                            config.StructuredOutputCorrectionRequiredToolName
+                            config.StructuredOutput.CorrectionRequiredToolName
                         )
                     )
                     {
@@ -216,8 +203,9 @@ internal sealed class AgentBlock<TState>(
                             tools,
                             message,
                             isCheckpointOnly,
-                            config.StructuredOutputCorrectionRequiredToolName,
+                            config.StructuredOutput.CorrectionRequiredToolName,
                             collector,
+                            boundCapabilityNames,
                             configureStructuredOutput: false
                         );
                     }
@@ -236,13 +224,11 @@ internal sealed class AgentBlock<TState>(
                 }
 
                 var directive = await config.TurnPolicy.Continue(
-                    new AgentTurnObservation<TState>(
-                        message,
-                        turnText.ToString(),
-                        turnToolNames,
-                        collector.HasLifecycleCall,
-                        continuationAttempt
-                    ),
+                    message,
+                    turnText.ToString(),
+                    turnToolNames,
+                    collector.HasLifecycleCall,
+                    continuationAttempt,
                     cts.Token
                 );
                 if (directive is null)
@@ -260,7 +246,8 @@ internal sealed class AgentBlock<TState>(
                     message,
                     isCheckpointOnly,
                     directive.RequiredToolName,
-                    collector
+                    collector,
+                    boundCapabilityNames
                 );
             }
 
@@ -275,16 +262,13 @@ internal sealed class AgentBlock<TState>(
             );
 
             var outcome = await ResolveOutcomeAsync(
-                collector,
                 structuredResult,
-                runtime.RunId,
-                invocationId,
                 updatedRuntime,
-                message.State,
+                capabilityInvocation,
                 isCheckpointOnly,
                 policyExhausted,
                 continuationAttempt,
-                cts.Token
+                message.RunContext
             );
             blockSw.Stop();
             if (outcome.LatestOutcome is null)
@@ -293,13 +277,6 @@ internal sealed class AgentBlock<TState>(
             }
             var timedOutcome = outcome.LatestOutcome with { Duration = blockSw.Elapsed };
             return FinalizeConversation(outcome with { LatestOutcome = timedOutcome });
-        }
-        finally
-        {
-            if (mcpClient is not null)
-            {
-                await mcpClient.DisposeAsync();
-            }
         }
     }
 
@@ -338,59 +315,52 @@ internal sealed class AgentBlock<TState>(
         );
     }
 
-    private void ConfigureFunctionInvocation(
-        HarnessAgent agent,
+    private AIAgent ConfigureFunctionInvocation(
+        AIAgent agent,
         ToolOutcomeCollector collector,
-        PipelineMessage<TState> message
-    )
-    {
-        var invokingClient =
-            agent.GetService<FunctionInvokingChatClient>()
-            ?? throw new InvalidOperationException(
-                "HarnessAgent did not expose its FunctionInvokingChatClient."
-            );
-
-        invokingClient.FunctionInvoker = async (ficContext, ct) =>
-        {
-            var isLifecycle =
-                config.LifecycleActionNames.Contains(ficContext.Function.Name)
-                || ficContext.Function.Name == config.Checkpoint?.Capability.ToolName;
-
-            if (!isLifecycle && toolInterceptor is not null)
-            {
-                var interception = await toolInterceptor(
-                    message,
-                    new ToolInvocation(ficContext.Function.Name),
-                    ct
-                );
-                if (interception is ToolInterceptionResult.Blocked blocked)
+        PipelineMessage<TState> message,
+        IReadOnlySet<string> boundCapabilityNames
+    ) =>
+        agent
+            .AsBuilder()
+            .Use(
+                async (_, ficContext, next, ct) =>
                 {
-                    return blocked.Message;
-                }
-            }
+                    var isLifecycle = boundCapabilityNames.Contains(ficContext.Function.Name);
 
-            if (!isLifecycle)
-            {
-                var toolResult = await ficContext.Function.InvokeAsync(ficContext.Arguments, ct);
-                if (!IsToolError(toolResult))
-                {
-                    collector.RecordSuccessfulToolCall(ficContext.Function.Name);
-                }
-                return toolResult;
-            }
+                    if (!isLifecycle && toolInterceptor is not null)
+                    {
+                        var blockedMessage = await toolInterceptor(
+                            message,
+                            ficContext.Function.Name,
+                            ct
+                        );
+                        if (blockedMessage is not null)
+                        {
+                            return blockedMessage;
+                        }
+                    }
 
-            using var mcpCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            mcpCts.CancelAfter(_mcpCallTimeout);
-            var result = await ficContext.Function.InvokeAsync(ficContext.Arguments, mcpCts.Token);
-            if (IsToolError(result))
-            {
-                return result;
-            }
-            collector.RecordLifecycleCall(ficContext.Function.Name);
-            ficContext.Terminate = true;
-            return result;
-        };
-    }
+                    var result = await next(ficContext, ct);
+                    if (IsToolError(result))
+                    {
+                        return result;
+                    }
+
+                    if (isLifecycle)
+                    {
+                        collector.RecordLifecycleCall(ficContext.Function.Name);
+                        ficContext.Terminate = true;
+                    }
+                    else
+                    {
+                        collector.RecordSuccessfulToolCall(ficContext.Function.Name);
+                    }
+
+                    return result;
+                }
+            )
+            .Build();
 
     private static bool IsToolError(object? result) =>
         result switch
@@ -415,31 +385,38 @@ internal sealed class AgentBlock<TState>(
     }
 
     private Task<PipelineMessage<TState>> ResolveOutcomeAsync(
-        ToolOutcomeCollector collector,
-        StructuredOutputResult<TState>? structuredResult,
-        Guid runId,
-        string invocationId,
+        AgentStructuredOutputResult<TState>? structuredResult,
         PipelineRuntime runtime,
-        TState state,
+        CapabilityInvocationState<TState> capabilityInvocation,
         bool isCheckpointOnly,
         bool policyExhausted,
         int continuationAttempt,
-        CancellationToken ct
+        PipelineRunContext? runContext
     )
     {
+        var state = capabilityInvocation.State;
         if (isCheckpointOnly)
         {
-            return ResolveCheckpointOutcomeAsync(
-                collector,
-                runId,
-                invocationId,
-                runtime,
-                state,
-                ct
+            return Task.FromResult(
+                capabilityInvocation.Accepted is { } checkpoint
+                    ? ApplyAcceptedCapability(runtime, checkpoint, resetSession: true, runContext)
+                    : new PipelineMessage<TState>(
+                        runtime.IncrementInvocations(config.BlockId),
+                        state,
+                        new BlockOutcome(
+                            "agent.failed",
+                            config.BlockId,
+                            $"Checkpoint-only mode: model did not call {config.Checkpoint!.Capability.ToolName}.",
+                            EmptyPayload()
+                        )
+                    )
+                    {
+                        RunContext = runContext,
+                    }
             );
         }
 
-        if (!collector.HasLifecycleCall)
+        if (capabilityInvocation.Accepted is null)
         {
             if (config.StructuredOutput is not null)
             {
@@ -467,6 +444,9 @@ internal sealed class AgentBlock<TState>(
                                 )
                             )
                         )
+                        {
+                            RunContext = runContext,
+                        }
                     );
                 }
 
@@ -485,6 +465,9 @@ internal sealed class AgentBlock<TState>(
                             structured.Payload
                         )
                     )
+                    {
+                        RunContext = runContext,
+                    }
                 );
             }
 
@@ -503,80 +486,48 @@ internal sealed class AgentBlock<TState>(
                     state,
                     new BlockOutcome(kind, config.BlockId, summary, payload)
                 )
+                {
+                    RunContext = runContext,
+                }
             );
         }
 
-        return ResolveLifecycleReceiptAsync(runId, invocationId, runtime, state, ct);
+        return Task.FromResult(
+            ApplyAcceptedCapability(
+                runtime,
+                capabilityInvocation.Accepted,
+                resetSession: false,
+                runContext
+            )
+        );
     }
 
-    private async Task<PipelineMessage<TState>> ResolveCheckpointOutcomeAsync(
-        ToolOutcomeCollector collector,
-        Guid runId,
-        string invocationId,
+    private PipelineMessage<TState> ApplyAcceptedCapability(
         PipelineRuntime runtime,
-        TState state,
-        CancellationToken ct
+        AcceptedCapability<TState> accepted,
+        bool resetSession,
+        PipelineRunContext? runContext
     )
     {
-        if (!collector.HasLifecycleCall)
+        var updatedRuntime = resetSession
+            ? runtime.WithoutSession(config.BlockId).WithoutUsage(config.BlockId)
+            : runtime;
+        return new PipelineMessage<TState>(
+            updatedRuntime.IncrementInvocations(config.BlockId),
+            accepted.State,
+            new BlockOutcome(
+                accepted.CapabilityId,
+                config.BlockId,
+                accepted.Summary,
+                accepted.Payload
+            )
+        )
         {
-            return new PipelineMessage<TState>(
-                runtime.IncrementInvocations(config.BlockId),
-                state,
-                new BlockOutcome(
-                    "agent.failed",
-                    config.BlockId,
-                    $"Checkpoint-only mode: model did not call {config.Checkpoint!.Capability.ToolName}.",
-                    EmptyPayload()
-                )
-            );
-        }
-
-        var receipt = await _receiptStore.ReadAsync(runId, invocationId, ct);
-        if (receipt is null)
-        {
-            return new PipelineMessage<TState>(
-                runtime.IncrementInvocations(config.BlockId),
-                state,
-                new BlockOutcome(
-                    "agent.failed",
-                    config.BlockId,
-                    "Checkpoint tool called but no receipt written.",
-                    EmptyPayload()
-                )
-            );
-        }
-
-        return ApplyAcceptedReceipt(new PipelineMessage<TState>(runtime, state), receipt);
+            RunContext = runContext,
+        };
     }
 
-    private async Task<PipelineMessage<TState>> ResolveLifecycleReceiptAsync(
-        Guid runId,
-        string invocationId,
-        PipelineRuntime runtime,
-        TState state,
-        CancellationToken ct
-    )
-    {
-        var receipt = await _receiptStore.ReadAsync(runId, invocationId, ct);
-        if (receipt is null)
-        {
-            return new PipelineMessage<TState>(
-                runtime.IncrementInvocations(config.BlockId),
-                state,
-                new BlockOutcome(
-                    "agent.failed",
-                    config.BlockId,
-                    "Lifecycle tool called but no receipt written.",
-                    EmptyPayload()
-                )
-            );
-        }
-
-        return ApplyAcceptedReceipt(new PipelineMessage<TState>(runtime, state), receipt);
-    }
-
-    private HarnessAgent CreateAgent(
+    private AIAgent CreateAgent(
         AgentFileStore? fileStore,
         string instructions,
         IReadOnlyList<AITool> tools,
@@ -584,6 +535,7 @@ internal sealed class AgentBlock<TState>(
         bool isCheckpointOnly,
         string? requiredToolName,
         ToolOutcomeCollector collector,
+        IReadOnlySet<string> boundCapabilityNames,
         bool configureStructuredOutput = true
     )
     {
@@ -626,8 +578,7 @@ internal sealed class AgentBlock<TState>(
             }
         );
 
-        ConfigureFunctionInvocation(agent, collector, message);
-        return agent;
+        return ConfigureFunctionInvocation(agent, collector, message, boundCapabilityNames);
     }
 
     private FileAccessProviderOptions ResolveAccessOptions(
@@ -669,13 +620,13 @@ internal sealed class AgentBlock<TState>(
 
     private static JsonElement EmptyPayload() => JsonSerializer.SerializeToElement(new { });
 
-    private void PublishUpdates(Guid runId, AgentResponseUpdate update)
+    private async ValueTask PublishUpdatesAsync(
+        PipelineMessage<TState> message,
+        Guid runId,
+        AgentResponseUpdate update,
+        CancellationToken cancellationToken
+    )
     {
-        if (onUpdate is null)
-        {
-            return;
-        }
-
         foreach (var content in update.Contents)
         {
             AgentUpdate? semantic = content switch
@@ -702,51 +653,25 @@ internal sealed class AgentBlock<TState>(
 
             if (semantic is not null)
             {
-                onUpdate(config.BlockId, runId, semantic);
+                onUpdate?.Invoke(config.BlockId, runId, semantic);
+                if (message.RunContext is not null)
+                {
+                    await message.RunContext.ObserveAsync(
+                        new PipelineAgentUpdated(runId, config.BlockId, semantic),
+                        cancellationToken
+                    );
+                }
             }
         }
     }
 
-    private TState ApplyReceipt(TState state, string kind, JsonElement payload) =>
-        config.ReceiptTransition is null ? state : config.ReceiptTransition(state, kind, payload);
-
-    private PipelineMessage<TState> ApplyAcceptedReceipt(
-        PipelineMessage<TState> message,
-        LifecycleReceipt receipt,
-        TimeSpan duration = default
-    )
-    {
-        var isCheckpoint =
-            config.Checkpoint is { } checkpoint
-            && receipt.Kind == checkpoint.Capability.ReceiptKind;
-        var updatedRuntime = isCheckpoint
-            ? message.Runtime.WithoutSession(config.BlockId).WithoutUsage(config.BlockId)
-            : message.Runtime;
-        var updatedState = isCheckpoint
-            ? config.Checkpoint!.Capability.Transition(message.State, receipt.Kind, receipt.Payload)
-            : ApplyReceipt(message.State, receipt.Kind, receipt.Payload);
-        var outcome = new BlockOutcome(
-            receipt.Kind,
-            config.BlockId,
-            receipt.Summary,
-            receipt.Payload,
-            duration
-        );
-        return new PipelineMessage<TState>(
-            updatedRuntime.IncrementInvocations(config.BlockId),
-            updatedState,
-            outcome
-        );
-    }
-
     private PipelineMessage<TState> FinalizeConversation(PipelineMessage<TState> message)
     {
-        if (config.ConversationPolicy is null || message.LatestOutcome is null)
+        if (config.RetainConversation is null || message.LatestOutcome is null)
         {
             return message;
         }
-        var decision = config.ConversationPolicy(message, message.LatestOutcome);
-        if (decision.Retention == AgentConversationRetention.Retain)
+        if (config.RetainConversation(message, message.LatestOutcome))
         {
             return message;
         }
@@ -762,28 +687,31 @@ internal sealed class AgentBlock<TState>(
 
     private PipelineRuntime ApplyPreInvocationPolicies(PipelineMessage<TState> message)
     {
-        if (config.SessionPolicy is null)
-        {
-            throw new InvalidOperationException(
-                $"Agent '{config.BlockId}' must explicitly select a session policy."
-            );
-        }
-
         var runtime = message.Runtime;
-        var session = config.SessionPolicy(message.State);
-        if (session.Action is AgentSessionAction.Reset or AgentSessionAction.Teardown)
+        if (!config.ContinueSession)
         {
             runtime = runtime.WithoutSession(config.BlockId).WithoutUsage(config.BlockId);
         }
 
         var profile =
             config.ProfilePolicy?.Invoke(message.State)
-            ?? new AgentProfileDecision(config.ProfileName, "Configured agent profile.");
+            ?? new AgentProfileSelection(config.ProfileName, "Configured agent profile.");
+        if (
+            runtime.AgentProfiles.TryGetValue(config.BlockId, out var currentProfile)
+            && !string.Equals(
+                currentProfile.ProfileName,
+                profile.ProfileName,
+                StringComparison.Ordinal
+            )
+        )
+        {
+            runtime = runtime.WithoutSession(config.BlockId).WithoutUsage(config.BlockId);
+        }
         return runtime.WithProfile(config.BlockId, profile);
     }
 
     private async Task<PipelineRuntime> CaptureSessionAsync(
-        HarnessAgent agent,
+        AIAgent agent,
         AgentSession session,
         PipelineRuntime runtime,
         CancellationToken ct
@@ -794,7 +722,7 @@ internal sealed class AgentBlock<TState>(
     }
 
     private async Task<AgentSession> RestoreOrCreateSessionAsync(
-        HarnessAgent agent,
+        AIAgent agent,
         PipelineRuntime runtime,
         CancellationToken ct
     )

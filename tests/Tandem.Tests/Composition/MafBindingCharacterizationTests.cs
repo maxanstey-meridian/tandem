@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows;
-using Tandem.Infrastructure.Projection;
 
 namespace Tandem.Tests.Composition;
 
@@ -101,7 +100,7 @@ public sealed class MafBindingCharacterizationTests
     }
 
     [Fact]
-    public async Task PlainStepAdapter_PreservesTypingReflectionAndObservation()
+    public async Task PlainStepAdapter_PreservesTypingAndReflection()
     {
         var step = new PlainStep<ProbeMessage, ProbeMessage>(message =>
             message with
@@ -116,14 +115,8 @@ public sealed class MafBindingCharacterizationTests
             .BeFalse();
         typeof(PlainStep<ProbeMessage, ProbeMessage>).BaseType.Should().Be(typeof(object));
 
-        var observer = new RecordingObserver();
         var adapter = new PlainStepExecutor<ProbeMessage, ProbeMessage>("plain-step", step);
-        var observed = new ObservedExecutor<ProbeMessage, ProbeMessage>(
-            "plain-step",
-            adapter,
-            observer
-        );
-        var workflow = BuildSingleStep(observed.BindExecutor(), "plain-step-observed");
+        var workflow = BuildSingleStep(adapter.BindExecutor(), "plain-step-observed");
 
         var output = await RunAsync<ProbeMessage, ProbeMessage>(
             workflow,
@@ -133,8 +126,6 @@ public sealed class MafBindingCharacterizationTests
 
         output.Count.Should().Be(1);
         workflow.ReflectExecutors().Keys.Should().Equal("plain-step");
-        observer.Started.Should().Equal("plain-step");
-        observer.Completed.Should().Equal("plain-step");
     }
 
     [Fact]
@@ -166,6 +157,191 @@ public sealed class MafBindingCharacterizationTests
         reflectedPort.PortId.Should().Be("human-input");
         reflectedPort.RequestType.TypeName.Should().Be(typeof(HumanQuestion).FullName);
         reflectedPort.ResponseType.TypeName.Should().Be(typeof(HumanAnswer).FullName);
+    }
+
+    [Fact]
+    public async Task ConditionalEdges_FanOutToEveryMatchingDestination()
+    {
+        var start = new PlainStepExecutor<int, int>(
+            "start",
+            new PlainStep<int, int>(value => value)
+        ).BindExecutor();
+        var first = new PlainStepExecutor<int, string>(
+            "first",
+            new PlainStep<int, string>(_ => "first")
+        ).BindExecutor();
+        var second = new PlainStepExecutor<int, string>(
+            "second",
+            new PlainStep<int, string>(_ => "second")
+        ).BindExecutor();
+        var workflow = new WorkflowBuilder(start)
+            .WithName("ordered-conditional-routing")
+            .AddEdge<int>(start, first, _ => true, "first", idempotent: false)
+            .AddEdge<int>(start, second, _ => true, "second", idempotent: false)
+            .WithOutputFrom(first, second)
+            .Build();
+
+        var outputs = await RunAllAsync<int, string>(workflow, 1, "ordered-conditional-routing");
+
+        outputs.Should().Equal("first", "second");
+    }
+
+    [Fact]
+    public async Task MatchingConditionalEdgesToTheSameTarget_ExecuteTheTargetForEachEdge()
+    {
+        var invocationCount = 0;
+        var start = new PlainStepExecutor<int, int>(
+            "start",
+            new PlainStep<int, int>(value => value)
+        ).BindExecutor();
+        var target = new PlainStepExecutor<int, string>(
+            "target",
+            new PlainStep<int, string>(_ =>
+            {
+                Interlocked.Increment(ref invocationCount);
+                return "target";
+            })
+        ).BindExecutor();
+        var workflow = new WorkflowBuilder(start)
+            .WithName("same-target-conditional-routing")
+            .AddEdge<int>(start, target, _ => true, "first", idempotent: false)
+            .AddEdge<int>(start, target, _ => true, "second", idempotent: false)
+            .WithOutputFrom(target)
+            .Build();
+
+        var outputs = await RunAllAsync<int, string>(
+            workflow,
+            1,
+            "same-target-conditional-routing"
+        );
+
+        outputs.Should().Equal("target", "target");
+        invocationCount.Should().Be(2);
+    }
+
+    [Fact]
+    public void DuplicateUnconditionalEdges_AreAcceptedDuringConstruction()
+    {
+        var start = new PlainStepExecutor<int, int>(
+            "start",
+            new PlainStep<int, int>(value => value)
+        ).BindExecutor();
+        var target = new PlainStepExecutor<int, int>(
+            "target",
+            new PlainStep<int, int>(value => value)
+        ).BindExecutor();
+        var builder = new WorkflowBuilder(start).AddEdge(start, target, "first", idempotent: false);
+
+        var act = () => builder.AddEdge(start, target, "second", idempotent: false);
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public async Task SwitchCases_SelectTheFirstMatchingDestinationInDeclarationOrder()
+    {
+        var start = new PlainStepExecutor<int, int>(
+            "start",
+            new PlainStep<int, int>(value => value)
+        ).BindExecutor();
+        var first = new PlainStepExecutor<int, string>(
+            "first",
+            new PlainStep<int, string>(_ => "first")
+        ).BindExecutor();
+        var second = new PlainStepExecutor<int, string>(
+            "second",
+            new PlainStep<int, string>(_ => "second")
+        ).BindExecutor();
+        var workflow = new WorkflowBuilder(start)
+            .WithName("ordered-switch-routing")
+            .AddSwitch(
+                start,
+                switchBuilder =>
+                    switchBuilder.AddCase<int>(_ => true, [first]).AddCase<int>(_ => true, [second])
+            )
+            .WithOutputFrom(first, second)
+            .Build();
+
+        var outputs = await RunAllAsync<int, string>(workflow, 1, "ordered-switch-routing");
+
+        outputs.Should().Equal("first");
+    }
+
+    [Fact]
+    public async Task RequestHalt_ExposesEveryRequestAndAcceptsConcurrentOutOfOrderResponses()
+    {
+        var start = new PlainStepExecutor<int, int>(
+            "start",
+            new PlainStep<int, int>(value => value)
+        ).BindExecutor();
+        var firstRequest = new PlainStepExecutor<int, FirstQuestion>(
+            "first-request",
+            new PlainStep<int, FirstQuestion>(value => new FirstQuestion(value))
+        ).BindExecutor();
+        var secondRequest = new PlainStepExecutor<int, SecondQuestion>(
+            "second-request",
+            new PlainStep<int, SecondQuestion>(value => new SecondQuestion(value))
+        ).BindExecutor();
+        var firstPort = (ExecutorBinding)
+            RequestPort.Create<FirstQuestion, FirstAnswer>("first-port");
+        var secondPort = (ExecutorBinding)
+            RequestPort.Create<SecondQuestion, SecondAnswer>("second-port");
+        var firstResume = new PlainStepExecutor<FirstAnswer, string>(
+            "first-resume",
+            new PlainStep<FirstAnswer, string>(answer => answer.Value)
+        ).BindExecutor();
+        var secondResume = new PlainStepExecutor<SecondAnswer, string>(
+            "second-resume",
+            new PlainStep<SecondAnswer, string>(answer => answer.Value)
+        ).BindExecutor();
+        var workflow = new WorkflowBuilder(start)
+            .WithName("multiple-requests")
+            .AddFanOutEdge(start, [firstRequest, secondRequest])
+            .AddEdge(firstRequest, firstPort)
+            .AddEdge(firstPort, firstResume)
+            .AddEdge(secondRequest, secondPort)
+            .AddEdge(secondPort, secondResume)
+            .WithOutputFrom(firstResume, secondResume)
+            .Build();
+        await using var run = await InProcessExecution.RunStreamingAsync(
+            workflow,
+            1,
+            "multiple-requests",
+            CancellationToken.None
+        );
+        var requests = new ConcurrentDictionary<string, ExternalRequest>(StringComparer.Ordinal);
+        var outputs = new ConcurrentBag<string>();
+        var watch = Task.Run(async () =>
+        {
+            await foreach (var evt in run.WatchStreamAsync(CancellationToken.None))
+            {
+                if (evt is RequestInfoEvent request)
+                {
+                    requests.TryAdd(request.Request.PortInfo.PortId, request.Request);
+                }
+                else if (evt is WorkflowOutputEvent output && output.Is<string>())
+                {
+                    outputs.Add(output.As<string>()!);
+                }
+            }
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (requests.Count < 2)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        await Task.WhenAll(
+            run.SendResponseAsync(
+                    requests["second-port"].CreateResponse(new SecondAnswer("second"))
+                )
+                .AsTask(),
+            run.SendResponseAsync(requests["first-port"].CreateResponse(new FirstAnswer("first")))
+                .AsTask()
+        );
+        await watch.WaitAsync(timeout.Token);
+
+        outputs.Should().BeEquivalentTo("first", "second");
     }
 
     private static Workflow BuildSingleStep(ExecutorBinding binding, string name) =>
@@ -208,6 +384,45 @@ public sealed class MafBindingCharacterizationTests
         return output!;
     }
 
+    private static async Task<IReadOnlyList<TOutput>> RunAllAsync<TInput, TOutput>(
+        Workflow workflow,
+        TInput input,
+        string runId
+    )
+        where TInput : notnull
+    {
+        await using var run = await InProcessExecution.RunStreamingAsync(
+            workflow,
+            input,
+            runId,
+            CancellationToken.None
+        );
+        var outputs = new List<TOutput>();
+
+        await foreach (var evt in run.WatchStreamAsync(CancellationToken.None))
+        {
+            if (evt is WorkflowErrorEvent error)
+            {
+                throw error.Exception ?? new InvalidOperationException("Workflow failed.");
+            }
+            if (evt is ExecutorFailedEvent failed)
+            {
+                throw failed.Data ?? new InvalidOperationException("Executor failed.");
+            }
+            if (evt is WorkflowOutputEvent workflowOutput && workflowOutput.Is<TOutput>())
+            {
+                var output = workflowOutput.As<TOutput>();
+                if (output is null)
+                {
+                    throw new InvalidOperationException("Workflow produced a null output.");
+                }
+                outputs.Add(output);
+            }
+        }
+
+        return outputs;
+    }
+
     private sealed class PlainStep<TInput, TOutput>(Func<TInput, TOutput> execute)
     {
         public ValueTask<TOutput> ExecuteAsync(TInput input, CancellationToken _) =>
@@ -226,33 +441,17 @@ public sealed class MafBindingCharacterizationTests
         ) => step.ExecuteAsync(input, cancellationToken);
     }
 
-    private sealed class RecordingObserver : IBlockExecutionObserver
-    {
-        public List<string> Started { get; } = [];
-        public List<string> Completed { get; } = [];
-
-        public ValueTask StartedAsync(string blockId, CancellationToken cancellationToken)
-        {
-            Started.Add(blockId);
-            return ValueTask.CompletedTask;
-        }
-
-        public ValueTask CompletedAsync<TInput, TOutput>(
-            string blockId,
-            TInput input,
-            TOutput output,
-            TimeSpan duration,
-            CancellationToken cancellationToken
-        )
-        {
-            Completed.Add(blockId);
-            return ValueTask.CompletedTask;
-        }
-    }
-
     private sealed record ProbeMessage(int Count);
 
     private sealed record HumanQuestion(string Value);
 
     private sealed record HumanAnswer(string Value);
+
+    private sealed record FirstQuestion(int Value);
+
+    private sealed record FirstAnswer(string Value);
+
+    private sealed record SecondQuestion(int Value);
+
+    private sealed record SecondAnswer(string Value);
 }

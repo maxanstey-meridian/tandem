@@ -2,7 +2,7 @@ namespace Tandem.Sample.Debate;
 
 public sealed class DebateComposition(DebateSteps debate)
 {
-    public Pipeline Build()
+    public Pipeline<DebateState> Build()
     {
         return TandemWorkflow
             .Start(

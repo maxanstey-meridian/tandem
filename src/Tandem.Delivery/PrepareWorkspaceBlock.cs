@@ -1,31 +1,25 @@
 using System.Diagnostics;
 using System.Text.Json;
-using Tandem.Domain;
+using Tandem.Advanced;
 
 namespace Tandem.Delivery;
 
 public sealed class PrepareWorkspaceBlock(WorkspacePreparation preparation)
 {
-    public async ValueTask<PipelineMessage<DeliveryState>> ExecuteAsync(
-        PipelineMessage<DeliveryState> message,
+    public async ValueTask<OperationResult<DeliveryState>> ExecuteAsync(
+        PipelineOperationContext<DeliveryState> context,
         CancellationToken cancellationToken
     )
     {
         var sw = Stopwatch.StartNew();
-        var ctx = message.State;
-        var runDir = Path.GetDirectoryName(ctx.WorkspacePath)!;
+        var ctx = context.State;
 
-        var prep = await preparation.PrepareAsync(
-            ctx.Packet,
-            runDir,
-            ctx.WorkspacePath,
-            cancellationToken
-        );
+        var prep = await preparation.PrepareAsync(ctx.Packet, ctx.WorkspacePath, cancellationToken);
 
         var updatedContext = ctx with
         {
             PinnedBaseSha = prep.PinnedBaseSha,
-            Status = Domain.RunStatus.Running,
+            Status = RunStatus.Running,
         };
 
         var payload = JsonSerializer.SerializeToElement(
@@ -33,10 +27,9 @@ public sealed class PrepareWorkspaceBlock(WorkspacePreparation preparation)
         );
 
         sw.Stop();
-        return new PipelineMessage<DeliveryState>(
-            message.Runtime,
+        return new OperationResult<DeliveryState>(
             updatedContext,
-            new BlockOutcome(
+            new OperationOutcome(
                 OutcomeKinds.WorkspacePrepared,
                 BlockIds.Prepare,
                 "Workspace prepared",

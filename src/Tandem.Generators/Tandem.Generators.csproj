@@ -8,6 +8,15 @@
         <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <GenerateDocumentationFile>false</GenerateDocumentationFile>
+        <PackageId>Tandem.Generators</PackageId>
+        <Title>Tandem Generators</Title>
+        <Description>Source generator for typed Tandem pipeline stages.</Description>
+        <PackageTags>agents;ai;workflow;pipeline;analyzer</PackageTags>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageType>Analyzer</PackageType>
+        <DevelopmentDependency>true</DevelopmentDependency>
+        <IncludeBuildOutput>false</IncludeBuildOutput>
+        <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
     </PropertyGroup>
 
     <ItemGroup>
@@ -16,5 +25,10 @@
             Version="5.3.0"
             PrivateAssets="all"
         />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="$(TargetPath)" Pack="true" PackagePath="analyzers/dotnet/cs" />
+        <None Include="../../README.md" Pack="true" PackagePath="/" />
     </ItemGroup>
 </Project>

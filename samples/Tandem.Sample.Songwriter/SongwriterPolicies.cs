@@ -1,5 +1,4 @@
 using FluentValidation;
-using Tandem.Domain;
 
 namespace Tandem.Sample.Songwriter;
 
@@ -34,9 +33,6 @@ public static class SongwriterPolicies
             ProofreaderFeedback = decision.Feedback,
             ProofreaderAccepted = decision.Accepted,
         };
-
-    public static AgentSessionDecision StartFresh(SongwriterState _) =>
-        new(AgentSessionAction.Reset, "Evaluate the latest durable song state afresh.");
 }
 
 public sealed class SongDecisionValidator : AbstractValidator<SongDecision>

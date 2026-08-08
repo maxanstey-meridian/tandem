@@ -8,19 +8,22 @@
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <NoWarn>$(NoWarn);CS1591</NoWarn>
+        <PackageId>Tandem</PackageId>
+        <Title>Tandem</Title>
+        <Description>Typed in-process agentic pipelines built on Microsoft Agent Framework.</Description>
+        <PackageTags>agents;ai;workflow;pipeline</PackageTags>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
     </PropertyGroup>
 
     <ItemGroup>
         <PackageReference Include="FluentValidation" Version="12.1.1" />
         <PackageReference Include="Microsoft.Agents.AI.Harness" Version="1.16.0" />
         <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.16.0" />
-        <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.8.3" />
-        <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
-        <PackageReference Include="ModelContextProtocol" Version="2.1.0" />
-        <PackageReference Include="OpenAI" Version="2.12.0" />
-        <PackageReference Include="Spectre.Console" Version="0.57.2" />
-        <PackageReference Include="System.CommandLine" Version="2.0.0" />
-        <PackageReference Include="YamlDotNet" Version="16.3.0" />
+        <PackageReference Include="Microsoft.Extensions.AI" Version="10.8.3" />
+        <PackageReference
+            Include="Microsoft.Extensions.DependencyInjection.Abstractions"
+            Version="10.0.10"
+        />
     </ItemGroup>
 
     <ItemGroup>
@@ -30,7 +33,8 @@
             ReferenceOutputAssembly="false"
         />
         <InternalsVisibleTo Include="Tandem.Tests" />
-        <InternalsVisibleTo Include="Tandem.Tool" />
+        <InternalsVisibleTo Include="Tandem.Advanced" />
         <EmbeddedResource Include="../../TANDEM.md" LogicalName="Tandem.TANDEM.md" />
+        <None Include="../../README.md" Pack="true" PackagePath="/" />
     </ItemGroup>
 </Project>

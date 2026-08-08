@@ -1,6 +1,7 @@
 using FluentValidation;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Tandem.Advanced;
 
 namespace Tandem.Sample.Debate;
 

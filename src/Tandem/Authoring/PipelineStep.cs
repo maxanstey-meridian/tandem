@@ -3,10 +3,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Agents.AI.Workflows.Checkpointing;
-using Tandem.Advanced;
 using Tandem.Domain;
-using Tandem.Infrastructure.Projection;
 
 namespace Tandem;
 
@@ -24,6 +21,7 @@ public interface IPipelineNode<TState> : IPipelineNode;
 
 internal interface IRawPipelineNode : IPipelineNode;
 
+[EditorBrowsable(EditorBrowsableState.Never)]
 public interface IPipelineStep<TResult> : IPipelineNode;
 
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -41,9 +39,8 @@ public static class PipelineNodes
         string id,
         Func<TState, TState> transition,
         string outcomeKind,
-        Func<string, string, string> summarize,
-        IBlockExecutionObserver? observer = null
-    ) => new StateTransitionFailedNode<TState>(id, transition, outcomeKind, summarize, observer);
+        Func<string, string, string> summarize
+    ) => new StateTransitionFailedNode<TState>(id, transition, outcomeKind, summarize);
 
     public static IPipelineNode<TState> Complete<TState>(string id) =>
         new TerminalCompleteNode<TState>(id);
@@ -52,9 +49,8 @@ public static class PipelineNodes
         string id,
         Func<TState, TState> transition,
         string outcomeKind,
-        string summary,
-        IBlockExecutionObserver? observer = null
-    ) => new StateTransitionCompleteNode<TState>(id, transition, outcomeKind, summary, observer);
+        string summary
+    ) => new StateTransitionCompleteNode<TState>(id, transition, outcomeKind, summary);
 
     public static PipelineInteraction<TState, TRequest, TResponse> WaitFor<
         TState,
@@ -63,9 +59,8 @@ public static class PipelineNodes
     >(
         string id,
         Func<TState, TRequest> createRequest,
-        Func<TState, TResponse, TState> applyResponse,
-        IBlockExecutionObserver? observer = null
-    ) => new(id, createRequest, applyResponse, observer);
+        Func<TState, TResponse, TState> applyResponse
+    ) => new(id, createRequest, applyResponse);
 }
 
 internal sealed class TerminalCompleteNode<TState>(string id)
@@ -75,7 +70,7 @@ internal sealed class TerminalCompleteNode<TState>(string id)
     public string Id => id;
 
     public PipelineNodeDescriptor Descriptor { get; } =
-        AdvancedPipelineNodes.Stage<PipelineMessage<TState>, PipelineMessage<TState>>(
+        CorePipelineNodes.Stage<PipelineMessage<TState>, PipelineMessage<TState>>(
             id,
             (message, _, _) =>
                 ValueTask.FromResult(
@@ -90,7 +85,7 @@ internal sealed class TerminalCompleteNode<TState>(string id)
                         LatestResult = PipelineResultPayload.Create(
                             id,
                             nameof(Outcome<object>.Success),
-                            message.State
+                            new { }
                         ),
                     }
                 )
@@ -104,7 +99,7 @@ internal sealed class TerminalFailedNode<TState>(string id)
     public string Id => id;
 
     public PipelineNodeDescriptor Descriptor { get; } =
-        AdvancedPipelineNodes.Stage<PipelineMessage<TState>, PipelineMessage<TState>>(
+        CorePipelineNodes.Stage<PipelineMessage<TState>, PipelineMessage<TState>>(
             id,
             (message, _, _) =>
                 ValueTask.FromResult(message with { Disposition = PipelineRunDisposition.Failed })
@@ -115,8 +110,7 @@ internal sealed class StateTransitionCompleteNode<TState>(
     string id,
     Func<TState, TState> transition,
     string outcomeKind,
-    string summary,
-    IBlockExecutionObserver? observer
+    string summary
 ) : IPipelineNode<TState>
 {
     public string Id => id;
@@ -142,8 +136,7 @@ internal sealed class StateTransitionCompleteNode<TState>(
                         )
                     )
                 );
-            },
-            observer
+            }
         );
 }
 
@@ -151,8 +144,7 @@ internal sealed class StateTransitionFailedNode<TState>(
     string id,
     Func<TState, TState> transition,
     string outcomeKind,
-    Func<string, string, string> summarize,
-    IBlockExecutionObserver? observer
+    Func<string, string, string> summarize
 ) : IPipelineNode<TState>
 {
     public string Id => id;
@@ -182,23 +174,26 @@ internal sealed class StateTransitionFailedNode<TState>(
                         Disposition = PipelineRunDisposition.Failed,
                     }
                 );
-            },
-            observer
+            }
         );
 }
 
 internal sealed class DelegatePipelineNodeDescriptor<TInput, TOutput>(
     string id,
     Func<TInput, IPipelineExecutionContext, CancellationToken, ValueTask<TOutput>> execute,
-    IBlockExecutionObserver? observer
+    string? observationId = null,
+    PipelineObservationMode observationMode = PipelineObservationMode.Full
 ) : PipelineNodeDescriptor
 {
     internal override ExecutorBinding Bind()
     {
-        var executor = new DelegatePipelineNodeExecutor<TInput, TOutput>(id, execute);
-        return observer is null
-            ? executor.BindExecutor()
-            : new ObservedExecutor<TInput, TOutput>(id, executor, observer).BindExecutor();
+        var executor = new DelegatePipelineNodeExecutor<TInput, TOutput>(
+            id,
+            observationId ?? id,
+            observationMode,
+            execute
+        );
+        return executor.BindExecutor();
     }
 }
 
@@ -211,36 +206,26 @@ internal sealed class RequestPortPipelineNodeDescriptor<TRequest, TResponse>(str
 
 internal sealed class DelegatePipelineNodeExecutor<TInput, TOutput>(
     string id,
+    string observationId,
+    PipelineObservationMode observationMode,
     Func<TInput, IPipelineExecutionContext, CancellationToken, ValueTask<TOutput>> execute
-) : Executor<TInput, TOutput>(id)
+) : Executor<TInput, TOutput>(id, options: null, declareCrossRunShareable: true)
 {
-    public override ValueTask<TOutput> HandleAsync(
+    public override async ValueTask<TOutput> HandleAsync(
         TInput input,
         IWorkflowContext context,
         CancellationToken cancellationToken
-    ) => execute(input, new PipelineExecutionContext(context), cancellationToken);
+    ) =>
+        await PipelineObservationPublisher.ExecuteAsync(
+            observationId,
+            observationMode,
+            input,
+            () => execute(input, new PipelineExecutionContext(), cancellationToken),
+            cancellationToken
+        );
 }
 
-internal sealed class PipelineExecutionContext(IWorkflowContext context) : IPipelineExecutionContext
-{
-    public ValueTask QueueStateUpdateAsync(
-        string key,
-        string value,
-        string scopeName,
-        CancellationToken cancellationToken
-    ) => context.QueueStateUpdateAsync(key, value, scopeName, cancellationToken);
-
-    public ValueTask<HashSet<string>> ReadStateKeysAsync(
-        string scopeName,
-        CancellationToken cancellationToken
-    ) => context.ReadStateKeysAsync(scopeName, cancellationToken);
-
-    public ValueTask<T?> ReadStateAsync<T>(
-        string key,
-        string scopeName,
-        CancellationToken cancellationToken
-    ) => context.ReadStateAsync<T>(key, scopeName, cancellationToken);
-}
+internal sealed class PipelineExecutionContext : IPipelineExecutionContext;
 
 [EditorBrowsable(EditorBrowsableState.Never)]
 public interface IGeneratedPipelineStep<TState, TResult>
@@ -253,17 +238,6 @@ public interface IStandardOutcomePipelineStep<TState>
 
 [EditorBrowsable(EditorBrowsableState.Never)]
 public readonly struct GeneratedStepCompletion;
-
-[EditorBrowsable(EditorBrowsableState.Never)]
-public sealed class GeneratedPipelineStepDescriptor<TState, TResult>(
-    string id,
-    Func<PipelineMessage<TState>, CancellationToken, ValueTask<TResult>> execute,
-    Func<PipelineMessage<TState>, TResult, PipelineMessage<TState>> adapt
-) : PipelineNodeDescriptor
-{
-    internal override ExecutorBinding Bind() =>
-        new GeneratedStepExecutor<TState, TResult>(id, execute, adapt).Bind();
-}
 
 [EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class GeneratedPassThroughStepDescriptor<TState>(
@@ -291,13 +265,10 @@ public sealed class GeneratedOutcomeStepDescriptor<TState>(
     Func<TState, CancellationToken, ValueTask<Outcome<TState>>> execute
 ) : PipelineNodeDescriptor
 {
-    private readonly StandardOutcomeRouteAwareness<TState> _routeAwareness = new();
+    internal override ExecutorBinding Bind() => Bind(new StandardOutcomeRouteAwareness<TState>());
 
-    internal override ExecutorBinding Bind() =>
-        new GeneratedOutcomeStepExecutor<TState>(id, execute, _routeAwareness).Bind();
-
-    internal void SetFailureRouteMatcher(Func<PipelineMessage<TState>, bool> matcher) =>
-        _routeAwareness.Matches = matcher;
+    internal ExecutorBinding Bind(StandardOutcomeRouteAwareness<TState> routeAwareness) =>
+        new GeneratedOutcomeStepExecutor<TState>(id, execute, routeAwareness).Bind();
 }
 
 internal sealed class StandardOutcomeRouteAwareness<TState>
@@ -324,7 +295,12 @@ internal sealed class GeneratedStepExecutor<TState, TResult>(
     string id,
     Func<PipelineMessage<TState>, CancellationToken, ValueTask<TResult>> execute,
     Func<PipelineMessage<TState>, TResult, PipelineMessage<TState>> adapt
-) : Executor<PipelineMessage<TState>, PipelineMessage<TState>>(id)
+)
+    : Executor<PipelineMessage<TState>, PipelineMessage<TState>>(
+        id,
+        options: null,
+        declareCrossRunShareable: true
+    )
 {
     internal ExecutorBinding Bind() => this.BindExecutor();
 
@@ -335,8 +311,17 @@ internal sealed class GeneratedStepExecutor<TState, TResult>(
     )
     {
         using var envelope = PipelineExecutionEnvelope.Begin(pipeline);
-        var result = await execute(pipeline, cancellationToken);
-        return adapt(envelope.Message, result);
+        return await PipelineObservationPublisher.ExecuteAsync(
+            Id,
+            PipelineObservationMode.Full,
+            pipeline,
+            async () =>
+            {
+                var result = await execute(pipeline, cancellationToken);
+                return adapt(envelope.Message, result);
+            },
+            cancellationToken
+        );
     }
 }
 
@@ -350,7 +335,7 @@ internal sealed class GeneratedPassThroughStepExecutor<TState>
         string id,
         Func<TState, CancellationToken, ValueTask> execute
     )
-        : base(id)
+        : base(id, options: null, declareCrossRunShareable: true)
     {
         _id = id;
         _execute = execute;
@@ -365,21 +350,30 @@ internal sealed class GeneratedPassThroughStepExecutor<TState>
     )
     {
         using var envelope = PipelineExecutionEnvelope.Begin(pipeline);
-        await _execute(pipeline.State, cancellationToken);
-        return envelope.Message with
-        {
-            LatestOutcome = new BlockOutcome(
-                StandardOutcomeKinds.Success,
-                _id,
-                "Succeeded",
-                JsonSerializer.SerializeToElement(new { })
-            ),
-            LatestResult = PipelineResultPayload.Create(
-                _id,
-                nameof(Outcome<object>.Success),
-                new { }
-            ),
-        };
+        return await PipelineObservationPublisher.ExecuteAsync(
+            _id,
+            PipelineObservationMode.Full,
+            pipeline,
+            async () =>
+            {
+                await _execute(pipeline.State, cancellationToken);
+                return envelope.Message with
+                {
+                    LatestOutcome = new BlockOutcome(
+                        StandardOutcomeKinds.Success,
+                        _id,
+                        "Succeeded",
+                        JsonSerializer.SerializeToElement(new { })
+                    ),
+                    LatestResult = PipelineResultPayload.Create(
+                        _id,
+                        nameof(Outcome<object>.Success),
+                        new { }
+                    ),
+                };
+            },
+            cancellationToken
+        );
     }
 }
 
@@ -393,7 +387,7 @@ internal sealed class GeneratedStateStepExecutor<TState>
         string id,
         Func<TState, CancellationToken, ValueTask<TState>> execute
     )
-        : base(id)
+        : base(id, options: null, declareCrossRunShareable: true)
     {
         _id = id;
         _execute = execute;
@@ -408,22 +402,31 @@ internal sealed class GeneratedStateStepExecutor<TState>
     )
     {
         using var envelope = PipelineExecutionEnvelope.Begin(pipeline);
-        var state = await _execute(pipeline.State, cancellationToken);
-        return envelope.Message with
-        {
-            State = state,
-            LatestOutcome = new BlockOutcome(
-                StandardOutcomeKinds.Success,
-                _id,
-                "Succeeded",
-                JsonSerializer.SerializeToElement(new { })
-            ),
-            LatestResult = PipelineResultPayload.Create(
-                _id,
-                nameof(Outcome<object>.Success),
-                state
-            ),
-        };
+        return await PipelineObservationPublisher.ExecuteAsync(
+            _id,
+            PipelineObservationMode.Full,
+            pipeline,
+            async () =>
+            {
+                var state = await _execute(pipeline.State, cancellationToken);
+                return envelope.Message with
+                {
+                    State = state,
+                    LatestOutcome = new BlockOutcome(
+                        StandardOutcomeKinds.Success,
+                        _id,
+                        "Succeeded",
+                        JsonSerializer.SerializeToElement(new { })
+                    ),
+                    LatestResult = PipelineResultPayload.Create(
+                        _id,
+                        nameof(Outcome<object>.Success),
+                        new { }
+                    ),
+                };
+            },
+            cancellationToken
+        );
     }
 }
 
@@ -439,7 +442,7 @@ internal sealed class GeneratedOutcomeStepExecutor<TState>
         Func<TState, CancellationToken, ValueTask<Outcome<TState>>> execute,
         StandardOutcomeRouteAwareness<TState> routeAwareness
     )
-        : base(id)
+        : base(id, options: null, declareCrossRunShareable: true)
     {
         _id = id;
         _execute = execute;
@@ -455,27 +458,36 @@ internal sealed class GeneratedOutcomeStepExecutor<TState>
     )
     {
         using var envelope = PipelineExecutionEnvelope.Begin(pipeline);
-        var result = await _execute(pipeline.State, cancellationToken);
-        return result switch
-        {
-            Outcome<TState>.Success success => envelope.Message with
+        return await PipelineObservationPublisher.ExecuteAsync(
+            _id,
+            PipelineObservationMode.Full,
+            pipeline,
+            async () =>
             {
-                State = success.State,
-                LatestOutcome = new BlockOutcome(
-                    StandardOutcomeKinds.Success,
-                    _id,
-                    "Succeeded",
-                    JsonSerializer.SerializeToElement(new { })
-                ),
-                LatestResult = PipelineResultPayload.Create(
-                    _id,
-                    nameof(Outcome<TState>.Success),
-                    success
-                ),
+                var result = await _execute(pipeline.State, cancellationToken);
+                return result switch
+                {
+                    Outcome<TState>.Success success => envelope.Message with
+                    {
+                        State = success.State,
+                        LatestOutcome = new BlockOutcome(
+                            StandardOutcomeKinds.Success,
+                            _id,
+                            "Succeeded",
+                            JsonSerializer.SerializeToElement(new { })
+                        ),
+                        LatestResult = PipelineResultPayload.Create(
+                            _id,
+                            nameof(Outcome<TState>.Success),
+                            new { }
+                        ),
+                    },
+                    Outcome<TState>.Failed failed => AdaptFailed(envelope.Message, failed),
+                    _ => throw new InvalidOperationException("Unknown standard outcome."),
+                };
             },
-            Outcome<TState>.Failed failed => AdaptFailed(envelope.Message, failed),
-            _ => throw new InvalidOperationException("Unknown standard outcome."),
-        };
+            cancellationToken
+        );
     }
 
     private PipelineMessage<TState> AdaptFailed(
@@ -495,7 +507,7 @@ internal sealed class GeneratedOutcomeStepExecutor<TState>
             LatestResult = PipelineResultPayload.Create(
                 _id,
                 nameof(Outcome<TState>.Failed),
-                failed
+                failed.Failure
             ),
             Disposition = null,
         };
@@ -598,14 +610,23 @@ internal static class PipelineExecutionEnvelope
     }
 }
 
-public sealed class Pipeline
+public sealed class Pipeline<TState>
 {
     private readonly IReadOnlyList<string> _outputStepIds;
+    private readonly IReadOnlyList<PipelineRouteInspection> _routes;
+    private readonly IReadOnlyList<PipelineInteractionInspection> _interactions;
 
-    internal Pipeline(Workflow workflow, IReadOnlyList<string> outputStepIds)
+    internal Pipeline(
+        Workflow workflow,
+        IReadOnlyList<string> outputStepIds,
+        IReadOnlyList<PipelineRouteInspection> routes,
+        IReadOnlyList<PipelineInteractionInspection> interactions
+    )
     {
         Workflow = workflow;
         _outputStepIds = outputStepIds;
+        _routes = routes;
+        _interactions = interactions;
     }
 
     internal Workflow Workflow { get; }
@@ -636,16 +657,14 @@ public sealed class Pipeline
             return id;
         }
 
-        var routes = Workflow
-            .ReflectEdges()
-            .SelectMany(entry =>
-                entry.Value.Select(edge => new PipelineRouteInspection(
-                    SemanticId(edge.Connection.SourceIds.Single()),
-                    SemanticId(edge.Connection.SinkIds.Single()),
-                    edge is DirectEdgeInfo direct && direct.HasCondition
-                ))
+        var routes = _routes
+            .Select(route =>
+                route with
+                {
+                    SourceId = SemanticId(route.SourceId),
+                    TargetId = SemanticId(route.TargetId),
+                }
             )
-            .Where(route => route.SourceId != route.TargetId)
             .ToArray();
         var ports = Workflow
             .ReflectPorts()
@@ -668,6 +687,7 @@ public sealed class Pipeline
                 .Order(StringComparer.Ordinal)
                 .ToArray(),
             ports,
+            _interactions,
             routes
                 .OrderBy(route => route.SourceId, StringComparer.Ordinal)
                 .ThenBy(route => route.TargetId, StringComparer.Ordinal)
@@ -686,19 +706,31 @@ public sealed record PipelineInspection(
     string StartStepId,
     IReadOnlyList<string> StepIds,
     IReadOnlyList<PipelinePortInspection> Ports,
+    IReadOnlyList<PipelineInteractionInspection> Interactions,
     IReadOnlyList<PipelineRouteInspection> Routes,
     IReadOnlyList<string> OutputStepIds,
     string Mermaid,
     string Dot
 );
 
-public sealed record PipelineRouteInspection(string SourceId, string TargetId, bool Conditional);
+public sealed record PipelineRouteInspection(
+    string SourceId,
+    string TargetId,
+    bool Conditional,
+    string? Label = null
+);
 
 public sealed record PipelinePortInspection(string Id, string InputType, string OutputType);
 
+public sealed record PipelineInteractionInspection(
+    string Id,
+    string RequestType,
+    string ResponseType
+);
+
 internal static class PipelineMafBridge
 {
-    public static Workflow GetWorkflow(Pipeline pipeline) => pipeline.Workflow;
+    public static Workflow GetWorkflow<TState>(Pipeline<TState> pipeline) => pipeline.Workflow;
 }
 
 public static class TandemWorkflow
@@ -722,11 +754,19 @@ public sealed class PipelineBuilder<TState>
     private readonly Dictionary<IPipelineNode, RouteMode> _routeModes = new(
         PipelineStepReferenceComparer.Instance
     );
-    private readonly HashSet<object> _interactions = [];
+    private readonly HashSet<IPipelineInteractionDefinition> _interactions = [];
     private readonly Dictionary<
         IPipelineNode,
         List<Func<PipelineMessage<TState>, bool>?>
     > _failureRoutes = new(PipelineStepReferenceComparer.Instance);
+    private readonly Dictionary<
+        IPipelineNode,
+        StandardOutcomeRouteAwareness<TState>
+    > _failureRouteAwareness = new(PipelineStepReferenceComparer.Instance);
+    private readonly Dictionary<IPipelineNode, List<PipelineRouteRegistration>> _routes = new(
+        PipelineStepReferenceComparer.Instance
+    );
+    private bool _built;
 
     private PipelineBuilder(WorkflowBuilder builder)
     {
@@ -740,7 +780,13 @@ public sealed class PipelineBuilder<TState>
     )
     {
         var descriptor = start.Descriptor;
-        var binding = descriptor.Bind();
+        var awareness =
+            descriptor is GeneratedOutcomeStepDescriptor<TState>
+                ? new StandardOutcomeRouteAwareness<TState>()
+                : null;
+        var binding = awareness is null
+            ? descriptor.Bind()
+            : ((GeneratedOutcomeStepDescriptor<TState>)descriptor).Bind(awareness);
         var workflowBuilder = new WorkflowBuilder(binding).WithName(name);
         if (!string.IsNullOrWhiteSpace(description))
         {
@@ -749,6 +795,10 @@ public sealed class PipelineBuilder<TState>
         var result = new PipelineBuilder<TState>(workflowBuilder);
         result._bindings.Add(start, binding);
         result._descriptors.Add(start, descriptor);
+        if (awareness is not null)
+        {
+            result._failureRouteAwareness.Add(start, awareness);
+        }
         return result;
     }
 
@@ -807,7 +857,7 @@ public sealed class PipelineBuilder<TState>
     {
         EnsureRouteMode(on, RouteMode.Output);
         TrackFailureRoute(on, when: null);
-        _builder.AddEdge(Bind(on), Bind(to), label, idempotent: false);
+        AddRoute(on, to, _ => true, label, unconditional: true);
         return this;
     }
 
@@ -820,13 +870,7 @@ public sealed class PipelineBuilder<TState>
     {
         EnsureRouteMode(from, RouteMode.Output);
         TrackFailureRoute(from, pipeline => when(pipeline.State));
-        _builder.AddEdge<PipelineMessage<TState>>(
-            Bind(from),
-            Bind(to),
-            pipeline => pipeline is not null && when(pipeline.State),
-            label,
-            idempotent: false
-        );
+        AddRoute(from, to, pipeline => when(pipeline.State), label);
         return this;
     }
 
@@ -839,13 +883,7 @@ public sealed class PipelineBuilder<TState>
     {
         EnsureRouteMode(from, RouteMode.Output);
         TrackFailureRoute(from, pipeline => when(pipeline.State));
-        _builder.AddEdge<PipelineMessage<TState>>(
-            Bind(from),
-            Bind(to),
-            pipeline => pipeline is not null && when(pipeline.State),
-            label,
-            idempotent: false
-        );
+        AddRoute(from, to, pipeline => when(pipeline.State), label);
         return this;
     }
 
@@ -857,13 +895,7 @@ public sealed class PipelineBuilder<TState>
     )
     {
         EnsureInteraction(from);
-        _builder.AddEdge<PipelineMessage<TState>>(
-            Bind(from.Resume),
-            Bind(to),
-            pipeline => pipeline is not null && when(pipeline.State),
-            label,
-            idempotent: false
-        );
+        AddRoute(from.Resume, to, pipeline => when(pipeline.State), label);
         return this;
     }
 
@@ -875,52 +907,70 @@ public sealed class PipelineBuilder<TState>
     )
     {
         EnsureInteraction(from);
-        _builder.AddEdge<PipelineMessage<TState>>(
-            Bind(from.Resume),
-            Bind(to),
-            pipeline => pipeline is not null && when(pipeline.State),
-            label,
-            idempotent: false
-        );
+        AddRoute(from.Resume, to, pipeline => when(pipeline.State), label);
         return this;
     }
 
-    public PipelineBuilder<TState> RouteWithContext<TTargetResult>(
-        Func<PipelineMessage<TState>, bool> when,
-        IPipelineNode<TState> from,
-        IGeneratedPipelineStep<TState, TTargetResult> to,
-        string label
-    )
+    public Pipeline<TState> Build(params IPipelineNode<TState>[] outputs)
     {
-        EnsureRouteMode(from, RouteMode.Output);
-        TrackFailureRoute(from, when);
-        _builder.AddEdge<PipelineMessage<TState>>(
-            Bind(from),
-            Bind(to),
-            pipeline => pipeline is not null && when(pipeline),
-            label,
-            idempotent: false
-        );
-        return this;
-    }
+        if (_built)
+        {
+            throw new InvalidOperationException("A pipeline builder can build only once.");
+        }
 
-    public Pipeline Build(params IPipelineNode<TState>[] outputs)
-    {
         var outputBindings = outputs.Select(Bind).ToArray();
 
         foreach (var node in _bindings.Keys)
         {
-            if (_descriptors[node] is GeneratedOutcomeStepDescriptor<TState> descriptor)
+            if (_failureRouteAwareness.TryGetValue(node, out var awareness))
             {
                 var routes = _failureRoutes.GetValueOrDefault(node) ?? [];
-                descriptor.SetFailureRouteMatcher(message =>
-                    routes.Any(route => route is null || route(message))
-                );
+                awareness.Matches = message => routes.Any(route => route is null || route(message));
             }
         }
 
+        foreach (var (source, routes) in _routes)
+        {
+            _builder.AddSwitch(
+                Bind(source),
+                switchBuilder =>
+                {
+                    foreach (var route in routes)
+                    {
+                        switchBuilder.AddCase<PipelineMessage<TState>>(
+                            message => message is not null && route.Predicate(message),
+                            [Bind(route.Target)]
+                        );
+                    }
+                }
+            );
+        }
+
         _builder.WithOutputFrom(outputBindings);
-        return new Pipeline(_builder.Build(), outputs.Select(output => output.Id).ToArray());
+        var pipeline = new Pipeline<TState>(
+            _builder.Build(),
+            outputs.Select(output => output.Id).ToArray(),
+            _routes
+                .SelectMany(entry =>
+                    entry.Value.Select(route => new PipelineRouteInspection(
+                        entry.Key.Id,
+                        route.Target.Id,
+                        !route.Unconditional,
+                        route.Label
+                    ))
+                )
+                .ToArray(),
+            _interactions
+                .Select(interaction => new PipelineInteractionInspection(
+                    interaction.Id,
+                    interaction.RequestType.FullName ?? interaction.RequestType.Name,
+                    interaction.ResponseType.FullName ?? interaction.ResponseType.Name
+                ))
+                .OrderBy(interaction => interaction.Id, StringComparer.Ordinal)
+                .ToArray()
+        );
+        _built = true;
+        return pipeline;
     }
 
     private PipelineBuilder<TState> RouteOutcome(
@@ -935,22 +985,48 @@ public sealed class PipelineBuilder<TState>
         {
             TrackFailureRoute(on.Source, when is null ? null : pipeline => when(pipeline.State));
         }
-        _builder.AddEdge<PipelineMessage<TState>>(
-            Bind(on.Source),
-            Bind(to),
+        AddRoute(
+            on.Source,
+            to,
             pipeline =>
                 pipeline?.LatestResult is { } result
                 && result.StepId == on.Source.Id
                 && result.CaseId == on.CaseId
                 && (when is null || when(pipeline.State)),
             label,
-            idempotent: false
+            unconditional: false
         );
         return this;
     }
 
+    private void AddRoute(
+        IPipelineNode source,
+        IPipelineNode target,
+        Func<PipelineMessage<TState>, bool> predicate,
+        string label,
+        bool unconditional = false
+    )
+    {
+        EnsureNotBuilt();
+        Bind(source);
+        Bind(target);
+        if (!_routes.TryGetValue(source, out var routes))
+        {
+            routes = [];
+            _routes.Add(source, routes);
+        }
+        if (unconditional && routes.Any(route => route.Unconditional))
+        {
+            throw new InvalidOperationException(
+                $"Step '{source.Id}' cannot declare more than one unconditional route."
+            );
+        }
+        routes.Add(new PipelineRouteRegistration(target, predicate, label, unconditional));
+    }
+
     private void TrackFailureRoute(IPipelineNode source, Func<PipelineMessage<TState>, bool>? when)
     {
+        EnsureNotBuilt();
         if (!_failureRoutes.TryGetValue(source, out var routes))
         {
             routes = [];
@@ -959,24 +1035,11 @@ public sealed class PipelineBuilder<TState>
         routes.Add(when);
     }
 
-    private ExecutorBinding Bind<TResult>(IGeneratedPipelineStep<TState, TResult> step)
-    {
-        if (_bindings.TryGetValue(step, out var binding))
-        {
-            return binding;
-        }
-
-        var descriptor = step.Descriptor;
-        binding = descriptor.Bind();
-        _bindings.Add(step, binding);
-        _descriptors.Add(step, descriptor);
-        return binding;
-    }
-
     private void EnsureInteraction<TRequest, TResponse>(
         PipelineInteraction<TState, TRequest, TResponse> interaction
     )
     {
+        EnsureNotBuilt();
         if (!_interactions.Add(interaction))
         {
             return;
@@ -993,7 +1056,16 @@ public sealed class PipelineBuilder<TState>
         }
 
         var descriptor = node.Descriptor;
-        binding = descriptor.Bind();
+        if (descriptor is GeneratedOutcomeStepDescriptor<TState> outcomeDescriptor)
+        {
+            var awareness = new StandardOutcomeRouteAwareness<TState>();
+            binding = outcomeDescriptor.Bind(awareness);
+            _failureRouteAwareness.Add(node, awareness);
+        }
+        else
+        {
+            binding = descriptor.Bind();
+        }
         _bindings.Add(node, binding);
         _descriptors.Add(node, descriptor);
         return binding;
@@ -1001,6 +1073,7 @@ public sealed class PipelineBuilder<TState>
 
     private void EnsureRouteMode(IPipelineNode source, RouteMode mode)
     {
+        EnsureNotBuilt();
         if (_routeModes.TryGetValue(source, out var existing) && existing != mode)
         {
             throw new InvalidOperationException(
@@ -1011,11 +1084,26 @@ public sealed class PipelineBuilder<TState>
         _routeModes[source] = mode;
     }
 
+    private void EnsureNotBuilt()
+    {
+        if (_built)
+        {
+            throw new InvalidOperationException("A built pipeline cannot be modified.");
+        }
+    }
+
     private enum RouteMode
     {
         Output,
         ResultSpecific,
     }
+
+    private sealed record PipelineRouteRegistration(
+        IPipelineNode Target,
+        Func<PipelineMessage<TState>, bool> Predicate,
+        string Label,
+        bool Unconditional
+    );
 
     private sealed class PipelineStepReferenceComparer : IEqualityComparer<IPipelineNode>
     {
@@ -1027,9 +1115,8 @@ public sealed class PipelineBuilder<TState>
     }
 }
 
-public static class PipelineResultPayload
+internal static class PipelineResultPayload
 {
-    [EditorBrowsable(EditorBrowsableState.Never)]
     public static PipelineResult Create<TCase>(string stepId, string caseId, TCase value) =>
         new(stepId, caseId, JsonSerializer.SerializeToElement(value));
 }

@@ -11,24 +11,20 @@ public static class SupportDefinitions
         var classifier = agentRuntime
             .Create<SupportState>(
                 "support-classify",
-                "support-classifier",
                 SupportPrompts.Classifier,
                 options.ClassifierClient
             )
             .WithMessage(SupportPrompts.ClassificationMessage)
             .WithOutput(new ClassificationDecisionValidator(), SupportPolicies.ApplyClassification)
-            .WithSessionPolicy(SupportPolicies.StartClassificationFresh)
             .Build();
         var resolver = agentRuntime
             .Create<SupportState>(
                 "support-resolve",
-                "support-resolver",
                 SupportPrompts.Resolver,
                 options.ResolverClient
             )
             .WithMessage(SupportPrompts.ResolutionMessage)
             .WithOutput(new ResolutionDecisionValidator(), SupportPolicies.ApplyResolution)
-            .WithSessionPolicy(SupportPolicies.StartResolutionFresh)
             .Build();
         var customerReply = PipelineNodes.WaitFor<SupportState, CustomerQuestion, CustomerReply>(
             SupportIds.CustomerReply,

@@ -38,12 +38,11 @@ public static class SongwriterDefinitions
         AgentRuntime agents
     ) =>
         agents
-            .Create<SongwriterState>(id, id, instructions, client)
+            .Create<SongwriterState>(id, instructions, client)
             .WithMessage(state =>
                 $"Brief: {state.Brief}\nLyrics: {state.Lyrics}\n"
                 + $"Lint: {state.LintFeedback}\nProofreader: {state.ProofreaderFeedback}"
             )
             .WithOutput(validator, apply)
-            .WithSessionPolicy(SongwriterPolicies.StartFresh)
             .Build();
 }

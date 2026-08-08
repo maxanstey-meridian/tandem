@@ -11,12 +11,17 @@ public sealed class RunEventProjector(
     ResolvedProfile? profile = null
 )
 {
+    private readonly Dictionary<string, string> _toolNames = new(StringComparer.Ordinal);
+
     public async Task EmitBlockStartedAsync(CancellationToken ct = default)
     {
         await EmitAsync(EventKinds.BlockStarted, $"Block {blockId} started", ct: ct);
     }
 
-    public async Task EmitBlockCompletedAsync(BlockOutcome outcome, CancellationToken ct = default)
+    public async Task EmitBlockCompletedAsync(
+        PipelineRunOutcome outcome,
+        CancellationToken ct = default
+    )
     {
         var dataValues = new Dictionary<string, object?>
         {
@@ -34,7 +39,7 @@ public sealed class RunEventProjector(
         var data = JsonSerializer.SerializeToElement(dataValues);
         await EmitAsync(
             EventKinds.BlockCompleted,
-            $"Block {outcome.BlockId} completed: {outcome.Kind}",
+            $"Block {outcome.StepId} completed: {outcome.Kind}",
             data,
             ct: ct
         );
@@ -57,6 +62,16 @@ public sealed class RunEventProjector(
     public async Task EmitRunFailedAsync(string reason, CancellationToken ct = default)
     {
         await EmitAsync(EventKinds.RunFailed, reason, ct: ct);
+    }
+
+    public async Task EmitRunFaultedAsync(string reason, CancellationToken ct = default)
+    {
+        await EmitAsync(EventKinds.RunFaulted, reason, ct: ct);
+    }
+
+    public async Task EmitRunCancelledAsync(string reason, CancellationToken ct = default)
+    {
+        await EmitAsync(EventKinds.RunCancelled, reason, ct: ct);
     }
 
     public async Task EmitHumanRequestedAsync(
@@ -146,6 +161,7 @@ public sealed class RunEventProjector(
                 await EmitAsync(EventKinds.AgentUsage, "usage", usageData, ct: ct);
                 break;
             case AgentUpdate.ToolStarted call:
+                _toolNames[call.CallId] = call.Name;
                 var description = DescribeToolCall(call.Name, call.Arguments);
                 var callData = JsonSerializer.SerializeToElement(
                     new
@@ -158,17 +174,23 @@ public sealed class RunEventProjector(
                 await EmitAsync(EventKinds.ToolStarted, description, callData, ct: ct);
                 break;
             case AgentUpdate.ToolCompleted result:
+                var toolName = _toolNames.Remove(result.CallId, out var completedToolName)
+                    ? completedToolName
+                    : null;
                 var resultData = JsonSerializer.SerializeToElement(
                     new
                     {
                         callId = result.CallId,
+                        name = toolName,
                         success = result.Succeeded,
                         error = result.Error,
                     }
                 );
                 await EmitAsync(
                     EventKinds.ToolCompleted,
-                    result.Succeeded ? "done" : "failed",
+                    result.Succeeded
+                        ? $"{toolName ?? "tool"} done"
+                        : $"{toolName ?? "tool"} failed: {result.Error ?? "unknown error"}",
                     resultData,
                     ct: ct
                 );

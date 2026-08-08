@@ -194,6 +194,126 @@ public sealed class GeneratedAuthoringVerticalTests
             .WithMessage("*cannot mix unconditional and outcome-specific*");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReusedOutcomeDescriptor_KeepsFailureAwarenessBoundToEachPipeline(
+        bool buildRecoveryLast
+    )
+    {
+        var outcome = new ReusableOutcomeStep();
+        var recovery = new RecoveryStage();
+        var recoveryBuilder = TandemWorkflow
+            .Start(outcome, "reused-outcome-recovery")
+            .Route(outcome.Failed, recovery, "recover");
+        var terminalBuilder = TandemWorkflow.Start(outcome, "reused-outcome-terminal");
+
+        var recoveryPipeline = buildRecoveryLast ? null : recoveryBuilder.Build(recovery);
+        var terminalPipeline = terminalBuilder.Build(outcome);
+        recoveryPipeline ??= recoveryBuilder.Build(recovery);
+
+        var outputs = await Task.WhenAll(
+            RunAsync(
+                recoveryPipeline.Workflow,
+                new PipelineMessage<CounterState>(
+                    PipelineRuntime.Create(Guid.CreateVersion7()),
+                    new CounterState(0)
+                )
+            ),
+            RunAsync(
+                terminalPipeline.Workflow,
+                new PipelineMessage<CounterState>(
+                    PipelineRuntime.Create(Guid.CreateVersion7()),
+                    new CounterState(0)
+                )
+            )
+        );
+
+        outputs[0].State.Count.Should().Be(10);
+        outputs[0].Disposition.Should().BeNull();
+        outputs[1].Disposition.Should().Be(PipelineRunDisposition.Failed);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReusedAgentDefinition_KeepsFailureAwarenessBoundToEachPipeline(
+        bool buildRecoveryLast
+    )
+    {
+        var definition = new AgentDefinition<CounterState>(
+            "reused-agent",
+            new AgentOperation<CounterState>(
+                (pipeline, _) =>
+                    ValueTask.FromResult(
+                        pipeline with
+                        {
+                            LatestOutcome = new BlockOutcome(
+                                "agent.failed",
+                                "reused-agent",
+                                "Expected failure"
+                            ),
+                        }
+                    )
+            )
+        );
+        var recovery = new RecoveryStage();
+        var recoveryBuilder = TandemWorkflow
+            .Start(definition, "reused-agent-recovery")
+            .Route(definition.Failed, recovery, "recover");
+        var terminalBuilder = TandemWorkflow.Start(definition, "reused-agent-terminal");
+
+        var recoveryPipeline = buildRecoveryLast ? null : recoveryBuilder.Build(recovery);
+        var terminalPipeline = terminalBuilder.Build(definition);
+        recoveryPipeline ??= recoveryBuilder.Build(recovery);
+
+        var outputs = await Task.WhenAll(
+            RunAsync(
+                recoveryPipeline.Workflow,
+                new PipelineMessage<CounterState>(
+                    PipelineRuntime.Create(Guid.CreateVersion7()),
+                    new CounterState(0)
+                )
+            ),
+            RunAsync(
+                terminalPipeline.Workflow,
+                new PipelineMessage<CounterState>(
+                    PipelineRuntime.Create(Guid.CreateVersion7()),
+                    new CounterState(0)
+                )
+            )
+        );
+
+        outputs[0].State.Count.Should().Be(10);
+        outputs[0].Disposition.Should().BeNull();
+        outputs[1].Disposition.Should().Be(PipelineRunDisposition.Failed);
+    }
+
+    [Fact]
+    public void Build_RejectsReusingOneMutableBuilder()
+    {
+        var increment = new IncrementStage();
+        var builder = TandemWorkflow.Start(increment, "single-use-builder");
+        builder.Build(increment);
+
+        var act = () => builder.Build(increment);
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*build only once*");
+    }
+
+    [Fact]
+    public void Build_RejectsAddingRoutesAfterPipelineIsBuilt()
+    {
+        var increment = new IncrementStage();
+        var target = new IncrementStage();
+        var builder = TandemWorkflow.Start(increment, "immutable-built-pipeline");
+        builder.Build(increment);
+
+        var act = () => builder.Route(on: increment, to: target, label: "too late");
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*cannot be modified*");
+    }
+
     private static async Task<PipelineMessage<CounterState>> RunAsync(
         Workflow workflow,
         PipelineMessage<CounterState> input
@@ -278,4 +398,28 @@ public sealed partial class RecoveryStage
 {
     public ValueTask<CounterState> ExecuteAsync(CounterState state, CancellationToken _) =>
         ValueTask.FromResult(state with { Count = state.Count + 10 });
+}
+
+internal sealed class ReusableOutcomeStep : IStandardOutcomePipelineStep<CounterState>
+{
+    private readonly GeneratedOutcomeStepDescriptor<CounterState> _descriptor;
+
+    public ReusableOutcomeStep()
+    {
+        _descriptor = new GeneratedOutcomeStepDescriptor<CounterState>(
+            Id,
+            (state, _) =>
+                ValueTask.FromResult<Outcome<CounterState>>(
+                    new Outcome<CounterState>.Failed(
+                        state,
+                        new FailureEvidence("test.failure", "Expected failure")
+                    )
+                )
+        );
+    }
+
+    public string Id => "reusable-outcome";
+    public PipelineNodeDescriptor Descriptor => _descriptor;
+    public PipelineOutcomeSelector<CounterState> Success => new(this, failed: false);
+    public PipelineOutcomeSelector<CounterState> Failed => new(this, failed: true);
 }

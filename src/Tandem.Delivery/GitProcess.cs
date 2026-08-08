@@ -58,6 +58,7 @@ public sealed class GitProcess(string? gitPath = null)
             }
             catch { }
             await process.WaitForExitAsync(CancellationToken.None);
+            cancellationToken.ThrowIfCancellationRequested();
         }
 
         var stdout = await stdoutTask;

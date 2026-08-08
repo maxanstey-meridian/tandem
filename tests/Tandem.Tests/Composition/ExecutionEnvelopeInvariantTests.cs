@@ -201,7 +201,7 @@ public sealed class ExecutionEnvelopeInvariantTests
         runtime
             .WithSession(id, JsonSerializer.SerializeToElement(new { id }))
             .WithUsage(id, new AgentUsage(1, 2, 3, 100, 80, TimeSpan.FromMilliseconds(4)))
-            .WithProfile(id, new AgentProfileDecision("profile-" + id, "test"))
+            .WithProfile(id, new AgentProfileSelection("profile-" + id, "test"))
             .IncrementInvocations(id);
 
     private static BlockOutcome Outcome(string id) =>
@@ -221,7 +221,7 @@ public sealed class ExecutionEnvelopeInvariantTests
     }
 
     private static async Task<PipelineMessage<EnvelopeState>> RunAsync(
-        Pipeline pipeline,
+        Pipeline<EnvelopeState> pipeline,
         PipelineMessage<EnvelopeState> input
     )
     {
@@ -232,7 +232,7 @@ public sealed class ExecutionEnvelopeInvariantTests
     }
 
     private static async Task RunForFailureAsync(
-        Pipeline pipeline,
+        Pipeline<EnvelopeState> pipeline,
         PipelineMessage<EnvelopeState> input,
         CancellationToken cancellationToken
     )
@@ -245,7 +245,7 @@ public sealed class ExecutionEnvelopeInvariantTests
         PipelineMessage<EnvelopeState>? Output,
         Exception? Failure
     )> ExecuteAsync(
-        Pipeline pipeline,
+        Pipeline<EnvelopeState> pipeline,
         PipelineMessage<EnvelopeState> input,
         CancellationToken cancellationToken
     )
@@ -285,7 +285,7 @@ public sealed class ExecutionEnvelopeInvariantTests
 public sealed record EnvelopeState(int Count, string Owner);
 
 [PipelineStage("envelope-state")]
-public sealed partial class EnvelopeStateStage(PipelineMessage<EnvelopeState> operationMessage)
+internal sealed partial class EnvelopeStateStage(PipelineMessage<EnvelopeState> operationMessage)
 {
     public async ValueTask<EnvelopeState> ExecuteAsync(EnvelopeState state, CancellationToken _)
     {
@@ -298,7 +298,7 @@ public sealed partial class EnvelopeStateStage(PipelineMessage<EnvelopeState> op
 }
 
 [PipelineStage("envelope-custom")]
-public sealed partial class EnvelopeCustomStage(PipelineMessage<EnvelopeState> operationMessage)
+internal sealed partial class EnvelopeCustomStage(PipelineMessage<EnvelopeState> operationMessage)
 {
     public ValueTask<Outcome<EnvelopeState>> ExecuteAsync(
         EnvelopeState state,
@@ -312,7 +312,7 @@ public sealed partial class EnvelopeCustomStage(PipelineMessage<EnvelopeState> o
 }
 
 [PipelineStage("nested-envelope")]
-public sealed partial class NestedEnvelopeStage(PipelineMessage<EnvelopeState> outerResult)
+internal sealed partial class NestedEnvelopeStage(PipelineMessage<EnvelopeState> outerResult)
 {
     public async ValueTask<EnvelopeState> ExecuteAsync(EnvelopeState state, CancellationToken _)
     {
@@ -345,7 +345,10 @@ public sealed partial class NestedEnvelopeStage(PipelineMessage<EnvelopeState> o
     private static PipelineRuntime UpdatedInnerRuntime(PipelineRuntime runtime) =>
         runtime.WithSession("inner", JsonSerializer.SerializeToElement(new { id = "inner" }));
 
-    private static async Task RunInnerAsync(Pipeline pipeline, PipelineMessage<EnvelopeState> input)
+    private static async Task RunInnerAsync(
+        Pipeline<EnvelopeState> pipeline,
+        PipelineMessage<EnvelopeState> input
+    )
     {
         await using var run = await InProcessExecution.RunStreamingAsync(
             pipeline.Workflow,
@@ -358,7 +361,7 @@ public sealed partial class NestedEnvelopeStage(PipelineMessage<EnvelopeState> o
 }
 
 [PipelineStage("parallel-envelope")]
-public sealed partial class ParallelEnvelopeStage(
+internal sealed partial class ParallelEnvelopeStage(
     PipelineMessage<EnvelopeState> operationMessage,
     EnvelopeGate gate
 )
@@ -394,7 +397,7 @@ public sealed class EnvelopeGate(int participants)
 }
 
 [PipelineStage("concurrent-operation-envelope")]
-public sealed partial class ConcurrentOperationEnvelopeStage(
+internal sealed partial class ConcurrentOperationEnvelopeStage(
     PipelineMessage<EnvelopeState> operationMessage
 )
 {
@@ -445,7 +448,7 @@ public sealed partial class ConcurrentOperationEnvelopeStage(
 }
 
 [PipelineStage("releasing-operation-envelope")]
-public sealed partial class ReleasingOperationEnvelopeStage(
+internal sealed partial class ReleasingOperationEnvelopeStage(
     PipelineMessage<EnvelopeState> operationMessage
 )
 {

@@ -15,6 +15,7 @@ public sealed class ProjectBoundaryTests
     public void ProjectReferences_KeepDeliveryOutOfTandemAndInTheHost()
     {
         var tandem = ProjectReferences("src/Tandem/Tandem.csproj");
+        var advanced = ProjectReferences("src/Tandem.Advanced/Tandem.Advanced.csproj");
         var delivery = ProjectReferences("src/Tandem.Delivery/Tandem.Delivery.csproj");
         var tool = ProjectReferences("src/Tandem.Tool/Tandem.Tool.csproj");
         var debate = ProjectReferences("samples/Tandem.Sample.Debate/Tandem.Sample.Debate.csproj");
@@ -26,14 +27,20 @@ public sealed class ProjectBoundaryTests
         );
 
         tandem.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
+        tandem.Should().NotContain(reference => reference.Contains("Tandem.Advanced"));
+        advanced.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         delivery.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
+        delivery.Should().Contain(reference => reference.EndsWith("Tandem.Advanced.csproj"));
         tool.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         tool.Should().Contain(reference => reference.EndsWith("Tandem.Delivery.csproj"));
         debate.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
+        debate.Should().Contain(reference => reference.EndsWith("Tandem.Advanced.csproj"));
         debate.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
         support.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
+        support.Should().NotContain(reference => reference.Contains("Tandem.Advanced"));
         support.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
         songwriter.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
+        songwriter.Should().NotContain(reference => reference.Contains("Tandem.Advanced"));
         songwriter.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
     }
 
@@ -226,6 +233,11 @@ public sealed class ProjectBoundaryTests
         exportedNames.Should().NotContain("AgentOperation`1");
         exportedNames.Should().NotContain("AgentOutput`1");
         exportedNames.Should().NotContain("CapabilityReceipt");
+        exportedNames.Should().NotContain("AgentCapability`1");
+        exportedNames.Should().NotContain("CheckpointPolicy`1");
+        exportedNames.Should().NotContain("AgentTurnPolicy`1");
+        exportedNames.Should().NotContain("AgentConversationDecision");
+        exportedNames.Should().NotContain("ToolInterceptionResult");
         exportedNames.Should().NotContain("IRawPipelineNode");
         typeof(OperationResult<>).Namespace.Should().Be("Tandem.Advanced");
         typeof(AgentDefinition<>).GetProperty("Operation").Should().BeNull();
@@ -250,12 +262,6 @@ public sealed class ProjectBoundaryTests
             .Single()
             .ParameterType.Should()
             .Be(typeof(IPipelineNode<DeliveryState>[]));
-        pipelineMethods
-            .Single(method => method.Name == "RouteWithContext")
-            .GetParameters()[1]
-            .ParameterType.Should()
-            .Be(typeof(IPipelineNode<DeliveryState>));
-
         var ordinaryMethods = typeof(AgentBuilder<>).GetMethods(
             BindingFlags.Public | BindingFlags.Instance
         );
@@ -273,19 +279,22 @@ public sealed class ProjectBoundaryTests
     }
 
     [Fact]
-    public void EveryAgentConstruction_SuppliesAnExplicitSessionPolicy()
+    public void SessionContinuation_IsExplicitAndOrdinaryAgentsDefaultFresh()
     {
         var source = File.ReadAllText(Path("src/Tandem.Delivery/DeliveryStepsFactory.cs"));
-        source.Should().Contain("sessionPolicy: ExecutorPolicies.ContinueWorkingSession");
-        source.Should().Contain("sessionPolicy: PlannerPolicies.ContinueConsultation");
-        source.Should().Contain("sessionPolicy: ReviewerPolicies.StartFreshForEachCandidate");
+        source.Should().Contain("continueSession: true");
+        source.Should().Contain("builder.ContinueSession()");
+        source.Should().NotContain("WithSessionPolicy");
 
         var debate = string.Join('\n', SourceLines("samples/Tandem.Sample.Debate"));
-        debate.Should().Contain(".WithSessionPolicy(");
+        debate.Should().Contain(".ContinueSession()");
+        debate.Should().NotContain("WithSessionPolicy");
         var support = string.Join('\n', SourceLines("samples/Tandem.Sample.Support"));
-        support.Should().Contain(".WithSessionPolicy(");
+        support.Should().NotContain("ContinueSession");
+        support.Should().NotContain("WithSessionPolicy");
         var songwriter = string.Join('\n', SourceLines("samples/Tandem.Sample.Songwriter"));
-        songwriter.Should().Contain(".WithSessionPolicy(");
+        songwriter.Should().NotContain("ContinueSession");
+        songwriter.Should().NotContain("WithSessionPolicy");
     }
 
     [Fact]
@@ -316,18 +325,18 @@ public sealed class ProjectBoundaryTests
     }
 
     [Fact]
-    public void PipelineAuthoring_RetainsNoRouteCollectionAndRegistersEdgesDirectly()
+    public void PipelineAuthoring_UsesMafOrderedSwitchForSemanticRoutes()
     {
         var source = File.ReadAllText(Path("src/Tandem/Authoring/PipelineStep.cs"));
-        source.Should().Contain("_builder.AddEdge");
-        source.Should().NotContain("_routes");
+        source.Should().Contain("_builder.AddSwitch");
+        source.Should().Contain("PipelineRouteRegistration");
         source.Should().NotContain("RouteDefinition");
     }
 
     [Fact]
     public void PublicTandemApi_ExposesNoMafTypes()
     {
-        var leaks = typeof(Pipeline)
+        var leaks = typeof(Pipeline<>)
             .Assembly.GetExportedTypes()
             .SelectMany(PublicSurfaceTypes)
             .Where(type => type.Assembly.GetName().Name?.StartsWith("Microsoft.Agents") == true)
@@ -351,7 +360,10 @@ public sealed class ProjectBoundaryTests
 
         persistence.Should().BeGreaterThan(-1);
         publication.Should().BeGreaterThan(persistence);
-        source.Should().Contain("new InProcessPipelineRunner()");
+        source.Should().Contain("new PipelineRunner()");
+        source.Should().NotContain("InProcessPipelineRunner");
+        source.Should().NotContain("PendingExternalRequest");
+        source.Should().NotContain("ExternalRequestAnswer");
         source.Should().NotContain("attachCommand");
         source.Should().NotContain("DurableTask");
         source.Should().NotContain("TaskHub");

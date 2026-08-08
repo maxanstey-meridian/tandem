@@ -18,6 +18,7 @@
         />
     </ItemGroup>
     <ItemGroup>
+        <ProjectReference Include="../../src/Tandem.Advanced/Tandem.Advanced.csproj" />
         <ProjectReference Include="../../src/Tandem/Tandem.csproj" />
         <ProjectReference
             Include="../../src/Tandem.Generators/Tandem.Generators.csproj"

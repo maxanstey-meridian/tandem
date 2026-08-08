@@ -42,7 +42,7 @@ public sealed class GitProcessTests
     }
 
     [Fact]
-    public async Task RunAsync_PropagatesCancellationAndReturnsResult()
+    public async Task RunAsync_PropagatesCallerCancellation()
     {
         // Use a fake git that sleeps. This exercises GitProcess's kill-on-cancel
         // path without depending on a real git command that blocks indefinitely.
@@ -66,10 +66,9 @@ public sealed class GitProcessTests
         await Task.Delay(300, CancellationToken.None);
         cts.Cancel();
 
-        var result = await runTask;
+        var act = async () => await runTask;
 
-        result.TimedOut.Should().BeFalse();
-        result.ExitCode.Should().NotBe(0);
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     private static void RunGitInit(string dir)

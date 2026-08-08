@@ -1,10 +1,19 @@
+using System.Text.Json;
+
 namespace Tandem.Domain;
 
-public sealed record StructuredOutputProblem(string Field, string Message);
+internal sealed record AgentStructuredOutputProblem(string Field, string Message);
 
-public sealed record StructuredOutputResult<TState>(
-    StructuredOutcome<TState>? Outcome,
-    IReadOnlyList<StructuredOutputProblem> Problems,
+internal sealed record AgentStructuredOutcome<TState>(
+    string Kind,
+    string Summary,
+    JsonElement Payload,
+    TState? UpdatedState = default
+);
+
+internal sealed record AgentStructuredOutputResult<TState>(
+    AgentStructuredOutcome<TState>? Outcome,
+    IReadOnlyList<AgentStructuredOutputProblem> Problems,
     string RawResponse,
     object? Candidate = null
 )

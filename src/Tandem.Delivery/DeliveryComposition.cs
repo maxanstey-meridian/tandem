@@ -2,9 +2,9 @@ namespace Tandem.Delivery;
 
 public sealed class DeliveryComposition(DeliveryStepsFactory stepsFactory)
 {
-    public Pipeline Build(PipelineBuildContext context)
+    public Pipeline<DeliveryState> Build()
     {
-        var delivery = stepsFactory.Create(context);
+        var delivery = stepsFactory.Create();
         return TandemWorkflow
             .Start(
                 at: delivery.PrepareWorkspace,

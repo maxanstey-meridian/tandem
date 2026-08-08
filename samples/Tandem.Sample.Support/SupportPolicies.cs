@@ -1,16 +1,9 @@
 using FluentValidation;
-using Tandem.Domain;
 
 namespace Tandem.Sample.Support;
 
 public static class SupportPolicies
 {
-    public static AgentSessionDecision StartClassificationFresh(SupportState _) =>
-        new(AgentSessionAction.Reset, "Classify each ticket from a fresh session.");
-
-    public static AgentSessionDecision StartResolutionFresh(SupportState _) =>
-        new(AgentSessionAction.Reset, "Resolve each classified ticket from a fresh session.");
-
     public static CustomerQuestion BuildCustomerQuestion(SupportState state) =>
         new(
             state.Ticket,

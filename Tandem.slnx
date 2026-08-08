@@ -1,5 +1,6 @@
 <Solution>
     <Folder Name="/src/">
+        <Project Path="src/Tandem.Advanced/Tandem.Advanced.csproj" />
         <Project Path="src/Tandem.Generators/Tandem.Generators.csproj" />
         <Project Path="src/Tandem.Delivery/Tandem.Delivery.csproj" />
         <Project Path="src/Tandem.Tool/Tandem.Tool.csproj" />
@@ -11,6 +12,7 @@
         <Project Path="samples/Tandem.Sample.Support/Tandem.Sample.Support.csproj" />
     </Folder>
     <Folder Name="/tests/">
+        <Project Path="tests/Tandem.ExternalConsumer.Tests/Tandem.ExternalConsumer.Tests.csproj" />
         <Project Path="tests/Tandem.Tests/Tandem.Tests.csproj" />
     </Folder>
 </Solution>

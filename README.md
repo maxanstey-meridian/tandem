@@ -28,7 +28,6 @@ A default declarative agent is already a typed pipeline step:
 var songwriter = agents
     .Create<SongwriterState>(
         "songwriter",
-        "songwriter",
         "Write or revise lyrics from the brief and current feedback.",
         clients.Songwriter
     )
@@ -37,7 +36,6 @@ var songwriter = agents
         + $"Lint: {state.LintFeedback}\nProofreader: {state.ProofreaderFeedback}"
     )
     .WithOutput(new SongDecisionValidator(), SongwriterPolicies.ApplySong)
-    .WithSessionPolicy(SongwriterPolicies.StartFresh)
     .Build();
 ```
 
@@ -135,19 +133,21 @@ They use state-first callbacks throughout and capture no pipeline build or run:
 
 ```csharp
 agents
-    .Create<SongwriterState>(id, id, instructions, client)
+    .Create<SongwriterState>(id, instructions, client)
     .WithMessage(state =>
         $"Brief: {state.Brief}\nLyrics: {state.Lyrics}\n"
         + $"Lint: {state.LintFeedback}\nProofreader: {state.ProofreaderFeedback}"
     )
     .WithOutput(new SongDecisionValidator(), SongwriterPolicies.ApplySong)
-    .WithSessionPolicy(SongwriterPolicies.StartFresh)
     .Build();
 ```
 
 `WithMessage` receives `TState`; validated output application returns `TState`.
+Agents start with a fresh session on every pipeline visit. Call
+`.ContinueSession()` only when retaining model conversation across visits is an
+intentional part of the composition.
 Successful validated application produces canonical `Success`. Tandem transports
-run identity, sessions, usage, invocation counts, outcomes, and replay metadata
+run identity, sessions, usage, invocation counts, and outcomes
 internally. Ordinary user code cannot unwrap an agent operation or copy an
 execution envelope.
 
@@ -181,9 +181,7 @@ Normal predicates receive state:
 ```
 
 Do not mix unconditional and outcome-specific routes from one source: both would
-match the same output. Tandem rejects that accidental fan-out. Use
-`RouteWithContext` only when an advanced route genuinely requires the complete
-execution message.
+match the same output. Tandem rejects that accidental fan-out.
 
 Request-port expansion and raw MAF nodes are internal. Generated steps and SDK
 furniture expose only typed `IPipelineNode<TState>` boundaries.
@@ -198,9 +196,8 @@ programming models:
   plumbing.
 - **Support** adds consumer-owned account lookup, typed state transitions, and a
   typed customer request/response handoff.
-- **Debate** adds revision loops, explicit retained/reset sessions, a lifecycle
-  action with a receipt-backed state transition, and teardown based on block
-  evidence.
+- **Debate** adds revision loops, explicit retained/reset sessions, an in-process
+  typed capability, and teardown based on block evidence.
 - **Delivery** adds custom blocks, workspaces and mutation policy, checkpoints,
   tools, verification commands, observations, and live human handoff.
 
@@ -222,49 +219,44 @@ envelope while the live run waits asynchronously.
 
 ### Debate Sessions And Teardown
 
-Debate keeps ordinary session policy state-first:
+Debate explicitly retains revision history:
 
 ```csharp
-public static AgentSessionDecision RetainRevisionContext(DebateState _) =>
-    new(AgentSessionAction.Continue, "Retain critic context across revision rounds.");
+builder.ContinueSession();
 ```
 
-Its judge conversation policy intentionally uses advanced block evidence:
+Its judge conversation policy intentionally uses the narrow Advanced context:
 
 ```csharp
 public static AgentConversationDecision DiscardJudgeAfterVerdict(
-    PipelineMessage<DebateState> _,
-    BlockOutcome __
-) => new(AgentConversationRetention.Discard, "The verdict closes the judge conversation.");
+    AgentMessageContext<DebateState> _,
+    AgentMessageOutcome __
+) => new(AgentConversationRetention.Discard);
 ```
 
 ## Advanced Blocks
 
-`PipelineMessage<TState>` and `BlockOutcome` are supported Tandem SDK concepts for
-custom blocks and runtime policies that genuinely need execution context. They
-are not the ordinary step contract.
+Advanced agent policies receive read-only `AgentMessageContext<TState>` and
+`AgentMessageOutcome` values rather than Tandem's complete execution envelope.
+Custom operations receive `PipelineOperationContext<TState>` and return
+`OperationResult<TState>`. The complete execution envelope remains internal to
+Tandem.
 
 ```csharp
-public sealed record PipelineMessage<TState>(
-    PipelineRuntime Runtime,
-    TState State,
-    BlockOutcome? LatestOutcome = null,
-    PipelineResult? LatestResult = null,
-    PipelineRunDisposition? Disposition = null
-);
-
-public sealed record BlockOutcome(
+public sealed record OperationOutcome(
     string Kind,
     string BlockId,
     string Summary,
     JsonElement Payload = default,
     TimeSpan Duration = default
 );
+
+public sealed record OperationResult<TState>(TState State, OperationOutcome Outcome);
 ```
 
 Import `Tandem.Advanced` to opt into envelope-aware agent policies and operations.
-Delivery uses `PipelineOperation.RunStateAsync` and `RunOutcomeAsync` to preserve
-runtime updates without manually copying envelope fields. The public descriptor
+Delivery uses `PipelineOperation.RunOutcomeAsync` to preserve runtime updates
+without manually copying envelope fields. The public descriptor
 types hidden from IntelliSense are an opaque cross-assembly ABI used by generated
 code, not a node-authoring hierarchy.
 
@@ -278,6 +270,35 @@ var inspection = composition.Build().Inspect();
 Console.WriteLine(inspection.Mermaid);
 Console.WriteLine(inspection.Dot);
 ```
+
+Run through the public process-owned runner:
+
+```csharp
+var result = await new PipelineRunner().RunAsync(
+    pipeline,
+    initialState,
+    new PipelineRunOptions(Interactions: handlers, Observer: observer),
+    cancellationToken
+);
+```
+
+`PipelineInteractionHandlers` registers typed request/response callbacks. The
+optional observer receives Tandem-owned semantic events for that run. Interactions
+are asynchronous and preserve in-memory state without serialization. Exiting the
+host process ends every active run; there is no restart or attach contract.
+
+## Packages
+
+Minimal pipelines reference `Tandem` plus the generator analyzer:
+
+```xml
+<PackageReference Include="Tandem" Version="..." />
+<PackageReference Include="Tandem.Generators" Version="..." PrivateAssets="all" />
+```
+
+Debate-style capabilities and custom policies additionally reference
+`Tandem.Advanced`. Songwriter and Support do not receive Advanced, Delivery,
+Tool, provider, dashboard, YAML, or MCP dependencies transitively.
 
 Run the included Delivery packet:
 
@@ -302,12 +323,13 @@ requires no scheduler, workflow database, daemon, or Docker runtime service.
 ## Repository
 
 - `src/Tandem`: authoring API and execution engine
+- `src/Tandem.Advanced`: explicit advanced authoring and operation facade
 - `src/Tandem.Generators`: incremental source generator
 - `src/Tandem.Delivery`: advanced first-party acceptance consumer
 - `src/Tandem.Tool`: process-owned `run` and standalone `publish` host
 - `samples/Tandem.Sample.Songwriter`: minimal progressive example
 - `samples/Tandem.Sample.Support`: typed live customer-support handoff
-- `samples/Tandem.Sample.Debate`: loops, lifecycle actions, and teardown policy
+- `samples/Tandem.Sample.Debate`: loops, typed capabilities, and teardown policy
 - `tests/Tandem.Tests`: unit, architecture, and real in-process workflow tests
 
 See [Pipeline Authoring](docs/pipeline-authoring.md) for the complete API journey

@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
@@ -12,9 +13,17 @@ internal sealed record PendingExternalRequest(
     string RequestType,
     string ResponseType,
     JsonElement Payload
-);
+)
+{
+    internal object? Value { get; init; }
+    internal Type? RequestClrType { get; init; }
+    internal Type? ResponseClrType { get; init; }
+}
 
-internal sealed record ExternalRequestAnswer(Guid RunId, string RequestId, JsonElement Payload);
+internal sealed record ExternalRequestAnswer(Guid RunId, string RequestId, JsonElement Payload)
+{
+    internal object? Value { get; init; }
+}
 
 internal interface IExternalRequestHandler
 {
@@ -27,18 +36,50 @@ internal interface IExternalRequestHandler
 internal sealed class InProcessPipelineRunner
 {
     public Task<PipelineMessage<TState>> RunAsync<TState>(
-        Pipeline pipeline,
+        Pipeline<TState> pipeline,
         Guid runId,
         TState initialState,
         CancellationToken cancellationToken
     ) =>
-        RunAsync(pipeline, runId, initialState, RejectExternalRequests.Instance, cancellationToken);
+        RunAsync(
+            pipeline,
+            runId,
+            initialState,
+            RejectExternalRequests.Instance,
+            observer: null,
+            cancellationToken
+        );
+
+    public Task<PipelineMessage<TState>> RunAsync<TState>(
+        Pipeline<TState> pipeline,
+        Guid runId,
+        TState initialState,
+        IPipelineObserver? observer,
+        CancellationToken cancellationToken
+    ) =>
+        RunAsync(
+            pipeline,
+            runId,
+            initialState,
+            RejectExternalRequests.Instance,
+            observer,
+            cancellationToken
+        );
 
     public async Task<PipelineMessage<TState>> RunAsync<TState>(
-        Pipeline pipeline,
+        Pipeline<TState> pipeline,
         Guid runId,
         TState initialState,
         IExternalRequestHandler requests,
+        CancellationToken cancellationToken
+    ) => await RunAsync(pipeline, runId, initialState, requests, observer: null, cancellationToken);
+
+    public async Task<PipelineMessage<TState>> RunAsync<TState>(
+        Pipeline<TState> pipeline,
+        Guid runId,
+        TState initialState,
+        IExternalRequestHandler requests,
+        IPipelineObserver? observer,
         CancellationToken cancellationToken
     )
     {
@@ -49,8 +90,11 @@ internal sealed class InProcessPipelineRunner
         var initialMessage = new PipelineMessage<TState>(
             PipelineRuntime.Create(runId),
             initialState
-        );
-        await using var run = await InProcessExecution.RunStreamingAsync(
+        )
+        {
+            RunContext = new PipelineRunContext(runId, observer),
+        };
+        await using var run = await InProcessExecution.Concurrent.RunStreamingAsync(
             PipelineMafBridge.GetWorkflow(pipeline),
             initialMessage,
             runId.ToString("N"),
@@ -58,47 +102,161 @@ internal sealed class InProcessPipelineRunner
         );
 
         PipelineMessage<TState>? output = null;
+        using var runCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken
+        );
+        var pendingResponses = new List<Task>();
+        var haltedRequests = new List<ExternalRequest>();
+        var handlerFailure = new TaskCompletionSource<Exception>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        void DispatchHaltedRequests()
+        {
+            if (haltedRequests.Count == 0)
+            {
+                return;
+            }
+            var responsesMaySend = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously
+            );
+            var handlersNotStarted = haltedRequests.Count;
+            void MarkHandlerStarted()
+            {
+                if (Interlocked.Decrement(ref handlersNotStarted) == 0)
+                {
+                    responsesMaySend.SetResult();
+                }
+            }
+            foreach (var haltedRequest in haltedRequests)
+            {
+                pendingResponses.Add(
+                    HandleRequestAsync(
+                        run,
+                        runId,
+                        haltedRequest,
+                        requests,
+                        handlerFailure,
+                        runCancellation,
+                        responsesMaySend.Task,
+                        MarkHandlerStarted
+                    )
+                );
+            }
+            haltedRequests.Clear();
+        }
+
+        Exception? failure = null;
         try
         {
-            await foreach (var evt in run.WatchStreamAsync(cancellationToken))
+            while (true)
             {
-                switch (evt)
+                await foreach (
+                    var evt in run.WatchStreamAsync(
+                        blockOnPendingRequest: false,
+                        runCancellation.Token
+                    )
+                )
                 {
-                    case WorkflowErrorEvent error:
-                        throw new WorkflowRunException(
-                            "Workflow execution failed.",
-                            error.Exception
-                        );
-                    case ExecutorFailedEvent failed:
-                        throw new WorkflowRunException("Workflow executor failed.", failed.Data);
-                    case WorkflowOutputEvent workflowOutput
-                        when workflowOutput.Is<PipelineMessage<TState>>():
-                        output = workflowOutput.As<PipelineMessage<TState>>();
-                        break;
-                    case RequestInfoEvent request:
-                        await SendResponseAsync(
-                            run,
-                            runId,
-                            request.Request,
-                            requests,
-                            cancellationToken
-                        );
-                        break;
+                    switch (evt)
+                    {
+                        case WorkflowErrorEvent error:
+                            throw new PipelineRunException(
+                                "Workflow execution failed.",
+                                error.Exception
+                            );
+                        case ExecutorFailedEvent failed:
+                            throw new PipelineRunException(
+                                "Workflow executor failed.",
+                                failed.Data
+                            );
+                        case WorkflowOutputEvent workflowOutput
+                            when workflowOutput.Is<PipelineMessage<TState>>():
+                            output = workflowOutput.As<PipelineMessage<TState>>();
+                            break;
+                        case RequestInfoEvent request:
+                            haltedRequests.Add(request.Request);
+                            break;
+                    }
                 }
+                if (haltedRequests.Count == 0)
+                {
+                    break;
+                }
+                var firstCurrentResponse = pendingResponses.Count;
+                DispatchHaltedRequests();
+                await Task.WhenAll(pendingResponses.Skip(firstCurrentResponse));
             }
 
             cancellationToken.ThrowIfCancellationRequested();
         }
-        catch
+        catch (Exception ex)
         {
+            failure = ex;
+        }
+
+        if (failure is not null)
+        {
+            runCancellation.Cancel();
             await CancelQuietlyAsync(run);
-            throw;
+        }
+        try
+        {
+            await Task.WhenAll(pendingResponses);
+        }
+        catch (Exception ex) when (failure is not null)
+        {
+            _ = ex;
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+        }
+        runCancellation.Cancel();
+        if (handlerFailure.Task.IsCompletedSuccessfully)
+        {
+            failure = await handlerFailure.Task;
+        }
+        if (failure is not null)
+        {
+            ExceptionDispatchInfo.Capture(failure).Throw();
         }
 
         return output
-            ?? throw new WorkflowRunException(
+            ?? throw new PipelineRunException(
                 "Workflow completed without producing a pipeline output."
             );
+    }
+
+    private static async Task HandleRequestAsync(
+        StreamingRun run,
+        Guid runId,
+        ExternalRequest request,
+        IExternalRequestHandler requests,
+        TaskCompletionSource<Exception> handlerFailure,
+        CancellationTokenSource runCancellation,
+        Task responsesMaySend,
+        Action markHandlerStarted
+    )
+    {
+        try
+        {
+            await SendResponseAsync(
+                run,
+                runId,
+                request,
+                requests,
+                responsesMaySend,
+                markHandlerStarted,
+                runCancellation.Token
+            );
+        }
+        catch (Exception ex)
+        {
+            handlerFailure.TrySetResult(ex);
+            runCancellation.Cancel();
+            await CancelQuietlyAsync(run);
+            throw;
+        }
     }
 
     private static async ValueTask SendResponseAsync(
@@ -106,6 +264,8 @@ internal sealed class InProcessPipelineRunner
         Guid runId,
         ExternalRequest request,
         IExternalRequestHandler requests,
+        Task responsesMaySend,
+        Action markHandlerStarted,
         CancellationToken cancellationToken
     )
     {
@@ -118,33 +278,98 @@ internal sealed class InProcessPipelineRunner
             );
         }
 
+        var interaction = requestData as IInteractionRequest;
+        var interactionRunContext = (interaction as IPipelineRunContextCarrier)?.RunContext;
+        var authoredRequestType = interaction?.RequestType ?? requestType;
+        var authoredResponseType =
+            interaction?.ResponseType ?? ResolveType(request.PortInfo.ResponseType);
+        var authoredRequest = interaction?.Request ?? requestData;
+
         var pending = new PendingExternalRequest(
             runId,
             request.RequestId,
-            request.PortInfo.PortId,
-            request.PortInfo.RequestType.TypeName,
-            request.PortInfo.ResponseType.TypeName,
-            JsonSerializer.SerializeToElement(requestData, requestType)
-        );
-        var answer = await requests.WaitAsync(pending, cancellationToken);
-        if (
-            answer.RunId != runId
-            || !string.Equals(answer.RequestId, request.RequestId, StringComparison.Ordinal)
+            interaction?.InteractionId ?? request.PortInfo.PortId,
+            authoredRequestType.FullName ?? authoredRequestType.Name,
+            authoredResponseType.FullName ?? authoredResponseType.Name,
+            interaction is null
+                ? JsonSerializer.SerializeToElement(authoredRequest, authoredRequestType)
+                : default
         )
         {
-            throw new InvalidOperationException(
-                $"Answer for run/request '{answer.RunId:N}/{answer.RequestId}' cannot satisfy "
-                    + $"pending run/request '{runId:N}/{request.RequestId}'."
-            );
-        }
+            Value = authoredRequest,
+            RequestClrType = authoredRequestType,
+            ResponseClrType = authoredResponseType,
+        };
+        try
+        {
+            if (interactionRunContext is not null)
+            {
+                await interactionRunContext.ObserveAsync(
+                    interaction!.CreateRequestedObservation(runId, request.RequestId),
+                    cancellationToken
+                );
+            }
+            ValueTask<ExternalRequestAnswer> pendingAnswer;
+            try
+            {
+                pendingAnswer = requests.WaitAsync(pending, cancellationToken);
+            }
+            finally
+            {
+                markHandlerStarted();
+            }
+            var answer = await pendingAnswer;
+            if (
+                answer.RunId != runId
+                || !string.Equals(answer.RequestId, request.RequestId, StringComparison.Ordinal)
+            )
+            {
+                throw new InvalidOperationException(
+                    $"Answer for run/request '{answer.RunId:N}/{answer.RequestId}' cannot satisfy "
+                        + $"pending run/request '{runId:N}/{request.RequestId}'."
+                );
+            }
 
-        var responseType = ResolveType(request.PortInfo.ResponseType);
-        var response =
-            JsonSerializer.Deserialize(answer.Payload, responseType)
-            ?? throw new InvalidOperationException(
-                $"Answer for request '{request.RequestId}' produced a null response."
+            var response =
+                answer.Value
+                ?? JsonSerializer.Deserialize(answer.Payload, authoredResponseType)
+                ?? throw new InvalidOperationException(
+                    $"Answer for request '{request.RequestId}' produced a null response."
+                );
+            await responsesMaySend.WaitAsync(cancellationToken);
+            await run.SendResponseAsync(
+                request.CreateResponse(interaction?.CreateResponse(response) ?? response)
             );
-        await run.SendResponseAsync(request.CreateResponse(response));
+            if (interactionRunContext is not null)
+            {
+                await interactionRunContext.ObserveAsync(
+                    interaction!.CreateAnsweredObservation(runId, request.RequestId, response),
+                    cancellationToken
+                );
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            if (interactionRunContext is not null)
+            {
+                await interactionRunContext.ObserveAsync(
+                    new PipelineStepCancelled(runId, interaction!.InteractionId),
+                    CancellationToken.None
+                );
+            }
+            throw;
+        }
+        catch (Exception ex)
+        {
+            if (interactionRunContext is not null)
+            {
+                await interactionRunContext.ObserveAsync(
+                    new PipelineStepFaulted(runId, interaction!.InteractionId, ex.Message),
+                    CancellationToken.None
+                );
+            }
+            throw;
+        }
     }
 
     private static Type ResolveType(TypeId typeId) =>
@@ -176,6 +401,3 @@ internal sealed class InProcessPipelineRunner
             );
     }
 }
-
-public sealed class WorkflowRunException(string message, Exception? inner = null)
-    : Exception(message, inner);

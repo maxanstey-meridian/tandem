@@ -2,7 +2,7 @@ namespace Tandem.Sample.Songwriter;
 
 public sealed class SongwriterComposition(SongwriterSteps song)
 {
-    public Pipeline Build()
+    public Pipeline<SongwriterState> Build()
     {
         return TandemWorkflow
             .Start(

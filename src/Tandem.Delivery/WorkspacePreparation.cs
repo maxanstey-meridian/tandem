@@ -24,7 +24,6 @@ public sealed class WorkspacePreparation(GitProcess git)
 
     public async Task<WorkspacePreparationResult> PrepareAsync(
         Packet packet,
-        string runDirectory,
         string workspacePath,
         CancellationToken cancellationToken
     )
@@ -38,14 +37,19 @@ public sealed class WorkspacePreparation(GitProcess git)
             await VerifyHeadAsync(workspacePath, pinnedSha, cancellationToken);
             return new WorkspacePreparationResult(pinnedSha, workspacePath);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            CleanupWorkspace(workspacePath);
+            throw;
+        }
         catch (WorkspacePreparationException)
         {
-            CleanupRunDirectory(runDirectory);
+            CleanupWorkspace(workspacePath);
             throw;
         }
         catch (Exception ex)
         {
-            CleanupRunDirectory(runDirectory);
+            CleanupWorkspace(workspacePath);
             throw new WorkspacePreparationException(ex.Message, ex);
         }
     }
@@ -175,13 +179,13 @@ public sealed class WorkspacePreparation(GitProcess git)
         }
     }
 
-    private static void CleanupRunDirectory(string runDirectory)
+    private static void CleanupWorkspace(string workspacePath)
     {
         try
         {
-            if (Directory.Exists(runDirectory))
+            if (Directory.Exists(workspacePath))
             {
-                Directory.Delete(runDirectory, recursive: true);
+                Directory.Delete(workspacePath, recursive: true);
             }
         }
         catch { }

@@ -1,52 +1,49 @@
-using System.Text.Json;
-using Tandem.Advanced;
 using Tandem.Domain;
 
 namespace Tandem;
 
 public sealed class PipelineInteraction<TState, TRequest, TResponse>
+    : IPipelineInteractionDefinition
 {
     internal PipelineInteraction(
         string id,
         Func<TState, TRequest> createRequest,
-        Func<TState, TResponse, TState> applyResponse,
-        IBlockExecutionObserver? observer
+        Func<TState, TResponse, TState> applyResponse
     )
     {
         Id = id;
-        Request = new RequestStage($"{id}--request", id, createRequest, observer);
+        Request = new RequestStage($"{id}--request", id, createRequest);
         Port = new RequestPort(id);
-        Resume = new ResumeStage($"{id}--resume", id, applyResponse, observer);
+        Resume = new ResumeStage($"{id}--resume", id, applyResponse);
     }
 
     public string Id { get; }
     internal IRawPipelineNode Request { get; }
     internal IRawPipelineNode Port { get; }
     internal IRawPipelineNode Resume { get; }
+    Type IPipelineInteractionDefinition.RequestType => typeof(TRequest);
+    Type IPipelineInteractionDefinition.ResponseType => typeof(TResponse);
 
     private sealed class RequestStage : IRawPipelineNode
     {
-        public RequestStage(
-            string id,
-            string scope,
-            Func<TState, TRequest> createRequest,
-            IBlockExecutionObserver? observer
-        )
+        public RequestStage(string id, string scope, Func<TState, TRequest> createRequest)
         {
             Id = id;
-            Descriptor = AdvancedPipelineNodes.Stage<PipelineMessage<TState>, TRequest>(
+            Descriptor = CorePipelineNodes.Stage<
+                PipelineMessage<TState>,
+                InteractionRequest<TState, TRequest, TResponse>
+            >(
                 id,
-                async (pipeline, context, cancellationToken) =>
-                {
-                    await context.QueueStateUpdateAsync(
-                        pipeline.Runtime.RunId.ToString("N"),
-                        JsonSerializer.Serialize(pipeline),
-                        scope,
-                        cancellationToken
-                    );
-                    return createRequest(pipeline.State);
-                },
-                observer
+                (pipeline, _, _) =>
+                    ValueTask.FromResult(
+                        new InteractionRequest<TState, TRequest, TResponse>(
+                            scope,
+                            pipeline,
+                            createRequest(pipeline.State)
+                        )
+                    ),
+                scope,
+                PipelineObservationMode.StartOnly
             );
         }
 
@@ -58,58 +55,121 @@ public sealed class PipelineInteraction<TState, TRequest, TResponse>
     {
         public string Id => id;
         public PipelineNodeDescriptor Descriptor { get; } =
-            AdvancedPipelineNodes.RequestPort<TRequest, TResponse>(id);
+            CorePipelineNodes.RequestPort<
+                InteractionRequest<TState, TRequest, TResponse>,
+                InteractionResponse<TState, TResponse>
+            >(id);
     }
 
     private sealed class ResumeStage : IRawPipelineNode
     {
-        public ResumeStage(
-            string id,
-            string scope,
-            Func<TState, TResponse, TState> applyResponse,
-            IBlockExecutionObserver? observer
-        )
+        public ResumeStage(string id, string scope, Func<TState, TResponse, TState> applyResponse)
         {
             Id = id;
-            Descriptor = AdvancedPipelineNodes.Stage<TResponse, PipelineMessage<TState>>(
+            Descriptor = CorePipelineNodes.Stage<
+                InteractionResponse<TState, TResponse>,
+                PipelineMessage<TState>
+            >(
                 id,
-                async (response, context, cancellationToken) =>
+                (response, _, _) =>
                 {
-                    var keys = await context.ReadStateKeysAsync(scope, cancellationToken);
-                    if (keys.Count != 1)
+                    if (!string.Equals(response.InteractionId, scope, StringComparison.Ordinal))
                     {
                         throw new InvalidOperationException(
-                            $"Expected one saved pipeline message for request port '{scope}'."
+                            $"Response for interaction '{response.InteractionId}' cannot resume '{scope}'."
                         );
                     }
-
-                    var json = await context.ReadStateAsync<string>(
-                        keys.Single(),
-                        scope,
-                        cancellationToken
+                    var pipeline = response.Pipeline;
+                    return ValueTask.FromResult(
+                        pipeline with
+                        {
+                            State = applyResponse(pipeline.State, response.Response),
+                            LatestOutcome = new BlockOutcome(
+                                "request.resumed",
+                                scope,
+                                $"Request '{scope}' resumed.",
+                                System.Text.Json.JsonSerializer.SerializeToElement(
+                                    response.Response
+                                )
+                            ),
+                            LatestResult = null,
+                        }
                     );
-                    var pipeline =
-                        JsonSerializer.Deserialize<PipelineMessage<TState>>(json ?? "")
-                        ?? throw new InvalidOperationException(
-                            $"The saved pipeline message for request port '{scope}' was invalid."
-                        );
-                    return pipeline with
-                    {
-                        State = applyResponse(pipeline.State, response),
-                        LatestOutcome = new BlockOutcome(
-                            "request.resumed",
-                            id,
-                            $"Request '{scope}' resumed.",
-                            JsonSerializer.SerializeToElement(response)
-                        ),
-                        LatestResult = null,
-                    };
                 },
-                observer
+                scope,
+                PipelineObservationMode.CompleteOnly
             );
         }
 
         public string Id { get; }
         public PipelineNodeDescriptor Descriptor { get; }
     }
+}
+
+internal interface IPipelineInteractionDefinition
+{
+    public string Id { get; }
+    internal Type RequestType { get; }
+    internal Type ResponseType { get; }
+}
+
+internal interface IInteractionRequest
+{
+    public string InteractionId { get; }
+    public Type RequestType { get; }
+    public Type ResponseType { get; }
+    public object Request { get; }
+    public object CreateResponse(object response);
+    public PipelineObservation CreateRequestedObservation(Guid runId, string requestId);
+    public PipelineObservation CreateAnsweredObservation(
+        Guid runId,
+        string requestId,
+        object response
+    );
+}
+
+internal sealed record InteractionRequest<TState, TRequest, TResponse>(
+    string InteractionId,
+    PipelineMessage<TState> Pipeline,
+    TRequest Value
+) : IInteractionRequest, IPipelineRunContextCarrier
+{
+    public PipelineRunContext? RunContext => Pipeline.RunContext;
+    Type IInteractionRequest.RequestType => typeof(TRequest);
+    Type IInteractionRequest.ResponseType => typeof(TResponse);
+    object IInteractionRequest.Request => Value!;
+
+    object IInteractionRequest.CreateResponse(object response) =>
+        response is TResponse typed
+            ? new InteractionResponse<TState, TResponse>(InteractionId, Pipeline, typed)
+            : throw new InvalidOperationException(
+                $"Interaction '{InteractionId}' requires response type '{typeof(TResponse).FullName}', "
+                    + $"not '{response.GetType().FullName}'."
+            );
+
+    PipelineObservation IInteractionRequest.CreateRequestedObservation(
+        Guid runId,
+        string requestId
+    ) => new PipelineInteractionRequested<TRequest>(runId, InteractionId, requestId, Value);
+
+    PipelineObservation IInteractionRequest.CreateAnsweredObservation(
+        Guid runId,
+        string requestId,
+        object response
+    ) =>
+        response is TResponse typed
+            ? new PipelineInteractionAnswered<TResponse>(runId, InteractionId, requestId, typed)
+            : throw new InvalidOperationException(
+                $"Interaction '{InteractionId}' cannot observe response type "
+                    + $"'{response.GetType().FullName}'."
+            );
+}
+
+internal sealed record InteractionResponse<TState, TResponse>(
+    string InteractionId,
+    PipelineMessage<TState> Pipeline,
+    TResponse Response
+) : IPipelineRunContextCarrier
+{
+    public PipelineRunContext? RunContext => Pipeline.RunContext;
 }

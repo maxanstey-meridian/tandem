@@ -1,11 +1,27 @@
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Tandem.Advanced;
 using Tandem.Git;
 
 namespace Tandem.Delivery;
 
+public sealed record DeliveryAgentProfile(
+    int ContextWindowTokens,
+    int MaxOutputTokens,
+    int CheckpointAtPercent
+);
+
+public sealed record DeliveryOptions(
+    Func<string, IChatClient> ChatClients,
+    Func<string, DeliveryAgentProfile> Profiles
+);
+
 public static class DeliveryRegistration
 {
-    public static IServiceCollection AddDelivery(this IServiceCollection services)
+    public static IServiceCollection AddDelivery(
+        this IServiceCollection services,
+        DeliveryOptions options
+    )
     {
         var capabilities = CreateCapabilities();
         var askPlanner = capabilities.AskPlanner;
@@ -14,15 +30,15 @@ public static class DeliveryRegistration
         services.AddSingleton(askPlanner);
         services.AddSingleton(submitReport);
         services.AddSingleton(writeCheckpoint);
+        services.AddSingleton<GitProcess>();
         services.AddSingleton<WorkspacePreparation>();
         services.AddSingleton<DeliveryDiffAcquisition>();
         services.AddSingleton<DeliveryStepsFactory>(sp =>
         {
-            var clients = sp.GetRequiredService<ITandemChatClients>();
             return new DeliveryStepsFactory(
                 sp.GetRequiredService<AgentRuntime>(),
-                clients.Build,
-                clients.ResolveProfile,
+                options.ChatClients,
+                options.Profiles,
                 sp.GetRequiredService<DeliveryDiffAcquisition>(),
                 sp.GetRequiredService<WorkspacePreparation>(),
                 sp.GetRequiredService<GitProcess>(),

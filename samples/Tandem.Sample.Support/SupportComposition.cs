@@ -2,7 +2,7 @@ namespace Tandem.Sample.Support;
 
 public sealed class SupportComposition(SupportSteps support)
 {
-    public Pipeline Build()
+    public Pipeline<SupportState> Build()
     {
         return TandemWorkflow
             .Start(

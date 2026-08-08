@@ -17,10 +17,10 @@
             Include="Microsoft.Extensions.DependencyInjection.Abstractions"
             Version="10.0.10"
         />
-        <PackageReference Include="ModelContextProtocol" Version="2.1.0" />
     </ItemGroup>
 
     <ItemGroup>
+        <ProjectReference Include="..\Tandem.Advanced\Tandem.Advanced.csproj" />
         <ProjectReference Include="..\Tandem\Tandem.csproj" />
         <ProjectReference
             Include="..\Tandem.Generators\Tandem.Generators.csproj"

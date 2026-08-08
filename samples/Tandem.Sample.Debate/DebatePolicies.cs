@@ -1,20 +1,14 @@
 using FluentValidation;
-using Tandem.Domain;
+using Tandem.Advanced;
 
 namespace Tandem.Sample.Debate;
 
 public static class DebatePolicies
 {
-    public static AgentSessionDecision RetainRevisionContext(DebateState _) =>
-        new(AgentSessionAction.Continue, "Retain critic context across revision rounds.");
-
-    public static AgentSessionDecision StartJudgeFresh(DebateState _) =>
-        new(AgentSessionAction.Reset, "Judge each accepted argument from a fresh session.");
-
     public static AgentConversationDecision DiscardJudgeAfterVerdict(
-        PipelineMessage<DebateState> _,
-        BlockOutcome __
-    ) => new(AgentConversationRetention.Discard, "The verdict closes the judge conversation.");
+        AgentMessageContext<DebateState> _,
+        AgentMessageOutcome __
+    ) => new(AgentConversationRetention.Discard);
 
     public static DebateState ApplyProposal(DebateState state, ProposalDecision decision) =>
         state with

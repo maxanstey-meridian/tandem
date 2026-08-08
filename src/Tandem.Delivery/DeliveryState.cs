@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Tandem.Domain;
 
 namespace Tandem.Delivery;
@@ -48,4 +49,15 @@ public enum ExecutorAction
     PlannerRequested,
     ReportSubmitted,
     CheckpointWritten,
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum RunStatus
+{
+    Running,
+    Ready,
+    WaitingForHuman,
+    Failed,
+    Faulted,
+    Cancelled,
 }

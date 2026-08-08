@@ -1,6 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Tandem.Domain;
+using Tandem.Advanced;
 
 namespace Tandem.Delivery;
 

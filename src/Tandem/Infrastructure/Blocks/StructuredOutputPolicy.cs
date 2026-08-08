@@ -4,20 +4,20 @@ using Tandem.Domain;
 
 namespace Tandem;
 
-public static class StructuredOutputPolicy
+internal static class AgentStructuredOutputPolicy
 {
-    public static StructuredOutputResult<TState> Parse<T, TState>(
+    public static AgentStructuredOutputResult<TState> Parse<T, TState>(
         string response,
         TState state,
         JsonSerializerOptions options,
         IValidator<T> validator,
-        Func<T, TState, StructuredOutcome<TState>> map
+        Func<T, TState, AgentStructuredOutcome<TState>> map
     )
     {
         string json;
         try
         {
-            json = StructuredJsonExtractor.Extract(response);
+            json = AgentStructuredJsonExtractor.Extract(response);
         }
         catch (InvalidOperationException exception)
         {
@@ -42,10 +42,10 @@ public static class StructuredOutputPolicy
         var validation = validator.Validate(value);
         if (!validation.IsValid)
         {
-            return new StructuredOutputResult<TState>(
+            return new AgentStructuredOutputResult<TState>(
                 null,
                 validation
-                    .Errors.Select(error => new StructuredOutputProblem(
+                    .Errors.Select(error => new AgentStructuredOutputProblem(
                         ToCamelCase(error.PropertyName),
                         error.ErrorMessage
                     ))
@@ -55,20 +55,20 @@ public static class StructuredOutputPolicy
             );
         }
 
-        return new StructuredOutputResult<TState>(map(value, state), [], response, value);
+        return new AgentStructuredOutputResult<TState>(map(value, state), [], response, value);
     }
 
-    private static StructuredOutputResult<TState> Failure<TState>(
+    private static AgentStructuredOutputResult<TState> Failure<TState>(
         string raw,
         string field,
         string message
-    ) => new(null, [new StructuredOutputProblem(field, message)], raw);
+    ) => new(null, [new AgentStructuredOutputProblem(field, message)], raw);
 
     private static string ToCamelCase(string path) =>
         string.IsNullOrEmpty(path) ? path : char.ToLowerInvariant(path[0]) + path[1..];
 }
 
-public static class StructuredJsonExtractor
+internal static class AgentStructuredJsonExtractor
 {
     public static string Extract(string text)
     {

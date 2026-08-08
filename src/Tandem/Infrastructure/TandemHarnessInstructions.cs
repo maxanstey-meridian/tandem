@@ -2,7 +2,7 @@ using System.Reflection;
 
 namespace Tandem.Infrastructure;
 
-public static class TandemHarnessInstructions
+internal static class TandemHarnessInstructions
 {
     private const string ResourceName = "Tandem.TANDEM.md";
     private static readonly Lazy<string> _value = new(Load);

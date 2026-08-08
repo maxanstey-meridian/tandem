@@ -8,7 +8,7 @@ namespace Tandem.Delivery;
 public sealed class DeliveryStepsFactory(
     AgentRuntime agentRuntime,
     Func<string, IChatClient> chatClients,
-    Func<string, ResolvedProfile> profileResolver,
+    Func<string, DeliveryAgentProfile> profileResolver,
     DeliveryDiffAcquisition diffAcquisition,
     WorkspacePreparation workspacePreparation,
     GitProcess git,
@@ -17,7 +17,7 @@ public sealed class DeliveryStepsFactory(
     AgentCapability<DeliveryState> writeCheckpoint
 )
 {
-    public DeliverySteps Create(PipelineBuildContext context)
+    public DeliverySteps Create()
     {
         var executor = CreateAgent(
             BlockIds.Executor,
@@ -25,7 +25,7 @@ public sealed class DeliveryStepsFactory(
             DeliveryPrompts.ExecutorInstructions,
             toolInterceptor: DeliveryPolicies.CreateMutationGate(),
             turnPolicy: DeliveryPolicies.CreateExecutorTurnPolicy(),
-            sessionPolicy: ExecutorPolicies.ContinueWorkingSession,
+            continueSession: true,
             conversationPolicy: ExecutorPolicies.RetainUntilAcceptedReport
         );
         var planner = CreateAgent(
@@ -35,7 +35,7 @@ public sealed class DeliveryStepsFactory(
             PlannerDecisionPolicy.Parse,
             structuredOutputAcceptance: DeliveryPolicies.CreatePlannerGroundingPolicy(),
             structuredOutputCorrectionRequiredToolName: "file_access_read",
-            sessionPolicy: PlannerPolicies.ContinueConsultation
+            continueSession: true
         );
         var reviewer = CreateAgent(
             BlockIds.Reviewer,
@@ -45,7 +45,6 @@ public sealed class DeliveryStepsFactory(
             messageAugmentation: DeliveryPolicies.CreateDiffAugmentation(diffAcquisition),
             structuredOutputAcceptance: DeliveryPolicies.CreateReviewerGroundingPolicy(),
             structuredOutputCorrectionRequiredToolName: "file_access_read",
-            sessionPolicy: ReviewerPolicies.StartFreshForEachCandidate,
             conversationPolicy: ReviewerPolicies.DiscardAfterDecision
         );
 
@@ -57,29 +56,24 @@ public sealed class DeliveryStepsFactory(
             executor,
             planner,
             new CaptureCandidateStage(new CaptureCandidateBlock(git)),
-            new VerificationStage(
-                new VerificationBlock(git, context.ExecutionObserver as ICommandOutputObserver)
-            ),
+            new VerificationStage(new VerificationBlock(git)),
             reviewer,
             PipelineNodes.Complete<DeliveryState>(
                 BlockIds.Complete,
                 complete.Execute,
                 OutcomeKinds.RunReady,
-                "Run ready",
-                context.ExecutionObserver
+                "Run ready"
             ),
             PipelineNodes.Failed<DeliveryState>(
                 BlockIds.Failed,
                 failed.Execute,
                 OutcomeKinds.RunFailed,
-                failed.Summarize,
-                context.ExecutionObserver
+                failed.Summarize
             ),
             PipelineNodes.WaitFor<DeliveryState, HumanQuestion, HumanAnswer>(
                 "HumanInput",
                 HumanInteraction.BuildQuestion,
-                HumanInteraction.ApplyAnswer,
-                context.ExecutionObserver
+                HumanInteraction.ApplyAnswer
             )
         );
     }
@@ -94,7 +88,7 @@ public sealed class DeliveryStepsFactory(
         AgentTurnPolicy<DeliveryState>? turnPolicy = null,
         StructuredOutputAcceptancePolicy<DeliveryState>? structuredOutputAcceptance = null,
         string? structuredOutputCorrectionRequiredToolName = null,
-        AgentSessionPolicy<DeliveryState>? sessionPolicy = null,
+        bool continueSession = false,
         AgentProfilePolicy<DeliveryState>? profilePolicy = null,
         AgentConversationPolicy<DeliveryState>? conversationPolicy = null
     )
@@ -112,7 +106,7 @@ public sealed class DeliveryStepsFactory(
             : null;
 
         var builder = agentRuntime
-            .Create<DeliveryState>(
+            .CreateProfiled<DeliveryState>(
                 blockId,
                 profileName,
                 instructions,
@@ -123,13 +117,12 @@ public sealed class DeliveryStepsFactory(
                 state => state.WorkspacePath,
                 state => DeliveryPolicies.AllowsWorkspaceMutation(blockId, state),
                 toolInterceptor
-            )
-            .WithSessionPolicy(
-                sessionPolicy
-                    ?? throw new InvalidOperationException(
-                        $"Agent '{blockId}' must supply a session policy."
-                    )
             );
+
+        if (continueSession)
+        {
+            builder.ContinueSession();
+        }
 
         if (blockId == BlockIds.Executor)
         {

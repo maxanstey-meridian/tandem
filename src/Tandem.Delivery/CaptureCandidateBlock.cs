@@ -1,19 +1,19 @@
 using System.Diagnostics;
 using System.Text.Json;
-using Tandem.Domain;
+using Tandem.Advanced;
 using Tandem.Git;
 
 namespace Tandem.Delivery;
 
 public sealed class CaptureCandidateBlock(GitProcess git)
 {
-    public async ValueTask<PipelineMessage<DeliveryState>> ExecuteAsync(
-        PipelineMessage<DeliveryState> message,
+    public async ValueTask<OperationResult<DeliveryState>> ExecuteAsync(
+        PipelineOperationContext<DeliveryState> context,
         CancellationToken cancellationToken
     )
     {
         var sw = Stopwatch.StartNew();
-        var ctx = message.State;
+        var ctx = context.State;
         var ws = ctx.WorkspacePath;
 
         var addResult = await git.RunAsync(ws, ["add", "-A"], cancellationToken);
@@ -29,7 +29,7 @@ public sealed class CaptureCandidateBlock(GitProcess git)
                 "commit",
                 "--allow-empty",
                 "-m",
-                $"Tandem candidate {message.Runtime.RunId:N}",
+                $"Tandem candidate {context.RunId:N}",
             ],
             cancellationToken
         );
@@ -48,10 +48,9 @@ public sealed class CaptureCandidateBlock(GitProcess git)
 
         var payload = JsonSerializer.SerializeToElement(new { candidateSha });
         sw.Stop();
-        return new PipelineMessage<DeliveryState>(
-            message.Runtime,
+        return new OperationResult<DeliveryState>(
             updatedContext,
-            new BlockOutcome(
+            new OperationOutcome(
                 OutcomeKinds.CandidateCaptured,
                 BlockIds.CaptureCandidate,
                 "Candidate captured",

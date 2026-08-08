@@ -369,6 +369,17 @@ public sealed class DashboardReducerTests
         model.IsTerminal.Should().BeTrue();
     }
 
+    [Theory]
+    [InlineData(EventKinds.RunFaulted, RunStatus.Faulted)]
+    [InlineData(EventKinds.RunCancelled, RunStatus.Cancelled)]
+    public void Apply_InterruptedRun_SetsDistinctTerminalStatus(string kind, RunStatus status)
+    {
+        var model = DashboardReducer.FromEvents([Evt("", kind, "interrupted")]);
+
+        model.Status.Should().Be(status);
+        model.IsTerminal.Should().BeTrue();
+    }
+
     [Fact]
     public void Apply_HumanRequested_SetsPendingRequestAndWaiting()
     {
@@ -653,6 +664,35 @@ public sealed class DashboardRendererTests
 
         console.Output.Should().Contain("read_file");
         console.Output.Should().NotContain("done");
+    }
+
+    [Fact]
+    public void Render_FailedToolCompletion_ShowsErrorEvidence()
+    {
+        var console = new TestConsole().Width(100).Height(30);
+        var renderer = new DashboardRenderer(console);
+        var completed = JsonSerializer.SerializeToElement(
+            new
+            {
+                callId = "c1",
+                success = false,
+                name = "write_file",
+                error = "permission denied",
+            }
+        );
+        var model = DashboardReducer.FromEvents([
+            DashboardTestEvents.Make("executor", EventKinds.ToolStarted, "write_file"),
+            DashboardTestEvents.Make(
+                "executor",
+                EventKinds.ToolCompleted,
+                "write_file failed: permission denied",
+                completed
+            ),
+        ]);
+
+        renderer.Render(model);
+
+        console.Output.Should().Contain("write_file").And.Contain("permission denied");
     }
 
     [Fact]

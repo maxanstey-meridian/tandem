@@ -115,7 +115,7 @@ public sealed class SupportCompositionTests
         );
 
     internal static async Task<PipelineMessage<SupportState>> RunInProcessAsync(
-        Pipeline pipeline,
+        Pipeline<SupportState> pipeline,
         PipelineMessage<SupportState> input,
         CustomerReply reply
     )
@@ -134,7 +134,7 @@ public sealed class SupportCompositionTests
         private Fixture(
             string home,
             ServiceProvider provider,
-            Pipeline pipeline,
+            Pipeline<SupportState> pipeline,
             RecordingAccountLookup lookup
         )
         {
@@ -146,7 +146,7 @@ public sealed class SupportCompositionTests
 
         public string Home { get; }
         public ServiceProvider Provider { get; }
-        public Pipeline Pipeline { get; }
+        public Pipeline<SupportState> Pipeline { get; }
         public RecordingAccountLookup Lookup { get; }
 
         public static Fixture Create()
@@ -158,7 +158,6 @@ public sealed class SupportCompositionTests
             Directory.CreateDirectory(home);
             var lookup = new RecordingAccountLookup();
             var services = new ServiceCollection();
-            services.AddSingleton(new TandemEnvironment(home));
             services.AddSingleton<IAccountLookup>(lookup);
             services
                 .AddTandem()
@@ -208,7 +207,7 @@ public sealed class SupportCompositionTests
         )
         {
             request.RequestType.Should().Be(typeof(CustomerQuestion).FullName);
-            request.Payload.Deserialize<CustomerQuestion>().Should().NotBeNull();
+            request.Value.Should().BeOfType<CustomerQuestion>();
             return ValueTask.FromResult(
                 new ExternalRequestAnswer(
                     request.RunId,

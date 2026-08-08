@@ -18,7 +18,7 @@ public sealed class DeliveryBlockFailureTests
         var block = new CaptureCandidateBlock(new GitProcess(fakeGit));
         var message = CreateMessage(temp.Path, []);
 
-        var act = () => block.ExecuteAsync(message, CancellationToken.None).AsTask();
+        var act = () => block.ExecuteAsync(Context(message), CancellationToken.None).AsTask();
 
         (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage(
             "*git add*exit code 23*add rejected*"
@@ -36,7 +36,7 @@ public sealed class DeliveryBlockFailureTests
         var message = CreateMessage(temp.Path, ["true", "true", "true", "true", "sleep 30"]);
         message = message with { State = message.State with { VerificationIndex = 4 } };
 
-        var result = await block.ExecuteAsync(message, CancellationToken.None);
+        var result = await block.ExecuteAsync(Context(message), CancellationToken.None);
 
         result.State.VerificationResults.Should().ContainSingle();
         var command = result.State.VerificationResults.Single();
@@ -44,7 +44,7 @@ public sealed class DeliveryBlockFailureTests
         command.TimedOut.Should().BeTrue();
         command.ExitCode.Should().Be(-1);
         command.Stderr.Should().Contain("timed out after");
-        result.LatestOutcome!.Kind.Should().Be(OutcomeKinds.CommandFailed);
+        result.Outcome.Kind.Should().Be(OutcomeKinds.CommandFailed);
     }
 
     [Fact]
@@ -58,7 +58,7 @@ public sealed class DeliveryBlockFailureTests
         var message = CreateMessage(temp.Path, ["sleep 30"]);
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
-        var act = () => block.ExecuteAsync(message, cts.Token).AsTask();
+        var act = () => block.ExecuteAsync(Context(message), cts.Token).AsTask();
 
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
@@ -81,11 +81,11 @@ public sealed class DeliveryBlockFailureTests
         message = message with { State = message.State with { CandidateSha = head.Stdout.Trim() } };
 
         var result = await new VerificationBlock(new GitProcess()).ExecuteAsync(
-            message,
+            Context(message),
             CancellationToken.None
         );
 
-        result.LatestOutcome!.Kind.Should().Be(OutcomeKinds.CommandFailed);
+        result.Outcome.Kind.Should().Be(OutcomeKinds.CommandFailed);
         result.State.VerificationResults.Single().Stderr.Should().Contain("must be read-only");
     }
 
@@ -100,6 +100,10 @@ public sealed class DeliveryBlockFailureTests
             DeliveryState.Create(packet, "base", workspace)
         );
     }
+
+    private static PipelineOperationContext<DeliveryState> Context(
+        PipelineMessage<DeliveryState> message
+    ) => new(message);
 
     private static async Task<string> CreateExecutableAsync(
         string directory,

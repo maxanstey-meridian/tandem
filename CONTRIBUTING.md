@@ -15,9 +15,9 @@ pipelines are unprivileged consumers. The runtime vocabulary is:
 - **Route**: an ordered condition and destination pair.
 - **Prompt**: instructions contributed to an agent step.
 
-The execution cycle is: run a step, persist its observations and result,
-evaluate its routes in order, then run the first matching destination, suspend,
-or complete.
+The execution cycle is: run a step, publish its observations and result to the
+current run observer when configured, evaluate its routes in order, then run the
+first matching destination, suspend, or complete.
 
 ## Boundaries
 
@@ -26,17 +26,17 @@ Keep these ownership boundaries explicit:
 - Pipeline composition owns block order, prompts, profiles, conditions, and
   successors.
 - Pipeline composition owns its concrete `TState`, user messages, workspace
-  policy, structured mappings, and explicitly registered MCP terminal set.
+  policy, structured mappings, and directly attached capability set.
 - Ordinary authored steps and policies use concrete `TState`; core must not add a
-  universal lifecycle state interface or state bag. Advanced block and runtime
-  policy APIs may use `PipelineMessage<TState>` and `BlockOutcome` when execution
-  evidence is their purpose.
+  universal lifecycle state interface or state bag. Advanced APIs expose narrow
+  context and operation values; the complete execution envelope remains internal.
 - Envelope-aware agent policy, raw parsing, checkpoint mechanics, capabilities,
   and runtime observation are extension methods in `Tandem.Advanced`, not
   ordinary `AgentBuilder<TState>` instance methods.
 - Capability authors own typed requests, validation, summaries, and state
-  transitions. Tandem owns receipt and transport identity, serialization,
-  registration, persistence, and replay.
+  transitions, including asynchronous durable acceptance when required. Tandem
+  owns invocation identity, local MAF tool binding, and atomic accepted-call
+  ownership.
 - Steps own operations, not orchestration.
 - Pipeline state records facts; it does not hide routing logic.
 - Microsoft Agent Framework owns workflow execution, sessions,
@@ -58,12 +58,12 @@ composition unless it changes what a block operation itself does.
 
 Treat all model-authored data as untrusted boundary input.
 
-- Lifecycle MCP tools compose their request contract, validator, schema, error
-  identity, and handler registration.
-- Invalid lifecycle calls return structured tool errors before handlers run or
-  receipts are persisted.
-- An accepted lifecycle call persists its outcome, terminates the active model
-  turn mechanically, and returns control to workflow routing.
+- Local capabilities compose their typed request contract, validator, flat
+  schema, summary, and asynchronous acceptance callback.
+- Invalid capability calls return structured tool errors before acceptance or
+  state transition and may be corrected in the same MAF session.
+- One capability call atomically owns acceptance. Durable acceptance completes
+  before state transition, mechanical turn termination, or workflow routing.
 - Planner and reviewer structured output must pass syntax, shape, enum, and
   cross-field validation before it can affect context or routing.
 - Structured-output recovery gets one corrective response in the same agent
@@ -71,8 +71,9 @@ Treat all model-authored data as untrusted boundary input.
 - Runtime FluentValidation rules are authoritative where generated JSON Schema
   cannot express semantic constraints.
 
-Generic boundary infrastructure must resolve behavior through registration. Do
-not add tool-name switches or duplicate semantic validation inside handlers.
+Capability execution follows direct agent attachment through MAF function
+middleware. Do not add tool-name switches, DI discovery, or duplicate semantic
+validation inside handlers.
 
 ## Naming Grammar
 
@@ -131,3 +132,9 @@ task check
 ```
 
 Runtime tests use real MAF in-process execution rather than a mocked event loop.
+
+Public package boundaries are also proven through packed consumers. Changes to
+exported types require a deliberate update to the owning `ExportedApi.txt`.
+Generator ABI remains hidden with `EditorBrowsable(Never)`, and the analyzer must
+remain under `analyzers/dotnet/cs` in `Tandem.Generators`. `task check` runs the
+package restore, execution, analyzer-delivery, and dependency-isolation proof.

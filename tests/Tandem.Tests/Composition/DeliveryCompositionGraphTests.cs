@@ -22,6 +22,7 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
     private const string HumanInputPortId = "HumanInput";
 
     private readonly string _tandemHome;
+    private readonly Pipeline<DeliveryState> _pipeline;
     private readonly Workflow _workflow;
 
     public DeliveryCompositionGraphTests()
@@ -34,7 +35,7 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
 
         var composition = new DeliveryComposition(
             CreateFactory(
-                new AgentRuntime(_tandemHome, null),
+                new AgentRuntime(),
                 _ => new FakeChatClient(),
                 _ => MakeProfile(),
                 new DeliveryDiffAcquisition(new GitProcess()),
@@ -42,7 +43,8 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
                 new GitProcess()
             )
         );
-        _workflow = PipelineMafBridge.GetWorkflow(composition.Build(new PipelineBuildContext()));
+        _pipeline = composition.Build();
+        _workflow = PipelineMafBridge.GetWorkflow(_pipeline);
     }
 
     public void Dispose()
@@ -89,7 +91,7 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
     {
         var inspection = new DeliveryComposition(
             CreateFactory(
-                new AgentRuntime(_tandemHome, null),
+                new AgentRuntime(),
                 _ => new FakeChatClient(),
                 _ => MakeProfile(),
                 new DeliveryDiffAcquisition(new GitProcess()),
@@ -97,14 +99,14 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
                 new GitProcess()
             )
         )
-            .Build(new PipelineBuildContext())
+            .Build()
             .Inspect();
 
         inspection.Name.Should().Be("delivery");
         inspection.StartStepId.Should().Be(BlockIds.Prepare);
         inspection.OutputStepIds.Should().Equal(BlockIds.Complete, BlockIds.Failed);
         inspection.StepIds.Should().HaveCount(9);
-        inspection.Routes.Should().HaveCount(22);
+        inspection.Routes.Should().HaveCount(24);
         inspection
             .Routes.Should()
             .Contain(route =>
@@ -117,21 +119,14 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
             .Should()
             .BeSubsetOf(inspection.StepIds);
         inspection.Ports.Should().BeEmpty();
-        inspection.Mermaid.Should().StartWith("flowchart").And.Contain("workspace prepared");
+        inspection.Mermaid.Should().StartWith("flowchart").And.Contain(BlockIds.Prepare);
         inspection.Dot.Should().StartWith("digraph");
     }
 
     [Fact]
-    public void EveryEdgeLabel_RendersInMermaid()
+    public void EverySemanticRouteLabel_IsRetainedInInspection()
     {
-        // Slice D: every edge carries a visualization label through MAF's
-        // WorkflowVisualizer. Labels are not exposed on EdgeInfo/DirectEdgeInfo
-        // (PLAN.md Slice A findings: ReflectEdges surfaces only Kind,
-        // Connection, HasCondition), so the Mermaid surface is the supported
-        // proof that labels made it through. The ReflectEdges() multiset pinned
-        // by Edges_MatchProductionGraph proves topology is unchanged under
-        // labels; this test proves every label renders.
-        var mermaid = WorkflowVisualizer.ToMermaidString(_workflow);
+        var labels = _pipeline.Inspect().Routes.Select(route => route.Label).ToArray();
 
         var expectedLabels = new[]
         {
@@ -160,22 +155,8 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
 
         foreach (var label in expectedLabels)
         {
-            mermaid
-                .Should()
-                .Contain(
-                    label,
-                    "the edge labelled \"{0}\" must render in the Mermaid visualization",
-                    label
-                );
+            labels.Should().Contain(label);
         }
-
-        // One planner-to-executor connection renders with the combined label.
-        mermaid
-            .Should()
-            .Contain(
-                "planner -. proceed / proceed with constraints .-> executor",
-                "planner success stays one physical edge with one combined label"
-            );
     }
 
     [Fact]
@@ -206,15 +187,21 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
     }
 
     [Fact]
-    public void HumanInputRequestPort_Identity_IsPreserved()
+    public void HumanInputInspection_ExposesAuthoredTypesWithoutPrivatePortTypes()
     {
-        var ports = _workflow.ReflectPorts();
-        ports.Should().ContainSingle("only the HumanInput request port is exposed for suspension");
-
-        var port = ports.Values.Single();
-        port.PortId.Should().Be(HumanInputPortId);
-        port.RequestType.TypeName.Should().Be("Tandem.Domain.HumanQuestion");
-        port.ResponseType.TypeName.Should().Be("Tandem.Domain.HumanAnswer");
+        var inspection = _pipeline.Inspect();
+        inspection.Ports.Should().BeEmpty();
+        inspection
+            .Interactions.Should()
+            .ContainSingle()
+            .Which.Should()
+            .Be(
+                new PipelineInteractionInspection(
+                    HumanInputPortId,
+                    typeof(HumanQuestion).FullName!,
+                    typeof(HumanAnswer).FullName!
+                )
+            );
     }
 
     [Fact]
@@ -231,18 +218,21 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
             );
 
         got.Count.Should()
-            .Be(
-                26,
-                "total edge count is a durable-sensitive invariant; a future cleanup must not silently reshape it"
-            );
+            .Be(25, "MAF switch reflection collapses multiple cases that share one target");
     }
 
     [Fact]
     public void EdgeCountPerSource_MatchesProductionLayout()
     {
         var perSource = _workflow
-            .ReflectEdges()
-            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Count);
+            .ReflectExecutors()
+            .Keys.Select(id => new
+            {
+                Id = id,
+                Count = FlattenEdges().Count(edge => edge.Source == id),
+            })
+            .Where(entry => entry.Count > 0)
+            .ToDictionary(entry => entry.Id, entry => entry.Count);
 
         perSource
             .Should()
@@ -251,7 +241,7 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
                 {
                     [BlockIds.Prepare] = 2,
                     [BlockIds.Executor] = 4,
-                    [BlockIds.Planner] = 4,
+                    [BlockIds.Planner] = 3,
                     [BlockIds.CaptureCandidate] = 3,
                     [BlockIds.Verify] = 4,
                     [BlockIds.Reviewer] = 4,
@@ -405,15 +395,14 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
         {
             foreach (var info in kvp.Value)
             {
-                var source = info.Connection.SourceIds.Single();
-                var sink = info.Connection.SinkIds.Single();
-                var hasCondition = info is DirectEdgeInfo direct
-                    ? direct.HasCondition
-                    : throw new InvalidOperationException(
-                        "Only DirectEdge kinds are expected in DeliveryComposition."
-                    );
-
-                list.Add(new EdgeTuple(source, sink, hasCondition));
+                var hasCondition = info is DirectEdgeInfo direct ? direct.HasCondition : true;
+                foreach (var source in info.Connection.SourceIds)
+                {
+                    foreach (var sink in info.Connection.SinkIds)
+                    {
+                        list.Add(new EdgeTuple(source, sink, hasCondition));
+                    }
+                }
             }
         }
 
@@ -480,8 +469,7 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
             // Planner success outcomes (Proceed | ProceedWithConstraints) share one physical edge.
             new(BlockIds.Planner, BlockIds.Executor, true),
             new(BlockIds.Planner, BlockIds.HumanQuestion, true),
-            // Planner stop and canonical failure are distinct edges; both target failed.
-            new(BlockIds.Planner, BlockIds.Failed, true),
+            // MAF switch reflection collapses distinct cases that share the failed target.
             new(BlockIds.Planner, BlockIds.Failed, true),
             // capture
             new(BlockIds.CaptureCandidate, BlockIds.Verify, true),
@@ -506,22 +494,12 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
             new(BlockIds.ApplyHumanAnswer, BlockIds.Failed, true),
         };
 
-    private static ResolvedProfile MakeProfile() =>
-        new(
-            ProviderName: "test",
-            BaseUrl: "http://localhost:9999/v1",
-            Model: "test-model",
-            WireApi: WireApi.Completions,
-            Reasoning: null,
-            ContextWindowTokens: 200000,
-            MaxOutputTokens: 32000,
-            CheckpointAtPercent: 80
-        );
+    private static DeliveryAgentProfile MakeProfile() => new(200000, 32000, 80);
 
     private static DeliveryStepsFactory CreateFactory(
         AgentRuntime runtime,
         Func<string, IChatClient> clients,
-        Func<string, ResolvedProfile> profiles,
+        Func<string, DeliveryAgentProfile> profiles,
         DeliveryDiffAcquisition diff,
         WorkspacePreparation workspace,
         GitProcess git

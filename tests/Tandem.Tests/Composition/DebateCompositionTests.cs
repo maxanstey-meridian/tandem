@@ -4,33 +4,27 @@ using FluentAssertions;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Tandem.Actions;
 using Tandem.Domain;
 using Tandem.Sample.Debate;
-using Tandem.Tests.Infrastructure;
 
 namespace Tandem.Tests.Composition;
 
 public sealed class DebateCompositionTests
 {
     [Fact]
-    public async Task Debate_ExecutesRevisionLoopAndReceiptReplayThroughPublicAuthoringSurface()
+    public async Task Debate_ExecutesRevisionLoopAndLocalCapabilityThroughPublicAuthoringSurface()
     {
-        using var fixture = await LifecycleFixture.CreateAsync();
         var clients = ScriptedClients.Create();
-        var pipeline = Build(fixture, clients);
-        var input = Input(fixture);
-        await WriteVerdictReceiptAsync(fixture, input);
+        var pipeline = Build(clients);
+        var input = Input();
 
         var output = await RunAsync(pipeline, input);
 
-        clients.Order.Should().Equal("proposer", "critic", "proposer", "critic");
-        clients
-            .Judge.CallCount.Should()
-            .Be(0, "the accepted receipt is replayed before a model call");
+        clients.Order.Should().Equal("proposer", "critic", "proposer", "critic", "judge");
+        clients.Judge.CallCount.Should().Be(1);
         output.State.Round.Should().Be(2);
         output.State.Arguments.Select(argument => argument.Text).Should().Contain("Revised case");
-        output.State.Verdict.Should().Be(new DebateVerdict("Affirmed", "Already accepted."));
+        output.State.Verdict.Should().Be(new DebateVerdict("Affirmed", "Accepted in process."));
         output.Runtime.InvocationCounts.Should().ContainKeys("proposer", "critic", "judge");
         output.Runtime.InvocationCounts["proposer"].Should().Be(2);
         output.Runtime.InvocationCounts["critic"].Should().Be(2);
@@ -46,10 +40,9 @@ public sealed class DebateCompositionTests
     [Fact]
     public async Task Debate_InspectionAndSerializationExposeOnlyPublicSemanticData()
     {
-        using var fixture = await LifecycleFixture.CreateAsync();
-        var pipeline = Build(fixture, ScriptedClients.Create());
+        var pipeline = Build(ScriptedClients.Create());
         var inspection = pipeline.Inspect();
-        var input = Input(fixture);
+        var input = Input();
         var json = JsonSerializer.Serialize(input);
         var roundTrip = JsonSerializer.Deserialize<PipelineMessage<DebateState>>(json);
 
@@ -69,20 +62,19 @@ public sealed class DebateCompositionTests
             );
         inspection.Routes.Count(route => route.Conditional).Should().Be(5);
         inspection.Routes.Count(route => !route.Conditional).Should().Be(1);
-        inspection.Mermaid.Should().StartWith("flowchart").And.Contain("revision requested");
+        inspection.Mermaid.Should().StartWith("flowchart");
+        inspection.Routes.Should().Contain(route => route.Label == "revision requested");
         inspection.Dot.Should().StartWith("digraph");
         roundTrip.Should().BeEquivalentTo(input);
     }
 
     [Fact]
-    public async Task AddDebate_RegistersCompositionAndActionSetExplicitly()
+    public void AddDebate_RegistersCompositionAndAgentRuntime()
     {
-        using var fixture = await LifecycleFixture.CreateAsync();
         var clients = ScriptedClients.Create();
         var services = new ServiceCollection();
-        services.AddSingleton(new TandemEnvironment(fixture.TandemHome, fixture.TandemExePath));
         services.AddTandem().AddDebate(Options(clients));
-        await using var provider = services.BuildServiceProvider();
+        using var provider = services.BuildServiceProvider();
 
         provider
             .GetRequiredService<DebateComposition>()
@@ -90,11 +82,7 @@ public sealed class DebateCompositionTests
             .Inspect()
             .Name.Should()
             .Be("debate");
-        provider
-            .GetRequiredService<LifecycleActionSetRegistry>()
-            .Register("debate", new ServiceCollection())
-            .Should()
-            .NotBeNull();
+        provider.GetRequiredService<AgentRuntime>().Should().NotBeNull();
     }
 
     [Theory]
@@ -132,43 +120,25 @@ public sealed class DebateCompositionTests
         input.State.Arguments.Should().ContainSingle();
     }
 
-    internal static Pipeline Build(LifecycleFixture fixture, ScriptedClients clients)
+    internal static Pipeline<DebateState> Build(ScriptedClients clients)
     {
         var services = new ServiceCollection();
-        services.AddSingleton(new TandemEnvironment(fixture.TandemHome, fixture.TandemExePath));
         services.AddTandem().AddDebate(Options(clients));
         using var provider = services.BuildServiceProvider();
         return provider.GetRequiredService<DebateComposition>().Build();
     }
 
-    internal static PipelineMessage<DebateState> Input(LifecycleFixture fixture) =>
+    internal static PipelineMessage<DebateState> Input() =>
         new(
-            PipelineRuntime.Create(fixture.RunId),
+            PipelineRuntime.Create(Guid.CreateVersion7()),
             new DebateState("Should typed composition own lifecycle state?", [], 0, null)
-        );
-
-    internal static async Task WriteVerdictReceiptAsync(
-        LifecycleFixture fixture,
-        PipelineMessage<DebateState> input
-    ) =>
-        await new LifecycleReceiptStore(fixture.TandemHome).WriteAsync(
-            fixture.RunId,
-            input.Runtime.NextInvocationId("judge"),
-            "judge",
-            "capability:Tandem.Sample.Debate.DebateState:submit_verdict",
-            "Verdict submitted: Affirmed",
-            JsonSerializer.SerializeToElement(
-                new SubmitVerdict("Affirmed", "Already accepted."),
-                JsonSerializerOptions.Web
-            ),
-            CancellationToken.None
         );
 
     private static DebateOptions Options(ScriptedClients clients) =>
         new(clients.Proposer, clients.Critic, clients.Judge);
 
     private static async Task<PipelineMessage<DebateState>> RunAsync(
-        Pipeline pipeline,
+        Pipeline<DebateState> pipeline,
         PipelineMessage<DebateState> input
     )
     {
@@ -228,27 +198,57 @@ public sealed class DebateCompositionTests
                 new ScriptedChatClient(
                     order,
                     "proposer",
-                    "{\"text\":\"Initial case\"}",
-                    "{\"text\":\"Revised case\"}"
+                    TextResponse("{\"text\":\"Initial case\"}"),
+                    TextResponse("{\"text\":\"Revised case\"}")
                 ),
                 new ScriptedChatClient(
                     order,
                     "critic",
-                    "{\"accepted\":false,\"critique\":\"Revise\"}",
-                    "{\"accepted\":true,\"critique\":\"Accepted\"}"
+                    TextResponse("{\"accepted\":false,\"critique\":\"Revise\"}"),
+                    TextResponse("{\"accepted\":true,\"critique\":\"Accepted\"}")
                 ),
-                new ScriptedChatClient(order, "judge", "must not execute")
+                new ScriptedChatClient(
+                    order,
+                    "judge",
+                    new ChatResponse(
+                        new ChatMessage(
+                            ChatRole.Assistant,
+                            [
+                                new FunctionCallContent(
+                                    "verdict-1",
+                                    "submit_verdict",
+                                    new Dictionary<string, object?>
+                                    {
+                                        ["verdict"] = "Affirmed",
+                                        ["reason"] = "Accepted in process.",
+                                    }
+                                ),
+                            ]
+                        )
+                    )
+                    {
+                        FinishReason = ChatFinishReason.ToolCalls,
+                        ModelId = "test-model",
+                    }
+                )
             );
         }
+
+        private static ChatResponse TextResponse(string text) =>
+            new(new ChatMessage(ChatRole.Assistant, [new TextContent(text)]))
+            {
+                FinishReason = ChatFinishReason.Stop,
+                ModelId = "test-model",
+            };
     }
 
     internal sealed class ScriptedChatClient(
         List<string> order,
         string name,
-        params string[] responses
+        params ChatResponse[] responses
     ) : IChatClient
     {
-        private readonly Queue<string> _responses = new(responses);
+        private readonly Queue<ChatResponse> _responses = new(responses);
         public int CallCount { get; private set; }
 
         public Task<ChatResponse> GetResponseAsync(
@@ -265,9 +265,7 @@ public sealed class DebateCompositionTests
         {
             CallCount++;
             order.Add(name);
-            var response = new ChatResponse(
-                new ChatMessage(ChatRole.Assistant, [new TextContent(_responses.Dequeue())])
-            );
+            var response = _responses.Dequeue();
             foreach (var update in response.ToChatResponseUpdates())
             {
                 yield return update;

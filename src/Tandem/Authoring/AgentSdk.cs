@@ -70,22 +70,19 @@ public sealed class AgentDefinition<TState> : IStandardOutcomePipelineStep<TStat
 
 public sealed class AgentRuntime
 {
-    private readonly string _home;
-    private readonly string? _executablePath;
-
-    internal AgentRuntime(string home, string? executablePath)
-    {
-        _home = home;
-        _executablePath = executablePath;
-    }
-
     public AgentBuilder<TState> Create<TState>(
+        string id,
+        string instructions,
+        IChatClient chatClient
+    ) => new(id, id, instructions, chatClient, chatClientFactory: null);
+
+    internal AgentBuilder<TState> CreateProfiled<TState>(
         string id,
         string profile,
         string instructions,
         IChatClient chatClient,
-        Func<string, IChatClient>? profileChatClients = null
-    ) => new(id, profile, instructions, chatClient, _home, _executablePath, profileChatClients);
+        Func<string, IChatClient> profileChatClients
+    ) => new(id, profile, instructions, chatClient, profileChatClients);
 }
 
 public sealed class AgentBuilder<TState>
@@ -94,26 +91,29 @@ public sealed class AgentBuilder<TState>
     private readonly string _profile;
     private readonly string _instructions;
     private readonly IChatClient _chatClient;
-    private readonly string _home;
-    private readonly string? _executablePath;
     private readonly Func<string, IChatClient>? _chatClientFactory;
     private Func<TState, string>? _message;
-    private AdvancedAgentMessage<TState>? _contextMessage;
+    private Func<PipelineMessage<TState>, string>? _contextMessage;
     private Func<TState, string>? _workspacePath;
     private Func<TState, bool>? _allowMutation;
-    private StructuredOutputParser<TState>? _structuredOutput;
-    private CheckpointPolicy<TState>? _checkpoint;
-    private MessageAugmentation<TState>? _messageAugmentation;
-    private AgentTurnPolicy<TState>? _turnPolicy;
-    private StructuredOutputAcceptancePolicy<TState>? _structuredOutputAcceptance;
-    private string? _structuredOutputCorrectionRequiredToolName;
-    private ReceiptStateTransition<TState>? _receiptTransition;
-    private string? _lifecycleActionSetIdentity;
-    private IReadOnlyList<string> _lifecycleActionNames = [];
-    private AgentSessionPolicy<TState>? _sessionPolicy;
-    private AgentProfilePolicy<TState>? _profilePolicy;
-    private AgentConversationPolicy<TState>? _conversationPolicy;
-    private ToolInterceptor<TState>? _toolInterceptor;
+    private AgentStructuredOutputDescriptor<TState>? _structuredOutput;
+    private AgentCheckpointDescriptor<TState>? _checkpoint;
+    private Func<
+        PipelineMessage<TState>,
+        CancellationToken,
+        ValueTask<string?>
+    >? _messageAugmentation;
+    private AgentTurnDescriptor<TState>? _turnPolicy;
+    private IReadOnlyList<AgentCapabilityDescriptor<TState>> _capabilities = [];
+    private bool _continueSession;
+    private Func<TState, AgentProfileSelection>? _profilePolicy;
+    private Func<PipelineMessage<TState>, BlockOutcome, bool>? _retainConversation;
+    private Func<
+        PipelineMessage<TState>,
+        string,
+        CancellationToken,
+        ValueTask<string?>
+    >? _toolInterceptor;
     private Action<ChatOptions>? _configureChatOptions;
 
     internal AgentBuilder(
@@ -121,8 +121,6 @@ public sealed class AgentBuilder<TState>
         string profile,
         string instructions,
         IChatClient chatClient,
-        string home,
-        string? executablePath,
         Func<string, IChatClient>? chatClientFactory
     )
     {
@@ -133,8 +131,6 @@ public sealed class AgentBuilder<TState>
         _profile = profile;
         _instructions = instructions;
         _chatClient = chatClient;
-        _home = home;
-        _executablePath = executablePath;
         _chatClientFactory = chatClientFactory;
     }
 
@@ -144,22 +140,29 @@ public sealed class AgentBuilder<TState>
         return this;
     }
 
-    internal AgentBuilder<TState> ConfigureMessageFromContext(AdvancedAgentMessage<TState> message)
+    internal AgentBuilder<TState> ConfigureMessageFromContext(
+        Func<PipelineMessage<TState>, string> message
+    )
     {
         _contextMessage = message;
         return this;
     }
 
-    public AgentBuilder<TState> WithSessionPolicy(AgentSessionPolicy<TState> policy)
+    public AgentBuilder<TState> ContinueSession()
     {
-        _sessionPolicy = policy;
+        _continueSession = true;
         return this;
     }
 
     internal AgentBuilder<TState> ConfigureWorkspace(
         Func<TState, string> path,
         Func<TState, bool> allowMutation,
-        ToolInterceptor<TState>? toolInterceptor = null
+        Func<
+            PipelineMessage<TState>,
+            string,
+            CancellationToken,
+            ValueTask<string?>
+        >? toolInterceptor = null
     )
     {
         _workspacePath = path;
@@ -169,16 +172,12 @@ public sealed class AgentBuilder<TState>
     }
 
     internal AgentBuilder<TState> ConfigureStructuredOutput(
-        StructuredOutputParser<TState> parser,
-        Action<ChatOptions>? configureChatOptions = null,
-        StructuredOutputAcceptancePolicy<TState>? acceptancePolicy = null,
-        string? correctionRequiredToolName = null
+        AgentStructuredOutputDescriptor<TState> descriptor,
+        Action<ChatOptions>? configureChatOptions = null
     )
     {
-        _structuredOutput = parser;
+        _structuredOutput = descriptor;
         _configureChatOptions = configureChatOptions;
-        _structuredOutputAcceptance = acceptancePolicy;
-        _structuredOutputCorrectionRequiredToolName = correctionRequiredToolName;
         return this;
     }
 
@@ -187,76 +186,62 @@ public sealed class AgentBuilder<TState>
         Func<TState, TOutput, TState> apply
     )
     {
-        _structuredOutput = (response, state) =>
-            StructuredOutputPolicy.Parse(
-                response,
-                state,
-                JsonSerializerOptions.Web,
-                validator,
-                (output, current) =>
-                {
-                    return new StructuredOutcome<TState>(
-                        StandardOutcomeKinds.Success,
-                        "Succeeded",
-                        JsonSerializer.SerializeToElement(output, JsonSerializerOptions.Web),
-                        apply(current, output)
-                    );
-                }
-            );
+        _structuredOutput = new AgentStructuredOutputDescriptor<TState>(
+            (response, state) =>
+                AgentStructuredOutputPolicy.Parse(
+                    response,
+                    state,
+                    JsonSerializerOptions.Web,
+                    validator,
+                    (output, current) =>
+                        new AgentStructuredOutcome<TState>(
+                            StandardOutcomeKinds.Success,
+                            "Succeeded",
+                            JsonSerializer.SerializeToElement(output, JsonSerializerOptions.Web),
+                            apply(current, output)
+                        )
+                )
+        );
         _configureChatOptions = options =>
             options.ResponseFormat = ChatResponseFormat.ForJsonSchema<TOutput>();
         return this;
     }
 
     internal AgentBuilder<TState> ConfigureOutput<TOutput>(
-        StructuredOutputParser<TState> parser,
-        StructuredOutputAcceptancePolicy<TState>? acceptancePolicy = null,
-        string? correctionRequiredToolName = null
+        AgentStructuredOutputDescriptor<TState> descriptor
     )
     {
-        _structuredOutput = parser;
-        _structuredOutputAcceptance = acceptancePolicy;
-        _structuredOutputCorrectionRequiredToolName = correctionRequiredToolName;
+        _structuredOutput = descriptor;
         _configureChatOptions = options =>
             options.ResponseFormat = ChatResponseFormat.ForJsonSchema<TOutput>();
         return this;
     }
 
-    private void AddCapability(AgentCapability<TState> capability)
+    private void AddCapability(AgentCapabilityDescriptor<TState> capability)
     {
-        if (
-            _lifecycleActionSetIdentity is not null
-            && !string.Equals(
-                _lifecycleActionSetIdentity,
-                capability.Identity,
-                StringComparison.Ordinal
-            )
-        )
-        {
-            throw new InvalidOperationException(
-                "All capabilities on an agent must share one identity."
-            );
-        }
-        if (_lifecycleActionNames.Contains(capability.ToolName, StringComparer.Ordinal))
+        var existing = _capabilities.FirstOrDefault(existing =>
+            existing.ToolName == capability.ToolName
+        );
+        if (ReferenceEquals(existing, capability))
         {
             return;
         }
-        _lifecycleActionSetIdentity = capability.Identity;
-        _lifecycleActionNames = [.. _lifecycleActionNames, capability.ToolName];
-        var current = _receiptTransition;
-        _receiptTransition = current is null
-            ? capability.Transition
-            : (state, kind, payload) =>
-                capability.Transition(current(state, kind, payload), kind, payload);
+        if (existing is not null)
+        {
+            throw new InvalidOperationException(
+                $"Agent '{_id}' has multiple capabilities named '{capability.ToolName}'."
+            );
+        }
+        _capabilities = [.. _capabilities, capability];
     }
 
-    internal AgentBuilder<TState> ConfigureCapability(AgentCapability<TState> capability)
+    internal AgentBuilder<TState> ConfigureCapability(AgentCapabilityDescriptor<TState> capability)
     {
         AddCapability(capability);
         return this;
     }
 
-    internal AgentBuilder<TState> ConfigureCheckpoint(CheckpointPolicy<TState> policy)
+    internal AgentBuilder<TState> ConfigureCheckpoint(AgentCheckpointDescriptor<TState> policy)
     {
         _checkpoint = policy;
         AddCapability(policy.Capability);
@@ -264,20 +249,20 @@ public sealed class AgentBuilder<TState>
     }
 
     internal AgentBuilder<TState> ConfigureMessageAugmentation(
-        MessageAugmentation<TState> augmentation
+        Func<PipelineMessage<TState>, CancellationToken, ValueTask<string?>> augmentation
     )
     {
         _messageAugmentation = augmentation;
         return this;
     }
 
-    internal AgentBuilder<TState> ConfigureContinuationPolicy(AgentTurnPolicy<TState> policy)
+    internal AgentBuilder<TState> ConfigureContinuationPolicy(AgentTurnDescriptor<TState> policy)
     {
         _turnPolicy = policy;
         return this;
     }
 
-    internal AgentBuilder<TState> ConfigureProfilePolicy(AgentProfilePolicy<TState> policy)
+    internal AgentBuilder<TState> ConfigureProfilePolicy(Func<TState, AgentProfileSelection> policy)
     {
         if (_chatClientFactory is null)
         {
@@ -291,10 +276,10 @@ public sealed class AgentBuilder<TState>
     }
 
     internal AgentBuilder<TState> ConfigureConversationPolicy(
-        AgentConversationPolicy<TState> policy
+        Func<PipelineMessage<TState>, BlockOutcome, bool> retainConversation
     )
     {
-        _conversationPolicy = policy;
+        _retainConversation = retainConversation;
         return this;
     }
 
@@ -304,22 +289,11 @@ public sealed class AgentBuilder<TState>
         {
             throw new InvalidOperationException($"Agent '{_id}' must configure a user message.");
         }
-        if (_sessionPolicy is null)
-        {
-            throw new InvalidOperationException($"Agent '{_id}' must configure a session policy.");
-        }
-        if (_checkpoint is not null && _lifecycleActionSetIdentity is null)
-        {
-            throw new InvalidOperationException(
-                $"Agent '{_id}' must select a lifecycle action set for checkpointing."
-            );
-        }
-
         var config = new AgentBlockConfig<TState>(
             _id,
             _profile,
             _instructions,
-            _lifecycleActionNames,
+            _capabilities,
             _message,
             _workspacePath,
             _allowMutation,
@@ -327,13 +301,9 @@ public sealed class AgentBuilder<TState>
             _checkpoint,
             _messageAugmentation,
             _turnPolicy,
-            _structuredOutputAcceptance,
-            _structuredOutputCorrectionRequiredToolName,
-            _receiptTransition,
-            _lifecycleActionSetIdentity,
-            _sessionPolicy,
+            _continueSession,
             _profilePolicy,
-            _conversationPolicy,
+            _retainConversation,
             _contextMessage
         );
 
@@ -343,9 +313,7 @@ public sealed class AgentBuilder<TState>
                 new AgentBlock<TState>(
                     config,
                     _chatClient,
-                    _home,
-                    _executablePath,
-                    AgentUpdates.Publish,
+                    onUpdate: null,
                     _toolInterceptor,
                     _configureChatOptions,
                     _chatClientFactory

@@ -19,7 +19,6 @@ public sealed class WorkspacePreparationTests
 
         var result = await prep.PrepareAsync(
             packet,
-            run.Dir,
             Path.Combine(run.Dir, "workspace"),
             CancellationToken.None
         );
@@ -41,7 +40,6 @@ public sealed class WorkspacePreparationTests
 
         var result = await prep.PrepareAsync(
             packet,
-            run.Dir,
             Path.Combine(run.Dir, "workspace"),
             CancellationToken.None
         );
@@ -61,7 +59,7 @@ public sealed class WorkspacePreparationTests
         var packet = MakePacket(source.Path, "main");
         var prep = new WorkspacePreparation(new GitProcess(_gitPath));
 
-        await prep.PrepareAsync(packet, run.Dir, workspacePath, CancellationToken.None);
+        await prep.PrepareAsync(packet, workspacePath, CancellationToken.None);
 
         File.Exists(Path.Combine(workspacePath, "readme.md")).Should().BeTrue();
         File.WriteAllText(Path.Combine(workspacePath, "readme.md"), "edited by agent\n");
@@ -73,7 +71,7 @@ public sealed class WorkspacePreparationTests
     }
 
     [Fact]
-    public async Task PrepareAsync_BadBaseRefFailsAndDeletesRunDirectory()
+    public async Task PrepareAsync_BadBaseRefFailsAndPreservesRunDirectory()
     {
         using var source = TempSourceRepo.Create();
         using var run = TempRunDir.Create();
@@ -82,12 +80,13 @@ public sealed class WorkspacePreparationTests
         var workspacePath = Path.Combine(run.Dir, "workspace");
 
         var act = async () =>
-            await prep.PrepareAsync(packet, run.Dir, workspacePath, CancellationToken.None);
+            await prep.PrepareAsync(packet, workspacePath, CancellationToken.None);
 
         (await act.Should().ThrowAsync<WorkspacePreparationException>()).WithMessage(
             "*does-not-exist*"
         );
-        Directory.Exists(run.Dir).Should().BeFalse("the run directory must be deleted on failure");
+        Directory.Exists(run.Dir).Should().BeTrue("run evidence must survive preparation failure");
+        Directory.Exists(workspacePath).Should().BeFalse();
     }
 
     private static Packet MakePacket(string repository, string @base) =>

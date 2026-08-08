@@ -3,6 +3,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using Spectre.Console;
 using Spectre.Console.Rendering;
+using Tandem.Delivery;
 using Tandem.Domain;
 
 namespace Tandem.Infrastructure.Dashboard;
@@ -195,7 +196,7 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         {
             EventKinds.ToolStarted => line.Text,
             EventKinds.ToolCompleted when line.ToolSuccess is true => line.ToolName ?? line.Text,
-            EventKinds.ToolCompleted => line.ToolName ?? line.Text,
+            EventKinds.ToolCompleted => line.Text,
             _ => line.Text,
         };
         var background = BlockBackground(blockId);
@@ -667,7 +668,11 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         status switch
         {
             RunStatus.Ready => new Style(Color.Green, decoration: Decoration.Bold),
-            RunStatus.Failed => new Style(Color.Red, decoration: Decoration.Bold),
+            RunStatus.Failed or RunStatus.Faulted => new Style(
+                Color.Red,
+                decoration: Decoration.Bold
+            ),
+            RunStatus.Cancelled => new Style(Color.Grey, decoration: Decoration.Bold),
             RunStatus.WaitingForHuman => new Style(Color.Yellow, decoration: Decoration.Bold),
             _ => new Style(Color.Cyan, decoration: Decoration.Bold),
         };

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Text.Json;
+using Tandem.Delivery;
 
 namespace Tandem.Domain;
 
@@ -62,7 +63,8 @@ public sealed record DashboardModel
     public string? DraftAnswer { get; init; }
 
     public bool IsReady => Status == RunStatus.Ready;
-    public bool IsTerminal => Status is RunStatus.Ready or RunStatus.Failed;
+    public bool IsTerminal =>
+        Status is RunStatus.Ready or RunStatus.Failed or RunStatus.Faulted or RunStatus.Cancelled;
 }
 
 public static class DashboardReducer
@@ -102,6 +104,26 @@ public static class DashboardReducer
                 return model with
                 {
                     Status = RunStatus.Failed,
+                    ActiveBlockId = null,
+                    CompletedAt = evt.Timestamp,
+                    Blocks = DeactivateBlocks(model.Blocks),
+                    UpdatedAt = evt.Timestamp,
+                };
+
+            case EventKinds.RunFaulted:
+                return model with
+                {
+                    Status = RunStatus.Faulted,
+                    ActiveBlockId = null,
+                    CompletedAt = evt.Timestamp,
+                    Blocks = DeactivateBlocks(model.Blocks),
+                    UpdatedAt = evt.Timestamp,
+                };
+
+            case EventKinds.RunCancelled:
+                return model with
+                {
+                    Status = RunStatus.Cancelled,
                     ActiveBlockId = null,
                     CompletedAt = evt.Timestamp,
                     Blocks = DeactivateBlocks(model.Blocks),

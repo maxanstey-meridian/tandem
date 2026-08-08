@@ -12,6 +12,10 @@ tasks:
     cmds:
       - dotnet test {{.SOLUTION}}
 
+  package:test:
+    cmds:
+      - dotnet test {{.ROOT_DIR}}/tests/Tandem.PackageConsumer.Tests/Tandem.PackageConsumer.Tests.csproj --configuration Release
+
   format:
     cmds:
       - dotnet tool restore
@@ -28,4 +32,5 @@ tasks:
     cmds:
       - task: format:check
       - task: test
+      - task: package:test
       - task: build

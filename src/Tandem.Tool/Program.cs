@@ -1,11 +1,8 @@
 using System.CommandLine;
 using System.Text;
-using System.Text.Json;
-using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Tandem;
-using Tandem.Actions;
 using Tandem.Application;
 using Tandem.Delivery;
 using Tandem.Domain;
@@ -14,6 +11,7 @@ using Tandem.Infrastructure;
 using Tandem.Infrastructure.Dashboard;
 using Tandem.Infrastructure.Projection;
 using Tandem.Interfaces;
+using Tandem.Tool;
 using InfrastructureChatClientBuilder = Tandem.Infrastructure.ChatClientBuilder;
 
 var packetArgument = new Argument<string>("packet-path")
@@ -40,21 +38,10 @@ var publishCommand = new Command("publish", "Publish a Ready candidate as a loca
     debugOption,
 };
 
-var actionSetArgument = new Argument<string>("action-set")
-{
-    Description = "Explicitly registered lifecycle action set identity.",
-};
-var mcpCommand = new Command("mcp", "Host a registered lifecycle action set over stdio")
-{
-    actionSetArgument,
-};
-mcpCommand.Hidden = true;
-
 var rootCommand = new RootCommand("Tandem — agentic pipeline runner")
 {
     runCommand,
     publishCommand,
-    mcpCommand,
 };
 
 runCommand.SetAction(
@@ -106,43 +93,6 @@ publishCommand.SetAction(
     }
 );
 
-static (string Home, Guid RunId, string BlockId, string InvocationId) ReadMcpContext()
-{
-    var tandemHome =
-        Environment.GetEnvironmentVariable("TANDEM_HOME")
-        ?? throw new InvalidOperationException("TANDEM_HOME is required.");
-    var runId =
-        Environment.GetEnvironmentVariable("TANDEM_RUN_ID")
-        ?? throw new InvalidOperationException("TANDEM_RUN_ID is required.");
-    var blockId =
-        Environment.GetEnvironmentVariable("TANDEM_BLOCK_ID")
-        ?? throw new InvalidOperationException("TANDEM_BLOCK_ID is required.");
-    var invocationId =
-        Environment.GetEnvironmentVariable("TANDEM_INVOCATION_ID")
-        ?? throw new InvalidOperationException("TANDEM_INVOCATION_ID is required.");
-
-    return (tandemHome, Guid.Parse(runId), blockId, invocationId);
-}
-
-mcpCommand.SetAction(
-    async (ParseResult parseResult, CancellationToken cancellationToken) =>
-    {
-        var context = ReadMcpContext();
-        await using var provider = BuildDeliveryServices(context.Home, config: null);
-        var actionSets = provider.GetRequiredService<LifecycleActionSetRegistry>();
-        await LifecycleMcpHost.RunAsync(
-            actionSets,
-            parseResult.GetRequiredValue(actionSetArgument),
-            context.Home,
-            context.RunId,
-            context.BlockId,
-            context.InvocationId,
-            cancellationToken
-        );
-        return 0;
-    }
-);
-
 return await rootCommand.Parse(args).InvokeAsync();
 
 static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken cancellationToken)
@@ -171,112 +121,86 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
         return 1;
     }
 
-    await using var provider = BuildDeliveryServices(tandemHome, config);
-    var chatClients = provider.GetRequiredService<ITandemChatClients>();
+    await using var provider = BuildDeliveryServices(config);
+    var chatClients = provider.GetRequiredService<TandemChatClients>();
     var runPaths = new RunSetup().Create(tandemHome);
     var composition = provider.GetRequiredService<DeliveryComposition>();
 
     var eventStore = new EventStore(runPaths.RunDirectory);
     var projection = RunProjection.Initial(
         runPaths.RunId,
-        DeliveryLifecycleActions.Identity,
+        "delivery",
         packetPath,
         packet.Repository,
         runPaths.WorkspacePath
     );
     await new RunProjectionStore(runPaths.RunDirectory).WriteAsync(projection, cancellationToken);
-    var runProjectors = new Dictionary<string, RunEventProjector>();
-    RunEventProjector GetProjector(string blockId)
-    {
-        if (!runProjectors.TryGetValue(blockId, out var p))
-        {
-            var profileName = blockId switch
-            {
-                BlockIds.Planner => "planning",
-                BlockIds.Reviewer => "review",
-                _ => "implementation",
-            };
-            p = new RunEventProjector(
-                runPaths.RunId,
-                blockId,
-                eventStore,
-                profile: chatClients.ResolveProfile(profileName)
-            );
-            runProjectors[blockId] = p;
-        }
-        return p;
-    }
-
     var renderer = new StreamRenderer();
-    var interactive = !Console.IsInputRedirected && !Console.IsOutputRedirected;
-    using var agentUpdates = Tandem.AgentUpdates.Observe(
-        runPaths.RunId,
-        (blockId, _, update) =>
-        {
-            if (!interactive)
-            {
-                renderer.RenderUpdate(update);
-            }
-            GetProjector(blockId).EmitAgentUpdateAsync(update).GetAwaiter().GetResult();
-        }
-    );
-    var pipeline = composition.Build(
-        new Tandem.PipelineBuildContext(
-            ExecutionObserver: new RunEventBlockExecutionObserver(GetProjector)
-        )
-    );
-
-    var implProfile = chatClients.ResolveProfile("implementation");
-    if (!interactive)
-    {
-        Console.WriteLine($"Run:       {runPaths.RunId}");
-        Console.WriteLine($"Workspace: {runPaths.WorkspacePath}");
-        Console.WriteLine($"Model:     {implProfile.ProviderName}/{implProfile.Model}");
-        Console.WriteLine();
-    }
-
-    await new RunEventProjector(runPaths.RunId, "", eventStore).EmitRunStartedAsync(
-        packetPath,
-        cancellationToken
-    );
-
     try
     {
-        using var runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        await using var requests = new InMemoryExternalRequestBroker(
-            async (request, requestCancellationToken) =>
+        var runProjectors = new Dictionary<string, RunEventProjector>();
+        RunEventProjector GetProjector(string blockId)
+        {
+            if (!runProjectors.TryGetValue(blockId, out var p))
             {
-                if (
-                    request.RequestType != typeof(HumanQuestion).FullName
-                    || request.ResponseType != typeof(HumanAnswer).FullName
-                )
+                var profileName = blockId switch
                 {
-                    throw new InvalidOperationException(
-                        $"Terminal host cannot answer interaction '{request.PortId}' with "
-                            + $"request/response types '{request.RequestType}' and "
-                            + $"'{request.ResponseType}'."
-                    );
-                }
+                    BlockIds.Planner => "planning",
+                    BlockIds.Reviewer => "review",
+                    _ => "implementation",
+                };
+                p = new RunEventProjector(
+                    runPaths.RunId,
+                    blockId,
+                    eventStore,
+                    profile: chatClients.ResolveProfile(profileName)
+                );
+                runProjectors[blockId] = p;
+            }
+            return p;
+        }
 
-                var question =
-                    request.Payload.Deserialize<HumanQuestion>()
-                    ?? throw new InvalidOperationException(
-                        $"Interaction '{request.PortId}' produced an invalid human question."
-                    );
-                await GetProjector(request.PortId)
-                    .EmitHumanRequestedAsync(question, requestCancellationToken);
+        var interactive = !Console.IsInputRedirected && !Console.IsOutputRedirected;
+        var runObserver = new RunEventPipelineObserver(
+            GetProjector,
+            update =>
+            {
+                if (!interactive)
+                {
+                    renderer.RenderUpdate(update);
+                }
             }
         );
-        var runner = new InProcessPipelineRunner();
+        var pipeline = composition.Build();
+
+        var implProfile = chatClients.ResolveProfile("implementation");
+        if (!interactive)
+        {
+            Console.WriteLine($"Run:       {runPaths.RunId}");
+            Console.WriteLine($"Workspace: {runPaths.WorkspacePath}");
+            Console.WriteLine($"Model:     {implProfile.ProviderName}/{implProfile.Model}");
+            Console.WriteLine();
+        }
+
+        await new RunEventProjector(runPaths.RunId, "", eventStore).EmitRunStartedAsync(
+            packetPath,
+            cancellationToken
+        );
+
+        using var runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var humanInteraction = new TerminalHumanInteraction();
+        var interactions = new PipelineInteractionHandlers().Handle<HumanQuestion, HumanAnswer>(
+            humanInteraction.WaitAsync
+        );
+        var runner = new PipelineRunner();
         var completionTask = CompleteRunAsync();
 
-        async Task<PipelineMessage<DeliveryState>> CompleteRunAsync()
+        async Task<PipelineRunResult<DeliveryState>> CompleteRunAsync()
         {
             var final = await runner.RunAsync(
                 pipeline,
-                runPaths.RunId,
                 DeliveryState.Create(packet, "", runPaths.WorkspacePath),
-                requests,
+                new PipelineRunOptions(runPaths.RunId, interactions, runObserver),
                 runCts.Token
             );
             renderer.RenderTerminalMessage(final);
@@ -285,14 +209,14 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
                 projection,
                 final,
                 eventStore,
-                cancellationToken
+                CancellationToken.None
             );
             return final;
         }
 
         var dashboard = new DashboardLoop(
             runPaths.RunDirectory,
-            onAnswerSubmitted: answer => SubmitHumanAnswerAsync(requests, runPaths.RunId, answer),
+            onAnswerSubmitted: answer => humanInteraction.SubmitAsync(runPaths.RunId, answer),
             onPublishRequested: async () =>
             {
                 var current = new RunProjectionStore(runPaths.RunDirectory).Read();
@@ -338,28 +262,57 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
             await completionTask;
         }
 
+        if (firstCompleted == dashboardTask && dashboardTask.IsFaulted)
+        {
+            runCts.Cancel();
+            try
+            {
+                await completionTask;
+            }
+            catch (OperationCanceledException) when (runCts.IsCancellationRequested) { }
+            await dashboardTask;
+        }
+
         if (firstCompleted == dashboardTask && !completionTask.IsCompleted)
         {
             runCts.Cancel();
         }
 
-        try
-        {
-            await completionTask;
-        }
-        catch (OperationCanceledException) when (runCts.IsCancellationRequested) { }
+        await completionTask;
 
         await dashboardTask;
     }
+    catch (OperationCanceledException)
+    {
+        await TryPersistInterruptedRunAsync(
+            runPaths.RunDirectory,
+            projection,
+            eventStore,
+            Tandem.Delivery.RunStatus.Cancelled,
+            "Run cancelled."
+        );
+        Console.Error.WriteLine("Cancelled.");
+        return 4;
+    }
     catch (Exception ex)
     {
-        var exitCode = ex switch
+        var reportedException = ex is PipelineRunException { InnerException: { } innerException }
+            ? innerException
+            : ex;
+        await TryPersistInterruptedRunAsync(
+            runPaths.RunDirectory,
+            projection,
+            eventStore,
+            Tandem.Delivery.RunStatus.Faulted,
+            reportedException.Message
+        );
+        var exitCode = reportedException switch
         {
             PacketException or ConfigurationLoadException or ProfileResolutionException => 1,
             WorkspacePreparationException => 2,
             _ => 4,
         };
-        Console.Error.WriteLine($"Error: {ex.Message}");
+        Console.Error.WriteLine($"Error: {reportedException.Message}");
         if (debug)
         {
             Console.Error.WriteLine(ex.StackTrace);
@@ -379,29 +332,42 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
     var terminalStatus = renderer.TerminalStatus;
     return terminalStatus switch
     {
-        Tandem.Domain.RunStatus.Ready => 0,
-        Tandem.Domain.RunStatus.Failed => 3,
-        Tandem.Domain.RunStatus.WaitingForHuman => 0,
+        Tandem.Delivery.RunStatus.Ready => 0,
+        Tandem.Delivery.RunStatus.Failed => 3,
+        Tandem.Delivery.RunStatus.WaitingForHuman => 0,
         _ => 4,
     };
 }
 
-static ServiceProvider BuildDeliveryServices(string tandemHome, TandemConfig? config)
+static ServiceProvider BuildDeliveryServices(TandemConfig config)
 {
     var services = new ServiceCollection();
-    services.AddSingleton(new TandemEnvironment(tandemHome, Environment.ProcessPath));
-    if (config is not null)
-    {
-        services.AddSingleton(config);
-    }
-    services.AddTandem().AddDelivery();
+    var clients = new TandemChatClients(config);
+    services.AddSingleton(config);
+    services.AddSingleton(clients);
+    services
+        .AddTandem()
+        .AddDelivery(
+            new DeliveryOptions(
+                clients.Build,
+                name =>
+                {
+                    var profile = clients.ResolveProfile(name);
+                    return new DeliveryAgentProfile(
+                        profile.ContextWindowTokens,
+                        profile.MaxOutputTokens,
+                        profile.CheckpointAtPercent
+                    );
+                }
+            )
+        );
     return services.BuildServiceProvider();
 }
 
 static async Task PersistTerminalProjectionAsync(
     string runDirectory,
     RunProjection projection,
-    PipelineMessage<DeliveryState> final,
+    PipelineRunResult<DeliveryState> final,
     EventStore eventStore,
     CancellationToken cancellationToken
 )
@@ -409,12 +375,12 @@ static async Task PersistTerminalProjectionAsync(
     var projector = new RunEventProjector(projection.RunId, "", eventStore);
     switch (final.State.Status)
     {
-        case Tandem.Domain.RunStatus.Ready:
+        case Tandem.Delivery.RunStatus.Ready:
             await projector.EmitRunReadyAsync(final.State.CandidateSha, cancellationToken);
             break;
-        case Tandem.Domain.RunStatus.Failed:
+        case Tandem.Delivery.RunStatus.Failed:
             await projector.EmitRunFailedAsync(
-                final.LatestOutcome?.Summary ?? "unknown",
+                final.Outcome?.Summary ?? "unknown",
                 cancellationToken
             );
             break;
@@ -431,6 +397,43 @@ static async Task PersistTerminalProjectionAsync(
         },
         cancellationToken
     );
+}
+
+static async Task TryPersistInterruptedRunAsync(
+    string runDirectory,
+    RunProjection projection,
+    EventStore eventStore,
+    Tandem.Delivery.RunStatus status,
+    string reason
+)
+{
+    try
+    {
+        var projector = new RunEventProjector(projection.RunId, "", eventStore);
+        if (status == Tandem.Delivery.RunStatus.Cancelled)
+        {
+            await projector.EmitRunCancelledAsync(reason, CancellationToken.None);
+        }
+        else
+        {
+            await projector.EmitRunFaultedAsync(reason, CancellationToken.None);
+        }
+        await new RunProjectionStore(runDirectory).WriteAsync(
+            projection with
+            {
+                Status = status,
+                ActiveBlockId = null,
+                UpdatedAt = DateTimeOffset.UtcNow,
+            },
+            CancellationToken.None
+        );
+    }
+    catch (Exception persistenceError)
+    {
+        Console.Error.WriteLine(
+            $"Warning: failed to persist terminal run state: {persistenceError.Message}"
+        );
+    }
 }
 
 static async Task<int> PublishAsync(
@@ -467,7 +470,7 @@ static async Task<int> PublishCandidateAsync(
     CancellationToken ct
 )
 {
-    if (projection.Status != Tandem.Domain.RunStatus.Ready)
+    if (projection.Status != Tandem.Delivery.RunStatus.Ready)
     {
         Console.Error.WriteLine($"Error: Run is not Ready (current: {projection.Status}).");
         return 1;
@@ -628,7 +631,7 @@ static async Task<int> PublishCandidateAsync(
     var updatedProjection = projection with
     {
         PublishedBranch = branchName,
-        Status = Tandem.Domain.RunStatus.Ready,
+        Status = Tandem.Delivery.RunStatus.Ready,
         UpdatedAt = DateTimeOffset.UtcNow,
     };
     await new RunProjectionStore(runDir).WriteAsync(updatedProjection, ct);
@@ -641,41 +644,6 @@ static async Task<int> PublishCandidateAsync(
     Console.WriteLine($"Commit:    {candidateSha}");
     Console.WriteLine($"Repository:{sourceRepo}");
     return 0;
-}
-
-static Task SubmitHumanAnswerAsync(
-    InMemoryExternalRequestBroker requests,
-    Guid runId,
-    string? answerText
-)
-{
-    if (string.IsNullOrWhiteSpace(answerText))
-    {
-        return Task.CompletedTask;
-    }
-
-    var pending = requests.PendingRequests.Where(request => request.RunId == runId).ToArray();
-    if (pending.Length != 1)
-    {
-        throw new InvalidOperationException(
-            $"Expected one pending human request for run '{runId:N}', found {pending.Length}."
-        );
-    }
-    if (pending[0].ResponseType != typeof(HumanAnswer).FullName)
-    {
-        throw new InvalidOperationException(
-            $"Pending interaction '{pending[0].PortId}' does not accept a human answer."
-        );
-    }
-
-    requests.Answer(
-        new ExternalRequestAnswer(
-            runId,
-            pending[0].RequestId,
-            JsonSerializer.SerializeToElement(new HumanAnswer(answerText.Trim()))
-        )
-    );
-    return Task.CompletedTask;
 }
 
 static string Slugify(string input)
@@ -741,32 +709,93 @@ file sealed class ChatClientBuilderFactory(TandemConfig config)
     }
 }
 
+file sealed class TerminalHumanInteraction
+{
+    private readonly object _sync = new();
+    private Pending? _pending;
+
+    public async ValueTask<HumanAnswer> WaitAsync(
+        PipelineInteractionContext<HumanQuestion, HumanAnswer> context,
+        CancellationToken cancellationToken
+    )
+    {
+        var pending = new Pending(context);
+        lock (_sync)
+        {
+            if (_pending is not null)
+            {
+                throw new InvalidOperationException("A human interaction is already pending.");
+            }
+            _pending = pending;
+        }
+
+        try
+        {
+            return await pending.Completion.Task.WaitAsync(cancellationToken);
+        }
+        finally
+        {
+            lock (_sync)
+            {
+                if (ReferenceEquals(_pending, pending))
+                {
+                    _pending = null;
+                }
+            }
+        }
+    }
+
+    public Task SubmitAsync(Guid runId, string? answerText)
+    {
+        if (string.IsNullOrWhiteSpace(answerText))
+        {
+            return Task.CompletedTask;
+        }
+
+        Pending pending;
+        lock (_sync)
+        {
+            pending =
+                _pending
+                ?? throw new InvalidOperationException(
+                    $"Run '{runId:N}' has no pending human interaction."
+                );
+            if (pending.Context.RunId != runId)
+            {
+                throw new InvalidOperationException(
+                    $"Pending interaction belongs to run '{pending.Context.RunId:N}', not '{runId:N}'."
+                );
+            }
+            _pending = null;
+        }
+
+        if (!pending.Completion.TrySetResult(new HumanAnswer(answerText.Trim())))
+        {
+            throw new InvalidOperationException(
+                $"Interaction '{pending.Context.InteractionId}' no longer accepts answers."
+            );
+        }
+        return Task.CompletedTask;
+    }
+
+    private sealed class Pending(PipelineInteractionContext<HumanQuestion, HumanAnswer> context)
+    {
+        public PipelineInteractionContext<HumanQuestion, HumanAnswer> Context { get; } = context;
+        public TaskCompletionSource<HumanAnswer> Completion { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+}
+
 file sealed class StreamRenderer
 {
     private readonly StringBuilder _agent = new();
     private readonly StringBuilder _reasoning = new();
     private readonly Dictionary<string, string> _toolNames = new();
-    private PipelineMessage<DeliveryState>? _finalMessage;
+    private PipelineRunResult<DeliveryState>? _finalMessage;
 
-    public Tandem.Domain.RunStatus? TerminalStatus => _finalMessage?.State.Status;
+    public Tandem.Delivery.RunStatus? TerminalStatus => _finalMessage?.State.Status;
 
-    public Task RenderEvent(WorkflowEvent evt)
-    {
-        switch (evt)
-        {
-            case WorkflowOutputEvent outputEvent:
-                if (outputEvent.Is<PipelineMessage<DeliveryState>>())
-                {
-                    var msg = outputEvent.As<PipelineMessage<DeliveryState>>();
-                    RenderTerminalBlockTransition(msg);
-                }
-                break;
-        }
-
-        return Task.CompletedTask;
-    }
-
-    public void RenderTerminalMessage(PipelineMessage<DeliveryState>? msg)
+    public void RenderTerminalMessage(PipelineRunResult<DeliveryState>? msg)
     {
         if (msg is null)
         {
@@ -776,21 +805,21 @@ file sealed class StreamRenderer
         RenderTerminalBlockTransition(msg);
     }
 
-    private void RenderTerminalBlockTransition(PipelineMessage<DeliveryState>? msg)
+    private void RenderTerminalBlockTransition(PipelineRunResult<DeliveryState>? msg)
     {
-        if (msg?.LatestOutcome is { } outcome)
+        if (msg?.Outcome is { } outcome)
         {
             var durStr =
                 outcome.Duration.TotalSeconds >= 1
                     ? $"{outcome.Duration.TotalSeconds:F1}s"
                     : $"{outcome.Duration.TotalMilliseconds:F0}ms";
-            Console.WriteLine($"[block] {outcome.BlockId} completed: {outcome.Kind} ({durStr})");
+            Console.WriteLine($"[block] {outcome.StepId} completed: {outcome.Kind} ({durStr})");
         }
         if (
             msg?.State.Status
-            is Tandem.Domain.RunStatus.Ready
-                or Tandem.Domain.RunStatus.Failed
-                or Tandem.Domain.RunStatus.WaitingForHuman
+            is Tandem.Delivery.RunStatus.Ready
+                or Tandem.Delivery.RunStatus.Failed
+                or Tandem.Delivery.RunStatus.WaitingForHuman
         )
         {
             _finalMessage = msg;
@@ -813,7 +842,7 @@ file sealed class StreamRenderer
         var ctx = msg.State;
         Console.WriteLine();
         Console.WriteLine($"Status:       {ctx.Status}");
-        Console.WriteLine($"Run:          {msg.Runtime.RunId}");
+        Console.WriteLine($"Run:          {msg.RunId}");
         Console.WriteLine($"Base:         {ctx.PinnedBaseSha}");
         if (ctx.CandidateSha is { } candidate)
         {
@@ -831,7 +860,7 @@ file sealed class StreamRenderer
             Console.WriteLine($"Planner:      {decision.Rationale}");
         }
         if (
-            ctx.Status == Tandem.Domain.RunStatus.WaitingForHuman
+            ctx.Status == Tandem.Delivery.RunStatus.WaitingForHuman
             && ctx.PlannerDecision?.HumanQuestion is { } question
         )
         {
