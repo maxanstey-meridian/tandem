@@ -168,16 +168,14 @@ public sealed class SupportCompositionTests
             var lookup = new RecordingAccountLookup();
             var services = new ServiceCollection();
             services.AddSingleton<IAccountLookup>(lookup);
-            services
-                .AddTandem()
-                .AddCustomerSupport(
-                    new SupportOptions(
-                        new ScriptedChatClient("{\"category\":\"billing\"}"),
-                        new ScriptedChatClient(
-                            "{\"proposedResolution\":\"The duplicate charge was reversed.\"}"
-                        )
+            services.AddCustomerSupport(
+                new SupportOptions(
+                    new ScriptedChatClient("{\"category\":\"billing\"}"),
+                    new ScriptedChatClient(
+                        "{\"proposedResolution\":\"The duplicate charge was reversed.\"}"
                     )
-                );
+                )
+            );
             var provider = services.BuildServiceProvider();
             return new Fixture(
                 home,

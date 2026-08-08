@@ -37,7 +37,7 @@ public sealed record PipelineEntry(
     bool? IsHuman
 );
 
-public sealed record HumanRequestView(string SourceBlockId, string Question, string Reason);
+public sealed record HumanRequestView(string InteractionId, string Question, string Reason);
 
 public sealed record DashboardModel
 {
@@ -633,7 +633,7 @@ public static class DashboardReducer
             try
             {
                 var data = evt.Data.Value;
-                var source = data.TryGetProperty("sourceBlockId", out var sb)
+                var source = data.TryGetProperty("interactionId", out var sb)
                     ? sb.GetString() ?? ""
                     : "";
                 var question = data.TryGetProperty("question", out var q)

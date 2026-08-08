@@ -304,7 +304,7 @@ public sealed class StructuredOutputTests
 
         var resumed = context with
         {
-            State = HumanInteraction.ApplyAnswer(
+            State = HumanInteraction.ApplyReviewerAnswer(
                 context.State,
                 new HumanAnswer("Keep public behavior.")
             ),
@@ -314,7 +314,6 @@ public sealed class StructuredOutputTests
         resumed = JsonSerializer.Deserialize<PipelineMessage<DeliveryState>>(persisted)!;
 
         resumed.State.ReviewerHumanAnswer.Should().Be("Keep public behavior.");
-        resumed.State.HumanAnswerSourceBlockId.Should().Be(BlockIds.Reviewer);
         ReviewerPrompts
             .BuildMessage(resumed.State)
             .Should()
@@ -330,7 +329,6 @@ public sealed class StructuredOutputTests
         );
 
         decision.Outcome!.UpdatedState!.ReviewerHumanAnswer.Should().BeNull();
-        decision.Outcome.UpdatedState.HumanAnswerSourceBlockId.Should().BeNull();
     }
 
     [Fact]

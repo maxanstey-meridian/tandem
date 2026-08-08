@@ -63,15 +63,19 @@ public sealed class RunEventPipelineObserver(
                 );
                 break;
             case PipelineInteractionRequested<HumanQuestion> requested:
-                _interactionSources[requested.RequestId] = requested.Request.SourceBlockId;
-                await projector.EmitHumanRequestedAsync(requested.Request, cancellationToken);
+                _interactionSources[requested.RequestId] = requested.StepId;
+                await projector.EmitHumanRequestedAsync(
+                    requested.StepId,
+                    requested.Request,
+                    cancellationToken
+                );
                 break;
             case PipelineInteractionAnswered<HumanAnswer> answered:
                 var source = _interactionSources.TryRemove(
                     answered.RequestId,
-                    out var sourceBlockId
+                    out var interactionId
                 )
-                    ? sourceBlockId
+                    ? interactionId
                     : "unknown";
                 await projector.EmitHumanAnsweredAsync(
                     source,

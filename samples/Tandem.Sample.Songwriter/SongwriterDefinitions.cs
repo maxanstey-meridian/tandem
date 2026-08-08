@@ -6,15 +6,14 @@ public sealed record SongwriterClients(IChatClient Songwriter, IChatClient Proof
 
 public static class SongwriterDefinitions
 {
-    public static SongwriterParticipants Create(AgentFactory agents, SongwriterClients clients) =>
+    public static SongwriterParticipants Create(SongwriterClients clients) =>
         new(
             Create(
                 "songwriter",
                 "Write or revise lyrics from the brief and current feedback.",
                 clients.Songwriter,
                 new SongDecisionValidator(),
-                SongwriterPolicies.ApplySong,
-                agents
+                SongwriterPolicies.ApplySong
             ),
             new LintStage(),
             Create(
@@ -22,8 +21,7 @@ public static class SongwriterDefinitions
                 "Proofread lyrics and either accept them or request changes.",
                 clients.Proofreader,
                 new ProofreaderDecisionValidator(),
-                SongwriterPolicies.ApplyProofread,
-                agents
+                SongwriterPolicies.ApplyProofread
             ),
             PipelineNodes.Complete<SongwriterState>("complete"),
             PipelineNodes.Failed<SongwriterState>("songwriter-failed")
@@ -34,10 +32,9 @@ public static class SongwriterDefinitions
         string instructions,
         IChatClient client,
         FluentValidation.IValidator<TOutput> validator,
-        Func<SongwriterState, TOutput, SongwriterState> apply,
-        AgentFactory agents
+        Func<SongwriterState, TOutput, SongwriterState> apply
     ) =>
-        agents
+        Agent
             .Create<SongwriterState>(id, instructions, client)
             .WithMessage(state =>
                 $"Brief: {state.Brief}\nLyrics: {state.Lyrics}\n"

@@ -6,7 +6,6 @@ namespace Tandem.Sample.Debate;
 public static class DebateDefinitions
 {
     public static DebateParticipants Create(
-        AgentFactory agentRuntime,
         DebateOptions options,
         AgentCapability<DebateState> verdict
     ) =>
@@ -16,17 +15,15 @@ public static class DebateDefinitions
                 "proposer",
                 options.ProposerClient,
                 new ProposalDecisionValidator(),
-                DebatePolicies.ApplyProposal,
-                agentRuntime
+                DebatePolicies.ApplyProposal
             ),
             CreateStructured(
                 "critic",
                 options.CriticClient,
                 new CritiqueDecisionValidator(),
-                DebatePolicies.ApplyCritique,
-                agentRuntime
+                DebatePolicies.ApplyCritique
             ),
-            agentRuntime
+            Agent
                 .Create<DebateState>(
                     "judge",
                     "Judge the accepted argument and submit a verdict.",
@@ -44,10 +41,9 @@ public static class DebateDefinitions
         string id,
         IChatClient client,
         FluentValidation.IValidator<TOutput> validator,
-        Func<DebateState, TOutput, DebateState> apply,
-        AgentFactory agentRuntime
+        Func<DebateState, TOutput, DebateState> apply
     ) =>
-        agentRuntime
+        Agent
             .Create<DebateState>(id, $"Act as the debate {id} and return structured JSON.", client)
             .WithMessage(state => $"Question: {state.Question}; round: {state.Round}")
             .WithOutput(validator, apply)

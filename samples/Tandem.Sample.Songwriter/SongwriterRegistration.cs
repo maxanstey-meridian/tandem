@@ -11,10 +11,7 @@ public static class SongwriterRegistration
     {
         services.AddSingleton(clients);
         services.AddSingleton(sp =>
-            SongwriterDefinitions.Create(
-                sp.GetRequiredService<AgentFactory>(),
-                sp.GetRequiredService<SongwriterClients>()
-            )
+            SongwriterDefinitions.Create(sp.GetRequiredService<SongwriterClients>())
         );
         services.AddSingleton<SongwriterComposition>();
         return services;

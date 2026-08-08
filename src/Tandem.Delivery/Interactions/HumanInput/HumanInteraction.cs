@@ -2,37 +2,29 @@ namespace Tandem.Delivery;
 
 public static class HumanInteraction
 {
-    public static HumanQuestion BuildQuestion(DeliveryState state)
-    {
-        if (state.PlannerDecision is { Decision: PlannerDecisionValue.NeedsHuman } planner)
-        {
-            return new HumanQuestion(
-                BlockIds.Planner,
-                planner.HumanQuestion ?? "No question provided.",
-                planner.Rationale
-            );
-        }
-        if (state.ReviewerDecision is { Decision: ReviewDecisionValue.NeedsHuman } reviewer)
-        {
-            return new HumanQuestion(
-                BlockIds.Reviewer,
-                reviewer.HumanQuestion ?? "No question provided.",
-                reviewer.Summary
-            );
-        }
-        throw new InvalidOperationException("No pending human question exists in delivery state.");
-    }
+    public static HumanQuestion BuildPlannerQuestion(DeliveryState state) =>
+        state.PlannerDecision is { Decision: PlannerDecisionValue.NeedsHuman } planner
+            ? new HumanQuestion(planner.HumanQuestion ?? "No question provided.", planner.Rationale)
+            : throw new InvalidOperationException("No pending planner question exists.");
 
-    public static DeliveryState ApplyAnswer(DeliveryState state, HumanAnswer answer)
-    {
-        var source = BuildQuestion(state).SourceBlockId;
-        return state with
+    public static DeliveryState ApplyPlannerAnswer(DeliveryState state, HumanAnswer answer) =>
+        state with
         {
             PlannerDecision = null,
-            ReviewerDecision = null,
-            ReviewerHumanAnswer = source == BlockIds.Reviewer ? answer.Text : null,
-            HumanAnswerSourceBlockId = source,
+            PlannerHumanAnswer = answer.Text,
             Status = RunStatus.Running,
         };
-    }
+
+    public static HumanQuestion BuildReviewerQuestion(DeliveryState state) =>
+        state.ReviewerDecision is { Decision: ReviewDecisionValue.NeedsHuman } reviewer
+            ? new HumanQuestion(reviewer.HumanQuestion ?? "No question provided.", reviewer.Summary)
+            : throw new InvalidOperationException("No pending reviewer question exists.");
+
+    public static DeliveryState ApplyReviewerAnswer(DeliveryState state, HumanAnswer answer) =>
+        state with
+        {
+            ReviewerDecision = null,
+            ReviewerHumanAnswer = answer.Text,
+            Status = RunStatus.Running,
+        };
 }

@@ -15,10 +15,10 @@ public sealed class DeliveryBlockFailureTests
             "fake-git.sh",
             "#!/bin/sh\necho add rejected >&2\nexit 23\n"
         );
-        var block = new CaptureCandidateBlock(new GitProcess(fakeGit));
+        var stage = new CaptureCandidateStage(new GitProcess(fakeGit));
         var message = CreateMessage(temp.Path, []);
 
-        var act = () => block.ExecuteAsync(Context(message), CancellationToken.None).AsTask();
+        var act = () => stage.ExecuteAsync(message.State, CancellationToken.None).AsTask();
 
         (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage(
             "*git add*exit code 23*add rejected*"

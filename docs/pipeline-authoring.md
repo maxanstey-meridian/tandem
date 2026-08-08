@@ -199,7 +199,7 @@ declared execution failure and its unhandled-failure semantics.
 ## Agent Definitions
 
 `[PipelineStage]` makes a class executable and routable; it does not imply model
-execution. Build an agent definition from the DI-owned `AgentFactory`. Support's
+execution. Build an immutable agent definition directly with `Agent.Create`. Support's
 compiled classifier configuration is:
 
 ```csharp
@@ -347,23 +347,18 @@ public static AgentConversationDecision DiscardJudgeAfterVerdict(
 ) => new(AgentConversationRetention.Discard);
 ```
 
-Delivery is the acceptance consumer for the advanced layer. Its custom workspace,
-candidate-capture, and verification blocks use `PipelineOperationContext<TState>`;
-generated adapters privately preserve the execution envelope.
+Delivery is the acceptance consumer for the advanced layer. Workspace preparation
+and candidate capture are ordinary generated stages over application services.
+Verification alone uses `PipelineOperationContext<TState>` because it emits
+run-owned command observations while executing.
 
 `PipelineOperation.RunOutcomeAsync` is available after importing
-`Tandem.Advanced` when a generated step adapts an advanced block. Delivery's
-workspace stage uses:
+`Tandem.Advanced` when a generated step adapts an advanced operation. Delivery's
+verification stage uses this bridge; ordinary stages should not request runtime
+context merely to access their typed state.
 
 ```csharp
-return await PipelineOperation.RunOutcomeAsync(
-    state,
-    context => operation.ExecuteAsync(context, cancellationToken),
-    result =>
-        result.Outcome.Kind == OutcomeKinds.WorkspacePrepared
-            ? new Outcome<DeliveryState>.Success(result.State)
-            : new Outcome<DeliveryState>.Failed(result.State, failure)
-);
+return await PipelineOperation.RunOutcomeAsync(...);
 ```
 
 This is advanced block integration, not the default shape for ordinary stages.
@@ -374,7 +369,7 @@ This is advanced block integration, not the default shape for ordinary stages.
   unconditional routes, and a review loop.
 - Support: consumer-owned deterministic I/O and typed live suspension/continuation.
 - Debate: revision sessions, local typed capabilities, and evidence-aware teardown.
-- Delivery: custom blocks, workspace mutation policy, checkpoints, tools,
+- Delivery: typed accepted facts, workspace mutation policy, checkpoints, tools,
   observations, verification, planner/reviewer lifecycle outcomes, and human
   handoff.
 
@@ -406,6 +401,11 @@ registration. Advanced `.WithAcceptance(...)` decorates the same capability with
 a runtime-aware callback for facts that must commit before Core applies the state
 transition and routing continues.
 
+A capability is a terminal semantic transition, not a repeatable general-purpose
+tool. An agent may expose several capabilities, but at most one is accepted per
+pipeline visit. If the agent also has typed output, Tandem validates and applies
+that output only when no capability was accepted.
+
 `PipelineNodeDescriptor` remains public only because generated partial classes
 compile in consumer assemblies. It is hidden from IntelliSense and is an opaque
 generated-code ABI; `IRawPipelineNode` and raw node factories are internal.
@@ -420,6 +420,6 @@ Console.WriteLine(inspection.Mermaid);
 Console.WriteLine(inspection.Dot);
 ```
 
-Inspection includes composition metadata, start and output steps, request-port
-identities and types, routes and condition presence, Mermaid, and Graphviz DOT.
+Inspection includes composition metadata, start and output steps, typed semantic
+interactions, routes and condition presence, Mermaid, and Graphviz DOT.
 Tandem does not maintain a second graph AST.

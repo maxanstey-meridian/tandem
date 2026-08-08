@@ -4,7 +4,6 @@ using Tandem.Git;
 namespace Tandem.Delivery;
 
 public sealed class DeliveryParticipantsFactory(
-    AgentFactory agentFactory,
     Func<string, IChatClient> chatClients,
     Func<string, DeliveryAgentProfile> profileResolver,
     DeliveryDiffAcquisition diffAcquisition,
@@ -17,22 +16,15 @@ public sealed class DeliveryParticipantsFactory(
 {
     public DeliveryParticipants Create()
     {
-        var agents = new DeliveryAgentFactory(
-            agentFactory,
-            chatClients,
-            profileResolver,
-            askPlanner,
-            submitReport,
-            writeCheckpoint
-        );
+        var agents = new DeliveryAgentFactory(chatClients, profileResolver);
         var complete = new CompleteRunTransition();
         var failed = new FailRunTransition();
 
         return new DeliveryParticipants(
-            new PrepareWorkspaceStage(new PrepareWorkspaceBlock(workspacePreparation)),
-            ExecutorAgent.Create(agents),
+            new PrepareWorkspaceStage(workspacePreparation),
+            ExecutorAgent.Create(agents, askPlanner, submitReport, writeCheckpoint),
             PlannerAgent.Create(agents),
-            new CaptureCandidateStage(new CaptureCandidateBlock(git)),
+            new CaptureCandidateStage(git),
             new VerificationStage(new VerificationBlock(git)),
             ReviewerAgent.Create(agents, diffAcquisition),
             PipelineNodes.Complete<DeliveryState>(
@@ -48,9 +40,14 @@ public sealed class DeliveryParticipantsFactory(
                 failed.Summarize
             ),
             PipelineNodes.WaitFor<DeliveryState, HumanQuestion, HumanAnswer>(
-                "HumanInput",
-                HumanInteraction.BuildQuestion,
-                HumanInteraction.ApplyAnswer
+                "PlannerHumanInput",
+                HumanInteraction.BuildPlannerQuestion,
+                HumanInteraction.ApplyPlannerAnswer
+            ),
+            PipelineNodes.WaitFor<DeliveryState, HumanQuestion, HumanAnswer>(
+                "ReviewerHumanInput",
+                HumanInteraction.BuildReviewerQuestion,
+                HumanInteraction.ApplyReviewerAnswer
             )
         );
     }

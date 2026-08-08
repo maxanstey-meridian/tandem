@@ -94,7 +94,15 @@ public abstract record ToolInterceptionResult
     public sealed record Blocked(string Message) : ToolInterceptionResult;
 }
 
-public sealed record ToolInvocation(string Name);
+public enum ToolEffect
+{
+    Read,
+    WorkspaceMutation,
+    LifecycleTransition,
+    Unclassified,
+}
+
+public sealed record ToolInvocation(string Name, ToolEffect Effect);
 
 public delegate ValueTask<ToolInterceptionResult?> ToolInterceptor<TState>(
     AgentMessageContext<TState> context,
@@ -157,17 +165,26 @@ public sealed record CheckpointPolicy<TState>(
     Func<AgentCheckpointContext<TState>, string> UserMessage
 );
 
-public static class AdvancedAgentBuilderExtensions
+public static class AgentProfiles
 {
-    public static AgentBuilder<TState> CreateProfiled<TState>(
-        this AgentFactory runtime,
+    public static AgentBuilder<TState> Create<TState>(
         string id,
         string profile,
         string instructions,
         IChatClient chatClient,
         Func<string, IChatClient> profileChatClients
-    ) => runtime.CreateProfiled<TState>(id, profile, instructions, chatClient, profileChatClients);
+    ) =>
+        AgentBuilder<TState>.CreateProfiled(
+            id,
+            profile,
+            instructions,
+            chatClient,
+            profileChatClients
+        );
+}
 
+public static class AdvancedAgentBuilderExtensions
+{
     public static AgentBuilder<TState> UseHarness<TState>(
         this AgentBuilder<TState> builder,
         string harnessInstructions
@@ -195,11 +212,22 @@ public static class AdvancedAgentBuilderExtensions
             allowMutation,
             toolInterceptor is null
                 ? null
-                : async (message, toolName, cancellationToken) =>
+                : async (message, toolName, effect, cancellationToken) =>
                 {
                     var result = await toolInterceptor(
                         ToContext(message),
-                        new ToolInvocation(toolName),
+                        new ToolInvocation(
+                            toolName,
+                            effect switch
+                            {
+                                Infrastructure.ToolEffect.Read => ToolEffect.Read,
+                                Infrastructure.ToolEffect.WorkspaceMutation =>
+                                    ToolEffect.WorkspaceMutation,
+                                Infrastructure.ToolEffect.LifecycleTransition =>
+                                    ToolEffect.LifecycleTransition,
+                                _ => ToolEffect.Unclassified,
+                            }
+                        ),
                         cancellationToken
                     );
                     return result is ToolInterceptionResult.Blocked blocked

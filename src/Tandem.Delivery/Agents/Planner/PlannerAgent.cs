@@ -11,7 +11,7 @@ internal static class PlannerAgent
             PlannerPrompts.Instructions,
             builder =>
                 builder
-                    .WithMessageFromContext(PlannerPrompts.BuildMessage)
+                    .WithMessage(PlannerPrompts.BuildMessage)
                     .WithOutput<DeliveryState, PlannerDecision>(
                         PlannerDecisionPolicy.Parse,
                         PlannerPolicies.RequireRepositoryGrounding(),

@@ -76,6 +76,7 @@ public sealed class RunEventProjector(
     }
 
     public async Task EmitHumanRequestedAsync(
+        string interactionId,
         HumanQuestion question,
         CancellationToken ct = default
     )
@@ -83,28 +84,28 @@ public sealed class RunEventProjector(
         var data = JsonSerializer.SerializeToElement(
             new
             {
-                sourceBlockId = question.SourceBlockId,
+                interactionId,
                 question = question.Question,
                 reason = question.Reason,
             }
         );
         await EmitAsync(
             EventKinds.HumanRequested,
-            $"Human input requested from {question.SourceBlockId}: {question.Question}",
+            $"Human input requested for {interactionId}: {question.Question}",
             data,
             ct: ct
         );
     }
 
     public async Task EmitHumanAnsweredAsync(
-        string sourceBlockId,
+        string interactionId,
         string answerText,
         CancellationToken ct = default
     )
     {
         await EmitAsync(
             EventKinds.HumanAnswered,
-            $"Human answer from {sourceBlockId}: {answerText}",
+            $"Human answer for {interactionId}: {answerText}",
             ct: ct
         );
     }

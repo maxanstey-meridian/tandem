@@ -1,13 +1,11 @@
 using System.Text.Json;
-using Tandem.Advanced;
 
 namespace Tandem.Delivery;
 
 public static class PlannerPrompts
 {
-    public static string BuildMessage(AgentMessageContext<DeliveryState> context)
+    public static string BuildMessage(DeliveryState state)
     {
-        var state = context.State;
         var packet = state.Packet;
         var outcomes = string.Join(
             "\n",
@@ -17,7 +15,11 @@ public static class PlannerPrompts
             packet.Constraints.Count > 0
                 ? string.Join("\n", packet.Constraints.Select(c => $"- {c}"))
                 : "(none)";
-        var request = context.LatestOutcome?.Payload.GetRawText() ?? "(no request provided)";
+        var request = state.ExecutorAcceptedFact is ExecutorAcceptedFact.PlannerRequested fact
+            ? $"Question: {fact.Request.Question}\n"
+                + $"Proposed approach: {fact.Request.ProposedApproach}\n"
+                + $"Evidence:\n{string.Join("\n", fact.Request.Evidence.Select(item => $"- {item}"))}"
+            : "(no request provided)";
         var previous =
             state.PlannerConstraints.Count > 0
                 ? string.Join("\n", state.PlannerConstraints.Select(c => $"- {c}"))
@@ -48,6 +50,9 @@ public static class PlannerPrompts
 
             Previous planner constraints:
             {previous}
+
+            Human answer:
+            {state.PlannerHumanAnswer ?? "(none)"}
 
             Return a structured JSON decision: Proceed, ProceedWithConstraints, NeedsHuman, or Stop.
             Example shape (use facts from this workspace, not these values):

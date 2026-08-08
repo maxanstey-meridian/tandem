@@ -1,58 +1,226 @@
 using FluentAssertions;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using Tandem.Infrastructure;
+using AdvancedToolEffect = Tandem.Advanced.ToolEffect;
+using RuntimeToolEffect = Tandem.Infrastructure.ToolEffect;
+
+#pragma warning disable MAAI001
 
 namespace Tandem.Tests.Composition;
 
 public sealed class DeliveryPolicyRegressionTests
 {
-    [Fact]
-    public void PlannerAndReviewer_AreReadOnlyRegardlessOfPipelineAuthority()
+    [Theory]
+    [InlineData(AdvancedToolEffect.Read, false)]
+    [InlineData(AdvancedToolEffect.LifecycleTransition, false)]
+    [InlineData(AdvancedToolEffect.WorkspaceMutation, true)]
+    [InlineData(AdvancedToolEffect.Unclassified, true)]
+    public async Task ExecutorMutationGate_IsSemanticAndFailClosed(
+        AdvancedToolEffect effect,
+        bool blocked
+    )
     {
+        var gate = ExecutorPolicies.CreateMutationGate();
+        var context = new AgentMessageContext<DeliveryState>(Guid.NewGuid(), CreateState(), null);
+
+        var result = await gate(
+            context,
+            new ToolInvocation("tool", effect),
+            CancellationToken.None
+        );
+
+        (result is ToolInterceptionResult.Blocked).Should().Be(blocked);
+    }
+
+    [Fact]
+    public async Task ExecutorMutationGate_AllowsMutationAfterAuthorityIsAccepted()
+    {
+        var gate = ExecutorPolicies.CreateMutationGate();
         var state = CreateState() with { MutationAuthorized = true };
+        var context = new AgentMessageContext<DeliveryState>(Guid.NewGuid(), state, null);
 
-        ExecutorPolicies.AllowsWorkspaceMutation(BlockIds.Planner, state).Should().BeFalse();
-        ExecutorPolicies.AllowsWorkspaceMutation(BlockIds.Reviewer, state).Should().BeFalse();
+        var result = await gate(
+            context,
+            new ToolInvocation("file_access_write", AdvancedToolEffect.WorkspaceMutation),
+            CancellationToken.None
+        );
+
+        result.Should().BeNull();
     }
 
     [Fact]
-    public void Executor_WorkspaceMutationTracksEstablishedAuthority()
+    public void HarnessToolEffects_ClassifyTheCompletePinnedFileToolSet()
     {
-        var state = CreateState();
+        var registry = new ToolEffectRegistry();
 
-        ExecutorPolicies.AllowsWorkspaceMutation(BlockIds.Executor, state).Should().BeFalse();
-        ExecutorPolicies
-            .AllowsWorkspaceMutation(BlockIds.Executor, state with { MutationAuthorized = true })
-            .Should()
-            .BeTrue();
-    }
+        HarnessToolEffects.Register(registry, includeMutations: true);
 
-    [Theory]
-    [InlineData("file_access_write")]
-    [InlineData("file_access_replace")]
-    [InlineData("file_access_delete")]
-    [InlineData("file_access_move")]
-    [InlineData("file_access_create")]
-    public void ExecutorMutationGate_CoversEveryRegisteredWorkspaceMutationTool(string toolName)
-    {
-        ExecutorPolicies.IsWorkspaceMutationTool(toolName).Should().BeTrue();
-    }
-
-    [Theory]
-    [InlineData("file_access_read")]
-    [InlineData("file_access_search")]
-    [InlineData("file_access_list")]
-    public void WorkspaceReadTools_AreNotTreatedAsMutation(string toolName)
-    {
-        ExecutorPolicies.IsWorkspaceMutationTool(toolName).Should().BeFalse();
+        AssertEffect(registry, FileAccessProvider.ReadFileToolName, RuntimeToolEffect.Read);
+        AssertEffect(registry, FileAccessProvider.LsToolName, RuntimeToolEffect.Read);
+        AssertEffect(registry, FileAccessProvider.GrepToolName, RuntimeToolEffect.Read);
+        AssertEffect(
+            registry,
+            FileAccessProvider.WriteToolName,
+            RuntimeToolEffect.WorkspaceMutation
+        );
+        AssertEffect(
+            registry,
+            FileAccessProvider.DeleteFileToolName,
+            RuntimeToolEffect.WorkspaceMutation
+        );
+        AssertEffect(
+            registry,
+            FileAccessProvider.ReplaceToolName,
+            RuntimeToolEffect.WorkspaceMutation
+        );
+        AssertEffect(
+            registry,
+            FileAccessProvider.ReplaceLinesToolName,
+            RuntimeToolEffect.WorkspaceMutation
+        );
     }
 
     [Fact]
-    public void CheckpointPolicy_IsOwnedOnlyByExecutor()
+    public void CheckpointToolEffects_OmitWorkspaceMutations()
     {
-        ExecutorPolicies.OwnsCheckpoint(BlockIds.Executor).Should().BeTrue();
-        ExecutorPolicies.OwnsCheckpoint(BlockIds.Planner).Should().BeFalse();
-        ExecutorPolicies.OwnsCheckpoint(BlockIds.Reviewer).Should().BeFalse();
+        var registry = new ToolEffectRegistry();
+
+        HarnessToolEffects.Register(registry, includeMutations: false);
+
+        registry.TryGet(FileAccessProvider.ReadFileToolName, out _).Should().BeTrue();
+        registry.TryGet(FileAccessProvider.WriteToolName, out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ExecutorHarness_BlocksClassifiedMutationBeforeToolExecution()
+    {
+        var workspace = Path.Combine(
+            Path.GetTempPath(),
+            "tandem-authority-" + Guid.NewGuid().ToString("N")
+        );
+        Directory.CreateDirectory(workspace);
+        try
+        {
+            var client = new ScriptedChatClient(
+                ToolCall(
+                    "write",
+                    FileAccessProvider.WriteToolName,
+                    new Dictionary<string, object?>()
+                ),
+                ToolCall(
+                    "report",
+                    "submit_report",
+                    new Dictionary<string, object?>
+                    {
+                        ["summary"] = "No mutation was performed.",
+                        ["outcomes"] = new[] { "No repository changes." },
+                        ["evidence"] = new[] { "Mutation gate rejected the write." },
+                    }
+                )
+            );
+            var capabilities = TestDeliveryCapabilities.Create();
+            var executor = ExecutorAgent.Create(
+                new DeliveryAgentFactory(_ => client, _ => new DeliveryAgentProfile(1000, 100, 80)),
+                capabilities.AskPlanner,
+                capabilities.SubmitReport,
+                capabilities.WriteCheckpoint
+            );
+            var complete = PipelineNodes.Complete<DeliveryState>("complete");
+            var pipeline = Pipeline
+                .Start(executor, "executor-authority")
+                .Route(executor.Success, complete, "accepted")
+                .Build(complete);
+            var state = CreateState() with { WorkspacePath = workspace };
+
+            var result = await new PipelineRunner().RunAsync(pipeline, state);
+
+            result.Status.Should().Be(PipelineRunStatus.Succeeded);
+            result
+                .State.ExecutorAcceptedFact.Should()
+                .BeOfType<ExecutorAcceptedFact.ReportSubmitted>();
+            client.CallCount.Should().Be(2);
+            client
+                .AdvertisedTools.SelectMany(tools => tools)
+                .Should()
+                .Contain(FileAccessProvider.WriteToolName);
+            Directory.EnumerateFileSystemEntries(workspace).Should().BeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(workspace, recursive: true);
+        }
+    }
+
+    private static void AssertEffect(
+        ToolEffectRegistry registry,
+        string name,
+        RuntimeToolEffect expected
+    )
+    {
+        registry.TryGet(name, out var actual).Should().BeTrue();
+        actual.Should().Be(expected);
     }
 
     private static DeliveryState CreateState() =>
         DeliveryState.Create(new Packet("test", "/tmp/repo", "main", [], [], [], ""), "", "/tmp");
+
+    private static ChatResponse ToolCall(
+        string callId,
+        string toolName,
+        IDictionary<string, object?> arguments
+    ) =>
+        new(
+            new ChatMessage(
+                ChatRole.Assistant,
+                [new FunctionCallContent(callId, toolName, arguments)]
+            )
+        )
+        {
+            FinishReason = ChatFinishReason.ToolCalls,
+            ModelId = "test-model",
+        };
+
+    private sealed class ScriptedChatClient(params ChatResponse[] responses) : IChatClient
+    {
+        private readonly Queue<ChatResponse> _responses = new(responses);
+
+        public int CallCount { get; private set; }
+        public List<IReadOnlyList<string>> AdvertisedTools { get; } = [];
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default
+        ) => Task.FromResult(Dequeue());
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation]
+                CancellationToken cancellationToken = default
+        )
+        {
+            AdvertisedTools.Add(options?.Tools?.Select(tool => tool.Name).ToArray() ?? []);
+            foreach (var update in Dequeue().ToChatResponseUpdates())
+            {
+                yield return update;
+            }
+            await Task.CompletedTask;
+        }
+
+        private ChatResponse Dequeue()
+        {
+            CallCount++;
+            return _responses.Count > 0
+                ? _responses.Dequeue()
+                : throw new InvalidOperationException("ScriptedChatClient exhausted.");
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose() { }
+    }
 }
+
+#pragma warning restore MAAI001

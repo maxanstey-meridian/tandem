@@ -611,7 +611,7 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         {
             rows.Add(
                 new Text(
-                    $"question [{request.SourceBlockId}] {request.Question}",
+                    $"question [{request.InteractionId}] {request.Question}",
                     new Style(Color.Yellow)
                 )
             );

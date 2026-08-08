@@ -189,10 +189,9 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
 
         using var runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var humanInteraction = new TerminalHumanInteraction();
-        var interactions = new PipelineInteractionHandlers().Handle(
-            composition.HumanInput,
-            humanInteraction.WaitAsync
-        );
+        var interactions = new PipelineInteractionHandlers()
+            .Handle(composition.PlannerHumanInput, humanInteraction.WaitAsync)
+            .Handle(composition.ReviewerHumanInput, humanInteraction.WaitAsync);
         var runner = new PipelineRunner();
         var completionTask = CompleteRunAsync();
 
@@ -346,22 +345,20 @@ static ServiceProvider BuildDeliveryServices(TandemConfig config)
     var clients = new TandemChatClients(config);
     services.AddSingleton(config);
     services.AddSingleton(clients);
-    services
-        .AddTandem()
-        .AddDelivery(
-            new DeliveryOptions(
-                clients.Build,
-                name =>
-                {
-                    var profile = clients.ResolveProfile(name);
-                    return new DeliveryAgentProfile(
-                        profile.ContextWindowTokens,
-                        profile.MaxOutputTokens,
-                        profile.CheckpointAtPercent
-                    );
-                }
-            )
-        );
+    services.AddDelivery(
+        new DeliveryOptions(
+            clients.Build,
+            name =>
+            {
+                var profile = clients.ResolveProfile(name);
+                return new DeliveryAgentProfile(
+                    profile.ContextWindowTokens,
+                    profile.MaxOutputTokens,
+                    profile.CheckpointAtPercent
+                );
+            }
+        )
+    );
     return services.BuildServiceProvider();
 }
 
@@ -860,10 +857,8 @@ file sealed class StreamRenderer
         {
             Console.WriteLine($"Planner:      {decision.Rationale}");
         }
-        if (
-            ctx.Status == Tandem.Delivery.RunStatus.WaitingForHuman
-            && ctx.PlannerDecision?.HumanQuestion is { } question
-        )
+        var question = ctx.PlannerDecision?.HumanQuestion ?? ctx.ReviewerDecision?.HumanQuestion;
+        if (ctx.Status == Tandem.Delivery.RunStatus.WaitingForHuman && question is not null)
         {
             Console.WriteLine($"Question:     {question}");
         }

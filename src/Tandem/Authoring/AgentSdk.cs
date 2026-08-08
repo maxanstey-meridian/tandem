@@ -69,21 +69,13 @@ public sealed class AgentDefinition<TState> : IStandardOutcomePipelineStep<TStat
     public PipelineOutcomeSelector<TState> Failed => new(this, failed: true);
 }
 
-public sealed class AgentFactory
+public static class Agent
 {
-    public AgentBuilder<TState> Create<TState>(
+    public static AgentBuilder<TState> Create<TState>(
         string id,
         string instructions,
         IChatClient chatClient
     ) => new(id, id, instructions, chatClient, chatClientFactory: null);
-
-    internal AgentBuilder<TState> CreateProfiled<TState>(
-        string id,
-        string profile,
-        string instructions,
-        IChatClient chatClient,
-        Func<string, IChatClient> profileChatClients
-    ) => new(id, profile, instructions, chatClient, profileChatClients);
 }
 
 public sealed class AgentBuilder<TState>
@@ -113,6 +105,7 @@ public sealed class AgentBuilder<TState>
     private Func<
         PipelineMessage<TState>,
         string,
+        ToolEffect?,
         CancellationToken,
         ValueTask<string?>
     >? _toolInterceptor;
@@ -137,6 +130,14 @@ public sealed class AgentBuilder<TState>
         _chatClient = chatClient;
         _chatClientFactory = chatClientFactory;
     }
+
+    internal static AgentBuilder<TState> CreateProfiled(
+        string id,
+        string profile,
+        string instructions,
+        IChatClient chatClient,
+        Func<string, IChatClient> profileChatClients
+    ) => new(id, profile, instructions, chatClient, profileChatClients);
 
     public AgentBuilder<TState> WithMessage(Func<TState, string> message)
     {
@@ -180,6 +181,7 @@ public sealed class AgentBuilder<TState>
         Func<
             PipelineMessage<TState>,
             string,
+            ToolEffect?,
             CancellationToken,
             ValueTask<string?>
         >? toolInterceptor = null

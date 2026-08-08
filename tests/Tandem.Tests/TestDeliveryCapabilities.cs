@@ -14,7 +14,11 @@ internal static class TestDeliveryCapabilities
                 "Ask the planner.",
                 new AskPlannerRequestValidator(),
                 request => $"Planner asked: {request.Question}",
-                (state, _) => state with { LastExecutorAction = ExecutorAction.PlannerRequested }
+                (state, request) =>
+                    state with
+                    {
+                        ExecutorAcceptedFact = new ExecutorAcceptedFact.PlannerRequested(request),
+                    }
             ),
             AgentCapabilities.Create<DeliveryState, SubmitReportRequest>(
                 "submit_report",
@@ -24,11 +28,7 @@ internal static class TestDeliveryCapabilities
                 (state, request) =>
                     state with
                     {
-                        ImplementationReport = System.Text.Json.JsonSerializer.SerializeToElement(
-                            request,
-                            System.Text.Json.JsonSerializerOptions.Web
-                        ),
-                        LastExecutorAction = ExecutorAction.ReportSubmitted,
+                        ExecutorAcceptedFact = new ExecutorAcceptedFact.ReportSubmitted(request),
                     }
             ),
             AgentCapabilities.Create<DeliveryState, WriteCheckpointRequest>(
@@ -39,11 +39,7 @@ internal static class TestDeliveryCapabilities
                 (state, request) =>
                     state with
                     {
-                        CheckpointPayload = System.Text.Json.JsonSerializer.SerializeToElement(
-                            request,
-                            System.Text.Json.JsonSerializerOptions.Web
-                        ),
-                        LastExecutorAction = ExecutorAction.CheckpointWritten,
+                        ExecutorAcceptedFact = new ExecutorAcceptedFact.CheckpointWritten(request),
                     }
             )
         );

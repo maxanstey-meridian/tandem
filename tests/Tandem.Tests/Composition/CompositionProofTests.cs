@@ -20,7 +20,7 @@ public sealed class CompositionProofTests
     [Fact]
     public async Task CompositionWithoutPlannerEdge_NeverInvokesPlanner()
     {
-        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, OutcomeKinds.WorkspacePrepared);
+        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, StandardOutcomeKinds.Success);
         var executor = new ScriptedOutcomeBlock(
             BlockIds.Executor,
             new BlockOutcome(OutcomeKinds.ReportSubmitted, BlockIds.Executor, "report", default)
@@ -28,7 +28,7 @@ public sealed class CompositionProofTests
         var planner = new ScriptedOutcomeBlock(BlockIds.Planner, OutcomeKinds.PlannerProceed);
         var capture = new ScriptedOutcomeBlock(
             BlockIds.CaptureCandidate,
-            OutcomeKinds.CandidateCaptured
+            StandardOutcomeKinds.Success
         );
         var reviewer = new ScriptedOutcomeBlock(BlockIds.Reviewer, OutcomeKinds.ReviewAccepted);
         var complete = new ScriptedOutcomeBlock(BlockIds.Complete, OutcomeKinds.RunReady);
@@ -46,7 +46,7 @@ public sealed class CompositionProofTests
             .AddEdge<PipelineMessage<DeliveryState>>(
                 prepareB,
                 executorB,
-                m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
+                m => m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
                 executorB,
@@ -56,7 +56,7 @@ public sealed class CompositionProofTests
             .AddEdge<PipelineMessage<DeliveryState>>(
                 captureB,
                 reviewerB,
-                m => m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
+                m => m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
                 reviewerB,
@@ -84,14 +84,14 @@ public sealed class CompositionProofTests
     [Fact]
     public async Task InsertingRecordingBlockBeforePlanner_RunsBeforePlanner()
     {
-        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, OutcomeKinds.WorkspacePrepared);
+        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, StandardOutcomeKinds.Success);
         var executor = new ScriptedOutcomeBlock(BlockIds.Executor, OutcomeKinds.PlannerRequested);
         var recorder = new RecordingBlock("recorder", OutcomeKinds.PlannerRequested);
         var planner = new ScriptedOutcomeBlock(BlockIds.Planner, OutcomeKinds.PlannerProceed);
         var executor2 = new ScriptedOutcomeBlock("executor-2", OutcomeKinds.ReportSubmitted);
         var capture = new ScriptedOutcomeBlock(
             BlockIds.CaptureCandidate,
-            OutcomeKinds.CandidateCaptured
+            StandardOutcomeKinds.Success
         );
         var reviewer = new ScriptedOutcomeBlock(BlockIds.Reviewer, OutcomeKinds.ReviewAccepted);
         var complete = new ScriptedOutcomeBlock(BlockIds.Complete, OutcomeKinds.RunReady);
@@ -111,7 +111,7 @@ public sealed class CompositionProofTests
             .AddEdge<PipelineMessage<DeliveryState>>(
                 prepareB,
                 executorB,
-                m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
+                m => m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
                 executorB,
@@ -132,7 +132,7 @@ public sealed class CompositionProofTests
             .AddEdge<PipelineMessage<DeliveryState>>(
                 captureB,
                 reviewerB,
-                m => m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
+                m => m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
                 reviewerB,
@@ -164,11 +164,11 @@ public sealed class CompositionProofTests
     public async Task TwoVerificationCommands_RunInPacketOrder()
     {
         var packet = TestPackets.MakePacket("cmd-1", "cmd-2");
-        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, OutcomeKinds.WorkspacePrepared);
+        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, StandardOutcomeKinds.Success);
         var executor = new ScriptedOutcomeBlock(BlockIds.Executor, OutcomeKinds.ReportSubmitted);
         var capture = new ScriptedOutcomeBlock(
             BlockIds.CaptureCandidate,
-            OutcomeKinds.CandidateCaptured
+            StandardOutcomeKinds.Success
         );
         var verify = new ScriptedVerificationBlock(true, true);
         var reviewer = new ScriptedOutcomeBlock(BlockIds.Reviewer, OutcomeKinds.ReviewAccepted);
@@ -202,7 +202,7 @@ public sealed class CompositionProofTests
     public async Task FailedFirstCommand_RoutesToExecutor_SkipsSecondCommand()
     {
         var packet = TestPackets.MakePacket("cmd-1", "cmd-2");
-        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, OutcomeKinds.WorkspacePrepared);
+        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, StandardOutcomeKinds.Success);
         var executorInvocations = 0;
         var executor = new ScriptedOutcomeBlock(
             BlockIds.Executor,
@@ -227,7 +227,7 @@ public sealed class CompositionProofTests
         );
         var capture = new ScriptedOutcomeBlock(
             BlockIds.CaptureCandidate,
-            OutcomeKinds.CandidateCaptured
+            StandardOutcomeKinds.Success
         );
         var verify = new ScriptedVerificationBlock(false, true); // first fails, second would pass
         var reviewer = new ScriptedOutcomeBlock(BlockIds.Reviewer, OutcomeKinds.ReviewAccepted);
@@ -247,7 +247,7 @@ public sealed class CompositionProofTests
             .AddEdge<PipelineMessage<DeliveryState>>(
                 prepareB,
                 executorB,
-                m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
+                m => m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
                 executorB,
@@ -258,7 +258,7 @@ public sealed class CompositionProofTests
                 captureB,
                 verifyB,
                 m =>
-                    m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
+                    m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
                     && m!.State.Packet.Verification.Count > 0
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
@@ -317,11 +317,11 @@ public sealed class CompositionProofTests
     public async Task PassingBothCommands_RoutesToReviewer()
     {
         var packet = TestPackets.MakePacket("cmd-1", "cmd-2");
-        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, OutcomeKinds.WorkspacePrepared);
+        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, StandardOutcomeKinds.Success);
         var executor = new ScriptedOutcomeBlock(BlockIds.Executor, OutcomeKinds.ReportSubmitted);
         var capture = new ScriptedOutcomeBlock(
             BlockIds.CaptureCandidate,
-            OutcomeKinds.CandidateCaptured
+            StandardOutcomeKinds.Success
         );
         var verify = new ScriptedVerificationBlock(true, true);
         var reviewer = new ScriptedOutcomeBlock(BlockIds.Reviewer, OutcomeKinds.ReviewAccepted);
@@ -357,11 +357,11 @@ public sealed class CompositionProofTests
     public async Task CompositionWithoutReview_CompletesAfterSuccessfulVerification()
     {
         var packet = TestPackets.MakePacket("cmd-1");
-        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, OutcomeKinds.WorkspacePrepared);
+        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, StandardOutcomeKinds.Success);
         var executor = new ScriptedOutcomeBlock(BlockIds.Executor, OutcomeKinds.ReportSubmitted);
         var capture = new ScriptedOutcomeBlock(
             BlockIds.CaptureCandidate,
-            OutcomeKinds.CandidateCaptured
+            StandardOutcomeKinds.Success
         );
         var verify = new ScriptedVerificationBlock(true);
         var complete = new ScriptedOutcomeBlock(BlockIds.Complete, OutcomeKinds.RunReady);
@@ -378,7 +378,7 @@ public sealed class CompositionProofTests
             .AddEdge<PipelineMessage<DeliveryState>>(
                 prepareB,
                 executorB,
-                m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
+                m => m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
                 executorB,
@@ -389,7 +389,7 @@ public sealed class CompositionProofTests
                 captureB,
                 verifyB,
                 m =>
-                    m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
+                    m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
                     && m!.State.Packet.Verification.Count > 0
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
@@ -420,18 +420,18 @@ public sealed class CompositionProofTests
     [Fact]
     public async Task TwoReviewBlocks_RunSequentiallyWithoutRuntimeChanges()
     {
-        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, OutcomeKinds.WorkspacePrepared);
+        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, StandardOutcomeKinds.Success);
         var executor = new ScriptedOutcomeBlock(BlockIds.Executor, OutcomeKinds.ReportSubmitted);
         var capture = new ScriptedOutcomeBlock(
             BlockIds.CaptureCandidate,
-            OutcomeKinds.CandidateCaptured
+            StandardOutcomeKinds.Success
         );
         var reviewer1 = new ScriptedOutcomeBlock("reviewer-1", OutcomeKinds.ReviewChangesRequested);
         var reviewer2 = new ScriptedOutcomeBlock("reviewer-2", OutcomeKinds.ReviewAccepted);
         var executor2 = new ScriptedOutcomeBlock("executor-2", OutcomeKinds.ReportSubmitted);
         var capture2 = new ScriptedOutcomeBlock(
             "capture-candidate-2",
-            OutcomeKinds.CandidateCaptured
+            StandardOutcomeKinds.Success
         );
         var complete = new ScriptedOutcomeBlock(BlockIds.Complete, OutcomeKinds.RunReady);
 
@@ -450,7 +450,7 @@ public sealed class CompositionProofTests
             .AddEdge<PipelineMessage<DeliveryState>>(
                 prepareB,
                 executorB,
-                m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
+                m => m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
                 executorB,
@@ -460,7 +460,7 @@ public sealed class CompositionProofTests
             .AddEdge<PipelineMessage<DeliveryState>>(
                 captureB,
                 reviewer1B,
-                m => m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
+                m => m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
                 reviewer1B,
@@ -475,7 +475,7 @@ public sealed class CompositionProofTests
             .AddEdge<PipelineMessage<DeliveryState>>(
                 capture2B,
                 reviewer2B,
-                m => m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
+                m => m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
                 reviewer2B,
@@ -505,7 +505,7 @@ public sealed class CompositionProofTests
     [Fact]
     public async Task CustomCondition_RoutesChineseOutcomeToSecondAgentBlock()
     {
-        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, OutcomeKinds.WorkspacePrepared);
+        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, StandardOutcomeKinds.Success);
         var executor = new ScriptedOutcomeBlock(
             BlockIds.Executor,
             ctx => new BlockOutcome(
@@ -533,7 +533,7 @@ public sealed class CompositionProofTests
             .AddEdge<PipelineMessage<DeliveryState>>(
                 prepareB,
                 executorB,
-                m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
+                m => m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
             )
             .AddEdge<PipelineMessage<DeliveryState>>(executorB, secondAgentB, HasChinese)
             .AddEdge<PipelineMessage<DeliveryState>>(
@@ -562,7 +562,7 @@ public sealed class CompositionProofTests
     [Fact]
     public async Task UsageBelowThreshold_RunsNormalExecutorInvocation()
     {
-        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, OutcomeKinds.WorkspacePrepared);
+        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, StandardOutcomeKinds.Success);
         var normalExecutor = new ScriptedOutcomeBlock(
             BlockIds.Executor,
             ctx =>
@@ -578,7 +578,7 @@ public sealed class CompositionProofTests
         );
         var capture = new ScriptedOutcomeBlock(
             BlockIds.CaptureCandidate,
-            OutcomeKinds.CandidateCaptured
+            StandardOutcomeKinds.Success
         );
         var reviewer = new ScriptedOutcomeBlock(BlockIds.Reviewer, OutcomeKinds.ReviewAccepted);
         var complete = new ScriptedOutcomeBlock(BlockIds.Complete, OutcomeKinds.RunReady);
@@ -615,7 +615,7 @@ public sealed class CompositionProofTests
             .AddEdge<PipelineMessage<DeliveryState>>(
                 prepareB,
                 executorB,
-                m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
+                m => m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
                 executorB,
@@ -630,7 +630,7 @@ public sealed class CompositionProofTests
             .AddEdge<PipelineMessage<DeliveryState>>(
                 captureB,
                 reviewerB,
-                m => m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
+                m => m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
                 reviewerB,
@@ -653,7 +653,7 @@ public sealed class CompositionProofTests
     [Fact]
     public async Task UsageCrossingThreshold_RunsCheckpointOnlyMode_ThenFreshSession()
     {
-        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, OutcomeKinds.WorkspacePrepared);
+        var prepare = new ScriptedOutcomeBlock(BlockIds.Prepare, StandardOutcomeKinds.Success);
 
         var checkpointExecutor = new ScriptedOutcomeBlock(
             "checkpoint-only",
@@ -687,7 +687,7 @@ public sealed class CompositionProofTests
         );
         var capture = new ScriptedOutcomeBlock(
             BlockIds.CaptureCandidate,
-            OutcomeKinds.CandidateCaptured
+            StandardOutcomeKinds.Success
         );
         var reviewer = new ScriptedOutcomeBlock(BlockIds.Reviewer, OutcomeKinds.ReviewAccepted);
         var complete = new ScriptedOutcomeBlock(BlockIds.Complete, OutcomeKinds.RunReady);
@@ -706,9 +706,7 @@ public sealed class CompositionProofTests
             PinnedBase,
             Workspace
         );
-        var checkpointPayload = JsonSerializer.SerializeToElement(
-            new { summary = "prior work", next = new[] { "finish" } }
-        );
+        var checkpoint = new WriteCheckpointRequest("prior work", ["inspected"], ["finish"]);
         ctx = ctx with
         {
             Runtime = ctx
@@ -720,7 +718,10 @@ public sealed class CompositionProofTests
                     BlockIds.Executor,
                     JsonSerializer.SerializeToElement(new { history = "old session" })
                 ),
-            State = ctx.State with { CheckpointPayload = checkpointPayload },
+            State = ctx.State with
+            {
+                ExecutorAcceptedFact = new ExecutorAcceptedFact.CheckpointWritten(checkpoint),
+            },
         };
 
         var workflow = new WorkflowBuilder(prepareB)
@@ -729,7 +730,7 @@ public sealed class CompositionProofTests
                 prepareB,
                 checkpointB,
                 m =>
-                    m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
+                    m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
                     && IsUsageAtOrAboveThreshold(m)
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
@@ -745,7 +746,7 @@ public sealed class CompositionProofTests
             .AddEdge<PipelineMessage<DeliveryState>>(
                 captureB,
                 reviewerB,
-                m => m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
+                m => m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
                 reviewerB,
@@ -768,7 +769,7 @@ public sealed class CompositionProofTests
                 prepareB,
                 clearingCheckpointB,
                 m =>
-                    m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
+                    m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
                     && IsUsageAtOrAboveThreshold(m)
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
@@ -784,7 +785,7 @@ public sealed class CompositionProofTests
             .AddEdge<PipelineMessage<DeliveryState>>(
                 captureB,
                 reviewerB,
-                m => m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
+                m => m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
                 reviewerB,
@@ -834,7 +835,7 @@ public sealed class CompositionProofTests
             .AddEdge<PipelineMessage<DeliveryState>>(
                 prepareB,
                 executorB,
-                m => m!.LatestOutcome?.Kind == OutcomeKinds.WorkspacePrepared
+                m => m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
             )
             .AddEdge<PipelineMessage<DeliveryState>>(
                 executorB,
@@ -845,7 +846,7 @@ public sealed class CompositionProofTests
                 captureB,
                 verifyB,
                 m =>
-                    m!.LatestOutcome?.Kind == OutcomeKinds.CandidateCaptured
+                    m!.LatestOutcome?.Kind == StandardOutcomeKinds.Success
                     && m!.State.Packet.Verification.Count > 0
             )
             .AddEdge<PipelineMessage<DeliveryState>>(

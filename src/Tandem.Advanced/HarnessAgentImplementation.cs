@@ -13,6 +13,10 @@ internal static class HarnessAgentImplementation
         AgentFileStore? fileStore = context.WorkspacePath is null
             ? null
             : new GitExcludedFileStore(new BomlessFileSystemAgentFileStore(context.WorkspacePath));
+        if (fileStore is not null)
+        {
+            HarnessToolEffects.Register(context.ToolEffects, context.ExposeWorkspaceMutationTools);
+        }
         return new HarnessAgent(
             context.ChatClient,
             new HarnessAgentOptions
@@ -35,14 +39,38 @@ internal static class HarnessAgentImplementation
                     ? null
                     : new FileAccessProviderOptions
                     {
-                        DisableWriteTools =
-                            !context.IsCheckpointOnly
-                            && !context.HasToolInterceptor
-                            && !context.AllowMutation,
+                        DisableWriteTools = !context.ExposeWorkspaceMutationTools,
                         DisableReadOnlyToolApproval = true,
                         DisableWriteToolApproval = true,
                     },
             }
+        );
+    }
+}
+
+internal static class HarnessToolEffects
+{
+    internal static void Register(ToolEffectRegistry registry, bool includeMutations)
+    {
+        registry.Add(FileAccessProvider.ReadFileToolName, Infrastructure.ToolEffect.Read);
+        registry.Add(FileAccessProvider.LsToolName, Infrastructure.ToolEffect.Read);
+        registry.Add(FileAccessProvider.GrepToolName, Infrastructure.ToolEffect.Read);
+        if (!includeMutations)
+        {
+            return;
+        }
+        registry.Add(FileAccessProvider.WriteToolName, Infrastructure.ToolEffect.WorkspaceMutation);
+        registry.Add(
+            FileAccessProvider.DeleteFileToolName,
+            Infrastructure.ToolEffect.WorkspaceMutation
+        );
+        registry.Add(
+            FileAccessProvider.ReplaceToolName,
+            Infrastructure.ToolEffect.WorkspaceMutation
+        );
+        registry.Add(
+            FileAccessProvider.ReplaceLinesToolName,
+            Infrastructure.ToolEffect.WorkspaceMutation
         );
     }
 }

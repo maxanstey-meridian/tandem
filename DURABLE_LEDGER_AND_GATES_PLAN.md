@@ -17,21 +17,25 @@ Process exit kills the workflow. Nothing in this plan can resume it.
 
 ## Design Status
 
-This plan is ready for characterization and contract work, not implementation.
-The following decisions must be made before checkpoint gate mechanics or durable
-record payloads are finalized:
+This plan is ready for framework characterization followed by implementation
+against the current state-first SDK.
 
-- whether semantic checkpointing is a product invariant that must block further
-  mutation, or only a context-window management mechanism that should use MAF's
-  maintained compaction support;
-- the retention, deletion, and redaction policy for human answers, verification
-  output, repository paths, and model-authored records; and
-- whether the local ledger is retained indefinitely or receives an explicit
-  operator deletion surface.
+The product decisions are settled:
 
-Until the first decision is made, characterize MAF compaction and
-`AIContextProvider`. Do not build a custom checkpoint gate merely to solve token
-pressure that the maintained framework already handles.
+- gates are a general turn-based enforcement mechanism over classified actions;
+- checkpoint pressure may latch a gate after a completed model request, and a
+  later action invocation is blocked when it reaches the function-invocation hook;
+- a gate cannot retroactively block actions from the completed request that
+  activated it;
+- durable records are retained indefinitely, without automatic redaction or an
+  operator deletion surface in this version; and
+- reasoning and free-form streamed assistant text are not durable records by
+  default.
+
+Characterize MAF compaction and `AIContextProvider` before finalizing checkpoint
+context reconstruction. Compaction may manage token pressure, but it does not
+replace a semantic gate when the composition requires an accepted checkpoint
+before later classified actions may proceed.
 
 ## Clean Boundary
 
@@ -78,6 +82,8 @@ not retained to seed or support the ledger.
   a run ID in `TState` or ambient singleton state.
 - Arbitrate ordering, idempotency, and optimistic concurrency through SQLite
   constraints and atomic statements.
+- Record a durable runtime journal from typed execution hooks.
+- Record accepted typed capabilities as semantic facts automatically.
 
 ### Composition
 
@@ -90,6 +96,23 @@ not retained to seed or support the ledger.
 Delivery owns planner decisions, progress checkpoints, outcomes, reports,
 verification, reviews, and human exchanges. These do not become universal Tandem
 domain concepts.
+
+The ledger has two lanes over the same typed storage substrate:
+
+```text
+runtime journal     what happened during execution
+semantic ledger     what was accepted as a product fact
+```
+
+The runtime journal records run and node lifecycle, classified tool attempts and
+completions, interactions, command results, usage, accepted structured output,
+and accepted capabilities. It does not persist model reasoning or ordinary
+streamed assistant text by default. Agents consume curated semantic projections,
+not the raw runtime journal.
+
+The semantic lane is automatic for accepted typed capabilities. Advanced in-code
+operations may append additional typed records explicitly through their narrow
+run-bound operation context. Ordinary state-first stages remain context-free.
 
 The run host and standalone commands are separate processes. Semantic agent
 capabilities execute locally in the run host through MAF function middleware.
@@ -107,8 +130,9 @@ run_entries    ordered append-only records
 run_documents  current replaceable records
 ```
 
-Operational dashboard events may remain in their existing implementation. Do
-not move them into SQLite merely to unify storage.
+Operational dashboard events may remain in `events.jsonl` for the current UI.
+The durable runtime journal is independently projected from typed runtime hooks;
+do not treat the dashboard file as the semantic ledger or its source of truth.
 
 Conceptual fields:
 
@@ -195,7 +219,8 @@ an unknown version fails clearly rather than being guessed or rewritten.
 No query-oriented secondary indexes, arbitrary SQL API, remote storage,
 replication, event sourcing, or migration framework is needed initially.
 Indexes required by primary and unique constraints are part of correctness, not
-query optimization. Retention remains an explicit unresolved product decision.
+query optimization. Records are retained indefinitely. This version provides no
+automatic redaction, expiry, retention job, or operator deletion command.
 
 ## Typed Boundary
 
@@ -215,6 +240,23 @@ ReadAsync(stream)
 ReadDocumentAsync(document)
 WriteDocumentAsync(document, value, expectedVersion)
 ```
+
+Advanced deterministic I/O operations receive the run-bound capability through
+the existing narrow context, conceptually:
+
+```csharp
+public sealed class PipelineOperationContext<TState>
+{
+    public Guid RunId { get; }
+    public TState State { get; }
+    public OperationOutcome? LatestOutcome { get; }
+    public IRunLedger Ledger { get; }
+}
+```
+
+Do not replace ordinary generated `ExecuteAsync(TState, CancellationToken)`
+stages with a universal context. Durable I/O is an Advanced concern. Do not add
+`Services`, `Get<T>()`, dictionaries, mutation flags, or another general state bag.
 
 Append returns a typed accepted-entry envelope containing sequence and recorded
 time. Document reads and writes return a typed envelope containing value and
@@ -236,12 +278,18 @@ contract name or an explicit payload version; silently deserializing an old name
 as a new incompatible type is forbidden.
 
 Pipeline definitions are reusable and may execute concurrent runs. A singleton
-composition must never capture a mutable "current run" ledger. Infrastructure
-may select a run using `PipelineRuntime.RunId`, the local
-Advanced capability-acceptance context, or the host's run identity,
-then hand composition code a run-bound typed capability.
+composition must never capture a mutable "current run" ledger. The internal
+`PipelineRunContext`, supplied per execution through `PipelineRunOptions`, owns
+the run-bound ledger. Infrastructure selects the run using `PipelineRuntime.RunId`,
+the Advanced capability-acceptance context, or the host's run identity, then hands
+Advanced composition code a run-bound typed capability.
 Run identity is explicit at the infrastructure boundary and absent from record
 method calls and `TState`.
+
+Storage belongs in a separate ledger infrastructure package rather than adding
+SQLite to the minimal `Tandem` package. Delivery and the Tool host opt into that
+package; Songwriter, Support, and other minimal consumers do not receive SQLite
+transitively.
 
 ## Delivery Records
 
@@ -299,6 +347,23 @@ Record a fact where it becomes accepted:
   orderly cancellation; and
 - persist publication only after its Git side effect has been reconciled.
 
+Typed capability acceptance also appends a standard semantic record automatically:
+
+```text
+validate request
+    -> reserve invocation acceptance
+    -> perform authored durable acceptance when configured
+    -> append typed capability-accepted fact
+    -> apply TState transition
+    -> commit invocation acceptance
+    -> terminate the agent visit
+```
+
+External MCP tools are transport, not automatically a product-domain contract.
+All classified tool attempts and completions enter the runtime journal. When an
+external operation represents a semantic product transition, wrap or promote it
+to a typed Tandem capability so validated acceptance enters the semantic ledger.
+
 The order is:
 
 ```text
@@ -311,10 +376,12 @@ validate
 If persistence fails, the current operation fails. If the process dies after the
 record is written, the record remains and the workflow stays dead.
 
-The capability remains one Core application concept. Delivery decorates that
-capability through Advanced with a Tandem-owned accepted-call identity containing
-run, block, invocation, and capability IDs after request validation and before
-state transition. A ledger-backed asynchronous acceptance callback:
+The capability remains one Core application concept. The current SDK already
+provides atomic invocation reservation, terminal capability semantics, and an
+Advanced `WithAcceptance` callback carrying run, block, invocation, and capability
+IDs after request validation and before state transition. Delivery decorates that
+existing capability with ledger acceptance rather than introducing another
+capability abstraction. A ledger-backed asynchronous acceptance callback:
 
 1. Derives authoritative host-owned fields.
 2. Commits the semantic ledger operation idempotently using the accepted-call identity.
@@ -328,6 +395,11 @@ no state transition, and releases its provisional invocation slot so a corrected
 call can try in the same MAF session. Retrying the same accepted-call identity
 must converge on the original durable fact; it does not replay or resume a dead
 workflow.
+
+Tandem cannot atomically commit SQLite together with arbitrary external side
+effects. Advanced acceptance callbacks that perform external I/O must be
+idempotent and own an explicit reconciliation contract. Pure typed state
+transitions plus their automatic ledger fact remain the default journey.
 
 Structured planner and reviewer decisions need an asynchronous acceptance seam
 after final validation and before their updated state is emitted. Human answers
@@ -394,13 +466,19 @@ Add narrow read capabilities only when an agent needs deeper history:
 These return Delivery-owned projections. Do not expose SQL, storage keys, raw
 JSON, or unrestricted cross-run reads.
 
+Do not provide agents with the unbounded runtime journal. Role projections select
+typed semantic streams and documents with deterministic limits. Persisted model,
+tool, and human content is still untrusted prompt data even though this version
+retains it indefinitely without automatic redaction.
+
 ## Composable Gates
 
 The current mutation interceptor and checkpoint branch in `AgentBlock` are
 specialized, and checkpoint-only prompting does not hard block mutation. Converge
 retained policies on one small enforcement mechanism.
 
-There are two gate forms.
+There are two gate activation forms. Both enforce classified actions at the
+invocation hook; they do not create a separate orchestration engine.
 
 A state guard defines:
 
@@ -424,7 +502,8 @@ A latched gate defines:
 - session action after release.
 
 The first latched trigger point is after an outer agent request, when its latest
-usage is known.
+usage is known. The latch affects later action invocations. It cannot undo or
+reject an action that already completed in the request that crossed the threshold.
 
 Conceptually:
 
@@ -453,7 +532,13 @@ existing dashboard event path.
 Do not put latches in mutable `AgentBlock` fields or a singleton current-run
 registry.
 
-## Tool Effects
+## Action Effects
+
+An action is an invocable operation that reaches an enforcement hook. Initially
+this means Harness tools, external MCP tools exposed through MAF, and typed Tandem
+capabilities. Custom Advanced operations opt into classification only when they
+are exposed as invocable agent actions; ordinary workflow nodes are routed by MAF
+and are not retroactively intercepted as tools.
 
 Introduce only the classifications needed for current enforcement:
 
@@ -466,13 +551,14 @@ LifecycleTransition
 - reads and searches are `Read`;
 - writes, moves, deletes, and workspace-changing Git operations are
   `WorkspaceMutation`; and
-- agent capabilities are `LifecycleTransition`.
+- typed Tandem capabilities are `LifecycleTransition`.
 
-Classify SDK tools once at their adapter or registration boundary. Do not repeat
-tool-name prefix matching in every composition policy. A custom tool used by a
-mutation-enabled agent must declare its effect.
+Classify SDK and external MCP tools once at their adapter or registration
+boundary. Do not repeat tool-name prefix matching in every composition policy. A
+custom invocable action used by a gated agent must declare its effect.
 
-For MAF 1.16, characterize classification against the actual exposed file tools:
+For MAF 1.16, characterize classification against the actual exposed file tools.
+The names below are hypotheses from the stale design, not an authoritative list:
 
 ```text
 Read
@@ -487,10 +573,11 @@ WorkspaceMutation
     file_access_replace_lines
 ```
 
-Use maintained framework constants where available. Fail agent construction if
-an exposed invocable custom tool has no effect classification. An unknown tool
-cannot be proven non-mutating at invocation time, so runtime name guessing is not
-a completeness mechanism. Detect name collisions as configuration errors.
+Use maintained framework constants or descriptors where available. Fail agent
+construction if a gated agent exposes an invocable custom or MCP tool with no
+effect classification. An unknown action cannot be proven non-mutating at
+invocation time, so runtime name guessing is not a completeness mechanism. Detect
+name collisions as configuration errors.
 
 Lifecycle capabilities declare `LifecycleTransition` at registration. Do not
 blanket-exempt lifecycle tools from gate evaluation. A latched gate always allows
@@ -506,27 +593,31 @@ handling.
 
 For each Tandem agent request:
 
-1. Execute under the gates active at turn start.
-2. Collect current usage and tool outcomes.
-3. Evaluate after-turn triggers.
-4. Latch newly activated gates before another turn begins.
-5. Block tools whose effects match an active gate.
+1. Snapshot the gates active when the outer request begins.
+2. At every invocable action hook, combine that snapshot with any state guard
+   evaluated from the incoming `TState`.
+3. Journal the classified action attempt.
+4. Block the action when an active gate covers its effect, without invoking the
+   underlying tool or MCP operation.
+5. Journal the blocked or completed result.
 6. Return the gate's actionable warning for blocked attempts.
-7. Direct a state guard to remediation or a latched gate to its release
+7. Collect latest-request usage and successful action outcomes.
+8. Evaluate after-turn triggers when the outer request completes.
+9. Latch newly activated gates before another outer request begins.
+10. Direct a state guard to remediation or a latched gate to its release
    capability.
-8. Validate any capability request.
-9. Persist its semantic record when it has one.
-10. Apply the live state transition.
-11. For a latched gate, clear only the gate released by that capability.
-12. Apply the configured session reset when the latched gate requests one.
+11. Validate any capability request.
+12. Persist its automatic typed acceptance fact and authored semantic records.
+13. Apply the live state transition.
+14. For a latched gate, clear only the gate released by that capability.
+15. Apply the configured session reset when the latched gate requests one.
 
 A Tandem gate turn is one outer `agent.RunStreamingAsync` request, including the
-MAF function-invocation loop it owns. All tools requested within that outer call
-execute under its starting gate snapshot. Usage observed when it completes can
-gate a correction/continuation request or a later workflow invocation, but cannot
-retroactively block tools from the completed response. If same-response blocking
-becomes a requirement, it needs a lower chat-response hook and is outside this
-after-turn design.
+MAF function-invocation loop it owns. Each action reaches function-invocation
+middleware and can be blocked there. Usage observed only when the outer request
+completes can gate a correction/continuation request or a later workflow
+invocation, but cannot retroactively block actions from the completed response.
+State guards known at request start can block actions in that request.
 
 Evaluate triggers after every outer request, before starting structured-output
 correction or continuation. `CurrentContextTokens` is the latest completed model
@@ -546,8 +637,10 @@ fact without emitting a second release/reset observation.
 
 ## Checkpoint Journey
 
-This journey applies only if semantic checkpointing is confirmed as a product
-invariant rather than replaced by MAF compaction for context management.
+This journey applies when Delivery configures checkpoint acceptance as a semantic
+release condition. MAF compaction may still manage context-window pressure, but
+it does not satisfy an authored requirement to record accepted progress before
+later mutation.
 
 ```text
 executor turn completes above threshold
@@ -591,7 +684,8 @@ or simulated checkpoint blocks:
 - built-in compaction behavior and session continuity; and
 - outer-request versus inner-model-call timing.
 
-Resolve the checkpoint product-invariant decision after this characterization.
+Use the characterization to select the maintained context reconstruction seam;
+the semantic action-gate decision is already settled.
 
 ### 2. Add The SQLite Adapter
 
@@ -609,9 +703,11 @@ Resolve the checkpoint product-invariant decision after this characterization.
 ### 3. Add Semantic Acceptance Seams
 
 - Add an asynchronous post-validation/pre-state seam for structured decisions.
-- Decorate Core capabilities through Advanced with accepted-call identity and an
-  asynchronous pre-transition acceptance callback.
-- Commit ledger-backed local capability acceptance before applying the Core
+- Reuse the landed Advanced capability accepted-call identity and asynchronous
+  pre-transition callback.
+- Automatically append a typed capability-accepted fact inside the existing
+  reserved acceptance boundary.
+- Commit authored ledger-backed capability acceptance before applying the Core
   typed state transition.
 - Persist human answers before broker delivery.
 - Persist authoritative verification before it enters `TState`.
@@ -627,16 +723,27 @@ Resolve the checkpoint product-invariant decision after this characterization.
 - Record a current publication candidate whenever candidate capture succeeds.
 - Do not import any existing persisted artifact.
 
-### 5. Add Ledger Context
+### 5. Add Durable Runtime Journal Hooks
+
+- Add run-level lifecycle observations.
+- Add typed node, interaction, command, usage, action-attempt, action-result,
+  structured-output-accepted, and capability-accepted journal records.
+- Await journal persistence at the boundary whose failure must prevent semantic
+  progress.
+- Do not persist reasoning or ordinary assistant text by default.
+- Keep `events.jsonl` as a dashboard projection rather than the journal source of
+  truth.
+
+### 6. Add Ledger Context
 
 - Build bounded role-specific projections.
 - Add only the read capabilities needed by current prompts.
 - Prefer MAF `AIContextProvider` if characterization confirms it is the honest
   context seam.
-- If semantic checkpointing remains, reset the executor after checkpoint
+- When Delivery's checkpoint gate releases, reset the executor after checkpoint
   acceptance and reconstruct its prompt from ledger records.
 
-### 6. Add Gate Mechanics
+### 7. Add Gate Mechanics
 
 - Add state guards and latched gates as separate activation models.
 - Include latest-request context usage in after-turn observations and track
@@ -647,14 +754,14 @@ Resolve the checkpoint product-invariant decision after this characterization.
 - Enforce active gates through MAF function middleware before tool invocation.
 - Release a latched gate only after its capability is semantically accepted.
 
-### 7. Migrate Delivery Policies
+### 8. Migrate Delivery Policies
 
 - Express planner mutation authorization as a state guard.
-- If retained, express checkpoint pressure as an after-turn latched gate.
+- Express Delivery checkpoint pressure as an after-turn latched gate.
 - Persist an authoritative checkpoint before release.
 - Remove the old checkpoint-only branch and duplicated mutation prefix checks.
 
-### 8. Make Publication Reconciliable
+### 9. Make Publication Reconciliable
 
 - Move publication lookup and validation behind a Delivery-owned application
   capability using the publication-candidate document.
@@ -662,7 +769,7 @@ Resolve the checkpoint product-invariant decision after this characterization.
 - Append one idempotent publication result after the Git ref is known.
 - Prove recovery from process failure immediately after `git push`.
 
-### 9. Delete Superseded Code
+### 10. Delete Superseded Code
 
 - Remove current fields and files only when the live design no longer consumes
   them.
@@ -692,65 +799,82 @@ Resolve the checkpoint product-invariant decision after this characterization.
 11. Runs remain isolated.
 12. Typed records round-trip without exposing JSON.
 13. Registering two record types under one persisted name fails.
+14. Minimal consumers do not receive the SQLite package transitively.
+
+### Runtime Journal
+
+15. Run and node lifecycle records survive process exit in deterministic order.
+16. Classified action attempts, blocked actions, and completions are durable.
+17. Interactions, command results, usage, accepted structured output, and accepted
+    capabilities produce typed durable journal records.
+18. Reasoning and ordinary streamed assistant text are not persisted by default.
+19. Journal persistence failure at a semantic boundary prevents later routing or
+    state transition.
 
 ### Delivery
 
-14. A planner decision is recorded before mutation authority opens.
-15. Structured-decision persistence failure prevents state update and routing.
-16. Multiple decisions remain queryable in order.
-17. Human answers exist before broker delivery; a conflicting answer for the
+20. A planner decision is recorded before mutation authority opens.
+21. Structured-decision persistence failure prevents state update and routing.
+22. Multiple decisions remain queryable in order.
+23. Human answers exist before broker delivery; a conflicting answer for the
     same request ID fails.
-18. Verification persistence failure prevents the result entering `TState`.
-19. Checkpoints append history rather than replacing it.
-20. Checkpoint outcomes and changed files come from authoritative sources.
-21. Retrying one accepted-call identity converges on one semantic commit before
+24. Verification persistence failure prevents the result entering `TState`.
+25. Checkpoints append history rather than replacing it.
+26. Checkpoint outcomes and changed files come from authoritative sources.
+27. Retrying one accepted-call identity converges on one semantic commit before
     state transition.
-22. Human, verification, review, report, and terminal records survive process
+28. Human, verification, review, report, and terminal records survive process
     exit.
-23. New agents receive deterministically bounded role-specific context with a
+29. New agents receive deterministically bounded role-specific context with a
     visible truncation marker.
-24. The publication-candidate document matches the candidate accepted at the
+30. The publication-candidate document matches the candidate accepted at the
     Ready terminal.
 
 ### Gates
 
-25. Construction fails when a gated agent exposes an unclassified invocable
+31. Construction fails when a gated agent exposes an unclassified invocable
     tool.
-26. The classification proof covers the actual MAF file-tool collection.
-27. Crossing the threshold closes the checkpoint gate before another outer
+32. The classification proof covers the actual MAF file-tool and configured MCP
+    collections.
+33. Crossing the threshold closes the checkpoint gate before another outer
     agent request.
-28. Workspace mutation attempted while gated is not executed.
-29. Read tools remain available when the policy allows them.
-30. Invalid checkpoint calls do not release the gate.
-31. The checkpoint record exists before release.
-32. Release resets executor session and latest-context usage exactly once.
-33. The next executor invocation creates a fresh session and receives bounded
+34. Workspace mutation attempted while gated is blocked at its invocation hook
+    and is not executed.
+35. Read tools remain available when the policy allows them.
+36. Invalid checkpoint calls do not release the gate.
+37. The checkpoint record exists before release.
+38. Release resets executor session and latest-context usage exactly once.
+39. The next executor invocation creates a fresh session and receives bounded
     ledger context.
-34. Opening the planner state guard does not release the checkpoint latch, and
+40. Opening the planner state guard does not release the checkpoint latch, and
     releasing the checkpoint latch does not grant planner authorization.
-35. A checkpoint latch survives executor-to-planner routing.
-36. Concurrent runs through one built pipeline do not share latches.
-37. Duplicate accepted-call handling does not emit another release/reset observation.
-38. Multiple tool calls in one model response all use the gate snapshot active
+41. A checkpoint latch survives executor-to-planner routing.
+42. Concurrent runs through one built pipeline do not share latches.
+43. Duplicate accepted-call handling does not emit another release/reset observation.
+44. Multiple tool calls in one model response all use the gate snapshot active
     at that outer request's start.
+45. A state guard active at request start blocks matching actions within that
+    request when each action reaches the hook.
+46. A usage latch activated at request completion affects the next request and
+    does not claim to have blocked actions from the completed request.
 
 ### Publication
 
-39. Failure immediately after `git push` is reconciled on retry.
-40. An existing branch at the requested candidate converges to one publication
+47. Failure immediately after `git push` is reconciled on retry.
+48. An existing branch at the requested candidate converges to one publication
     record.
-41. An existing branch at another candidate conflicts.
-42. Concurrent publication of the same branch and candidate converges without
+49. An existing branch at another candidate conflicts.
+50. Concurrent publication of the same branch and candidate converges without
     duplicate records.
 
 ### Runtime Boundary
 
-43. Process exit kills the workflow.
-44. Ledger records remain readable.
-45. No API can resume the dead workflow from those records.
-46. Orderly authored failure, host fault, and cancellation record distinct
+51. Process exit kills the workflow.
+52. Ledger records remain readable.
+53. No API can resume the dead workflow from those records.
+54. Orderly authored failure, host fault, and cancellation record distinct
     terminal statuses.
-47. A hard-killed run remains last-known `Running` and is never presented as
+55. A hard-killed run remains last-known `Running` and is never presented as
     proof of liveness.
 
 ## Non-Goals
@@ -768,6 +892,9 @@ Resolve the checkpoint product-invariant decision after this characterization.
 - Remote storage.
 - A universal decision, checkpoint, review, or outcome model.
 - A general rules engine.
+- A universal service-bearing context for ordinary state-first stages.
+- Persisting model reasoning or ordinary streamed assistant text by default.
+- Automatic retention expiry, redaction, or operator deletion in this version.
 - Treating a `Running` ledger row as a process-liveness guarantee.
 - Making SQLite and Git one fictional transaction.
 
@@ -777,14 +904,16 @@ Resolve the checkpoint product-invariant decision after this characterization.
 - SQLite correctness also passes separate-process contention and lock-timeout
   tests.
 - Delivery records new accepted facts in typed streams and documents.
+- Typed runtime hooks produce a durable journal without making that raw journal
+  normal agent context.
 - Agents consume bounded ledger context.
-- The retention/redaction decision is recorded before sensitive durable payloads
-  are introduced.
-- If semantic checkpointing remains, its history survives process exit without
-  enabling resume.
-- If semantic checkpointing does not remain, MAF compaction owns context-window
-  pressure and no replacement checkpoint gate is built.
-- Gates evaluate latest-request usage and enforce declared tool effects through
+- Durable product and journal records are retained indefinitely without automatic
+  redaction or a deletion command; reasoning and ordinary assistant text remain
+  excluded by default.
+- Semantic checkpoint history survives process exit without enabling resume when
+  Delivery configures checkpoint acceptance as a gate release.
+- MAF compaction may manage context pressure independently of semantic gates.
+- Gates evaluate latest-request usage and enforce declared action effects through
   maintained MAF function middleware.
 - Ledger-backed capabilities persist before releasing their gate.
 - Planner and checkpoint gates compose independently.

@@ -4,7 +4,7 @@ Tandem.AgentCapabilities
 Tandem.AgentCapability`1
 Tandem.AgentCapability`2
 Tandem.AgentDefinition`1
-Tandem.AgentFactory
+Tandem.Agent
 Tandem.FailureEvidence
 Tandem.Outcome`1
 Tandem.Outcome`1+Failed
@@ -23,7 +23,6 @@ Tandem.Pipeline
 Tandem.Pipeline`1
 Tandem.PipelineRunStatus
 Tandem.StandardOutcomeKinds
-Tandem.TandemRegistration
 
 [runtime-hosting]
 Tandem.AgentUpdate

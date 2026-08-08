@@ -161,17 +161,45 @@ public sealed class LocalCapabilityTests
     }
 
     [Fact]
-    public async Task DeliveryCapabilities_ExecuteThroughHarnessInProcess()
+    public async Task AcceptedCapability_SkipsConfiguredStructuredOutputAndCorrection()
+    {
+        var validator = new InlineValidator<IncrementRequest>();
+        validator.RuleFor(request => request.Amount).GreaterThan(0);
+        var client = new ScriptedChatClient(
+            ToolCall("accepted", "increment", new Dictionary<string, object?> { ["amount"] = 2 })
+        );
+        var agent = Agent
+            .Create<TestState>("agent", "Choose a result.", client)
+            .WithMessage(_ => "Increment the state.")
+            .WithOutput(
+                validator,
+                (state, request) => state with { Count = state.Count + request.Amount + 100 }
+            )
+            .WithCapability(CreateCapability())
+            .Build();
+        var complete = PipelineNodes.Complete<TestState>("complete");
+        var pipeline = Pipeline
+            .Start(agent, "capability-or-output")
+            .Route(agent.Success, complete, "completed")
+            .Build(complete);
+
+        var result = await new PipelineRunner().RunAsync(pipeline, new TestState(0));
+
+        result.State.Count.Should().Be(2);
+        result.Status.Should().Be(PipelineRunStatus.Succeeded);
+        client.CallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task DeliveryCapabilities_ApplyTypedAcceptedFactsInProcess()
     {
         var services = new ServiceCollection();
-        services
-            .AddTandem()
-            .AddDelivery(
-                new DeliveryOptions(
-                    _ => throw new InvalidOperationException("Model execution is not required."),
-                    _ => new DeliveryAgentProfile(1000, 100, 80)
-                )
-            );
+        services.AddDelivery(
+            new DeliveryOptions(
+                _ => throw new InvalidOperationException("Model execution is not required."),
+                _ => new DeliveryAgentProfile(1000, 100, 80)
+            )
+        );
         using var provider = services.BuildServiceProvider();
         var capabilities = provider
             .GetServices<AgentCapability<DeliveryState>>()
@@ -245,11 +273,13 @@ public sealed class LocalCapabilityTests
             initial
         );
 
-        planner.State.LastExecutorAction.Should().Be(ExecutorAction.PlannerRequested);
-        report.State.LastExecutorAction.Should().Be(ExecutorAction.ReportSubmitted);
-        report.State.ImplementationReport.Should().NotBeNull();
-        checkpoint.State.LastExecutorAction.Should().Be(ExecutorAction.CheckpointWritten);
-        checkpoint.State.CheckpointPayload.Should().NotBeNull();
+        planner
+            .State.ExecutorAcceptedFact.Should()
+            .BeOfType<ExecutorAcceptedFact.PlannerRequested>();
+        report.State.ExecutorAcceptedFact.Should().BeOfType<ExecutorAcceptedFact.ReportSubmitted>();
+        checkpoint
+            .State.ExecutorAcceptedFact.Should()
+            .BeOfType<ExecutorAcceptedFact.CheckpointWritten>();
     }
 
     [Fact]
@@ -395,7 +425,7 @@ public sealed class LocalCapabilityTests
     {
         var first = CreateCapability();
         var second = CreateCapability();
-        var builder = new AgentFactory()
+        var builder = Agent
             .Create<TestState>("agent", "Test capabilities.", new ScriptedChatClient())
             .WithMessage(_ => "message")
             .ContinueSession()

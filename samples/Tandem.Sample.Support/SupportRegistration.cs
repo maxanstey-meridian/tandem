@@ -15,7 +15,6 @@ public static class SupportRegistration
         services.AddSingleton(options);
         services.AddSingleton(sp =>
             SupportDefinitions.Create(
-                sp.GetRequiredService<AgentFactory>(),
                 sp.GetRequiredService<SupportOptions>(),
                 sp.GetRequiredService<IAccountLookup>()
             )

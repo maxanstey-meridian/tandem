@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Tandem.Delivery;
@@ -13,12 +12,10 @@ public sealed record DeliveryState(
     string? CandidateSha,
     int VerificationIndex,
     IReadOnlyList<VerificationResult> VerificationResults,
-    JsonElement? CheckpointPayload,
-    JsonElement? ImplementationReport,
+    ExecutorAcceptedFact? ExecutorAcceptedFact,
     ReviewDecision? ReviewerDecision,
+    string? PlannerHumanAnswer,
     string? ReviewerHumanAnswer,
-    string? HumanAnswerSourceBlockId,
-    ExecutorAction? LastExecutorAction,
     RunStatus Status
 )
 {
@@ -33,21 +30,26 @@ public sealed record DeliveryState(
             CandidateSha: null,
             VerificationIndex: 0,
             VerificationResults: [],
-            CheckpointPayload: null,
-            ImplementationReport: null,
+            ExecutorAcceptedFact: null,
             ReviewerDecision: null,
+            PlannerHumanAnswer: null,
             ReviewerHumanAnswer: null,
-            HumanAnswerSourceBlockId: null,
-            LastExecutorAction: null,
             Status: RunStatus.Running
         );
 }
 
-public enum ExecutorAction
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
+[JsonDerivedType(typeof(ExecutorAcceptedFact.PlannerRequested), "planner-requested")]
+[JsonDerivedType(typeof(ExecutorAcceptedFact.ReportSubmitted), "report-submitted")]
+[JsonDerivedType(typeof(ExecutorAcceptedFact.CheckpointWritten), "checkpoint-written")]
+public abstract record ExecutorAcceptedFact
 {
-    PlannerRequested,
-    ReportSubmitted,
-    CheckpointWritten,
+    public sealed record PlannerRequested(AskPlannerRequest Request) : ExecutorAcceptedFact;
+
+    public sealed record ReportSubmitted(SubmitReportRequest Report) : ExecutorAcceptedFact;
+
+    public sealed record CheckpointWritten(WriteCheckpointRequest Checkpoint)
+        : ExecutorAcceptedFact;
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]

@@ -1,5 +1,5 @@
 namespace Tandem.Delivery;
 
-public sealed record HumanQuestion(string SourceBlockId, string Question, string Reason);
+public sealed record HumanQuestion(string Question, string Reason);
 
 public sealed record HumanAnswer(string Text);

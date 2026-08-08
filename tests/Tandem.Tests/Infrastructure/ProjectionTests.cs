@@ -277,7 +277,7 @@ public sealed class RunEventProjectorTests
         var (eventStore, cleanup) = CreateObserver();
         try
         {
-            var question = new HumanQuestion(BlockIds.Planner, "Which pattern?", "ambiguous");
+            var question = new HumanQuestion("Which pattern?", "ambiguous");
             var projected = new TaskCompletionSource(
                 TaskCreationOptions.RunContinuationsAsynchronously
             );
@@ -289,7 +289,7 @@ public sealed class RunEventProjectorTests
                         request.RunId,
                         request.PortId,
                         eventStore
-                    ).EmitHumanRequestedAsync(pendingQuestion, cancellationToken);
+                    ).EmitHumanRequestedAsync(request.PortId, pendingQuestion, cancellationToken);
                     projected.SetResult();
                 }
             );
@@ -312,9 +312,7 @@ public sealed class RunEventProjectorTests
             var model = DashboardReducer.FromEvents(await eventStore.ReadAllAsync());
             model
                 .PendingHumanRequest.Should()
-                .BeEquivalentTo(
-                    new HumanRequestView(BlockIds.Planner, "Which pattern?", "ambiguous")
-                );
+                .BeEquivalentTo(new HumanRequestView("HumanInput", "Which pattern?", "ambiguous"));
             await cancellation.CancelAsync();
             var act = async () => await wait;
             await act.Should().ThrowAsync<OperationCanceledException>();
@@ -399,7 +397,7 @@ public sealed class RunEventProjectorTests
             var projector = new RunEventProjector(runId, "prepare", eventStore);
 
             var outcome = new PipelineRunOutcome(
-                OutcomeKinds.WorkspacePrepared,
+                StandardOutcomeKinds.Success,
                 "prepare",
                 "Workspace prepared",
                 JsonSerializer.SerializeToElement(new { sha = "abc" }),
@@ -413,7 +411,7 @@ public sealed class RunEventProjectorTests
             events[0].Kind.Should().Be(EventKinds.BlockCompleted);
             events[0].Data.Should().NotBeNull();
             var data = events[0].Data!.Value;
-            data.GetProperty("kind").GetString().Should().Be(OutcomeKinds.WorkspacePrepared);
+            data.GetProperty("kind").GetString().Should().Be(StandardOutcomeKinds.Success);
             data.GetProperty("summary").GetString().Should().Be("Workspace prepared");
         }
         finally
@@ -497,16 +495,16 @@ public sealed class RunEventProjectorTests
             await observer.ObserveAsync(
                 new PipelineInteractionRequested<HumanQuestion>(
                     runId,
-                    "human-input",
+                    "PlannerHumanInput",
                     requestId,
-                    new HumanQuestion(BlockIds.Planner, "Which pattern?", "ambiguous")
+                    new HumanQuestion("Which pattern?", "ambiguous")
                 ),
                 CancellationToken.None
             );
             await observer.ObserveAsync(
                 new PipelineInteractionAnswered<HumanAnswer>(
                     runId,
-                    "human-input",
+                    "PlannerHumanInput",
                     requestId,
                     new HumanAnswer("Use the existing pattern.")
                 ),
@@ -518,7 +516,7 @@ public sealed class RunEventProjectorTests
                 .Select(evt => evt.Kind)
                 .Should()
                 .Equal(EventKinds.HumanRequested, EventKinds.HumanAnswered);
-            events[1].Message.Should().Contain(BlockIds.Planner).And.NotContain("unknown");
+            events[1].Message.Should().Contain("PlannerHumanInput").And.NotContain("unknown");
             DashboardReducer.FromEvents(events).PendingHumanRequest.Should().BeNull();
         }
         finally

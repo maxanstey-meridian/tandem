@@ -17,7 +17,7 @@ public sealed class RegistrationTests : IDisposable
     [Fact]
     public void AgentTimeout_RejectsUnsupportedDurations()
     {
-        var builder = new AgentFactory()
+        var builder = Agent
             .Create<TestState>("agent", "Respond.", new FakeChatClient())
             .WithMessage(state => state.Message);
 
@@ -27,27 +27,24 @@ public sealed class RegistrationTests : IDisposable
     }
 
     [Fact]
-    public void PublicRegistrations_ResolveDeliveryAndAgentFactory()
+    public void PublicRegistrations_ResolveDelivery()
     {
         Directory.CreateDirectory(_home);
         var services = new ServiceCollection();
         var clients = new FakeChatClients();
-        services
-            .AddTandem()
-            .AddDelivery(new DeliveryOptions(clients.Build, clients.ResolveProfile));
+        services.AddDelivery(new DeliveryOptions(clients.Build, clients.ResolveProfile));
 
         using var provider = services.BuildServiceProvider(
             new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true }
         );
 
         provider.GetRequiredService<DeliveryComposition>().Should().NotBeNull();
-        provider.GetRequiredService<AgentFactory>().Should().NotBeNull();
     }
 
     [Fact]
-    public void AgentFactory_DirectClientBuildsWithDefaultFreshSession()
+    public void Agent_DirectClientBuildsWithDefaultFreshSession()
     {
-        var definition = new AgentFactory()
+        var definition = Agent
             .Create<TestState>("classify", "Classify the ticket.", new FakeChatClient())
             .WithMessage(state => state.Message)
             .Build();
@@ -56,9 +53,9 @@ public sealed class RegistrationTests : IDisposable
     }
 
     [Fact]
-    public void AgentFactory_BuildsWithoutWorkspaceCapability()
+    public void Agent_BuildsWithoutWorkspaceCapability()
     {
-        var operation = new AgentFactory()
+        var operation = Agent
             .Create<TestState>("classify", "Classify the ticket.", new FakeChatClient())
             .WithMessage(state => state.Message)
             .Build();
@@ -72,8 +69,8 @@ public sealed class RegistrationTests : IDisposable
         var primary = new RecordingModelClient();
         var promoted = new RecordingModelClient();
         IChatClient Resolve(string profile) => profile == "promoted" ? promoted : primary;
-        var agent = new AgentFactory()
-            .CreateProfiled<TestState>("profiled", "primary", "Respond once.", primary, Resolve)
+        var agent = AgentProfiles
+            .Create<TestState>("profiled", "primary", "Respond once.", primary, Resolve)
             .WithMessage(state => state.Message)
             .WithProfilePolicy(state => new AgentProfileDecision(
                 state.Promote ? "promoted" : "primary",
@@ -104,7 +101,7 @@ public sealed class RegistrationTests : IDisposable
             _ => "incremented",
             (state, request) => state with { Count = state.Count + request.Amount }
         );
-        var builder = new AgentFactory()
+        var builder = Agent
             .Create<FirstScope.SharedState>("agent", "Test capabilities.", new FakeChatClient())
             .WithMessage(_ => "message")
             .WithCapability(first)
@@ -122,7 +119,7 @@ public sealed class RegistrationTests : IDisposable
     [Fact]
     public void DefaultAgentDefinition_IsDirectlyComposableWithTypedOutcomeSelectors()
     {
-        var definition = new AgentFactory()
+        var definition = Agent
             .Create<TestState>("classify", "Classify the ticket.", new FakeChatClient())
             .WithMessage(state => state.Message)
             .Build();
@@ -148,9 +145,7 @@ public sealed class RegistrationTests : IDisposable
         Directory.CreateDirectory(_home);
         var clients = new FakeChatClients();
         var services = new ServiceCollection();
-        services
-            .AddTandem()
-            .AddDelivery(new DeliveryOptions(clients.Build, clients.ResolveProfile));
+        services.AddDelivery(new DeliveryOptions(clients.Build, clients.ResolveProfile));
 
         using var provider = services.BuildServiceProvider(
             new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true }

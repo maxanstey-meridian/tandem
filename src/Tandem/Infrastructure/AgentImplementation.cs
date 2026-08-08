@@ -8,10 +8,34 @@ internal sealed record AgentImplementationContext(
     IChatClient ChatClient,
     ChatOptions ChatOptions,
     string? WorkspacePath,
-    bool AllowMutation,
-    bool HasToolInterceptor,
-    bool IsCheckpointOnly
+    bool ExposeWorkspaceMutationTools,
+    ToolEffectRegistry ToolEffects
 );
+
+internal enum ToolEffect
+{
+    Read,
+    WorkspaceMutation,
+    LifecycleTransition,
+}
+
+internal sealed class ToolEffectRegistry
+{
+    private readonly Dictionary<string, ToolEffect> _effects = new(StringComparer.Ordinal);
+
+    internal void Add(string name, ToolEffect effect)
+    {
+        if (!_effects.TryAdd(name, effect))
+        {
+            throw new InvalidOperationException(
+                $"Tool '{name}' has more than one authority classification."
+            );
+        }
+    }
+
+    internal bool TryGet(string name, out ToolEffect effect) =>
+        _effects.TryGetValue(name, out effect);
+}
 
 internal delegate AIAgent AgentImplementationFactory(AgentImplementationContext context);
 

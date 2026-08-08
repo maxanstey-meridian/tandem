@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 namespace Tandem.Delivery;
 
 internal static class DeliveryCapabilities
@@ -11,7 +9,11 @@ internal static class DeliveryCapabilities
             "Ask the planner block for guidance and end the current turn.",
             new AskPlannerRequestValidator(),
             request => $"Planner asked: {request.Question}",
-            (state, _) => state with { LastExecutorAction = ExecutorAction.PlannerRequested }
+            (state, request) =>
+                state with
+                {
+                    ExecutorAcceptedFact = new ExecutorAcceptedFact.PlannerRequested(request),
+                }
         );
         var submitReport = AgentCapabilities.Create<DeliveryState, SubmitReportRequest>(
             "submit_report",
@@ -21,11 +23,7 @@ internal static class DeliveryCapabilities
             (state, request) =>
                 state with
                 {
-                    ImplementationReport = JsonSerializer.SerializeToElement(
-                        request,
-                        JsonSerializerOptions.Web
-                    ),
-                    LastExecutorAction = ExecutorAction.ReportSubmitted,
+                    ExecutorAcceptedFact = new ExecutorAcceptedFact.ReportSubmitted(request),
                 }
         );
         var writeCheckpoint = AgentCapabilities.Create<DeliveryState, WriteCheckpointRequest>(
@@ -36,11 +34,7 @@ internal static class DeliveryCapabilities
             (state, request) =>
                 state with
                 {
-                    CheckpointPayload = JsonSerializer.SerializeToElement(
-                        request,
-                        JsonSerializerOptions.Web
-                    ),
-                    LastExecutorAction = ExecutorAction.CheckpointWritten,
+                    ExecutorAcceptedFact = new ExecutorAcceptedFact.CheckpointWritten(request),
                 }
         );
         return new DeliveryCapabilitySet(askPlanner, submitReport, writeCheckpoint);

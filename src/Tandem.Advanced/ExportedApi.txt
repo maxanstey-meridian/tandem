@@ -11,6 +11,7 @@ Tandem.Advanced.AgentMessageContext`1
 Tandem.Advanced.AgentMessageOutcome
 Tandem.Advanced.AgentProfileDecision
 Tandem.Advanced.AgentProfilePolicy`1
+Tandem.Advanced.AgentProfiles
 Tandem.Advanced.AgentTurnContinuationPolicy`1
 Tandem.Advanced.AgentTurnDirective
 Tandem.Advanced.AgentTurnObservation`1
@@ -30,6 +31,7 @@ Tandem.Advanced.StructuredOutputParser`1
 Tandem.Advanced.StructuredOutputPolicy
 Tandem.Advanced.StructuredOutputProblem
 Tandem.Advanced.StructuredOutputResult`1
+Tandem.Advanced.ToolEffect
 Tandem.Advanced.ToolInterceptionResult
 Tandem.Advanced.ToolInterceptionResult+Blocked
 Tandem.Advanced.ToolInterceptor`1

@@ -81,6 +81,19 @@ This is a focused conceptual correction, not another SDK redesign. Promote the
 semantic capability API, preserve the required durable acceptance seam, update
 the consumers and boundary proofs, and stop.
 
+### Amendment: Terminal Capability Semantics
+
+An `AgentCapability<TState>` permits one validated semantic state transition.
+An agent may expose multiple capabilities during a pipeline visit, but acceptance
+of one capability concludes that visit. Typed output is an alternative terminal
+result used only when no capability is accepted; Tandem must not parse, validate,
+or correct structured output after capability acceptance.
+
+`AgentFactory` was removed after implementation proved it held no state,
+dependencies, or policy. Ordinary construction is `Agent.Create(...)`; Advanced
+profile-backed construction is `AgentProfiles.Create(...)` and returns the same
+Core `AgentBuilder<TState>`.
+
 ## Priority
 
 Generic-agent neutrality is priority zero. Do not start naming cleanup or another
@@ -469,7 +482,7 @@ Finalize names only after the behavioral boundaries above are correct.
 
 Recommended direction:
 
-- rename `AgentRuntime` to `AgentFactory`;
+- replace the stateless `AgentRuntime`/`AgentFactory` seam with `Agent.Create(...)`;
 - replace `TandemWorkflow.Start(...)` with `Pipeline.Start(...)` if the resulting
   C# call site remains unambiguous and pleasant;
 - move `Outcome<TState>`, `FailureEvidence`, `PipelineRunStatus`, and
@@ -641,7 +654,7 @@ commodity behavior that the maintained generic agent already provides.
 Do these as small, separately reviewable changes rather than one SDK rewrite.
 
 1. Prove current Mermaid/DOT leakage, then render semantic diagrams.
-2. Rename `AgentRuntime` to `AgentFactory`.
+2. Replace the unearned stateless factory with `Agent.Create(...)`.
 3. Evaluate and adopt `Pipeline.Start(...)` when the call site is clear.
 4. Move ordinary outcome types into `Tandem`.
 5. Resolve validation ownership and provide the chosen adapter.

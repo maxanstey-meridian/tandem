@@ -175,7 +175,7 @@ public sealed class PublicRuntimeTests
     [Fact]
     public async Task AgentExecution_PreservesObservationForDownstreamInteraction()
     {
-        var agent = new AgentFactory()
+        var agent = Agent
             .Create<PublicState>("agent", "Respond.", new TextChatClient("ready"))
             .WithMessage(state => $"Count: {state.Count}")
             .Build();

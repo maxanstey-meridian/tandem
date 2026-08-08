@@ -42,8 +42,8 @@ semantic fact before Core applies the typed state transition.
 
 `AgentCapabilities.Create` is pure. Feature composition roots may register the
 returned capability as immutable application configuration, then attach it to
-the intended agent. Execution follows that attachment directly; `AddTandem` does
-not discover capabilities or construct a transport registry.
+the intended agent. Execution follows that attachment directly; Tandem does not
+discover capabilities or construct a transport registry.
 
 ## Advanced Surface
 

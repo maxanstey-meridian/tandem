@@ -8,36 +8,30 @@ public static class ExecutorPolicies
         AgentMessageContext<DeliveryState> context,
         AgentMessageOutcome _
     ) =>
-        context.State.LastExecutorAction == ExecutorAction.ReportSubmitted
+        context.State.ExecutorAcceptedFact is ExecutorAcceptedFact.ReportSubmitted
             ? new(AgentConversationRetention.Discard)
             : new(AgentConversationRetention.Retain);
 
     public static ToolInterceptor<DeliveryState> CreateMutationGate() =>
         (context, invocation, _) =>
-            context.State.MutationAuthorized || !IsWorkspaceMutationTool(invocation.Name)
-                ? ValueTask.FromResult<ToolInterceptionResult?>(null)
-                : ValueTask.FromResult<ToolInterceptionResult?>(
+            invocation.Effect == ToolEffect.Unclassified
+                ? ValueTask.FromResult<ToolInterceptionResult?>(
                     new ToolInterceptionResult.Blocked(
-                        """
-                        MUTATION GATE CLOSED: Your edit was NOT applied — no file was changed.
-                        Mutation authority is not yet granted. Call ask_planner with your
-                        proposed approach and evidence. Reads remain available for gathering
-                        evidence. Continue only on proceed or proceed_with_constraints.
-                        """
+                        $"Tool '{invocation.Name}' has no authority classification and was blocked."
                     )
-                );
-
-    public static bool IsWorkspaceMutationTool(string name) =>
-        name.StartsWith("file_access_write", StringComparison.Ordinal)
-        || name.StartsWith("file_access_replace", StringComparison.Ordinal)
-        || name.StartsWith("file_access_delete", StringComparison.Ordinal)
-        || name.StartsWith("file_access_move", StringComparison.Ordinal)
-        || name.StartsWith("file_access_create", StringComparison.Ordinal);
-
-    public static bool AllowsWorkspaceMutation(string participantId, DeliveryState state) =>
-        participantId == BlockIds.Executor && state.MutationAuthorized;
-
-    public static bool OwnsCheckpoint(string participantId) => participantId == BlockIds.Executor;
+                )
+            : context.State.MutationAuthorized || invocation.Effect != ToolEffect.WorkspaceMutation
+                ? ValueTask.FromResult<ToolInterceptionResult?>(null)
+            : ValueTask.FromResult<ToolInterceptionResult?>(
+                new ToolInterceptionResult.Blocked(
+                    """
+                    MUTATION GATE CLOSED: Your edit was NOT applied — no file was changed.
+                    Mutation authority is not yet granted. Call ask_planner with your
+                    proposed approach and evidence. Reads remain available for gathering
+                    evidence. Continue only on proceed or proceed_with_constraints.
+                    """
+                )
+            );
 
     public static AgentTurnPolicy<DeliveryState> CreateTurnPolicy() =>
         new(

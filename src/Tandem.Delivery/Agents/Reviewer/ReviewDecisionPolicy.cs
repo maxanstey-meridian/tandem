@@ -46,7 +46,10 @@ public static class ReviewDecisionPolicy
             {
                 ReviewerDecision = decision,
                 ReviewerHumanAnswer = null,
-                HumanAnswerSourceBlockId = null,
+                Status =
+                    decision.Decision == ReviewDecisionValue.NeedsHuman
+                        ? RunStatus.WaitingForHuman
+                        : state.Status,
             }
         );
     }

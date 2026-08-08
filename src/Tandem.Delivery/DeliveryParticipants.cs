@@ -9,5 +9,6 @@ public sealed record DeliveryParticipants(
     AgentDefinition<DeliveryState> Reviewer,
     IPipelineNode<DeliveryState> CompleteRun,
     IPipelineNode<DeliveryState> FailRun,
-    PipelineInteraction<DeliveryState, HumanQuestion, HumanAnswer> HumanInput
+    PipelineInteraction<DeliveryState, HumanQuestion, HumanAnswer> PlannerHumanInput,
+    PipelineInteraction<DeliveryState, HumanQuestion, HumanAnswer> ReviewerHumanInput
 );

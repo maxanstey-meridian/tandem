@@ -33,8 +33,11 @@ public static class ExecutorPrompts
                 ? $"\nLatest verification failure (if any):\n{VerificationResultFormatting.Format(state.VerificationResults)}"
                 : "";
         var candidate = state.CandidateSha is { } sha ? $"\nCurrent candidate SHA: {sha}" : "";
-        var checkpoint = state.CheckpointPayload is { } payload
-            ? $"\nPrevious checkpoint (context was compacted, continue from here):\n{payload.GetRawText()}"
+        var checkpoint = state.ExecutorAcceptedFact is ExecutorAcceptedFact.CheckpointWritten fact
+            ? $"\nPrevious checkpoint (context was compacted, continue from here):\n"
+                + $"Summary: {fact.Checkpoint.Summary}\n"
+                + $"Completed: {string.Join("; ", fact.Checkpoint.Completed)}\n"
+                + $"Next: {string.Join("; ", fact.Checkpoint.Next)}"
             : "";
         return $"""
             Packet: {state.Packet.Title}

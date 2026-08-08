@@ -386,7 +386,7 @@ public sealed class DashboardReducerTests
         var data = JsonSerializer.SerializeToElement(
             new
             {
-                sourceBlockId = "planner",
+                interactionId = "PlannerHumanInput",
                 question = "Which pattern?",
                 reason = "ambiguous",
             }
@@ -396,7 +396,7 @@ public sealed class DashboardReducerTests
         ]);
 
         model.PendingHumanRequest.Should().NotBeNull();
-        model.PendingHumanRequest!.SourceBlockId.Should().Be("planner");
+        model.PendingHumanRequest!.InteractionId.Should().Be("PlannerHumanInput");
         model.PendingHumanRequest.Question.Should().Be("Which pattern?");
         model.PendingHumanRequest.Reason.Should().Be("ambiguous");
         model.Status.Should().Be(RunStatus.WaitingForHuman);

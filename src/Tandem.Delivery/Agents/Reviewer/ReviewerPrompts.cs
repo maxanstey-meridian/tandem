@@ -50,7 +50,7 @@ public static class ReviewerPrompts
             {verification}
 
             Implementation report:
-            {state.ImplementationReport?.GetRawText() ?? "(none)"}
+            {FormatReport(state.ExecutorAcceptedFact)}
 
             Human answer for this review:
             {state.ReviewerHumanAnswer ?? "(none)"}
@@ -96,4 +96,11 @@ public static class ReviewerPrompts
         reasoning, narration, apologies, markdown fences, or text before or after the JSON.
         HumanQuestion must be present only for NeedsHuman and null otherwise.
         """;
+
+    private static string FormatReport(ExecutorAcceptedFact? fact) =>
+        fact is ExecutorAcceptedFact.ReportSubmitted submitted
+            ? $"Summary: {submitted.Report.Summary}\n"
+                + $"Outcome claims:\n{string.Join("\n", submitted.Report.Outcomes.Select(item => $"- {item}"))}\n"
+                + $"Evidence:\n{string.Join("\n", submitted.Report.Evidence.Select(item => $"- {item}"))}"
+            : "(none)";
 }

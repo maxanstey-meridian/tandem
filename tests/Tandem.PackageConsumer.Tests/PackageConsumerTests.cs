@@ -298,7 +298,6 @@ public sealed class PackageConsumerTests
         using Tandem.Sample.Songwriter;
 
         var participants = SongwriterDefinitions.Create(
-            new AgentFactory(),
             new SongwriterClients(
                 new ScriptedChatClient(
                     ScriptedChatClient.Text("{\"lyrics\":\"First draft\"}"),
@@ -324,7 +323,6 @@ public sealed class PackageConsumerTests
         using Tandem.Sample.Support;
 
         var participants = SupportDefinitions.Create(
-            new AgentFactory(),
             new SupportOptions(
                 new ScriptedChatClient(ScriptedChatClient.Text("{\"category\":\"billing\"}")),
                 new ScriptedChatClient(ScriptedChatClient.Text("{\"proposedResolution\":\"Refund issued.\"}"))
@@ -388,7 +386,6 @@ public sealed class PackageConsumerTests
             )
         ) { FinishReason = ChatFinishReason.ToolCalls, ModelId = "package-proof" };
         var participants = DebateDefinitions.Create(
-            new AgentFactory(),
             new DebateOptions(
                 new ScriptedChatClient(ScriptedChatClient.Text("{\"text\":\"Initial case\"}"), ScriptedChatClient.Text("{\"text\":\"Revised case\"}")),
                 new ScriptedChatClient(ScriptedChatClient.Text("{\"accepted\":false,\"critique\":\"Revise\"}"), ScriptedChatClient.Text("{\"accepted\":true,\"critique\":\"Accepted\"}")),

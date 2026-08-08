@@ -35,7 +35,6 @@ public static class DeliveryRegistration
         services.AddSingleton<DeliveryParticipantsFactory>(sp =>
         {
             return new DeliveryParticipantsFactory(
-                sp.GetRequiredService<AgentFactory>(),
                 options.ChatClients,
                 options.Profiles,
                 sp.GetRequiredService<DeliveryDiffAcquisition>(),

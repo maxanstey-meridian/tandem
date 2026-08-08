@@ -46,6 +46,20 @@ public sealed class ProjectBoundaryTests
             .NotContain(file => File.Exists(System.IO.Path.Combine(root, file)));
     }
 
+    [Fact]
+    public void Delivery_UsesTypedFactsAndSemanticTopology()
+    {
+        var source = string.Join('\n', SourceLines("src/Tandem.Delivery"));
+
+        source.Should().NotContain("LatestOutcome");
+        source.Should().NotContain("JsonElement");
+        source.Should().NotContain("SourceBlockId");
+        source.Should().NotContain("HumanAnswerSourceBlockId");
+        source.Should().NotContain("IsWorkspaceMutationTool");
+        source.Should().NotContain("PrepareWorkspaceBlock");
+        source.Should().NotContain("CaptureCandidateBlock");
+    }
+
     private static readonly string _root = System.IO.Path.GetFullPath(
         System.IO.Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..")
     );
@@ -268,7 +282,7 @@ public sealed class ProjectBoundaryTests
     [Fact]
     public void OrdinaryAgentAndNodeApi_HidesInfrastructureAuthoring()
     {
-        var assembly = typeof(AgentFactory).Assembly;
+        var assembly = typeof(Agent).Assembly;
         var exportedNames = assembly.GetExportedTypes().Select(type => type.Name).ToArray();
 
         exportedNames.Should().NotContain("AgentOperation`1");

@@ -9,8 +9,11 @@ public sealed class DeliveryComposition
         _delivery = participantsFactory.Create();
     }
 
-    public PipelineInteraction<DeliveryState, HumanQuestion, HumanAnswer> HumanInput =>
-        _delivery.HumanInput;
+    public PipelineInteraction<DeliveryState, HumanQuestion, HumanAnswer> PlannerHumanInput =>
+        _delivery.PlannerHumanInput;
+
+    public PipelineInteraction<DeliveryState, HumanQuestion, HumanAnswer> ReviewerHumanInput =>
+        _delivery.ReviewerHumanInput;
 
     public Pipeline<DeliveryState> Build()
     {
@@ -33,19 +36,19 @@ public sealed class DeliveryComposition
             )
             .Route(
                 on: delivery.Executor.Success,
-                when: state => state.LastExecutorAction == ExecutorAction.PlannerRequested,
+                when: state => state.ExecutorAcceptedFact is ExecutorAcceptedFact.PlannerRequested,
                 to: delivery.Planner,
                 label: "planner requested"
             )
             .Route(
                 on: delivery.Executor.Success,
-                when: state => state.LastExecutorAction == ExecutorAction.ReportSubmitted,
+                when: state => state.ExecutorAcceptedFact is ExecutorAcceptedFact.ReportSubmitted,
                 to: delivery.CaptureCandidate,
                 label: "report submitted"
             )
             .Route(
                 on: delivery.Executor.Success,
-                when: state => state.LastExecutorAction == ExecutorAction.CheckpointWritten,
+                when: state => state.ExecutorAcceptedFact is ExecutorAcceptedFact.CheckpointWritten,
                 to: delivery.Executor,
                 label: "checkpoint written"
             )
@@ -59,7 +62,7 @@ public sealed class DeliveryComposition
             .Route(
                 on: delivery.Planner.Success,
                 when: IsPlannerNeedsHuman,
-                to: delivery.HumanInput,
+                to: delivery.PlannerHumanInput,
                 label: "needs human"
             )
             .Route(
@@ -124,28 +127,12 @@ public sealed class DeliveryComposition
             .Route(
                 on: delivery.Reviewer.Success,
                 when: IsReviewNeedsHuman,
-                to: delivery.HumanInput,
+                to: delivery.ReviewerHumanInput,
                 label: "needs human"
             )
             .Route(on: delivery.Reviewer.Failed, to: delivery.FailRun, label: "agent failed")
-            .Route(
-                when: IsPlannerHumanAnswer,
-                from: delivery.HumanInput,
-                to: delivery.Planner,
-                label: "answer for planner"
-            )
-            .Route(
-                when: IsReviewerHumanAnswer,
-                from: delivery.HumanInput,
-                to: delivery.Reviewer,
-                label: "answer for reviewer"
-            )
-            .Route(
-                when: IsUnknownHumanAnswer,
-                from: delivery.HumanInput,
-                to: delivery.FailRun,
-                label: "unknown answer source"
-            )
+            .Route(delivery.PlannerHumanInput, delivery.Planner, "answer for planner")
+            .Route(delivery.ReviewerHumanInput, delivery.Reviewer, "answer for reviewer")
             .Build(delivery.CompleteRun, delivery.FailRun);
     }
 
@@ -186,13 +173,4 @@ public sealed class DeliveryComposition
 
     private static bool IsReviewNeedsHuman(DeliveryState state) =>
         state.ReviewerDecision?.Decision == ReviewDecisionValue.NeedsHuman;
-
-    private static bool IsPlannerHumanAnswer(DeliveryState state) =>
-        state.HumanAnswerSourceBlockId == BlockIds.Planner;
-
-    private static bool IsReviewerHumanAnswer(DeliveryState state) =>
-        state.HumanAnswerSourceBlockId == BlockIds.Reviewer;
-
-    private static bool IsUnknownHumanAnswer(DeliveryState state) =>
-        state.HumanAnswerSourceBlockId is not (BlockIds.Planner or BlockIds.Reviewer);
 }

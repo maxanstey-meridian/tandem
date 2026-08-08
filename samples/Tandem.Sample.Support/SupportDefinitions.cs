@@ -2,13 +2,9 @@ namespace Tandem.Sample.Support;
 
 public static class SupportDefinitions
 {
-    public static SupportParticipants Create(
-        AgentFactory agentRuntime,
-        SupportOptions options,
-        IAccountLookup accountLookup
-    )
+    public static SupportParticipants Create(SupportOptions options, IAccountLookup accountLookup)
     {
-        var classifier = agentRuntime
+        var classifier = Agent
             .Create<SupportState>(
                 "support-classify",
                 SupportPrompts.Classifier,
@@ -17,7 +13,7 @@ public static class SupportDefinitions
             .WithMessage(SupportPrompts.ClassificationMessage)
             .WithOutput(new ClassificationDecisionValidator(), SupportPolicies.ApplyClassification)
             .Build();
-        var resolver = agentRuntime
+        var resolver = Agent
             .Create<SupportState>(
                 "support-resolve",
                 SupportPrompts.Resolver,

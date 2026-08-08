@@ -41,9 +41,9 @@ Keep these ownership boundaries explicit:
 - Pipeline state records facts; it does not hide routing logic.
 - Microsoft Agent Framework owns workflow execution, sessions,
   model loops, tool dispatch, and workflow events.
-- Tandem owns product composition, blocks, conditions, policies, Git and
+- Delivery owns its composition, participants, conditions, policies, Git and
   verification operations, event projection, and operator interfaces.
-- Planner and reviewer blocks have read-only workspace access.
+- Planner and reviewer agents have read-only workspace access.
 - Executor mutation is available only after the pipeline establishes mutation
   authority.
 - Each run operates in an isolated clone pinned to the resolved base commit.
@@ -52,7 +52,7 @@ Keep these ownership boundaries explicit:
 
 Do not introduce a second orchestration engine, imperative lifecycle coordinator,
 or application-level agent loop. A lifecycle change belongs in workflow
-composition unless it changes what a block operation itself does.
+composition unless it changes what a participant operation itself does.
 
 ## Machine Boundaries
 
@@ -64,6 +64,11 @@ Treat all model-authored data as untrusted boundary input.
   state transition and may be corrected in the same MAF session.
 - One capability call atomically owns acceptance. Durable acceptance completes
   before state transition, mechanical turn termination, or workflow routing.
+- An accepted capability concludes the current agent visit. Structured-output
+  parsing and correction run only when no capability was accepted.
+- Harness tool authority is classified from maintained SDK constants in Advanced.
+  Delivery gates semantic effects, never guessed name prefixes; unclassified tools
+  fail closed wherever an authority gate is active.
 - Planner and reviewer structured output must pass syntax, shape, enum, and
   cross-field validation before it can affect context or routing.
 - Structured-output recovery gets one corrective response in the same agent

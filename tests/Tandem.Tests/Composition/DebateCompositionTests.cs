@@ -68,11 +68,11 @@ public sealed class DebateCompositionTests
     }
 
     [Fact]
-    public void AddDebate_RegistersCompositionAndAgentFactory()
+    public void AddDebate_RegistersComposition()
     {
         var clients = ScriptedClients.Create();
         var services = new ServiceCollection();
-        services.AddTandem().AddDebate(Options(clients));
+        services.AddDebate(Options(clients));
         using var provider = services.BuildServiceProvider();
 
         provider
@@ -81,7 +81,6 @@ public sealed class DebateCompositionTests
             .Inspect()
             .Name.Should()
             .Be("debate");
-        provider.GetRequiredService<AgentFactory>().Should().NotBeNull();
     }
 
     [Theory]
@@ -122,7 +121,7 @@ public sealed class DebateCompositionTests
     internal static Pipeline<DebateState> Build(ScriptedClients clients)
     {
         var services = new ServiceCollection();
-        services.AddTandem().AddDebate(Options(clients));
+        services.AddDebate(Options(clients));
         using var provider = services.BuildServiceProvider();
         return provider.GetRequiredService<DebateComposition>().Build();
     }

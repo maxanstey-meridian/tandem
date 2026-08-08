@@ -14,8 +14,13 @@ internal sealed class AgentBlock<TState>(
     AgentBlockConfig<TState> config,
     IChatClient chatClient,
     Action<string, Guid, AgentUpdate>? onUpdate = null,
-    Func<PipelineMessage<TState>, string, CancellationToken, ValueTask<string?>>? toolInterceptor =
-        null,
+    Func<
+        PipelineMessage<TState>,
+        string,
+        ToolEffect?,
+        CancellationToken,
+        ValueTask<string?>
+    >? toolInterceptor = null,
     Action<ChatOptions>? configureChatOptions = null,
     Func<string, IChatClient>? chatClientFactory = null
 )
@@ -316,7 +321,8 @@ internal sealed class AgentBlock<TState>(
         AIAgent agent,
         ToolOutcomeCollector collector,
         PipelineMessage<TState> message,
-        IReadOnlySet<string> boundCapabilityNames
+        IReadOnlySet<string> boundCapabilityNames,
+        ToolEffectRegistry toolEffects
     ) =>
         agent
             .AsBuilder()
@@ -324,12 +330,14 @@ internal sealed class AgentBlock<TState>(
                 async (_, ficContext, next, ct) =>
                 {
                     var isLifecycle = boundCapabilityNames.Contains(ficContext.Function.Name);
+                    var classified = toolEffects.TryGet(ficContext.Function.Name, out var effect);
 
-                    if (!isLifecycle && toolInterceptor is not null)
+                    if (toolInterceptor is not null)
                     {
                         var blockedMessage = await toolInterceptor(
                             message,
                             ficContext.Function.Name,
+                            classified ? effect : null,
                             ct
                         );
                         if (blockedMessage is not null)
@@ -555,14 +563,19 @@ internal sealed class AgentBlock<TState>(
                 message.Runtime.AgentProfiles.GetValueOrDefault(config.BlockId)?.ProfileName
                     ?? config.ProfileName
             );
+        var toolEffects = new ToolEffectRegistry();
+        foreach (var capabilityName in boundCapabilityNames)
+        {
+            toolEffects.Add(capabilityName, ToolEffect.LifecycleTransition);
+        }
+        var allowMutation = config.AllowMutation?.Invoke(message.State) ?? false;
         var implementationContext = new AgentImplementationContext(
             config.BlockId,
             selectedChatClient,
             chatOptions,
             config.WorkspacePath?.Invoke(message.State),
-            config.AllowMutation?.Invoke(message.State) ?? false,
-            toolInterceptor is not null,
-            isCheckpointOnly
+            !isCheckpointOnly && (allowMutation || toolInterceptor is not null),
+            toolEffects
         );
         var agent = config.ImplementationFactory is null
             ? new ChatClientAgent(
@@ -576,7 +589,13 @@ internal sealed class AgentBlock<TState>(
             )
             : config.ImplementationFactory(implementationContext);
 
-        return ConfigureFunctionInvocation(agent, collector, message, boundCapabilityNames);
+        return ConfigureFunctionInvocation(
+            agent,
+            collector,
+            message,
+            boundCapabilityNames,
+            toolEffects
+        );
     }
 
     private static JsonElement EmptyPayload() => JsonSerializer.SerializeToElement(new { });

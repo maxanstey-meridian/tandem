@@ -1,13 +1,13 @@
 # Tandem
 
-Tandem is a .NET library for building typed agentic pipelines that live for the
-lifetime of the process that starts them.
+Tandem models LLM agents as bounded typed components in explicit application
+pipelines. Agents, ordinary C#, and human interactions operate on shared typed
+state; explicit routes determine what happens next. Runs live for the lifetime
+of the process that starts them.
 
-You write ordinary C# classes for work and compose their successors explicitly.
-Tandem builds that graph as a Microsoft Agent Framework workflow. MAF owns
-orchestration, agent loops, sessions, and tool dispatch; authored
-pipeline code owns state, prompts, policies, capabilities, meaningful results,
-and routes.
+Tandem currently executes that graph through Microsoft Agent Framework. MAF owns
+orchestration, agent loops, sessions, and tool dispatch; authored pipeline code
+owns state, prompts, policies, capabilities, meaningful results, and routes.
 
 ```text
 write -> lint -> review -> complete
@@ -25,8 +25,7 @@ smallest complete authoring example. Its pipeline state is an immutable record.
 A default declarative agent is already a typed pipeline step:
 
 ```csharp
-var songwriter = agents
-    .Create<SongwriterState>(
+var songwriter = Agent.Create<SongwriterState>(
         "songwriter",
         "Write or revise lyrics from the brief and current feedback.",
         clients.Songwriter
@@ -128,12 +127,12 @@ cancellation remains cancellation; neither follows an ordinary output route.
 
 ## State-First Agents And Policies
 
-Agent definitions are immutable application configuration registered once in DI.
-They use state-first callbacks throughout and capture no pipeline build or run:
+Agent definitions are immutable application configuration created once and reusable
+across built pipelines and concurrent runs. They use state-first callbacks throughout
+and capture no pipeline build or run:
 
 ```csharp
-agents
-    .Create<SongwriterState>(id, instructions, client)
+Agent.Create<SongwriterState>(id, instructions, client)
     .WithMessage(state =>
         $"Brief: {state.Brief}\nLyrics: {state.Lyrics}\n"
         + $"Lint: {state.LintFeedback}\nProofreader: {state.ProofreaderFeedback}"
@@ -221,6 +220,14 @@ Composition routes to and from that interaction. Tandem privately expands it to
 MAF's request, port, and resume executors, preserving the complete execution
 envelope while the live run waits asynchronously.
 
+An interaction may also begin a pipeline directly:
+
+```csharp
+Pipeline
+    .Start(customerReply, "support-intake")
+    .Route(customerReply, resolver, "reply received");
+```
+
 ### Debate Sessions And Teardown
 
 Debate explicitly retains revision history:
@@ -286,6 +293,10 @@ var result = await new PipelineRunner().RunAsync(
 );
 ```
 
+Completed runs report an explicit `PipelineRunStatus.Succeeded` or
+`PipelineRunStatus.Failed`. Cancellation and undeclared faults remain cancellation
+and exceptions rather than additional result statuses.
+
 `PipelineInteractionHandlers` registers typed request/response callbacks. The
 optional observer receives Tandem-owned semantic events for that run. Interactions
 are asynchronous and preserve in-memory state without serialization. Exiting the
@@ -305,6 +316,11 @@ Harness execution, and custom policies additionally reference `Tandem.Advanced`.
 Songwriter and Support do not receive Advanced, Delivery,
 Tool, provider, dashboard, YAML, or MCP dependencies transitively.
 
+An `AgentCapability<TState>` permits one validated semantic state transition. An
+agent may be offered multiple capabilities, but acceptance of one capability
+concludes that pipeline visit. When typed output is also configured, it is the
+ordinary terminal result only when no capability is accepted.
+
 For v1, Tandem deliberately uses FluentValidation's `IValidator<T>` as its public
 typed-output and capability-validation vocabulary. This is an intentional
 compatibility commitment rather than an incidental implementation dependency.
@@ -314,6 +330,11 @@ Run the included Delivery packet:
 ```sh
 dotnet run --project src/Tandem.Tool -- run examples/01-todo-api/packet.md
 ```
+
+Delivery executes configured verification commands directly in the host process
+environment. Its candidate mutation check protects repository integrity; it is
+not a security sandbox. Verification commands must be trusted with the process's
+filesystem, environment, credentials, and network access.
 
 Publish a ready candidate:
 

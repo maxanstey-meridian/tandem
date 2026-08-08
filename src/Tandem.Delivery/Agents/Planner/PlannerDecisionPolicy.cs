@@ -56,7 +56,11 @@ public static class PlannerDecisionPolicy
                         ? decision.Constraints
                         : state.PlannerConstraints,
                 MutationAuthorized = authorizesMutation || state.MutationAuthorized,
-                HumanAnswerSourceBlockId = null,
+                PlannerHumanAnswer = null,
+                Status =
+                    decision.Decision == PlannerDecisionValue.NeedsHuman
+                        ? RunStatus.WaitingForHuman
+                        : state.Status,
             }
         );
     }

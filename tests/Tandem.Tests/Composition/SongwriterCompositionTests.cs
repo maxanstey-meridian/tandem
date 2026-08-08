@@ -16,25 +16,23 @@ public sealed class SongwriterCompositionTests
     {
         var order = new List<string>();
         var services = new ServiceCollection();
-        services
-            .AddTandem()
-            .AddSongwriter(
-                new SongwriterClients(
-                    new ScriptedChatClient(
-                        order,
-                        "songwriter",
-                        "{\"lyrics\":\"First draft\"}",
-                        "{\"lyrics\":\"Linted\\ndraft\"}",
-                        "{\"lyrics\":\"Final\\ndraft\"}"
-                    ),
-                    new ScriptedChatClient(
-                        order,
-                        "proofreader",
-                        "{\"accepted\":false,\"feedback\":\"Sharpen the ending.\"}",
-                        "{\"accepted\":true,\"feedback\":\"Accepted.\"}"
-                    )
+        services.AddSongwriter(
+            new SongwriterClients(
+                new ScriptedChatClient(
+                    order,
+                    "songwriter",
+                    "{\"lyrics\":\"First draft\"}",
+                    "{\"lyrics\":\"Linted\\ndraft\"}",
+                    "{\"lyrics\":\"Final\\ndraft\"}"
+                ),
+                new ScriptedChatClient(
+                    order,
+                    "proofreader",
+                    "{\"accepted\":false,\"feedback\":\"Sharpen the ending.\"}",
+                    "{\"accepted\":true,\"feedback\":\"Accepted.\"}"
                 )
-            );
+            )
+        );
         await using var provider = services.BuildServiceProvider();
         var pipeline = provider.GetRequiredService<SongwriterComposition>().Build();
         var input = new PipelineMessage<SongwriterState>(
@@ -60,14 +58,12 @@ public sealed class SongwriterCompositionTests
     {
         var order = new List<string>();
         var services = new ServiceCollection();
-        services
-            .AddTandem()
-            .AddSongwriter(
-                new SongwriterClients(
-                    new ScriptedChatClient(order, "songwriter", "{\"lyrics\":\"Valid\\ndraft\"}"),
-                    new ScriptedChatClient(order, "proofreader", "not json", "still not json")
-                )
-            );
+        services.AddSongwriter(
+            new SongwriterClients(
+                new ScriptedChatClient(order, "songwriter", "{\"lyrics\":\"Valid\\ndraft\"}"),
+                new ScriptedChatClient(order, "proofreader", "not json", "still not json")
+            )
+        );
         await using var provider = services.BuildServiceProvider();
         var pipeline = provider.GetRequiredService<SongwriterComposition>().Build();
         var input = new PipelineMessage<SongwriterState>(

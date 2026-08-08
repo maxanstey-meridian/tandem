@@ -7,6 +7,38 @@ namespace Tandem.Tests.Domain;
 public sealed class PipelineMessageSerializationTests
 {
     [Fact]
+    public void ExecutorAcceptedFacts_RoundTripWithTheirTypedPayloads()
+    {
+        ExecutorAcceptedFact[] facts =
+        [
+            new ExecutorAcceptedFact.PlannerRequested(
+                new AskPlannerRequest("question", "approach", ["evidence"])
+            ),
+            new ExecutorAcceptedFact.ReportSubmitted(
+                new SubmitReportRequest("summary", ["outcome"], ["evidence"])
+            ),
+            new ExecutorAcceptedFact.CheckpointWritten(
+                new WriteCheckpointRequest("summary", ["completed"], ["next"])
+            ),
+        ];
+
+        foreach (var fact in facts)
+        {
+            var json = JsonSerializer.Serialize<ExecutorAcceptedFact>(fact);
+            var roundTrip = JsonSerializer.Deserialize<ExecutorAcceptedFact>(json);
+
+            roundTrip.Should().NotBeNull().And.BeOfType(fact.GetType());
+            JsonElement
+                .DeepEquals(
+                    JsonSerializer.SerializeToElement(fact, fact.GetType()),
+                    JsonSerializer.SerializeToElement(roundTrip, roundTrip!.GetType())
+                )
+                .Should()
+                .BeTrue();
+        }
+    }
+
+    [Fact]
     public void FullyPopulatedDeliveryMessage_RoundTripsAsClosedGenericType()
     {
         var runId = Guid.CreateVersion7();
@@ -42,8 +74,9 @@ public sealed class PipelineMessageSerializationTests
             [
                 new VerificationResult(0, "task test", 0, "ok", "", TimeSpan.FromSeconds(2), false),
             ],
-            CheckpointPayload = JsonSerializer.SerializeToElement(new { next = "finish" }),
-            ImplementationReport = JsonSerializer.SerializeToElement(new { summary = "done" }),
+            ExecutorAcceptedFact = new ExecutorAcceptedFact.ReportSubmitted(
+                new SubmitReportRequest("done", ["outcome-1"], ["evidence-1"])
+            ),
             Status = RunStatus.Ready,
         };
         var message = new PipelineMessage<DeliveryState>(
@@ -67,32 +100,13 @@ public sealed class PipelineMessageSerializationTests
         roundTrip.Runtime.AgentSessions.Should().ContainKey("executor");
         roundTrip.Runtime.AgentUsage["executor"].CurrentContextTokens.Should().Be(15);
         roundTrip.Runtime.InvocationCounts["executor"].Should().Be(1);
-        roundTrip
-            .State.Should()
-            .BeEquivalentTo(
-                state,
-                options =>
-                    options
-                        .Excluding(candidate => candidate.CheckpointPayload)
-                        .Excluding(candidate => candidate.ImplementationReport)
-            );
+        roundTrip.State.Should().BeEquivalentTo(state);
         roundTrip.LatestOutcome!.Kind.Should().Be(message.LatestOutcome!.Kind);
         roundTrip.Status.Should().Be(PipelineRunStatus.Failed);
         roundTrip.LatestOutcome.BlockId.Should().Be(message.LatestOutcome.BlockId);
         roundTrip.LatestOutcome.Summary.Should().Be(message.LatestOutcome.Summary);
         JsonElement
             .DeepEquals(roundTrip.LatestOutcome.Payload, message.LatestOutcome.Payload)
-            .Should()
-            .BeTrue();
-        JsonElement
-            .DeepEquals(roundTrip.State.CheckpointPayload!.Value, state.CheckpointPayload!.Value)
-            .Should()
-            .BeTrue();
-        JsonElement
-            .DeepEquals(
-                roundTrip.State.ImplementationReport!.Value,
-                state.ImplementationReport!.Value
-            )
             .Should()
             .BeTrue();
     }

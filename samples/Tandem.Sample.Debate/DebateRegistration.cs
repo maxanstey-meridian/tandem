@@ -27,11 +27,7 @@ public static class DebateRegistration
         services.AddSingleton(verdict);
         services.AddSingleton(options);
         services.AddSingleton(sp =>
-            DebateDefinitions.Create(
-                sp.GetRequiredService<AgentFactory>(),
-                sp.GetRequiredService<DebateOptions>(),
-                verdict
-            )
+            DebateDefinitions.Create(sp.GetRequiredService<DebateOptions>(), verdict)
         );
         services.AddSingleton<DebateComposition>();
         return services;
