@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Tandem;
+using Tandem.Advanced;
 using Tandem.Application;
 using Tandem.Delivery;
 using Tandem.Domain;
@@ -11,6 +12,7 @@ using Tandem.Infrastructure;
 using Tandem.Infrastructure.Dashboard;
 using Tandem.Infrastructure.Projection;
 using Tandem.Interfaces;
+using Tandem.Ledger;
 using Tandem.Tool;
 using InfrastructureChatClientBuilder = Tandem.Infrastructure.ChatClientBuilder;
 
@@ -121,21 +123,19 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
         return 1;
     }
 
-    await using var provider = BuildDeliveryServices(config);
-    var chatClients = provider.GetRequiredService<TandemChatClients>();
     var runPaths = new RunSetup().Create(tandemHome);
+    var ledgerStore = new SqliteLedgerStore(Path.Combine(tandemHome, "ledger.sqlite3"));
+    await ledgerStore.InitializeAsync(cancellationToken);
+    await ledgerStore.CreateRunAsync(runPaths.RunId, "delivery", cancellationToken);
+    var deliveryLedger = new DeliveryLedger(ledgerStore.ForRun(runPaths.RunId));
+    await deliveryLedger.InitializeAsync(packet, cancellationToken);
+    await using var provider = BuildDeliveryServices(config, deliveryLedger);
+    var chatClients = provider.GetRequiredService<TandemChatClients>();
     var composition = provider.GetRequiredService<DeliveryComposition>();
 
     var eventStore = new EventStore(runPaths.RunDirectory);
-    var projection = RunProjection.Initial(
-        runPaths.RunId,
-        "delivery",
-        packetPath,
-        packet.Repository,
-        runPaths.WorkspacePath
-    );
-    await new RunProjectionStore(runPaths.RunDirectory).WriteAsync(projection, cancellationToken);
     var renderer = new StreamRenderer();
+    var journalObserver = new LedgerPipelineObserver(ledgerStore.ForRun(runPaths.RunId));
     try
     {
         var runProjectors = new Dictionary<string, RunEventProjector>();
@@ -161,7 +161,7 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
         }
 
         var interactive = !Console.IsInputRedirected && !Console.IsOutputRedirected;
-        var runObserver = new RunEventPipelineObserver(
+        var dashboardObserver = new RunEventPipelineObserver(
             GetProjector,
             update =>
             {
@@ -171,6 +171,7 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
                 }
             }
         );
+        var runObserver = new CompositePipelineObserver(journalObserver, dashboardObserver);
         var pipeline = composition.Build();
 
         var implProfile = chatClients.ResolveProfile("implementation");
@@ -186,9 +187,10 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
             packetPath,
             cancellationToken
         );
+        await journalObserver.RecordRunStartedAsync(cancellationToken);
 
         using var runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var humanInteraction = new TerminalHumanInteraction();
+        var humanInteraction = new TerminalHumanInteraction(deliveryLedger);
         var interactions = new PipelineInteractionHandlers()
             .Handle(composition.PlannerHumanInput, humanInteraction.WaitAsync)
             .Handle(composition.ReviewerHumanInput, humanInteraction.WaitAsync);
@@ -200,15 +202,21 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
             var final = await runner.RunAsync(
                 pipeline,
                 DeliveryState.Create(packet, "", runPaths.WorkspacePath),
-                new PipelineRunOptions(runPaths.RunId, interactions, runObserver),
+                new PipelineRunOptions(
+                    runPaths.RunId,
+                    interactions,
+                    runObserver
+                ).WithAcceptanceUnitOfWork(new LedgerUnitOfWork(ledgerStore)),
                 runCts.Token
             );
             renderer.RenderTerminalMessage(final);
-            await PersistTerminalProjectionAsync(
-                runPaths.RunDirectory,
-                projection,
+            await PersistTerminalAsync(
+                runPaths.RunId,
                 final,
                 eventStore,
+                ledgerStore,
+                deliveryLedger,
+                journalObserver,
                 CancellationToken.None
             );
             return final;
@@ -219,17 +227,13 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
             onAnswerSubmitted: answer => humanInteraction.SubmitAsync(runPaths.RunId, answer),
             onPublishRequested: async () =>
             {
-                var current = new RunProjectionStore(runPaths.RunDirectory).Read();
-                if (current is not null)
-                {
-                    await PublishCandidateAsync(
-                        runPaths.RunDirectory,
-                        current,
-                        null,
-                        eventStore,
-                        cancellationToken
-                    );
-                }
+                await PublishFromLedgerAsync(
+                    tandemHome,
+                    runPaths.RunId,
+                    null,
+                    eventStore,
+                    cancellationToken
+                );
             },
             onDetach: () =>
             {
@@ -285,9 +289,11 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
     catch (OperationCanceledException)
     {
         await TryPersistInterruptedRunAsync(
-            runPaths.RunDirectory,
-            projection,
+            runPaths.RunId,
             eventStore,
+            ledgerStore,
+            deliveryLedger,
+            journalObserver,
             Tandem.Delivery.RunStatus.Cancelled,
             "Run cancelled."
         );
@@ -300,9 +306,11 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
             ? innerException
             : ex;
         await TryPersistInterruptedRunAsync(
-            runPaths.RunDirectory,
-            projection,
+            runPaths.RunId,
             eventStore,
+            ledgerStore,
+            deliveryLedger,
+            journalObserver,
             Tandem.Delivery.RunStatus.Faulted,
             reportedException.Message
         );
@@ -339,7 +347,7 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
     };
 }
 
-static ServiceProvider BuildDeliveryServices(TandemConfig config)
+static ServiceProvider BuildDeliveryServices(TandemConfig config, IDeliveryRecordSink records)
 {
     var services = new ServiceCollection();
     var clients = new TandemChatClients(config);
@@ -356,25 +364,43 @@ static ServiceProvider BuildDeliveryServices(TandemConfig config)
                     profile.MaxOutputTokens,
                     profile.CheckpointAtPercent
                 );
-            }
+            },
+            records
         )
     );
     return services.BuildServiceProvider();
 }
 
-static async Task PersistTerminalProjectionAsync(
-    string runDirectory,
-    RunProjection projection,
+static async Task PersistTerminalAsync(
+    Guid runId,
     PipelineRunResult<DeliveryState> final,
     EventStore eventStore,
+    SqliteLedgerStore ledgerStore,
+    DeliveryLedger deliveryLedger,
+    LedgerPipelineObserver journalObserver,
     CancellationToken cancellationToken
 )
 {
-    var projector = new RunEventProjector(projection.RunId, "", eventStore);
+    var projector = new RunEventProjector(runId, "", eventStore);
     var status =
         final.Outcome?.Kind == OutcomeKinds.RunReady
             ? Tandem.Delivery.RunStatus.Ready
             : Tandem.Delivery.RunStatus.Failed;
+    await deliveryLedger.AcceptTerminalOutcomeAsync(
+        $"terminal--{status}",
+        new TerminalOutcomeRecord(
+            status.ToString(),
+            final.State.CandidateSha,
+            final.Outcome?.Summary
+        ),
+        cancellationToken
+    );
+    await journalObserver.RecordRunCompletedAsync(status.ToString(), cancellationToken);
+    await ledgerStore.CompleteRunAsync(
+        runId,
+        status == Tandem.Delivery.RunStatus.Ready ? LedgerRunStatus.Ready : LedgerRunStatus.Failed,
+        cancellationToken
+    );
     switch (status)
     {
         case Tandem.Delivery.RunStatus.Ready:
@@ -387,31 +413,34 @@ static async Task PersistTerminalProjectionAsync(
             );
             break;
     }
-
-    await new RunProjectionStore(runDirectory).WriteAsync(
-        projection with
-        {
-            Status = status,
-            ActiveBlockId = null,
-            PinnedBaseSha = final.State.PinnedBaseSha,
-            CandidateSha = final.State.CandidateSha,
-            UpdatedAt = DateTimeOffset.UtcNow,
-        },
-        cancellationToken
-    );
 }
 
 static async Task TryPersistInterruptedRunAsync(
-    string runDirectory,
-    RunProjection projection,
+    Guid runId,
     EventStore eventStore,
+    SqliteLedgerStore ledgerStore,
+    DeliveryLedger deliveryLedger,
+    LedgerPipelineObserver journalObserver,
     Tandem.Delivery.RunStatus status,
     string reason
 )
 {
     try
     {
-        var projector = new RunEventProjector(projection.RunId, "", eventStore);
+        await deliveryLedger.AcceptTerminalOutcomeAsync(
+            $"terminal--{status}",
+            new TerminalOutcomeRecord(status.ToString(), null, reason),
+            CancellationToken.None
+        );
+        await journalObserver.RecordRunCompletedAsync(status.ToString(), CancellationToken.None);
+        await ledgerStore.CompleteRunAsync(
+            runId,
+            status == Tandem.Delivery.RunStatus.Cancelled
+                ? LedgerRunStatus.Cancelled
+                : LedgerRunStatus.Faulted,
+            CancellationToken.None
+        );
+        var projector = new RunEventProjector(runId, "", eventStore);
         if (status == Tandem.Delivery.RunStatus.Cancelled)
         {
             await projector.EmitRunCancelledAsync(reason, CancellationToken.None);
@@ -420,15 +449,6 @@ static async Task TryPersistInterruptedRunAsync(
         {
             await projector.EmitRunFaultedAsync(reason, CancellationToken.None);
         }
-        await new RunProjectionStore(runDirectory).WriteAsync(
-            projection with
-            {
-                Status = status,
-                ActiveBlockId = null,
-                UpdatedAt = DateTimeOffset.UtcNow,
-            },
-            CancellationToken.None
-        );
     }
     catch (Exception persistenceError)
     {
@@ -446,230 +466,45 @@ static async Task<int> PublishAsync(
 )
 {
     var tandemHome = TandemHomeResolver.Resolve();
-    var runDir = Path.Combine(tandemHome, "runs", runIdArg);
-    if (!Directory.Exists(runDir))
+    if (!Guid.TryParse(runIdArg, out var runId))
     {
-        Console.Error.WriteLine($"Error: Run directory not found: {runDir}");
+        Console.Error.WriteLine($"Error: Invalid run ID '{runIdArg}'.");
         return 1;
     }
-
-    var projection = new RunProjectionStore(runDir).Read();
-    if (projection is null)
-    {
-        Console.Error.WriteLine($"Error: run.json not found in {runDir}");
-        return 1;
-    }
-
+    var runDir = Path.Combine(tandemHome, "runs", runId.ToString("N"));
     var eventStore = new EventStore(runDir);
-    return await PublishCandidateAsync(runDir, projection, branch, eventStore, cancellationToken);
+    return await PublishFromLedgerAsync(tandemHome, runId, branch, eventStore, cancellationToken);
 }
 
-static async Task<int> PublishCandidateAsync(
-    string runDir,
-    RunProjection projection,
-    string? explicitBranch,
+static async Task<int> PublishFromLedgerAsync(
+    string tandemHome,
+    Guid runId,
+    string? branch,
     EventStore eventStore,
-    CancellationToken ct
+    CancellationToken cancellationToken
 )
 {
-    if (projection.Status != Tandem.Delivery.RunStatus.Ready)
+    var store = new SqliteLedgerStore(Path.Combine(tandemHome, "ledger.sqlite3"));
+    await store.InitializeAsync(cancellationToken);
+    var run = await store.GetRunAsync(runId, cancellationToken);
+    if (run.Status != LedgerRunStatus.Ready)
     {
-        Console.Error.WriteLine($"Error: Run is not Ready (current: {projection.Status}).");
-        return 1;
+        throw new InvalidOperationException($"Run is not Ready (current: {run.Status}).");
     }
-
-    if (string.IsNullOrEmpty(projection.CandidateSha))
-    {
-        Console.Error.WriteLine("Error: No candidate SHA in run projection.");
-        return 1;
-    }
-
-    if (string.IsNullOrEmpty(projection.RepositoryPath))
-    {
-        Console.Error.WriteLine("Error: No source repository path in run projection.");
-        return 1;
-    }
-
-    var candidateSha = projection.CandidateSha!;
-    var sourceRepo = projection.RepositoryPath!;
-    var workspace = projection.WorkspacePath;
-
-    // Verify workspace HEAD contains the candidate commit.
-    var git = new GitProcess();
-    var headResult = await git.RunAsync(workspace, ["rev-parse", "HEAD"], ct);
-    if (headResult.ExitCode != 0)
-    {
-        Console.Error.WriteLine($"Error: Could not read workspace HEAD: {headResult.Stderr}");
-        return 1;
-    }
-
-    var headSha = headResult.Stdout.Trim();
-    if (!headSha.StartsWith(candidateSha, StringComparison.OrdinalIgnoreCase))
-    {
-        Console.Error.WriteLine(
-            $"Error: Workspace HEAD ({headSha[..12]}) does not contain candidate ({candidateSha[..12]})."
-        );
-        return 1;
-    }
-
-    // Verify source repo still resolves the pinned base SHA.
-    if (!string.IsNullOrEmpty(projection.PinnedBaseSha))
-    {
-        var baseResult = await git.RunAsync(
-            sourceRepo,
-            ["cat-file", "-e", projection.PinnedBaseSha!],
-            ct
-        );
-        if (baseResult.ExitCode != 0)
-        {
-            Console.Error.WriteLine(
-                $"Error: Pinned base SHA {projection.PinnedBaseSha} not found in source repo."
-            );
-            return 1;
-        }
-    }
-
-    // Derive branch name.
-    string branchName;
-    if (!string.IsNullOrEmpty(explicitBranch))
-    {
-        branchName = explicitBranch!;
-    }
-    else
-    {
-        var slug = Slugify(Path.GetFileNameWithoutExtension(projection.PacketPath));
-        var prefix = runDir[^8..];
-        branchName = $"tandem/{slug}-{prefix}";
-    }
-
-    // Validate the branch name.
-    var validateResult = await git.RunAsync(null, ["check-ref-format", "--branch", branchName], ct);
-    if (validateResult.ExitCode != 0)
-    {
-        Console.Error.WriteLine(
-            $"Error: Invalid branch name '{branchName}': {validateResult.Stderr}"
-        );
-        return 1;
-    }
-
-    // Check target branch doesn't already exist.
-    var existingResult = await git.RunAsync(
-        sourceRepo,
-        ["rev-parse", "--verify", $"refs/heads/{branchName}"],
-        ct
+    var records = new DeliveryLedger(store.ForRun(runId));
+    var result = await new PublicationOperation(new GitProcess(), records).ExecuteAsync(
+        branch,
+        cancellationToken
     );
-    if (existingResult.ExitCode == 0)
-    {
-        Console.Error.WriteLine($"Error: Branch '{branchName}' already exists in source repo.");
-        return 1;
-    }
-
-    // Record source repo's current state for postcondition.
-    var currentBranchResult = await git.RunAsync(
-        sourceRepo,
-        ["rev-parse", "--abbrev-ref", "HEAD"],
-        ct
+    await new RunEventProjector(runId, "", eventStore).EmitRunPublishedAsync(
+        result.Branch,
+        result.CandidateSha,
+        cancellationToken
     );
-    var currentBranch = currentBranchResult.Stdout.Trim();
-    var sourceStatusBefore = await git.RunAsync(sourceRepo, ["status", "--porcelain"], ct);
-
-    // Transfer the commit: push from workspace to source repo.
-    var pushResult = await git.RunAsync(
-        workspace,
-        ["push", sourceRepo, $"{candidateSha}:refs/heads/{branchName}"],
-        ct
-    );
-    if (pushResult.ExitCode != 0)
-    {
-        Console.Error.WriteLine($"Error: git push failed: {pushResult.Stderr}");
-        return 1;
-    }
-
-    // Verify: the branch resolves to the exact candidate SHA.
-    var verifyResult = await git.RunAsync(
-        sourceRepo,
-        ["rev-parse", $"refs/heads/{branchName}"],
-        ct
-    );
-    if (verifyResult.ExitCode != 0)
-    {
-        Console.Error.WriteLine(
-            $"Error: Could not verify branch after push: {verifyResult.Stderr}"
-        );
-        return 1;
-    }
-
-    var publishedSha = verifyResult.Stdout.Trim();
-    if (!publishedSha.Equals(candidateSha, StringComparison.OrdinalIgnoreCase))
-    {
-        Console.Error.WriteLine(
-            $"Error: Branch resolves to {publishedSha[..12]} but expected {candidateSha[..12]}."
-        );
-        return 1;
-    }
-
-    // Verify source repo's current branch and working tree are unchanged.
-    var currentBranchAfter = await git.RunAsync(
-        sourceRepo,
-        ["rev-parse", "--abbrev-ref", "HEAD"],
-        ct
-    );
-    if (currentBranchAfter.Stdout.Trim() != currentBranch)
-    {
-        Console.Error.WriteLine(
-            $"Error: Source repo branch changed from '{currentBranch}' to '{currentBranchAfter.Stdout.Trim()}'."
-        );
-        return 1;
-    }
-
-    var sourceStatusAfter = await git.RunAsync(sourceRepo, ["status", "--porcelain"], ct);
-    if (sourceStatusAfter.Stdout != sourceStatusBefore.Stdout)
-    {
-        Console.Error.WriteLine("Error: Source repo working tree changed during publication.");
-        return 1;
-    }
-
-    // Update run projection.
-    var updatedProjection = projection with
-    {
-        PublishedBranch = branchName,
-        Status = Tandem.Delivery.RunStatus.Ready,
-        UpdatedAt = DateTimeOffset.UtcNow,
-    };
-    await new RunProjectionStore(runDir).WriteAsync(updatedProjection, ct);
-
-    // Emit run.published event.
-    var projector = new RunEventProjector(updatedProjection.RunId, "", eventStore);
-    await projector.EmitRunPublishedAsync(branchName, candidateSha, ct);
-
-    Console.WriteLine($"Published: {branchName}");
-    Console.WriteLine($"Commit:    {candidateSha}");
-    Console.WriteLine($"Repository:{sourceRepo}");
+    Console.WriteLine($"Published: {result.Branch}");
+    Console.WriteLine($"Commit:    {result.CandidateSha}");
+    Console.WriteLine($"Repository:{result.Repository}");
     return 0;
-}
-
-static string Slugify(string input)
-{
-    var slug = new StringBuilder();
-    var prevDash = false;
-    foreach (var c in input.ToLowerInvariant())
-    {
-        if (char.IsLetterOrDigit(c))
-        {
-            slug.Append(c);
-            prevDash = false;
-        }
-        else if (!prevDash && slug.Length > 0)
-        {
-            slug.Append('-');
-            prevDash = true;
-        }
-    }
-    if (slug.Length > 0 && slug[^1] == '-')
-    {
-        slug.Remove(slug.Length - 1, 1);
-    }
-    return slug.ToString();
 }
 
 file sealed class ChatClientBuilderFactory(TandemConfig config)
@@ -708,83 +543,6 @@ file sealed class ChatClientBuilderFactory(TandemConfig config)
 
         var apiKey = EnvironmentApiKeyReader.Read(providerConfig.ApiKeyEnvironmentVariable);
         return new ProfileResolver().Resolve(config, profileName, apiKey);
-    }
-}
-
-file sealed class TerminalHumanInteraction
-{
-    private readonly object _sync = new();
-    private Pending? _pending;
-
-    public async ValueTask<HumanAnswer> WaitAsync(
-        PipelineInteractionContext<HumanQuestion, HumanAnswer> context,
-        CancellationToken cancellationToken
-    )
-    {
-        var pending = new Pending(context);
-        lock (_sync)
-        {
-            if (_pending is not null)
-            {
-                throw new InvalidOperationException("A human interaction is already pending.");
-            }
-            _pending = pending;
-        }
-
-        try
-        {
-            return await pending.Completion.Task.WaitAsync(cancellationToken);
-        }
-        finally
-        {
-            lock (_sync)
-            {
-                if (ReferenceEquals(_pending, pending))
-                {
-                    _pending = null;
-                }
-            }
-        }
-    }
-
-    public Task SubmitAsync(Guid runId, string? answerText)
-    {
-        if (string.IsNullOrWhiteSpace(answerText))
-        {
-            return Task.CompletedTask;
-        }
-
-        Pending pending;
-        lock (_sync)
-        {
-            pending =
-                _pending
-                ?? throw new InvalidOperationException(
-                    $"Run '{runId:N}' has no pending human interaction."
-                );
-            if (pending.Context.RunId != runId)
-            {
-                throw new InvalidOperationException(
-                    $"Pending interaction belongs to run '{pending.Context.RunId:N}', not '{runId:N}'."
-                );
-            }
-            _pending = null;
-        }
-
-        if (!pending.Completion.TrySetResult(new HumanAnswer(answerText.Trim())))
-        {
-            throw new InvalidOperationException(
-                $"Interaction '{pending.Context.InteractionId}' no longer accepts answers."
-            );
-        }
-        return Task.CompletedTask;
-    }
-
-    private sealed class Pending(PipelineInteractionContext<HumanQuestion, HumanAnswer> context)
-    {
-        public PipelineInteractionContext<HumanQuestion, HumanAnswer> Context { get; } = context;
-        public TaskCompletionSource<HumanAnswer> Completion { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }
 

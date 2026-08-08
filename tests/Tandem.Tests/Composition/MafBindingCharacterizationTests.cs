@@ -1,11 +1,60 @@
 using System.Collections.Concurrent;
 using FluentAssertions;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Compaction;
 using Microsoft.Agents.AI.Workflows;
+
+#pragma warning disable MAAI001
 
 namespace Tandem.Tests.Composition;
 
 public sealed class MafBindingCharacterizationTests
 {
+    [Fact]
+    public void HarnessFileTools_HaveStableConstantsAndCompleteReadWriteClassification()
+    {
+        var reads = new[]
+        {
+            FileAccessProvider.ReadFileToolName,
+            FileAccessProvider.LsToolName,
+            FileAccessProvider.GrepToolName,
+        };
+        var mutations = new[]
+        {
+            FileAccessProvider.WriteToolName,
+            FileAccessProvider.DeleteFileToolName,
+            FileAccessProvider.ReplaceToolName,
+            FileAccessProvider.ReplaceLinesToolName,
+        };
+
+        reads.Should().Equal("file_access_read", "file_access_ls", "file_access_grep");
+        mutations
+            .Should()
+            .Equal(
+                "file_access_write",
+                "file_access_delete",
+                "file_access_replace",
+                "file_access_replace_lines"
+            );
+        reads.Concat(mutations).Should().OnlyHaveUniqueItems().And.HaveCount(7);
+    }
+
+    [Fact]
+    public void ContextWindowCompaction_UsesAnInputBudgetAndOrderedThresholds()
+    {
+        var strategy = new ContextWindowCompactionStrategy(
+            maxContextWindowTokens: 100_000,
+            maxOutputTokens: 10_000,
+            toolEvictionThreshold: 0.5,
+            truncationThreshold: 0.8
+        );
+
+        strategy.InputBudgetTokens.Should().Be(90_000);
+        strategy.ToolEvictionThreshold.Should().Be(0.5);
+        strategy.TruncationThreshold.Should().Be(0.8);
+        new CompactionProvider(strategy).StateKeys.Should().ContainSingle();
+    }
+
     [Fact]
     public void SameExecutor_BindExecutorTwice_CreatesFreshBindingsWithStableIdentity()
     {
@@ -455,3 +504,5 @@ public sealed class MafBindingCharacterizationTests
 
     private sealed record SecondAnswer(string Value);
 }
+
+#pragma warning restore MAAI001

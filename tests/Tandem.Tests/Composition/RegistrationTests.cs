@@ -32,7 +32,9 @@ public sealed class RegistrationTests : IDisposable
         Directory.CreateDirectory(_home);
         var services = new ServiceCollection();
         var clients = new FakeChatClients();
-        services.AddDelivery(new DeliveryOptions(clients.Build, clients.ResolveProfile));
+        services.AddDelivery(
+            new DeliveryOptions(clients.Build, clients.ResolveProfile, new FakeDeliveryRecordSink())
+        );
 
         using var provider = services.BuildServiceProvider(
             new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true }
@@ -145,7 +147,9 @@ public sealed class RegistrationTests : IDisposable
         Directory.CreateDirectory(_home);
         var clients = new FakeChatClients();
         var services = new ServiceCollection();
-        services.AddDelivery(new DeliveryOptions(clients.Build, clients.ResolveProfile));
+        services.AddDelivery(
+            new DeliveryOptions(clients.Build, clients.ResolveProfile, new FakeDeliveryRecordSink())
+        );
 
         using var provider = services.BuildServiceProvider(
             new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true }

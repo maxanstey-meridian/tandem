@@ -16,7 +16,7 @@ public sealed class BoundaryValidatorTests
             .IsValid.Should()
             .BeFalse();
         new WriteCheckpointRequestValidator()
-            .Validate(new WriteCheckpointRequest("Summary", ["Done"], [" "]))
+            .Validate(new WriteCheckpointRequest("Summary", ["Done"], [" "], [], "Next"))
             .IsValid.Should()
             .BeFalse();
     }

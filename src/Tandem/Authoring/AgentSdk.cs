@@ -119,6 +119,8 @@ public sealed class AgentBuilder<TState>
     private Action<ChatOptions>? _configureChatOptions;
     private AgentImplementationFactory? _implementationFactory;
     private TimeSpan? _timeout;
+    private IReadOnlyList<AgentStateGuardDescriptor<TState>> _stateGuards = [];
+    private IReadOnlyList<AgentLatchedGateDescriptor> _latchedGates = [];
 
     internal AgentBuilder(
         string id,
@@ -265,6 +267,7 @@ public sealed class AgentBuilder<TState>
             PipelineMessage<TState>,
             AgentStructuredOutputResult<TState>,
             IReadOnlySet<ToolObservationDescriptor>,
+            string,
             int,
             IReadOnlyList<AgentStructuredOutputProblem>
         > acceptance
@@ -288,6 +291,42 @@ public sealed class AgentBuilder<TState>
             );
         }
         _structuredOutput = _structuredOutput with { Accept = acceptance };
+        return this;
+    }
+
+    internal AgentBuilder<TState> ConfigureOutputAcceptanceAsync(
+        Type outputType,
+        Func<
+            PipelineMessage<TState>,
+            AgentStructuredOutputResult<TState>,
+            IReadOnlySet<ToolObservationDescriptor>,
+            string,
+            int,
+            CancellationToken,
+            ValueTask
+        > acceptance
+    )
+    {
+        if (_structuredOutput is null)
+        {
+            throw new InvalidOperationException(
+                "Output acceptance requires typed output. Call WithOutput(...) first."
+            );
+        }
+        if (_structuredOutput.AcceptAsync is not null)
+        {
+            throw new InvalidOperationException(
+                "Asynchronous output acceptance is already configured."
+            );
+        }
+        if (_structuredOutput.OutputType != outputType)
+        {
+            throw new InvalidOperationException(
+                $"Output acceptance for '{outputType.Name}' cannot decorate configured output "
+                    + $"'{_structuredOutput.OutputType?.Name ?? "unknown"}'."
+            );
+        }
+        _structuredOutput = _structuredOutput with { AcceptAsync = acceptance };
         return this;
     }
 
@@ -319,6 +358,31 @@ public sealed class AgentBuilder<TState>
     {
         _checkpoint = policy;
         AddCapability(policy.Capability);
+        _latchedGates =
+        [
+            .. _latchedGates,
+            new AgentLatchedGateDescriptor(
+                "checkpoint-required",
+                usage =>
+                    usage.CurrentContextTokens + policy.MaxOutputTokens
+                    >= policy.CheckpointAtTokens,
+                new HashSet<ToolEffect> { ToolEffect.WorkspaceMutation },
+                $"Context limit approaching. Call {policy.Capability.ToolName} before further mutation.",
+                policy.Capability.CapabilityId,
+                policy.Capability.ToolName,
+                ResetSessionAfterRelease: true
+            ),
+        ];
+        return this;
+    }
+
+    internal AgentBuilder<TState> ConfigureStateGuard(AgentStateGuardDescriptor<TState> guard)
+    {
+        if (_stateGuards.Any(existing => existing.Id == guard.Id))
+        {
+            throw new InvalidOperationException($"Agent '{_id}' has duplicate gate '{guard.Id}'.");
+        }
+        _stateGuards = [.. _stateGuards, guard];
         return this;
     }
 
@@ -387,7 +451,9 @@ public sealed class AgentBuilder<TState>
             _retainConversation,
             _contextMessage,
             _implementationFactory,
-            _timeout
+            _timeout,
+            _stateGuards,
+            _latchedGates
         );
 
         return new AgentDefinition<TState>(

@@ -1,5 +1,6 @@
 [advanced]
 Tandem.Advanced.AdvancedAgentBuilderExtensions
+Tandem.Advanced.AdvancedPipelineRunOptionsExtensions
 Tandem.Advanced.AdvancedAgentMessage`1
 Tandem.Advanced.AgentCapabilityAcceptanceContext`2
 Tandem.Advanced.AgentCapabilityAcceptanceExtensions
@@ -12,14 +13,17 @@ Tandem.Advanced.AgentMessageOutcome
 Tandem.Advanced.AgentProfileDecision
 Tandem.Advanced.AgentProfilePolicy`1
 Tandem.Advanced.AgentProfiles
+Tandem.Advanced.AgentStateGuard`1
 Tandem.Advanced.AgentTurnContinuationPolicy`1
 Tandem.Advanced.AgentTurnDirective
 Tandem.Advanced.AgentTurnObservation`1
+Tandem.Advanced.IPipelineAcceptanceUnitOfWork
 Tandem.Advanced.AgentTurnPolicy`1
 Tandem.Advanced.CheckpointPolicy`1
 Tandem.Advanced.MessageAugmentation`1
 Tandem.Advanced.OperationOutcome
 Tandem.Advanced.OperationResult`1
+Tandem.Advanced.OutputAcceptance`2
 Tandem.Advanced.OutputAcceptanceObservation`2
 Tandem.Advanced.OutputAcceptancePolicy`2
 Tandem.Advanced.PipelineOperation

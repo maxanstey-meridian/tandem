@@ -32,12 +32,18 @@ Tandem.AgentUpdate+ToolCompleted
 Tandem.AgentUpdate+ToolStarted
 Tandem.AgentUpdate+Usage
 Tandem.IPipelineObserver
+Tandem.PipelineActionAttempted
+Tandem.PipelineActionCompleted
 Tandem.PipelineAgentUpdated
+Tandem.PipelineAgentUsage
+Tandem.PipelineCapabilityAccepted
 Tandem.PipelineCommandOutput
 Tandem.PipelineInteractionAnswered`1
+Tandem.PipelineInteractionAnsweredObservation
 Tandem.PipelineInteractionContext`2
 Tandem.PipelineInteractionHandlers
 Tandem.PipelineInteractionRequested`1
+Tandem.PipelineInteractionRequestedObservation
 Tandem.PipelineObservation
 Tandem.PipelineRunException
 Tandem.PipelineRunOptions
@@ -48,6 +54,7 @@ Tandem.PipelineStepCancelled
 Tandem.PipelineStepCompleted
 Tandem.PipelineStepFaulted
 Tandem.PipelineStepStarted
+Tandem.PipelineStructuredOutputAccepted
 
 [generator-abi]
 Tandem.GeneratedOutcomeStepDescriptor`1

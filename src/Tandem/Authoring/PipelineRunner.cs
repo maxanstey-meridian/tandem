@@ -7,7 +7,10 @@ public sealed record PipelineRunOptions(
     Guid? RunId = null,
     PipelineInteractionHandlers? Interactions = null,
     IPipelineObserver? Observer = null
-);
+)
+{
+    internal IPipelineAcceptanceUnitOfWork? AcceptanceUnitOfWork { get; init; }
+}
 
 public sealed record PipelineRunResult<TState>(
     Guid RunId,
@@ -160,6 +163,7 @@ public sealed class PipelineRunner
                 runId,
                 initialState,
                 options.Observer,
+                options.AcceptanceUnitOfWork,
                 cancellationToken
             )
             : await runner.RunAsync(
@@ -168,6 +172,7 @@ public sealed class PipelineRunner
                 initialState,
                 new TypedInteractionHandler(options.Interactions),
                 options.Observer,
+                options.AcceptanceUnitOfWork,
                 cancellationToken
             );
         var outcome = output.LatestOutcome is null

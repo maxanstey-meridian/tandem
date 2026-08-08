@@ -122,12 +122,14 @@ work; no process owns an ambient current run.
 
 ## Minimal Ledger
 
-The generic substrate needs only three storage concepts:
+The generic substrate needs only three product-storage concepts plus one schema
+metadata registry:
 
 ```text
 runs           run identity, composition, status, timestamps
 run_entries    ordered append-only records
 run_documents  current replaceable records
+ledger_contracts persisted stream/document contract identity
 ```
 
 Operational dashboard events may remain in `events.jsonl` for the current UI.
@@ -159,6 +161,12 @@ run_documents
     version
     payload
     updated_at
+
+ledger_contracts
+    storage_name
+    storage_kind
+    contract_name
+    contract_version
 ```
 
 Required behavior:
@@ -227,9 +235,15 @@ automatic redaction, expiry, retention job, or operator deletion command.
 Composition code must use typed records, not raw JSON:
 
 ```csharp
-public sealed record LedgerStream<TEntry>(string Name);
+public sealed record LedgerStream<TEntry>(
+    string Name,
+    string Contract,
+    int Version = 1);
 
-public sealed record LedgerDocument<TDocument>(string Name);
+public sealed record LedgerDocument<TDocument>(
+    string Name,
+    string Contract,
+    int Version = 1);
 ```
 
 The run-bound capability needs the equivalent of:
@@ -260,9 +274,9 @@ stages with a universal context. Durable I/O is an Advanced concern. Do not add
 
 Append returns a typed accepted-entry envelope containing sequence and recorded
 time. Document reads and writes return a typed envelope containing value and
-version. The exact replay contract for a document write must be settled before a
-ledger-backed capability updates a current document; an invocation replay must
-not advance a document version twice.
+version. A document write replay is recognized only when the stored version is
+exactly `expectedVersion + 1` and its deterministic payload bytes match; it
+returns the original accepted document without advancing the version again.
 
 The exact API should follow the landed Tandem authoring style. Preserve these
 constraints:
@@ -272,10 +286,12 @@ constraints:
 - no public `object` or dictionary-based record API is introduced; and
 - adding a composition record type does not require a new database table.
 
-Stream and document names are persisted contract identities. Registration fails
-if two record types claim the same name. Breaking payload changes use a new
-contract name or an explicit payload version; silently deserializing an old name
-as a new incompatible type is forbidden.
+Stream and document names are persisted storage identities. The metadata registry
+atomically binds each storage name to exactly one stream/document kind, stable
+contract name, and positive contract version across runs and processes.
+Registration fails if another kind, contract name, or version claims the same
+storage name. Breaking payload changes use a new storage name or explicit contract
+version; silently deserializing an old name as a new incompatible type is forbidden.
 
 Pipeline definitions are reusable and may execute concurrent runs. A singleton
 composition must never capture a mutable "current run" ledger. The internal
@@ -557,8 +573,8 @@ Classify SDK and external MCP tools once at their adapter or registration
 boundary. Do not repeat tool-name prefix matching in every composition policy. A
 custom invocable action used by a gated agent must declare its effect.
 
-For MAF 1.16, characterize classification against the actual exposed file tools.
-The names below are hypotheses from the stale design, not an authoritative list:
+MAF 1.16 characterization confirms the actual exposed file tools through
+maintained `FileAccessProvider` constants:
 
 ```text
 Read

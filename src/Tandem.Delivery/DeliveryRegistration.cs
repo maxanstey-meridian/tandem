@@ -1,5 +1,6 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Tandem.Git;
 
 namespace Tandem.Delivery;
@@ -12,7 +13,8 @@ public sealed record DeliveryAgentProfile(
 
 public sealed record DeliveryOptions(
     Func<string, IChatClient> ChatClients,
-    Func<string, DeliveryAgentProfile> Profiles
+    Func<string, DeliveryAgentProfile> Profiles,
+    IDeliveryRecordSink Records
 );
 
 public static class DeliveryRegistration
@@ -22,27 +24,39 @@ public static class DeliveryRegistration
         DeliveryOptions options
     )
     {
-        var capabilities = DeliveryCapabilities.Create();
-        var askPlanner = capabilities.AskPlanner;
-        var submitReport = capabilities.SubmitReport;
-        var writeCheckpoint = capabilities.WriteCheckpoint;
-        services.AddSingleton(askPlanner);
-        services.AddSingleton(submitReport);
-        services.AddSingleton(writeCheckpoint);
-        services.AddSingleton<GitProcess>();
+        services.AddSingleton(options.Records);
+        services.TryAddSingleton<GitProcess>();
+        services.AddSingleton<CheckpointAcceptance>();
+        services.AddSingleton(sp =>
+            DeliveryCapabilities.Create(
+                options.Records,
+                sp.GetRequiredService<CheckpointAcceptance>()
+            )
+        );
+        services.AddSingleton<AgentCapability<DeliveryState>>(sp =>
+            sp.GetRequiredService<DeliveryCapabilitySet>().AskPlanner
+        );
+        services.AddSingleton<AgentCapability<DeliveryState>>(sp =>
+            sp.GetRequiredService<DeliveryCapabilitySet>().SubmitReport
+        );
+        services.AddSingleton<AgentCapability<DeliveryState>>(sp =>
+            sp.GetRequiredService<DeliveryCapabilitySet>().WriteCheckpoint
+        );
         services.AddSingleton<WorkspacePreparation>();
         services.AddSingleton<DeliveryDiffAcquisition>();
         services.AddSingleton<DeliveryParticipantsFactory>(sp =>
         {
+            var capabilities = sp.GetRequiredService<DeliveryCapabilitySet>();
             return new DeliveryParticipantsFactory(
                 options.ChatClients,
                 options.Profiles,
+                options.Records,
                 sp.GetRequiredService<DeliveryDiffAcquisition>(),
                 sp.GetRequiredService<WorkspacePreparation>(),
                 sp.GetRequiredService<GitProcess>(),
-                askPlanner,
-                submitReport,
-                writeCheckpoint
+                capabilities.AskPlanner,
+                capabilities.SubmitReport,
+                capabilities.WriteCheckpoint
             );
         });
         services.AddSingleton<DeliveryComposition>();

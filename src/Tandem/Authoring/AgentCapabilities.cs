@@ -217,15 +217,40 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
                 _invocation.State,
                 request
             );
-            if (_accept is not null)
+            async ValueTask<AcceptedCapability<TState>> AcceptAsync(CancellationToken ct)
             {
-                await _accept(context, cancellationToken);
+                if (_accept is not null)
+                {
+                    await _accept(context, ct);
+                }
+                if (_invocation.RunContext is { } observedRunContext)
+                {
+                    await observedRunContext.ObserveAsync(
+                        new PipelineCapabilityAccepted(
+                            _invocation.RunId,
+                            _invocation.BlockId,
+                            _invocation.InvocationId,
+                            _capabilityId,
+                            _name
+                        ),
+                        ct
+                    );
+                }
+                ct.ThrowIfCancellationRequested();
+                var acceptedState = _apply(context.State, context.Request);
+                return new AcceptedCapability<TState>(
+                    _capabilityId,
+                    _name,
+                    acceptedState,
+                    summary,
+                    payload
+                );
             }
-            cancellationToken.ThrowIfCancellationRequested();
-            var state = _apply(context.State, context.Request);
-            _invocation.Commit(
-                new AcceptedCapability<TState>(_capabilityId, _name, state, summary, payload)
-            );
+
+            var accepted = _invocation.RunContext is { } runContext
+                ? await runContext.ExecuteAsync(AcceptAsync, cancellationToken)
+                : await AcceptAsync(cancellationToken);
+            _invocation.Commit(accepted);
             return JsonSerializer.SerializeToElement(
                 new { accepted = true, outcome = new { kind = _capabilityId, payload } },
                 _jsonOptions

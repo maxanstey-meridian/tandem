@@ -3,7 +3,7 @@ using Tandem.Git;
 namespace Tandem.Delivery;
 
 [PipelineStage(DeliveryIds.CaptureCandidate)]
-public sealed partial class CaptureCandidateStage(GitProcess git)
+public sealed partial class CaptureCandidateStage(GitProcess git, IDeliveryRecordSink records)
 {
     public async ValueTask<Outcome<DeliveryState>> ExecuteAsync(
         DeliveryState state,
@@ -33,10 +33,24 @@ public sealed partial class CaptureCandidateStage(GitProcess git)
             cancellationToken
         );
         EnsureSucceeded("git rev-parse", revResult, cancellationToken);
+        var candidateSha = revResult.Stdout.Trim();
+        var acceptedCandidateId = $"candidate--{candidateSha}";
+        await records.AcceptPublicationCandidateAsync(
+            acceptedCandidateId,
+            new PublicationCandidateDocument(
+                acceptedCandidateId,
+                state.Packet.Repository,
+                state.WorkspacePath,
+                state.Packet.Title,
+                state.PinnedBaseSha,
+                candidateSha
+            ),
+            cancellationToken
+        );
         return new Outcome<DeliveryState>.Success(
             state with
             {
-                CandidateSha = revResult.Stdout.Trim(),
+                CandidateSha = candidateSha,
                 VerificationIndex = 0,
                 VerificationResults = [],
             }

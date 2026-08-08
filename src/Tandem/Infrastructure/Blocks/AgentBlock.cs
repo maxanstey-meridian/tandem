@@ -51,18 +51,16 @@ internal sealed class AgentBlock<TState>(
         var runtime = ApplyPreInvocationPolicies(message);
         message = message with { Runtime = runtime };
         var invocationId = runtime.NextInvocationId(config.BlockId);
-        var isCheckpointOnly = ShouldRunCheckpointOnly(runtime);
-        var selectedCapabilities = isCheckpointOnly
-            ? new[] { config.Checkpoint!.Capability }
-            : config.Capabilities;
+        var requiresCheckpointRelease = IsCheckpointReleaseRequired(runtime);
         var capabilityInvocation = new CapabilityInvocationState<TState>(
             runtime.RunId,
             config.BlockId,
             invocationId,
-            message.State
+            message.State,
+            message.RunContext
         );
-        var capabilityFunctions = selectedCapabilities
-            .Select(capability => capability.Bind(capabilityInvocation))
+        var capabilityFunctions = config
+            .Capabilities.Select(capability => capability.Bind(capabilityInvocation))
             .ToArray();
         if (
             config.WorkspacePath is not null
@@ -79,7 +77,7 @@ internal sealed class AgentBlock<TState>(
         {
             var collector = new ToolOutcomeCollector();
 
-            var instructions = isCheckpointOnly
+            var instructions = requiresCheckpointRelease
                 ? config.Checkpoint!.Instructions
                 : config.SystemInstructions;
             var tools = capabilityFunctions.Cast<AITool>().ToList();
@@ -90,13 +88,14 @@ internal sealed class AgentBlock<TState>(
                 instructions,
                 tools,
                 message,
-                isCheckpointOnly,
-                requiredToolName: null,
+                requiredToolName: requiresCheckpointRelease
+                    ? config.Checkpoint!.Capability.ToolName
+                    : null,
                 collector: collector,
                 boundCapabilityNames: boundCapabilityNames
             );
             var session = await RestoreOrCreateSessionAsync(agent, runtime, cts.Token);
-            var baseMessage = isCheckpointOnly
+            var baseMessage = requiresCheckpointRelease
                 ? config.Checkpoint!.UserMessage(
                     message.State,
                     runtime.AgentUsage.GetValueOrDefault(config.BlockId)?.CurrentContextTokens ?? 0
@@ -112,6 +111,10 @@ internal sealed class AgentBlock<TState>(
 
             long? inputTokens = null;
             long? outputTokens = null;
+            var cumulativeInputTokens =
+                runtime.AgentUsage.GetValueOrDefault(config.BlockId)?.CumulativeInputTokens ?? 0;
+            var cumulativeOutputTokens =
+                runtime.AgentUsage.GetValueOrDefault(config.BlockId)?.CumulativeOutputTokens ?? 0;
             var lastModelCallDuration = TimeSpan.Zero;
             var continuationAttempt = 0;
             var policyExhausted = false;
@@ -152,9 +155,27 @@ internal sealed class AgentBlock<TState>(
                 }
 
                 turnSw.Stop();
-                inputTokens = (inputTokens ?? 0) + (turnInputTokens ?? 0);
-                outputTokens = (outputTokens ?? 0) + (turnOutputTokens ?? 0);
+                inputTokens = turnInputTokens;
+                outputTokens = turnOutputTokens;
+                cumulativeInputTokens += turnInputTokens ?? 0;
+                cumulativeOutputTokens += turnOutputTokens ?? 0;
                 lastModelCallDuration += turnSw.Elapsed;
+                var latestTurnUsage = ResolveUsage(
+                    turnInputTokens,
+                    turnOutputTokens,
+                    cumulativeInputTokens,
+                    cumulativeOutputTokens,
+                    turnSw.Elapsed
+                );
+                var checkpointWasLatched = runtime.IsGateLatched(
+                    config.BlockId,
+                    "checkpoint-required"
+                );
+                runtime = LatchTriggeredGates(
+                    runtime.WithUsage(config.BlockId, latestTurnUsage),
+                    latestTurnUsage
+                );
+                message = message with { Runtime = runtime };
                 foreach (var observation in collector.SuccessfulTools)
                 {
                     structuredToolObservations.Add(observation);
@@ -163,6 +184,29 @@ internal sealed class AgentBlock<TState>(
                 if (capabilityInvocation.Accepted is not null)
                 {
                     break;
+                }
+
+                if (
+                    !checkpointWasLatched
+                    && runtime.IsGateLatched(config.BlockId, "checkpoint-required")
+                    && config.Checkpoint is { } activatedCheckpoint
+                )
+                {
+                    requiresCheckpointRelease = true;
+                    instructions = activatedCheckpoint.Instructions;
+                    userMessage = activatedCheckpoint.UserMessage(
+                        message.State,
+                        latestTurnUsage.CurrentContextTokens
+                    );
+                    agent = CreateAgent(
+                        instructions,
+                        tools,
+                        message,
+                        activatedCheckpoint.Capability.ToolName,
+                        collector,
+                        boundCapabilityNames
+                    );
+                    continue;
                 }
 
                 if (config.StructuredOutput is not null)
@@ -177,6 +221,7 @@ internal sealed class AgentBlock<TState>(
                             message,
                             structuredResult,
                             structuredToolObservations,
+                            $"{runtime.NextInvocationId(config.BlockId)}--output",
                             structuredAttempt
                         );
                         if (problems.Count > 0)
@@ -187,6 +232,56 @@ internal sealed class AgentBlock<TState>(
                                 Problems = [.. structuredResult.Problems, .. problems],
                             };
                         }
+                    }
+                    if (structuredResult.Success && config.StructuredOutput.AcceptAsync is not null)
+                    {
+                        async ValueTask<bool> AcceptAsync(CancellationToken cancellationToken)
+                        {
+                            await config.StructuredOutput.AcceptAsync(
+                                message,
+                                structuredResult,
+                                structuredToolObservations,
+                                $"{runtime.NextInvocationId(config.BlockId)}--output",
+                                structuredAttempt,
+                                cancellationToken
+                            );
+                            if (message.RunContext is { } observedRunContext)
+                            {
+                                await observedRunContext.ObserveAsync(
+                                    new PipelineStructuredOutputAccepted(
+                                        runtime.RunId,
+                                        config.BlockId,
+                                        $"{runtime.NextInvocationId(config.BlockId)}--output",
+                                        structuredResult.Outcome!.Kind
+                                    ),
+                                    cancellationToken
+                                );
+                            }
+                            return true;
+                        }
+
+                        if (message.RunContext is { } structuredRunContext)
+                        {
+                            await structuredRunContext.ExecuteAsync(AcceptAsync, cts.Token);
+                        }
+                        else
+                        {
+                            await AcceptAsync(cts.Token);
+                        }
+                    }
+                    else if (
+                        structuredResult.Success && message.RunContext is { } structuredRunContext
+                    )
+                    {
+                        await structuredRunContext.ObserveAsync(
+                            new PipelineStructuredOutputAccepted(
+                                runtime.RunId,
+                                config.BlockId,
+                                $"{runtime.NextInvocationId(config.BlockId)}--output",
+                                structuredResult.Outcome!.Kind
+                            ),
+                            cts.Token
+                        );
                     }
                     if (structuredResult.Success || structuredAttempt >= 1)
                     {
@@ -205,7 +300,6 @@ internal sealed class AgentBlock<TState>(
                             instructions,
                             tools,
                             message,
-                            isCheckpointOnly,
                             config.StructuredOutput.CorrectionRequiredToolName,
                             collector,
                             boundCapabilityNames,
@@ -215,7 +309,11 @@ internal sealed class AgentBlock<TState>(
                     continue;
                 }
 
-                if (isCheckpointOnly || collector.HasLifecycleCall || config.TurnPolicy is null)
+                if (
+                    requiresCheckpointRelease
+                    || collector.HasLifecycleCall
+                    || config.TurnPolicy is null
+                )
                 {
                     break;
                 }
@@ -246,15 +344,36 @@ internal sealed class AgentBlock<TState>(
                     instructions,
                     tools,
                     message,
-                    isCheckpointOnly,
                     directive.RequiredToolName,
                     collector,
                     boundCapabilityNames
                 );
             }
 
-            var agentUsage = ResolveUsage(inputTokens, outputTokens, lastModelCallDuration);
-            var runtimeAfterUsage = runtime.WithUsage(config.BlockId, agentUsage);
+            var agentUsage = ResolveUsage(
+                inputTokens,
+                outputTokens,
+                cumulativeInputTokens,
+                cumulativeOutputTokens,
+                lastModelCallDuration
+            );
+            if (message.RunContext is { } usageRunContext)
+            {
+                await usageRunContext.ObserveAsync(
+                    new PipelineAgentUsage(
+                        runtime.RunId,
+                        config.BlockId,
+                        agentUsage.CurrentInputTokens,
+                        agentUsage.CurrentOutputTokens,
+                        agentUsage.CurrentContextTokens
+                    ),
+                    cts.Token
+                );
+            }
+            var runtimeAfterUsage = LatchTriggeredGates(
+                runtime.WithUsage(config.BlockId, agentUsage),
+                agentUsage
+            );
 
             var updatedRuntime = await CaptureSessionAsync(
                 agent,
@@ -267,7 +386,7 @@ internal sealed class AgentBlock<TState>(
                 structuredResult,
                 updatedRuntime,
                 capabilityInvocation,
-                isCheckpointOnly,
+                requiresCheckpointRelease,
                 policyExhausted,
                 continuationAttempt,
                 message.RunContext
@@ -282,22 +401,31 @@ internal sealed class AgentBlock<TState>(
         }
     }
 
-    private bool ShouldRunCheckpointOnly(PipelineRuntime runtime)
+    private bool IsCheckpointReleaseRequired(PipelineRuntime runtime)
     {
-        if (config.Checkpoint is not { } policy)
-        {
-            return false;
-        }
-
-        if (!runtime.AgentUsage.TryGetValue(config.BlockId, out var usage))
-        {
-            return false;
-        }
-
-        return usage.CurrentContextTokens + policy.MaxOutputTokens >= policy.CheckpointAtTokens;
+        return config.Checkpoint is not null
+            && runtime.IsGateLatched(config.BlockId, "checkpoint-required");
     }
 
-    private AgentUsage ResolveUsage(long? inputTokens, long? outputTokens, TimeSpan elapsed)
+    private PipelineRuntime LatchTriggeredGates(PipelineRuntime runtime, AgentUsage usage)
+    {
+        foreach (var gate in config.LatchedGates ?? [])
+        {
+            if (!runtime.IsGateLatched(config.BlockId, gate.Id) && gate.Trigger(usage))
+            {
+                runtime = runtime.WithGateLatch(config.BlockId, gate.Id);
+            }
+        }
+        return runtime;
+    }
+
+    private AgentUsage ResolveUsage(
+        long? inputTokens,
+        long? outputTokens,
+        long cumulativeInputTokens,
+        long cumulativeOutputTokens,
+        TimeSpan elapsed
+    )
     {
         var policy = config.Checkpoint;
         var contextWindow = policy?.ContextWindowTokens ?? 0;
@@ -313,7 +441,9 @@ internal sealed class AgentBlock<TState>(
             CurrentContextTokens: currentContext,
             ContextWindowTokens: contextWindow,
             CheckpointAtTokens: checkpointAt,
-            LastModelCallDuration: elapsed
+            LastModelCallDuration: elapsed,
+            CumulativeInputTokens: cumulativeInputTokens,
+            CumulativeOutputTokens: cumulativeOutputTokens
         );
     }
 
@@ -334,6 +464,55 @@ internal sealed class AgentBlock<TState>(
                         ficContext.Function.Name,
                         out var semantics
                     );
+                    var effect = classified ? semantics.Effect.ToString() : "Unclassified";
+                    if (message.RunContext is { } actionRunContext)
+                    {
+                        await actionRunContext.ObserveAsync(
+                            new PipelineActionAttempted(
+                                message.Runtime.RunId,
+                                config.BlockId,
+                                message.Runtime.NextInvocationId(config.BlockId),
+                                ficContext.Function.Name,
+                                effect
+                            ),
+                            ct
+                        );
+                    }
+
+                    var activeGates = ResolveActiveGates(message);
+                    var gate = activeGates.FirstOrDefault(active =>
+                        (!classified || active.BlockedEffects.Contains(semantics.Effect))
+                        && !string.Equals(
+                            active.ReleaseCapabilityName,
+                            ficContext.Function.Name,
+                            StringComparison.Ordinal
+                        )
+                    );
+                    if (gate is not null)
+                    {
+                        if (message.RunContext is { } gatedRunContext)
+                        {
+                            await gatedRunContext.ObserveAsync(
+                                new PipelineActionCompleted(
+                                    message.Runtime.RunId,
+                                    config.BlockId,
+                                    message.Runtime.NextInvocationId(config.BlockId),
+                                    ficContext.Function.Name,
+                                    effect,
+                                    "Blocked"
+                                ),
+                                ct
+                            );
+                        }
+                        return JsonSerializer.SerializeToElement(
+                            new
+                            {
+                                isError = true,
+                                error = "action blocked by gate",
+                                problems = new[] { gate.Message },
+                            }
+                        );
+                    }
 
                     if (toolInterceptor is not null)
                     {
@@ -345,11 +524,61 @@ internal sealed class AgentBlock<TState>(
                         );
                         if (blockedMessage is not null)
                         {
+                            if (message.RunContext is { } blockedRunContext)
+                            {
+                                await blockedRunContext.ObserveAsync(
+                                    new PipelineActionCompleted(
+                                        message.Runtime.RunId,
+                                        config.BlockId,
+                                        message.Runtime.NextInvocationId(config.BlockId),
+                                        ficContext.Function.Name,
+                                        effect,
+                                        "Blocked"
+                                    ),
+                                    ct
+                                );
+                            }
                             return blockedMessage;
                         }
                     }
 
-                    var result = await next(ficContext, ct);
+                    object? result;
+                    try
+                    {
+                        result = await next(ficContext, ct);
+                    }
+                    catch
+                    {
+                        if (message.RunContext is { } failedRunContext)
+                        {
+                            await failedRunContext.ObserveAsync(
+                                new PipelineActionCompleted(
+                                    message.Runtime.RunId,
+                                    config.BlockId,
+                                    message.Runtime.NextInvocationId(config.BlockId),
+                                    ficContext.Function.Name,
+                                    effect,
+                                    "Faulted"
+                                ),
+                                CancellationToken.None
+                            );
+                        }
+                        throw;
+                    }
+                    if (message.RunContext is { } completedRunContext)
+                    {
+                        await completedRunContext.ObserveAsync(
+                            new PipelineActionCompleted(
+                                message.Runtime.RunId,
+                                config.BlockId,
+                                message.Runtime.NextInvocationId(config.BlockId),
+                                ficContext.Function.Name,
+                                effect,
+                                IsToolError(result) ? "Failed" : "Completed"
+                            ),
+                            ct
+                        );
+                    }
                     if (IsToolError(result))
                     {
                         return result;
@@ -401,14 +630,14 @@ internal sealed class AgentBlock<TState>(
         AgentStructuredOutputResult<TState>? structuredResult,
         PipelineRuntime runtime,
         CapabilityInvocationState<TState> capabilityInvocation,
-        bool isCheckpointOnly,
+        bool requiresCheckpointRelease,
         bool policyExhausted,
         int continuationAttempt,
         PipelineRunContext? runContext
     )
     {
         var state = capabilityInvocation.State;
-        if (isCheckpointOnly)
+        if (requiresCheckpointRelease)
         {
             return Task.FromResult(
                 capabilityInvocation.Accepted is { } checkpoint
@@ -522,9 +751,26 @@ internal sealed class AgentBlock<TState>(
         PipelineRunContext? runContext
     )
     {
-        var updatedRuntime = resetSession
-            ? runtime.WithoutSession(config.BlockId).WithoutUsage(config.BlockId)
-            : runtime;
+        var updatedRuntime = runtime;
+        foreach (
+            var gate in (config.LatchedGates ?? []).Where(gate =>
+                gate.ReleaseCapabilityId == accepted.CapabilityId
+                && updatedRuntime.IsGateLatched(config.BlockId, gate.Id)
+            )
+        )
+        {
+            updatedRuntime = updatedRuntime.WithoutGateLatch(config.BlockId, gate.Id);
+            if (gate.ResetSessionAfterRelease)
+            {
+                resetSession = true;
+            }
+        }
+        if (resetSession)
+        {
+            updatedRuntime = updatedRuntime
+                .WithoutSession(config.BlockId)
+                .WithoutUsage(config.BlockId);
+        }
         return new PipelineMessage<TState>(
             updatedRuntime.IncrementInvocations(config.BlockId),
             accepted.State,
@@ -544,7 +790,6 @@ internal sealed class AgentBlock<TState>(
         string instructions,
         IReadOnlyList<AITool> tools,
         PipelineMessage<TState> message,
-        bool isCheckpointOnly,
         string? requiredToolName,
         ToolOutcomeCollector collector,
         IReadOnlySet<string> boundCapabilityNames,
@@ -577,12 +822,14 @@ internal sealed class AgentBlock<TState>(
             toolEffects.Add(capabilityName, ToolEffect.LifecycleTransition);
         }
         var allowMutation = config.AllowMutation?.Invoke(message.State) ?? false;
+        var hasGates =
+            (config.StateGuards?.Count ?? 0) > 0 || (config.LatchedGates?.Count ?? 0) > 0;
         var implementationContext = new AgentImplementationContext(
             config.BlockId,
             selectedChatClient,
             chatOptions,
             config.WorkspacePath?.Invoke(message.State),
-            !isCheckpointOnly && (allowMutation || toolInterceptor is not null),
+            allowMutation || toolInterceptor is not null || hasGates,
             toolEffects
         );
         var agent = config.ImplementationFactory is null
@@ -596,6 +843,18 @@ internal sealed class AgentBlock<TState>(
                 }
             )
             : config.ImplementationFactory(implementationContext);
+        if (hasGates)
+        {
+            var unclassified = chatOptions.Tools?.FirstOrDefault(tool =>
+                !toolEffects.TryGet(tool.Name, out _)
+            );
+            if (unclassified is not null)
+            {
+                throw new InvalidOperationException(
+                    $"Gated agent '{config.BlockId}' exposes unclassified action '{unclassified.Name}'."
+                );
+            }
+        }
 
         return ConfigureFunctionInvocation(
             agent,
@@ -606,7 +865,40 @@ internal sealed class AgentBlock<TState>(
         );
     }
 
+    private IReadOnlyList<ActiveAgentGate> ResolveActiveGates(PipelineMessage<TState> message)
+    {
+        var active = new List<ActiveAgentGate>();
+        active.AddRange(
+            (config.StateGuards ?? [])
+                .Where(guard => guard.IsActive(message.State))
+                .Select(guard => new ActiveAgentGate(
+                    guard.Id,
+                    guard.BlockedEffects,
+                    guard.Message,
+                    guard.RemediationCapabilityName
+                ))
+        );
+        active.AddRange(
+            (config.LatchedGates ?? [])
+                .Where(gate => message.Runtime.IsGateLatched(config.BlockId, gate.Id))
+                .Select(gate => new ActiveAgentGate(
+                    gate.Id,
+                    gate.BlockedEffects,
+                    gate.Message,
+                    gate.ReleaseCapabilityName
+                ))
+        );
+        return active;
+    }
+
     private static JsonElement EmptyPayload() => JsonSerializer.SerializeToElement(new { });
+
+    private sealed record ActiveAgentGate(
+        string Id,
+        IReadOnlySet<ToolEffect> BlockedEffects,
+        string Message,
+        string? ReleaseCapabilityName
+    );
 
     private async ValueTask PublishUpdatesAsync(
         PipelineMessage<TState> message,

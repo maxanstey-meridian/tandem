@@ -240,6 +240,7 @@ public sealed class DeliveryCompositionGraphTests
         return new DeliveryParticipantsFactory(
             clients,
             profiles,
+            new FakeDeliveryRecordSink(),
             diff,
             workspace,
             git,

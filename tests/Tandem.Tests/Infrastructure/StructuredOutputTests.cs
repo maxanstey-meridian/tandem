@@ -45,6 +45,77 @@ public sealed class StructuredOutputTests
     }
 
     [Fact]
+    public async Task AsyncOutputAcceptance_CompletesBeforeMappedStateIsEmitted()
+    {
+        var accepted = false;
+        string? acceptedOutputId = null;
+        var client = new ScriptedChatClient(
+            Response(
+                "{\"decision\":\"Proceed\",\"rationale\":\"Proceed.\","
+                    + "\"constraints\":[],\"evidenceUsed\":[\"README.md\"],"
+                    + "\"humanQuestion\":null}"
+            )
+        );
+        var agent = Agent
+            .Create<DeliveryState>("planner", "Plan.", client)
+            .WithMessage(_ => "Decide.")
+            .WithOutput(new PlannerDecisionValidator(), PlannerPolicies.ApplyDecision)
+            .WithOutputAcceptance<DeliveryState, PlannerDecision>(
+                (observation, _) =>
+                {
+                    observation.Context.State.MutationAuthorized.Should().BeFalse();
+                    observation.Output.Decision.Should().Be(PlannerDecisionValue.Proceed);
+                    acceptedOutputId = observation.AcceptedOutputId;
+                    accepted = true;
+                    return ValueTask.CompletedTask;
+                }
+            )
+            .Build();
+        var complete = PipelineNodes.Complete<DeliveryState>("complete");
+        var pipeline = Pipeline
+            .Start(agent, "async-output-acceptance")
+            .Route(agent.Success, complete, "accepted")
+            .Build(complete);
+
+        var result = await new PipelineRunner().RunAsync(pipeline, CreateContext("/tmp").State);
+
+        accepted.Should().BeTrue();
+        acceptedOutputId.Should().MatchRegex("^[0-9a-f]{32}--planner--1--output$");
+        result.State.MutationAuthorized.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AsyncOutputAcceptanceFailure_PreventsMappedStateAndRouting()
+    {
+        var client = new ScriptedChatClient(
+            Response(
+                "{\"decision\":\"Proceed\",\"rationale\":\"Proceed.\","
+                    + "\"constraints\":[],\"evidenceUsed\":[\"README.md\"],"
+                    + "\"humanQuestion\":null}"
+            )
+        );
+        var agent = Agent
+            .Create<DeliveryState>("planner", "Plan.", client)
+            .WithMessage(_ => "Decide.")
+            .WithOutput(new PlannerDecisionValidator(), PlannerPolicies.ApplyDecision)
+            .WithOutputAcceptance<DeliveryState, PlannerDecision>(
+                (_, _) => ValueTask.FromException(new IOException("Ledger unavailable."))
+            )
+            .Build();
+        var complete = PipelineNodes.Complete<DeliveryState>("complete");
+        var pipeline = Pipeline
+            .Start(agent, "failed-output-acceptance")
+            .Route(agent.Success, complete, "must not route")
+            .Build(complete);
+
+        var run = async () =>
+            await new PipelineRunner().RunAsync(pipeline, CreateContext("/tmp").State);
+
+        var exception = await run.Should().ThrowAsync<PipelineRunException>();
+        exception.Which.InnerException.Should().BeOfType<IOException>();
+    }
+
+    [Fact]
     public void TypedOutputAcceptance_RejectsMismatchedConfiguredOutputType()
     {
         var builder = Agent

@@ -4,6 +4,36 @@ using Tandem.Domain;
 
 namespace Tandem.Advanced;
 
+public interface IPipelineAcceptanceUnitOfWork
+{
+    public ValueTask<T> ExecuteAsync<T>(
+        Func<CancellationToken, ValueTask<T>> operation,
+        CancellationToken cancellationToken
+    );
+}
+
+public static class AdvancedPipelineRunOptionsExtensions
+{
+    public static PipelineRunOptions WithAcceptanceUnitOfWork(
+        this PipelineRunOptions options,
+        IPipelineAcceptanceUnitOfWork unitOfWork
+    )
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(unitOfWork);
+        return options with { AcceptanceUnitOfWork = new AcceptanceUnitOfWorkAdapter(unitOfWork) };
+    }
+
+    private sealed class AcceptanceUnitOfWorkAdapter(IPipelineAcceptanceUnitOfWork unitOfWork)
+        : Tandem.IPipelineAcceptanceUnitOfWork
+    {
+        public ValueTask<T> ExecuteAsync<T>(
+            Func<CancellationToken, ValueTask<T>> operation,
+            CancellationToken cancellationToken
+        ) => unitOfWork.ExecuteAsync(operation, cancellationToken);
+    }
+}
+
 public sealed record OperationResult<TState>(TState State, OperationOutcome Outcome)
 {
     internal static OperationResult<TState> From(PipelineMessage<TState> message)
@@ -173,6 +203,14 @@ public sealed record CheckpointPolicy<TState>(
     Func<AgentCheckpointContext<TState>, string> UserMessage
 );
 
+public sealed record AgentStateGuard<TState>(
+    string Id,
+    Func<TState, bool> IsActive,
+    IReadOnlySet<ToolEffect> Blocks,
+    string Message,
+    AgentCapability<TState>? Remediation = null
+);
+
 public static class AgentProfiles
 {
     public static AgentBuilder<TState> Create<TState>(
@@ -279,6 +317,15 @@ public static class AdvancedAgentBuilderExtensions
             StructuredOutputDescriptors.Accept(acceptance)
         );
 
+    public static AgentBuilder<TState> WithOutputAcceptance<TState, TOutput>(
+        this AgentBuilder<TState> builder,
+        OutputAcceptance<TState, TOutput> acceptance
+    ) =>
+        builder.ConfigureOutputAcceptanceAsync(
+            typeof(TOutput),
+            StructuredOutputDescriptors.AcceptAsync(acceptance)
+        );
+
     public static AgentBuilder<TState> WithCheckpoint<TState>(
         this AgentBuilder<TState> builder,
         CheckpointPolicy<TState> policy
@@ -296,6 +343,42 @@ public static class AdvancedAgentBuilderExtensions
                     )
             )
         );
+
+    public static AgentBuilder<TState> WithStateGuard<TState>(
+        this AgentBuilder<TState> builder,
+        AgentStateGuard<TState> guard
+    )
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(guard.Id);
+        ArgumentNullException.ThrowIfNull(guard.IsActive);
+        ArgumentNullException.ThrowIfNull(guard.Blocks);
+        ArgumentException.ThrowIfNullOrWhiteSpace(guard.Message);
+        if (guard.Blocks.Count == 0 || guard.Blocks.Contains(ToolEffect.Unclassified))
+        {
+            throw new ArgumentException(
+                "State guards require at least one classified blocked effect.",
+                nameof(guard)
+            );
+        }
+        return builder.ConfigureStateGuard(
+            new AgentStateGuardDescriptor<TState>(
+                guard.Id,
+                guard.IsActive,
+                guard.Blocks.Select(ToInfrastructure).ToHashSet(),
+                guard.Message,
+                guard.Remediation?.Descriptor.ToolName
+            )
+        );
+    }
+
+    private static Infrastructure.ToolEffect ToInfrastructure(ToolEffect effect) =>
+        effect switch
+        {
+            ToolEffect.Read => Infrastructure.ToolEffect.Read,
+            ToolEffect.WorkspaceMutation => Infrastructure.ToolEffect.WorkspaceMutation,
+            ToolEffect.LifecycleTransition => Infrastructure.ToolEffect.LifecycleTransition,
+            _ => throw new ArgumentOutOfRangeException(nameof(effect)),
+        };
 
     public static AgentBuilder<TState> WithMessageAugmentation<TState>(
         this AgentBuilder<TState> builder,

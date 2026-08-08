@@ -38,6 +38,7 @@ public sealed class ProjectBoundaryTests
         var tandem = ProjectReferences("src/Tandem/Tandem.csproj");
         var advanced = ProjectReferences("src/Tandem.Advanced/Tandem.Advanced.csproj");
         var delivery = ProjectReferences("src/Tandem.Delivery/Tandem.Delivery.csproj");
+        var ledger = ProjectReferences("src/Tandem.Ledger/Tandem.Ledger.csproj");
         var tool = ProjectReferences("src/Tandem.Tool/Tandem.Tool.csproj");
         var debate = ProjectReferences("samples/Tandem.Sample.Debate/Tandem.Sample.Debate.csproj");
         var support = ProjectReferences(
@@ -52,8 +53,10 @@ public sealed class ProjectBoundaryTests
         advanced.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         delivery.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         delivery.Should().Contain(reference => reference.EndsWith("Tandem.Advanced.csproj"));
+        ledger.Should().BeEmpty();
         tool.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         tool.Should().Contain(reference => reference.EndsWith("Tandem.Delivery.csproj"));
+        tool.Should().Contain(reference => reference.EndsWith("Tandem.Ledger.csproj"));
         debate.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         debate.Should().Contain(reference => reference.EndsWith("Tandem.Advanced.csproj"));
         debate.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
@@ -63,6 +66,10 @@ public sealed class ProjectBoundaryTests
         songwriter.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         songwriter.Should().NotContain(reference => reference.Contains("Tandem.Advanced"));
         songwriter.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
+        tandem.Should().NotContain(reference => reference.Contains("Tandem.Ledger"));
+        advanced.Should().NotContain(reference => reference.Contains("Tandem.Ledger"));
+        support.Should().NotContain(reference => reference.Contains("Tandem.Ledger"));
+        songwriter.Should().NotContain(reference => reference.Contains("Tandem.Ledger"));
     }
 
     [Fact]
@@ -378,10 +385,10 @@ public sealed class ProjectBoundaryTests
     }
 
     [Fact]
-    public void Tool_UsesOneProcessOwnedRuntimeAndPersistsPublicationMetadata()
+    public void Tool_UsesOneProcessOwnedRuntimeAndSQLiteSemanticAuthority()
     {
         var source = File.ReadAllText(Path("src/Tandem.Tool/Program.cs"));
-        var persistence = source.IndexOf("RunProjection.Initial(", StringComparison.Ordinal);
+        var persistence = source.IndexOf("ledgerStore.CreateRunAsync(", StringComparison.Ordinal);
         var publication = source.IndexOf(
             "Console.WriteLine($\"Run:       {runPaths.RunId}\")",
             StringComparison.Ordinal
@@ -390,6 +397,8 @@ public sealed class ProjectBoundaryTests
         persistence.Should().BeGreaterThan(-1);
         publication.Should().BeGreaterThan(persistence);
         source.Should().Contain("new PipelineRunner()");
+        source.Should().NotContain("RunProjectionStore");
+        source.Should().NotContain("run.json");
         source.Should().NotContain("InProcessPipelineRunner");
         source.Should().NotContain("PendingExternalRequest");
         source.Should().NotContain("ExternalRequestAnswer");

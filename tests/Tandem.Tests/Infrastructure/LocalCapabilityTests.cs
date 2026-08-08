@@ -6,6 +6,8 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Tandem.Domain;
 using Tandem.Infrastructure.Blocks;
+using Tandem.Ledger;
+using Tandem.Tool;
 
 namespace Tandem.Tests.Infrastructure;
 
@@ -124,6 +126,69 @@ public sealed class LocalCapabilityTests
     }
 
     [Fact]
+    public async Task JournalFailureAtCapabilityBoundary_DoesNotCommitStateOrCompleteVisit()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "tandem-journal-failure-" + Guid.NewGuid().ToString("N")
+        );
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var store = new SqliteLedgerStore(Path.Combine(directory, "ledger.sqlite3"));
+            await store.InitializeAsync();
+            var runId = Guid.CreateVersion7();
+            await store.CreateRunAsync(runId, "test");
+            var ledger = store.ForRun(runId);
+            var accepted = new LedgerStream<IncrementRequest>(
+                "test.accepted",
+                "test.increment-accepted"
+            );
+            var capability = CreateCapability()
+                .WithAcceptance<TestState, IncrementRequest>(
+                    async (context, cancellationToken) =>
+                        await ledger.AppendAsync(
+                            accepted,
+                            context.AcceptedCallId,
+                            context.Request,
+                            cancellationToken
+                        )
+                );
+            var observer = new CompositePipelineObserver(
+                new LedgerPipelineObserver(ledger),
+                new FailingAcceptanceObserver()
+            );
+            var client = new ScriptedChatClient(
+                ToolCall("call-1", "increment", new Dictionary<string, object?> { ["amount"] = 1 }),
+                ToolCall("call-2", "increment", new Dictionary<string, object?> { ["amount"] = 1 })
+            );
+            var input = new PipelineMessage<TestState>(
+                PipelineRuntime.Create(runId),
+                new TestState(0)
+            )
+            {
+                RunContext = new PipelineRunContext(
+                    runId,
+                    observer,
+                    new InlineAcceptanceUnitOfWork(store)
+                ),
+            };
+
+            var execute = async () =>
+                await CreateBlock(client, capability).ExecuteAsync(input, CancellationToken.None);
+
+            await execute.Should().ThrowAsync<Exception>();
+            input.State.Count.Should().Be(0);
+            client.CallCount.Should().BeGreaterThan(1);
+            (await ledger.ReadAsync(accepted)).Should().BeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task FirstAcceptedCall_TerminatesTurnBeforeLaterCapability()
     {
         var acceptances = 0;
@@ -193,11 +258,13 @@ public sealed class LocalCapabilityTests
     [Fact]
     public async Task DeliveryCapabilities_ApplyTypedAcceptedFactsInProcess()
     {
+        var records = new FakeDeliveryRecordSink();
         var services = new ServiceCollection();
         services.AddDelivery(
             new DeliveryOptions(
                 _ => throw new InvalidOperationException("Model execution is not required."),
-                _ => new DeliveryAgentProfile(1000, 100, 80)
+                _ => new DeliveryAgentProfile(1000, 100, 80),
+                records
             )
         );
         using var provider = services.BuildServiceProvider();
@@ -254,30 +321,16 @@ public sealed class LocalCapabilityTests
             ),
             initial
         );
-        var checkpoint = await RunBlockAsync(
-            CreateDeliveryBlock(
-                new ScriptedChatClient(
-                    ToolCall(
-                        "checkpoint",
-                        "write_checkpoint",
-                        new Dictionary<string, object?>
-                        {
-                            ["summary"] = "Progress saved.",
-                            ["completed"] = new[] { "inspected" },
-                            ["next"] = new[] { "verify" },
-                        }
-                    )
-                ),
-                capabilities["write_checkpoint"]
-            ),
-            initial
-        );
-
         planner.State.ExecutorTransition.Should().BeOfType<ExecutorTransition.PlannerRequested>();
         report.State.ExecutorTransition.Should().BeOfType<ExecutorTransition.ReportSubmitted>();
-        checkpoint
-            .State.ExecutorTransition.Should()
-            .BeOfType<ExecutorTransition.CheckpointWritten>();
+        records
+            .CapabilityAttempts.Select(attempt => attempt.CapabilityName)
+            .Should()
+            .Equal("ask_planner", "submit_report");
+        records
+            .CapabilityAttempts.Select(attempt => attempt.AcceptedCallId)
+            .Should()
+            .OnlyHaveUniqueItems();
     }
 
     [Fact]
@@ -460,7 +513,7 @@ public sealed class LocalCapabilityTests
                 "agent",
                 "test",
                 "Use normal capabilities.",
-                [CreateCapability().Descriptor],
+                [CreateCapability().Descriptor, checkpoint.Descriptor],
                 _ => "Normal turn.",
                 null,
                 null,
@@ -478,18 +531,98 @@ public sealed class LocalCapabilityTests
         );
         var runtime = PipelineRuntime
             .Create(Guid.CreateVersion7())
-            .WithUsage("agent", new AgentUsage(90, 0, 90, 100, 100, TimeSpan.Zero));
+            .WithUsage("agent", new AgentUsage(90, 0, 90, 100, 100, TimeSpan.Zero))
+            .WithGateLatch("agent", "checkpoint-required");
 
         var output = await block.ExecuteAsync(
             new PipelineMessage<TestState>(runtime, new TestState(0)),
             CancellationToken.None
         );
 
-        client.AdvertisedTools.Should().ContainSingle().Which.Should().Equal("checkpoint");
+        client
+            .AdvertisedTools.Should()
+            .ContainSingle()
+            .Which.Should()
+            .BeEquivalentTo(["increment", "checkpoint"]);
         output.State.Count.Should().Be(5);
         output.LatestOutcome!.Kind.Should().Be(CapabilityKind("checkpoint"));
         output.Runtime.AgentSessions.Should().NotContainKey("agent");
         output.Runtime.AgentUsage.Should().NotContainKey("agent");
+    }
+
+    [Fact]
+    public async Task UsageThreshold_LatchesForTheNextRequest_AndAcceptedCheckpointReleasesIt()
+    {
+        var checkpoint = AgentCapabilities.Create<TestState, IncrementRequest>(
+            "checkpoint",
+            "Checkpoint progress.",
+            new InlineValidator<IncrementRequest>(),
+            request => $"Checkpointed {request.Amount}",
+            (state, request) => state with { Count = state.Count + request.Amount }
+        );
+        var policy = new AgentCheckpointDescriptor<TestState>(
+            100,
+            20,
+            80,
+            checkpoint.Descriptor,
+            "Write a checkpoint.",
+            (_, _) => "Checkpoint now."
+        );
+        var client = new ScriptedChatClient(
+            new ChatResponse(new ChatMessage(ChatRole.Assistant, "Still working."))
+            {
+                Usage = new UsageDetails { InputTokenCount = 70, OutputTokenCount = 1 },
+            },
+            ToolCall(
+                "checkpoint-call",
+                "checkpoint",
+                new Dictionary<string, object?> { ["amount"] = 1 }
+            )
+        );
+        var block = new AgentBlock<TestState>(
+            new AgentBlockConfig<TestState>(
+                "agent",
+                "test",
+                "Work.",
+                [checkpoint.Descriptor],
+                _ => "Work now.",
+                null,
+                null,
+                Checkpoint: policy,
+                ContinueSession: true,
+                LatchedGates:
+                [
+                    new AgentLatchedGateDescriptor(
+                        "checkpoint-required",
+                        usage =>
+                            usage.CurrentContextTokens + policy.MaxOutputTokens
+                            >= policy.CheckpointAtTokens,
+                        new HashSet<Tandem.Infrastructure.ToolEffect>
+                        {
+                            Tandem.Infrastructure.ToolEffect.WorkspaceMutation,
+                        },
+                        "Checkpoint required.",
+                        checkpoint.Descriptor.CapabilityId,
+                        checkpoint.Descriptor.ToolName,
+                        true
+                    ),
+                ]
+            ),
+            client
+        );
+        var output = await block.ExecuteAsync(
+            new PipelineMessage<TestState>(
+                PipelineRuntime.Create(Guid.CreateVersion7()),
+                new TestState(0)
+            ),
+            CancellationToken.None
+        );
+
+        client.CallCount.Should().Be(2);
+        output.Runtime.IsGateLatched("agent", "checkpoint-required").Should().BeFalse();
+        output.Runtime.AgentSessions.Should().NotContainKey("agent");
+        output.Runtime.AgentUsage.Should().NotContainKey("agent");
+        output.State.Count.Should().Be(1);
     }
 
     private static string CapabilityKind(string name) =>
@@ -502,7 +635,7 @@ public sealed class LocalCapabilityTests
         && element.TryGetProperty("isError", out var isError)
         && isError.GetBoolean();
 
-    private static AgentCapability<TestState> CreateCapability(
+    private static AgentCapability<TestState, IncrementRequest> CreateCapability(
         Action<IncrementRequest>? accepted = null
     )
     {
@@ -626,6 +759,26 @@ public sealed class LocalCapabilityTests
     private sealed record TestState(int Count);
 
     private sealed record IncrementRequest(int Amount);
+
+    private sealed class FailingAcceptanceObserver : IPipelineObserver
+    {
+        public ValueTask ObserveAsync(
+            PipelineObservation observation,
+            CancellationToken cancellationToken
+        ) =>
+            observation is PipelineCapabilityAccepted
+                ? ValueTask.FromException(new IOException("Journal failed."))
+                : ValueTask.CompletedTask;
+    }
+
+    private sealed class InlineAcceptanceUnitOfWork(SqliteLedgerStore store)
+        : IPipelineAcceptanceUnitOfWork
+    {
+        public ValueTask<T> ExecuteAsync<T>(
+            Func<CancellationToken, ValueTask<T>> operation,
+            CancellationToken cancellationToken
+        ) => store.ExecuteAsync(operation, cancellationToken);
+    }
 
     private sealed class ScriptedChatClient(params ChatResponse[] responses) : IChatClient
     {

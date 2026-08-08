@@ -21,7 +21,8 @@ internal sealed class CapabilityInvocationState<TState>(
     Guid runId,
     string blockId,
     string invocationId,
-    TState state
+    TState state,
+    PipelineRunContext? runContext = null
 )
 {
     private readonly object _sync = new();
@@ -31,6 +32,7 @@ internal sealed class CapabilityInvocationState<TState>(
     public string BlockId { get; } = blockId;
     public string InvocationId { get; } = invocationId;
     public TState State { get; } = state;
+    public PipelineRunContext? RunContext { get; } = runContext;
     public AcceptedCapability<TState>? Accepted { get; private set; }
 
     public bool TryReserve()

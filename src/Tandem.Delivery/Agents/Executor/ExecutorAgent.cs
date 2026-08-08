@@ -19,10 +19,20 @@ internal static class ExecutorAgent
                     .WithCapability(askPlanner)
                     .WithCapability(submitReport)
                     .WithMessage(ExecutorPrompts.BuildMessage)
-                    .WithWorkspace(
-                        state => state.WorkspacePath,
-                        state => state.MutationAuthorized,
-                        ExecutorPolicies.CreateMutationGate()
+                    .WithWorkspace(state => state.WorkspacePath, state => state.MutationAuthorized)
+                    .WithStateGuard(
+                        new AgentStateGuard<DeliveryState>(
+                            "planner-authorization",
+                            state => !state.MutationAuthorized,
+                            new HashSet<ToolEffect> { ToolEffect.WorkspaceMutation },
+                            """
+                            MUTATION GATE CLOSED: Your edit was NOT applied — no file was changed.
+                            Mutation authority is not yet granted. Call ask_planner with your
+                            proposed approach and evidence. Reads remain available for gathering
+                            evidence. Continue only on proceed or proceed_with_constraints.
+                            """,
+                            askPlanner
+                        )
                     )
                     .WithCheckpoint(
                         CreateCheckpointPolicy(

@@ -5,7 +5,11 @@ using Tandem.Git;
 
 namespace Tandem.Delivery;
 
-public sealed class VerificationOperation(GitProcess git, TimeSpan? commandTimeout = null)
+public sealed class VerificationOperation(
+    GitProcess git,
+    IDeliveryRecordSink records,
+    TimeSpan? commandTimeout = null
+)
 {
     private readonly TimeSpan _commandTimeout = commandTimeout ?? TimeSpan.FromMinutes(10);
 
@@ -55,6 +59,11 @@ public sealed class VerificationOperation(GitProcess git, TimeSpan? commandTimeo
             command,
             output,
             result.ExitCode,
+            cancellationToken
+        );
+        await records.AcceptVerificationResultAsync(
+            $"{context.RunId:N}--{DeliveryIds.Verify}--{ctx.VerificationResults.Count + 1}",
+            result,
             cancellationToken
         );
 

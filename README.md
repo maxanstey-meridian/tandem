@@ -1,394 +1,191 @@
 # Tandem
 
-Tandem models LLM agents as bounded typed components in explicit application
-pipelines. Agents, ordinary C#, and human interactions operate on shared typed
-state; explicit routes determine what happens next. Runs live for the lifetime
-of the process that starts them.
-
-The authoring rule is: facts in state, decisions in routes, permissions in
-capabilities, humans in interactions, and runtime mechanics below the seam.
-
-Tandem currently executes that graph through Microsoft Agent Framework. MAF owns
-orchestration, agent loops, sessions, and tool dispatch; authored pipeline code
-owns state, prompts, policies, capabilities, meaningful results, and routes.
+Tandem is a typed .NET SDK for building agentic applications as explicit pipelines.
+Agents, ordinary C# stages, and human interactions share immutable application state;
+routes define what happens next.
 
 ```text
-write -> lint -> review -> complete
-  ^         |       |
-  +---------+-------+
+agent -> C# stage -> human -> agent
+  |                              |
+  +----------- explicit loop ---+
 ```
 
-The configured graph is the lifecycle. Fluent call order never creates an
-implicit successor: every edge is declared with `Route`.
+The configured pipeline is the lifecycle. There is no hidden application-level
+coordinator deciding which participant runs next.
 
-## Start With Songwriter
+## What It Is
 
-[`samples/Tandem.Sample.Songwriter`](samples/Tandem.Sample.Songwriter) is the
-smallest complete authoring example. Its pipeline state is an immutable record.
-A default declarative agent is already a typed pipeline step:
+- A small authoring model for typed, in-process agent workflows.
+- Explicit composition: every transition is a named route.
+- State-first: agents and stages read and update your `TState`.
+- Typed at machine boundaries: model output is deserialized, validated, then applied.
+- Built on Microsoft Agent Framework for model loops, sessions, tools, and execution.
+
+## What It Is Not
+
+- A durable workflow service, scheduler, daemon, or distributed queue.
+- A hidden multi-agent coordinator or prompt-driven routing framework.
+- A replacement for ordinary application code: deterministic work remains C#.
+- A security sandbox for tools or commands.
+
+Runs belong to the process that starts them. Cancellation remains cancellation;
+undeclared faults remain exceptions.
+
+## The Basic Shape
+
+This abbreviated review loop contains the core Tandem concepts:
 
 ```csharp
-var songwriter = Agent.Create<SongwriterState>(
-        "songwriter",
-        "Write or revise lyrics from the brief and current feedback.",
-        clients.Songwriter
-    )
+// CodingState carries the task, the proposed change, and the latest review decision.
+public sealed record CodingState(
+    string Instructions,
+    string? ProposedChange = null,
+    bool Approved = false,
+    string? ReviewNotes = null);
+
+// The coder turns the instructions and any review notes into a proposed change.
+var coder = Agent
+    .Create<CodingState>(
+        "coder",
+        "You are a coding agent. Make the requested change and respond to review notes.",
+        coderClient)
+    // Each pass includes the original task, current work, and latest review notes.
     .WithMessage(state =>
-        $"Brief: {state.Brief}\nLyrics: {state.Lyrics}\n"
-        + $"Lint: {state.LintFeedback}\nProofreader: {state.ProofreaderFeedback}"
-    )
-    .WithOutput(new SongDecisionValidator(), SongwriterPolicies.ApplySong)
+        $"Instructions: {state.Instructions}\n"
+        + $"Current change: {state.ProposedChange}\n"
+        + $"Review notes: {state.ReviewNotes}")
+    // Require the agent to return a CodingDecision.
+    // Validate that decision, then use ApplyDecision to update CodingState.
+    .WithOutput(new CodingDecisionValidator(), CodingPolicies.ApplyDecision)
     .Build();
+
+// Human review pauses the pipeline and returns an approval decision with optional notes.
+var humanReview = PipelineNodes.WaitFor<CodingState, ChangeReview, ReviewAnswer>(
+    "human-review",
+    // The reviewer receives the proposed change.
+    state => new ChangeReview(state.ProposedChange!),
+    // Their answer updates the facts used by the outgoing routes.
+    (state, answer) => state with
+    {
+        Approved = answer.Approved,
+        ReviewNotes = answer.Notes,
+    });
+
+// Deterministic checks remain ordinary C#; Complete marks the successful terminal.
+var checks = new CodeCheckStage();
+var complete = PipelineNodes.Complete<CodingState>("complete");
+
+// The pipeline starts with the coder and declares every possible transition.
+var pipeline = Pipeline
+    .Start(coder, "coding-task")
+    // Proposed changes pass deterministic checks before reaching a reviewer.
+    .Route(coder.Success, checks, "change proposed")
+    .Route(checks, humanReview, "checks passed")
+    // Approval completes the pipeline.
+    .Route(
+        from: humanReview,
+        when: state => state.Approved,
+        to: complete,
+        label: "approved")
+    // Rejection returns to the coder with ReviewNotes populated.
+    .Route(
+        from: humanReview,
+        when: state => !state.Approved,
+        to: coder,
+        label: "changes requested")
+    .Build(complete);
 ```
 
-`AgentDefinition<TState>` owns its ID, state type, standard `Outcome<TState>`
-execution, and typed `Success`/`Failed` selectors. No forwarding
-`[PipelineStage]` class is required. Songwriter follows only successful model
-execution; an unhandled failure ends the run as failed:
+The model produces a typed `CodingDecision`. Tandem validates it before
+`CodingPolicies.ApplyDecision` can update state. The human interaction suspends the
+run without inventing a service call, and the final two routes make the loop visible.
+`CodingDecisionValidator`, `CodingPolicies`, and the review request/answer records are
+ordinary application code; the runnable samples show their complete definitions.
+
+Deterministic work uses an ordinary generated stage:
 
 ```csharp
-.Route(on: song.Songwriter.Success, to: song.Lint, label: "song written")
-```
-
-Successful terminals are SDK nodes rather than empty authored classes:
-
-```csharp
-var complete = PipelineNodes.Complete<SongwriterState>("complete");
-```
-
-The terminal preserves current state and produces standard success.
-
-Put semantic branch facts in pipeline state and route successful execution with a
-state predicate:
-
-```csharp
-.Route(
-    on: song.Proofreader.Success,
-    when: state => state.ProofreaderAccepted,
-    to: song.Complete,
-    label: "proof accepted"
-)
-.Route(
-    on: song.Proofreader.Success,
-    when: state => !state.ProofreaderAccepted,
-    to: song.Songwriter,
-    label: "changes requested"
-)
-.Route(on: song.Proofreader.Failed, to: song.Failed, label: "agent failed")
-```
-
-`song.Failed` is created with `PipelineNodes.Failed<SongwriterState>(...)`. It
-preserves the failure evidence and terminates with Tandem's failed disposition.
-Both completion and failure furniture expose `IPipelineNode<TState>`; ordinary
-samples and composition records do not use `IRawPipelineNode`.
-
-## Three Inferred Step Forms
-
-The source generator infers a step's authoring mode from its `ExecuteAsync`
-signature. There is no mode setting and no universal result-union requirement.
-
-```csharp
-ValueTask ExecuteAsync(TState state, CancellationToken cancellationToken)
-```
-
-Pass-through: preserves state, produces standard success, and exposes no
-outcome selectors.
-
-```csharp
-ValueTask<TState> ExecuteAsync(TState state, CancellationToken cancellationToken)
-```
-
-State-updating: uses the returned state, produces standard success, and exposes
-no outcome selectors.
-
-```csharp
-ValueTask<Outcome<TState>> ExecuteAsync(
-    TState state,
-    CancellationToken cancellationToken
-)
-```
-
-Standard outcome: returns typed `Success` or `Failed` and exposes exactly those
-selectors. The compiled core contract is:
-
-```csharp
-public abstract record Outcome<TState>
+// PipelineStage generates the typed adapter used by composition.
+[PipelineStage("code-checks")]
+public sealed partial class CodeCheckStage
 {
-    private Outcome() { }
-
-    public sealed record Success(TState State) : Outcome<TState>;
-    public sealed record Failed(TState State, FailureEvidence Failure) : Outcome<TState>;
+    // The stage receives and returns application state directly.
+    public ValueTask<CodingState> ExecuteAsync(
+        CodingState state,
+        CancellationToken cancellationToken)
+    {
+        // Formatting, compilation, or tests would update the relevant facts here.
+        return ValueTask.FromResult(state);
+    }
 }
-
-public sealed record FailureEvidence(string Code, string Summary, string? Detail = null);
 ```
 
-A standard `Failed` result is recoverable pipeline data only when an unconditional
-route handles it or at least one conditional route matches its failed state. An
-unhandled `Failed` ends the run as failed. Exceptions are undeclared faults, and
-cancellation remains cancellation; neither follows an ordinary output route.
+## Quick Start
 
-## State-First Agents And Policies
-
-Agent definitions are immutable application configuration created once and reusable
-across built pipelines and concurrent runs. They use state-first callbacks throughout
-and capture no pipeline build or run:
-
-```csharp
-Agent.Create<SongwriterState>(id, instructions, client)
-    .WithMessage(state =>
-        $"Brief: {state.Brief}\nLyrics: {state.Lyrics}\n"
-        + $"Lint: {state.LintFeedback}\nProofreader: {state.ProofreaderFeedback}"
-    )
-    .WithOutput(new SongDecisionValidator(), SongwriterPolicies.ApplySong)
-    .Build();
-```
-
-`WithMessage` receives `TState`; validated output application returns `TState`.
-Agents start with a fresh session on every pipeline visit. Call
-`.ContinueSession()` only when retaining model conversation across visits is an
-intentional part of the composition.
-Generic agents use MAF's `ChatClientAgent` and receive only Tandem's small bounded-node
-contract plus authored instructions. Delivery opts into Harness and its repository
-contract explicitly. Call `.WithTimeout(...)` only when an agent-specific deadline is
-part of the composition; otherwise host cancellation is the only lifetime boundary.
-Successful validated application produces canonical `Success`. Tandem transports
-run identity, sessions, usage, invocation counts, and outcomes
-internally. Ordinary user code cannot unwrap an agent operation or copy an
-execution envelope.
-
-Advanced acceptance constraints decorate the same typed output pipeline. They
-receive the validated output and semantic tool observations before state application;
-they do not replace Core deserialization, validation, or mapping:
-
-```csharp
-builder
-    .WithOutput(new DecisionValidator(), DecisionPolicies.Apply)
-    .RequireOutputAcceptance(DecisionPolicies.RepositoryGrounded());
-```
-
-## Explicit Routing
-
-Use an unconditional output route for serial flow when every produced result is
-allowed to continue:
-
-```csharp
-.Route(on: support.LoadAccount, to: support.Resolve, label: "account loaded")
-```
-
-Use canonical outcome selectors and state predicates when execution outcome or a
-domain fact controls the successor:
-
-```csharp
-.Route(
-    on: song.Lint,
-    when: state => state.LintFeedback is null,
-    to: song.Proofreader,
-    label: "lint passed"
-)
-.Route(
-    on: song.Lint,
-    when: state => state.LintFeedback is not null,
-    to: song.Songwriter,
-    label: "lint changes requested"
-)
-.Route(on: song.Songwriter.Success, to: song.Lint, label: "song written")
-```
-
-Normal predicates receive state:
-
-```csharp
-.Route(
-    when: state => state.FinalDisposition == "closed",
-    from: support.CustomerReply,
-    to: support.Close,
-    label: "customer confirmed"
-)
-```
-
-Do not mix unconditional and outcome-specific routes from one source: both would
-match the same output. Tandem rejects that accidental fan-out.
-
-Request-port expansion and raw MAF nodes are internal. Generated steps and SDK
-furniture expose only typed `IPipelineNode<TState>` boundaries.
-
-## Progressive Samples
-
-The public SDK is one progressive journey rather than separate basic and advanced
-programming models:
-
-- **Songwriter** proves state-updating steps, state-owned semantic branches,
-  unconditional serial routes, and agent execution without workspace or runtime
-  plumbing.
-- **Support** adds consumer-owned account lookup, typed state transitions, and a
-  typed customer request/response handoff.
-- **Debate** adds revision loops, explicit retained/reset sessions, an in-process
-  typed capability, and teardown based on agent outcomes.
-- **Delivery** adds Advanced operations, workspaces and mutation policy, checkpoints,
-  tools, verification commands, observations, and live human handoff.
-
-### Live Support Handoff
-
-Support declares one semantic interaction with state-first transformations:
-
-```csharp
-var customerReply = PipelineNodes.WaitFor<SupportState, CustomerQuestion, CustomerReply>(
-    SupportIds.CustomerReply,
-    SupportPolicies.BuildCustomerQuestion,
-    SupportPolicies.ApplyCustomerReply
-);
-```
-
-Composition routes to and from that interaction. Tandem privately expands it to
-MAF's request, port, and resume executors, preserving the complete execution
-envelope while the live run waits asynchronously.
-
-An interaction may also begin a pipeline directly:
-
-```csharp
-Pipeline
-    .Start(customerReply, "support-intake")
-    .Route(customerReply, resolver, "reply received");
-```
-
-### Debate Sessions And Teardown
-
-Debate explicitly retains revision history:
-
-```csharp
-builder.ContinueSession();
-```
-
-Its judge conversation policy intentionally uses the narrow Advanced context:
-
-```csharp
-public static AgentConversationDecision DiscardJudgeAfterVerdict(
-    AgentMessageContext<DebateState> _,
-    AgentMessageOutcome __
-) => new(AgentConversationRetention.Discard);
-```
-
-## Advanced Operations
-
-Advanced agent policies receive read-only `AgentMessageContext<TState>` and
-`AgentMessageOutcome` values rather than Tandem's complete execution envelope.
-Custom operations receive `PipelineOperationContext<TState>` and return
-`OperationResult<TState>`. The complete execution envelope remains internal to
-Tandem.
-
-```csharp
-public sealed record OperationOutcome(
-    string Kind,
-    string BlockId,
-    string Summary,
-    JsonElement Payload = default,
-    TimeSpan Duration = default
-);
-
-public sealed record OperationResult<TState>(TState State, OperationOutcome Outcome);
-```
-
-Import `Tandem.Advanced` to opt into envelope-aware agent policies and operations.
-Delivery uses `PipelineOperation.RunOutcomeAsync` to preserve runtime updates
-without manually copying envelope fields. The public descriptor
-types hidden from IntelliSense are an opaque cross-assembly ABI used by generated
-code, not a node-authoring hierarchy.
-
-## Inspect And Run
-
-`Inspect()` describes Tandem's semantic pipeline, including start and output nodes,
-routes, typed interactions, and Mermaid/DOT diagrams:
-
-```csharp
-var inspection = composition.Build().Inspect();
-Console.WriteLine(inspection.Mermaid);
-Console.WriteLine(inspection.Dot);
-```
-
-Run through the public process-owned runner:
-
-```csharp
-var result = await new PipelineRunner().RunAsync(
-    pipeline,
-    initialState,
-    new PipelineRunOptions(Interactions: handlers, Observer: observer),
-    cancellationToken
-);
-```
-
-Completed runs report an explicit `PipelineRunStatus.Succeeded` or
-`PipelineRunStatus.Failed`. Cancellation and undeclared faults remain cancellation
-and exceptions rather than additional result statuses.
-
-`PipelineInteractionHandlers` registers typed request/response callbacks. The
-optional observer receives Tandem-owned semantic events for that run. Interactions
-are asynchronous and preserve in-memory state without serialization. Exiting the
-host process ends every active run; there is no restart or attach contract.
-
-## Packages
-
-Minimal pipelines reference `Tandem` plus the generator analyzer:
+Tandem currently targets .NET 10. Reference the core package and its source generator:
 
 ```xml
+<!-- Core authoring API and in-process runner. -->
 <PackageReference Include="Tandem" Version="..." />
+<!-- Generates typed adapters for [PipelineStage] classes. -->
 <PackageReference Include="Tandem.Generators" Version="..." PrivateAssets="all" />
 ```
 
-Typed capabilities are available from `Tandem`. Runtime-aware acceptance,
-Harness execution, and custom policies additionally reference `Tandem.Advanced`.
-Songwriter and Support do not receive Advanced, Delivery,
-Tool, provider, dashboard, YAML, or MCP dependencies transitively.
+1. Define an immutable state record containing application facts.
+2. Create agents with `Agent.Create<TState>()`, `.WithMessage(...)`, and typed
+   `.WithOutput(...)`.
+3. Keep deterministic operations in ordinary `[PipelineStage]` classes.
+4. Model external decisions with `PipelineNodes.WaitFor<TState, TRequest, TResponse>()`.
+5. Compose the lifecycle with explicit `.Route(...)` calls.
+6. Run it with a typed interaction handler:
 
-An `AgentCapability<TState>` permits one validated semantic state transition. An
-agent may be offered multiple capabilities, but acceptance of one capability
-concludes that pipeline visit. When typed output is also configured, it is the
-ordinary terminal result only when no capability is accepted.
+```csharp
+// This handler connects human-review to the host's UI, CLI, chat, or API.
+var handlers = new PipelineInteractionHandlers()
+    .Handle(humanReview, AskReviewerAsync);
 
-For v1, Tandem deliberately uses FluentValidation's `IValidator<T>` as its public
-typed-output and capability-validation vocabulary. This is an intentional
-compatibility commitment rather than an incidental implementation dependency.
+// The runner executes the pipeline from an initial CodingState.
+var result = await new PipelineRunner().RunAsync(
+    pipeline,
+    // Instructions are the only application fact required at startup.
+    new CodingState("Add a friendly greeting to the home page."),
+    // Interaction handlers are supplied by the host for this run.
+    new PipelineRunOptions(Interactions: handlers),
+    cancellationToken);
 
-Run the included Delivery packet:
-
-```sh
-dotnet run --project src/Tandem.Tool -- run examples/01-todo-api/packet.md
+// The result contains both the terminal status and final typed state.
+Console.WriteLine(result.Status); // Succeeded or Failed
+Console.WriteLine(result.State.ProposedChange);
 ```
 
-Delivery executes configured verification commands directly in the host process
-environment. Its candidate mutation check protects repository integrity; it is
-not a security sandbox. Verification commands must be trusted with the process's
-filesystem, environment, credentials, and network access.
+`Tandem.Advanced` is an explicit opt-in for execution-aware concerns such as
+Harness workspaces, tool authority, output acceptance, checkpoints, and custom
+operation observations. Most application pipelines should begin with Core only.
 
-Publish a ready candidate:
+## Samples
 
-```sh
-dotnet run --project src/Tandem.Tool -- publish <run-id> --branch tandem/my-change
-```
+- [Songwriter](samples/Tandem.Sample.Songwriter): the smallest complete loop;
+  typed agents, an ordinary lint stage, and state-owned routing.
+- [Support](samples/Tandem.Sample.Support): deterministic I/O plus a typed live
+  customer handoff.
+- [Debate](samples/Tandem.Sample.Debate): revision loops, retained sessions, and
+  typed capabilities.
+- [Delivery](src/Tandem.Delivery): an experimental first-party pipeline exercising
+  Advanced workspace and verification features.
 
-Each `tandem run` process owns its workflow, agent sessions, and pending human
-requests. Human waits consume no blocked worker thread, but exiting the process
-destroys the run and it cannot be resumed or attached from another process.
-Independent `tandem run` processes continue independently.
-
-The Delivery host requires .NET 10 and an OpenAI-compatible model provider. It
-requires no scheduler, workflow database, daemon, or Docker runtime service.
+For the complete API journey, see
+[Pipeline Authoring](docs/pipeline-authoring.md). Architecture and contribution
+rules live in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Repository
 
-- `src/Tandem`: authoring API and execution engine
-- `src/Tandem.Advanced`: explicit advanced authoring and operation facade
-- `src/Tandem.Generators`: incremental source generator
-- `src/Tandem.Delivery`: advanced first-party acceptance consumer
-- `src/Tandem.Tool`: process-owned `run` and standalone `publish` host
-- `samples/Tandem.Sample.Songwriter`: minimal progressive example
-- `samples/Tandem.Sample.Support`: typed live customer-support handoff
-- `samples/Tandem.Sample.Debate`: loops, typed capabilities, and teardown policy
-- `tests/Tandem.Tests`: unit, architecture, and real in-process workflow tests
+- `src/Tandem`: core authoring API and in-process execution.
+- `src/Tandem.Advanced`: explicit execution-aware extensions.
+- `src/Tandem.Generators`: source-generated stage adapters.
+- `samples`: progressively richer runnable examples.
+- `tests`: boundary, package, and real in-process execution proofs.
 
-See [Pipeline Authoring](docs/pipeline-authoring.md) for the complete API journey
-and [CONTRIBUTING.md](CONTRIBUTING.md) for architecture rules.
-
-Run all checks with:
+Run the repository checks with:
 
 ```sh
 dotnet tool restore

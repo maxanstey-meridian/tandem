@@ -35,11 +35,31 @@ public sealed record PipelineCommandOutput(
     int ExitCode
 ) : PipelineObservation(RunId, StepId);
 
+public abstract record PipelineInteractionRequestedObservation(
+    Guid RunId,
+    string StepId,
+    string RequestId,
+    string RequestType
+) : PipelineObservation(RunId, StepId);
+
 public sealed record PipelineInteractionRequested<TRequest>(
     Guid RunId,
     string StepId,
     string RequestId,
     TRequest Request
+)
+    : PipelineInteractionRequestedObservation(
+        RunId,
+        StepId,
+        RequestId,
+        typeof(TRequest).FullName ?? typeof(TRequest).Name
+    );
+
+public abstract record PipelineInteractionAnsweredObservation(
+    Guid RunId,
+    string StepId,
+    string RequestId,
+    string ResponseType
 ) : PipelineObservation(RunId, StepId);
 
 public sealed record PipelineInteractionAnswered<TResponse>(
@@ -47,9 +67,59 @@ public sealed record PipelineInteractionAnswered<TResponse>(
     string StepId,
     string RequestId,
     TResponse Response
+)
+    : PipelineInteractionAnsweredObservation(
+        RunId,
+        StepId,
+        RequestId,
+        typeof(TResponse).FullName ?? typeof(TResponse).Name
+    );
+
+public sealed record PipelineAgentUsage(
+    Guid RunId,
+    string StepId,
+    int InputTokens,
+    int OutputTokens,
+    int CurrentContextTokens
 ) : PipelineObservation(RunId, StepId);
 
-internal sealed class PipelineRunContext(Guid runId, IPipelineObserver? observer)
+public sealed record PipelineActionAttempted(
+    Guid RunId,
+    string StepId,
+    string InvocationId,
+    string ActionName,
+    string Effect
+) : PipelineObservation(RunId, StepId);
+
+public sealed record PipelineActionCompleted(
+    Guid RunId,
+    string StepId,
+    string InvocationId,
+    string ActionName,
+    string Effect,
+    string Result
+) : PipelineObservation(RunId, StepId);
+
+public sealed record PipelineStructuredOutputAccepted(
+    Guid RunId,
+    string StepId,
+    string AcceptedOutputId,
+    string OutcomeKind
+) : PipelineObservation(RunId, StepId);
+
+public sealed record PipelineCapabilityAccepted(
+    Guid RunId,
+    string StepId,
+    string InvocationId,
+    string CapabilityId,
+    string CapabilityName
+) : PipelineObservation(RunId, StepId);
+
+internal sealed class PipelineRunContext(
+    Guid runId,
+    IPipelineObserver? observer,
+    IPipelineAcceptanceUnitOfWork? unitOfWork = null
+)
 {
     public Guid RunId { get; } = runId;
 
@@ -57,6 +127,19 @@ internal sealed class PipelineRunContext(Guid runId, IPipelineObserver? observer
         PipelineObservation observation,
         CancellationToken cancellationToken
     ) => observer?.ObserveAsync(observation, cancellationToken) ?? ValueTask.CompletedTask;
+
+    public ValueTask<T> ExecuteAsync<T>(
+        Func<CancellationToken, ValueTask<T>> operation,
+        CancellationToken cancellationToken
+    ) => unitOfWork?.ExecuteAsync(operation, cancellationToken) ?? operation(cancellationToken);
+}
+
+internal interface IPipelineAcceptanceUnitOfWork
+{
+    public ValueTask<T> ExecuteAsync<T>(
+        Func<CancellationToken, ValueTask<T>> operation,
+        CancellationToken cancellationToken
+    );
 }
 
 internal interface IPipelineRunContextCarrier

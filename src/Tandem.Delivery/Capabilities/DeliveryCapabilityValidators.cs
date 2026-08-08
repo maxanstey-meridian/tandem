@@ -32,7 +32,10 @@ public sealed class WriteCheckpointRequestValidator : AbstractValidator<WriteChe
         RuleFor(request => request.Summary).NotEmpty();
         RuleFor(request => request.Completed).NotNull();
         RuleForEach(request => request.Completed).NotEmpty();
-        RuleFor(request => request.Next).NotNull();
-        RuleForEach(request => request.Next).NotEmpty();
+        RuleFor(request => request.InspectedFiles).NotNull();
+        RuleForEach(request => request.InspectedFiles).NotEmpty();
+        RuleFor(request => request.Uncertainties).NotNull();
+        RuleForEach(request => request.Uncertainties).NotEmpty();
+        RuleFor(request => request.NextAction).NotEmpty();
     }
 }

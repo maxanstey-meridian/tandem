@@ -14,6 +14,14 @@ internal static class PlannerAgent
                     .WithMessage(PlannerPrompts.BuildMessage)
                     .WithOutput(new PlannerDecisionValidator(), PlannerPolicies.ApplyDecision)
                     .RequireOutputAcceptance(PlannerPolicies.RepositoryGrounded())
+                    .WithOutputAcceptance<DeliveryState, PlannerDecision>(
+                        (observation, cancellationToken) =>
+                            agents.Records.AcceptPlannerDecisionAsync(
+                                observation.AcceptedOutputId,
+                                observation.Output,
+                                cancellationToken
+                            )
+                    )
                     .ContinueSession()
         );
 }

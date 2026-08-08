@@ -32,7 +32,8 @@ internal sealed record PipelineRuntime(
     IReadOnlyDictionary<string, JsonElement> AgentSessions,
     IReadOnlyDictionary<string, AgentUsage> AgentUsage,
     IReadOnlyDictionary<string, int> InvocationCounts,
-    IReadOnlyDictionary<string, AgentProfileSelection> AgentProfiles
+    IReadOnlyDictionary<string, AgentProfileSelection> AgentProfiles,
+    HashSet<string> GateLatches
 )
 {
     public static PipelineRuntime Create(Guid runId) =>
@@ -41,7 +42,8 @@ internal sealed record PipelineRuntime(
             new Dictionary<string, JsonElement>(),
             new Dictionary<string, AgentUsage>(),
             new Dictionary<string, int>(),
-            new Dictionary<string, AgentProfileSelection>()
+            new Dictionary<string, AgentProfileSelection>(),
+            new HashSet<string>(StringComparer.Ordinal)
         );
 
     public string NextInvocationId(string blockId) =>
@@ -103,6 +105,26 @@ internal sealed record PipelineRuntime(
                 .Where(kvp => kvp.Key != blockId)
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
         };
+
+    public bool IsGateLatched(string blockId, string gateId) =>
+        GateLatches.Contains($"{blockId}:{gateId}");
+
+    public PipelineRuntime WithGateLatch(string blockId, string gateId) =>
+        this with
+        {
+            GateLatches = new HashSet<string>(GateLatches, StringComparer.Ordinal)
+            {
+                $"{blockId}:{gateId}",
+            },
+        };
+
+    public PipelineRuntime WithoutGateLatch(string blockId, string gateId) =>
+        this with
+        {
+            GateLatches = GateLatches
+                .Where(key => !string.Equals(key, $"{blockId}:{gateId}", StringComparison.Ordinal))
+                .ToHashSet(StringComparer.Ordinal),
+        };
 }
 
 internal sealed record BlockOutcome(
@@ -119,5 +141,7 @@ internal sealed record AgentUsage(
     int CurrentContextTokens,
     int ContextWindowTokens,
     int CheckpointAtTokens,
-    TimeSpan LastModelCallDuration
+    TimeSpan LastModelCallDuration,
+    long CumulativeInputTokens = 0,
+    long CumulativeOutputTokens = 0
 );

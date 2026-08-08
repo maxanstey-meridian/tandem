@@ -25,6 +25,7 @@
     <ItemGroup>
         <ProjectReference Include="..\Tandem\Tandem.csproj" />
         <ProjectReference Include="..\Tandem.Delivery\Tandem.Delivery.csproj" />
+        <ProjectReference Include="..\Tandem.Ledger\Tandem.Ledger.csproj" />
         <InternalsVisibleTo Include="Tandem.Tests" />
     </ItemGroup>
 </Project>

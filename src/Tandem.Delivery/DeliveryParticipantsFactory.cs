@@ -6,6 +6,7 @@ namespace Tandem.Delivery;
 public sealed class DeliveryParticipantsFactory(
     Func<string, IChatClient> chatClients,
     Func<string, DeliveryAgentProfile> profileResolver,
+    IDeliveryRecordSink records,
     DeliveryDiffAcquisition diffAcquisition,
     WorkspacePreparation workspacePreparation,
     GitProcess git,
@@ -16,7 +17,7 @@ public sealed class DeliveryParticipantsFactory(
 {
     public DeliveryParticipants Create()
     {
-        var agents = new DeliveryAgentFactory(chatClients, profileResolver);
+        var agents = new DeliveryAgentFactory(chatClients, profileResolver, records);
         var complete = new CompleteRunTransition();
         var failed = new FailRunTransition();
 
@@ -24,8 +25,8 @@ public sealed class DeliveryParticipantsFactory(
             new PrepareWorkspaceStage(workspacePreparation),
             ExecutorAgent.Create(agents, askPlanner, submitReport, writeCheckpoint),
             PlannerAgent.Create(agents),
-            new CaptureCandidateStage(git),
-            new VerificationStage(new VerificationOperation(git)),
+            new CaptureCandidateStage(git, records),
+            new VerificationStage(new VerificationOperation(git, records)),
             ReviewerAgent.Create(agents, diffAcquisition),
             PipelineNodes.Complete<DeliveryState>(
                 DeliveryIds.Complete,

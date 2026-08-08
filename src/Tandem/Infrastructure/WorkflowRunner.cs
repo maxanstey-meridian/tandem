@@ -47,6 +47,7 @@ internal sealed class InProcessPipelineRunner
             initialState,
             RejectExternalRequests.Instance,
             observer: null,
+            unitOfWork: null,
             cancellationToken
         );
 
@@ -63,6 +64,25 @@ internal sealed class InProcessPipelineRunner
             initialState,
             RejectExternalRequests.Instance,
             observer,
+            unitOfWork: null,
+            cancellationToken
+        );
+
+    public Task<PipelineMessage<TState>> RunAsync<TState>(
+        Pipeline<TState> pipeline,
+        Guid runId,
+        TState initialState,
+        IPipelineObserver? observer,
+        IPipelineAcceptanceUnitOfWork? unitOfWork,
+        CancellationToken cancellationToken
+    ) =>
+        RunAsync(
+            pipeline,
+            runId,
+            initialState,
+            RejectExternalRequests.Instance,
+            observer,
+            unitOfWork,
             cancellationToken
         );
 
@@ -72,7 +92,16 @@ internal sealed class InProcessPipelineRunner
         TState initialState,
         IExternalRequestHandler requests,
         CancellationToken cancellationToken
-    ) => await RunAsync(pipeline, runId, initialState, requests, observer: null, cancellationToken);
+    ) =>
+        await RunAsync(
+            pipeline,
+            runId,
+            initialState,
+            requests,
+            observer: null,
+            unitOfWork: null,
+            cancellationToken
+        );
 
     public async Task<PipelineMessage<TState>> RunAsync<TState>(
         Pipeline<TState> pipeline,
@@ -80,6 +109,25 @@ internal sealed class InProcessPipelineRunner
         TState initialState,
         IExternalRequestHandler requests,
         IPipelineObserver? observer,
+        CancellationToken cancellationToken
+    ) =>
+        await RunAsync(
+            pipeline,
+            runId,
+            initialState,
+            requests,
+            observer,
+            unitOfWork: null,
+            cancellationToken
+        );
+
+    public async Task<PipelineMessage<TState>> RunAsync<TState>(
+        Pipeline<TState> pipeline,
+        Guid runId,
+        TState initialState,
+        IExternalRequestHandler requests,
+        IPipelineObserver? observer,
+        IPipelineAcceptanceUnitOfWork? unitOfWork,
         CancellationToken cancellationToken
     )
     {
@@ -92,7 +140,7 @@ internal sealed class InProcessPipelineRunner
             initialState
         )
         {
-            RunContext = new PipelineRunContext(runId, observer),
+            RunContext = new PipelineRunContext(runId, observer, unitOfWork),
         };
         await using var run = await InProcessExecution.Concurrent.RunStreamingAsync(
             PipelineMafBridge.GetWorkflow(pipeline),

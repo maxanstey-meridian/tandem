@@ -739,7 +739,13 @@ public sealed class CompositionProofTests
             PinnedBase,
             Workspace
         );
-        var checkpoint = new WriteCheckpointRequest("prior work", ["inspected"], ["finish"]);
+        var checkpoint = new WriteCheckpointRequest(
+            "prior work",
+            ["inspected"],
+            ["README.md"],
+            [],
+            "finish"
+        );
         ctx = ctx with
         {
             Runtime = ctx

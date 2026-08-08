@@ -41,6 +41,7 @@ public delegate IReadOnlyList<StructuredOutputProblem> StructuredOutputAcceptanc
 
 public sealed record OutputAcceptanceObservation<TState, TOutput>(
     AgentMessageContext<TState> Context,
+    string AcceptedOutputId,
     TOutput Output,
     IReadOnlySet<ToolObservation> Tools,
     int Attempt
@@ -48,6 +49,11 @@ public sealed record OutputAcceptanceObservation<TState, TOutput>(
 
 public delegate IReadOnlyList<StructuredOutputProblem> OutputAcceptancePolicy<TState, TOutput>(
     OutputAcceptanceObservation<TState, TOutput> observation
+);
+
+public delegate ValueTask OutputAcceptance<TState, TOutput>(
+    OutputAcceptanceObservation<TState, TOutput> observation,
+    CancellationToken cancellationToken
 );
 
 public static class StructuredOutputPolicy
@@ -209,7 +215,7 @@ internal static class StructuredOutputDescriptors
             (response, state) => ToCore(parser(response, state)),
             acceptancePolicy is null
                 ? null
-                : (message, result, tools, attempt) =>
+                : (message, result, tools, _, attempt) =>
                     acceptancePolicy(
                             new StructuredOutputAcceptanceObservation<TState>(
                                 ToContext(message),
@@ -223,17 +229,18 @@ internal static class StructuredOutputDescriptors
                             problem.Message
                         ))
                         .ToArray(),
-            correctionRequiredToolName
+            CorrectionRequiredToolName: correctionRequiredToolName
         );
 
     public static Func<
         PipelineMessage<TState>,
         AgentStructuredOutputResult<TState>,
         IReadOnlySet<Infrastructure.ToolObservationDescriptor>,
+        string,
         int,
         IReadOnlyList<AgentStructuredOutputProblem>
     > Accept<TState, TOutput>(OutputAcceptancePolicy<TState, TOutput> acceptance) =>
-        (message, result, tools, attempt) =>
+        (message, result, tools, acceptedOutputId, attempt) =>
             result.Candidate is null ? []
             : result.Candidate is not TOutput output
                 ?
@@ -247,6 +254,7 @@ internal static class StructuredOutputDescriptors
             : acceptance(
                     new OutputAcceptanceObservation<TState, TOutput>(
                         ToContext(message),
+                        acceptedOutputId,
                         output,
                         tools.Select(ToPublic).ToHashSet(),
                         attempt
@@ -254,6 +262,34 @@ internal static class StructuredOutputDescriptors
                 )
                 .Select(problem => new AgentStructuredOutputProblem(problem.Field, problem.Message))
                 .ToArray();
+
+    public static Func<
+        PipelineMessage<TState>,
+        AgentStructuredOutputResult<TState>,
+        IReadOnlySet<Infrastructure.ToolObservationDescriptor>,
+        string,
+        int,
+        CancellationToken,
+        ValueTask
+    > AcceptAsync<TState, TOutput>(OutputAcceptance<TState, TOutput> acceptance) =>
+        (message, result, tools, acceptedOutputId, attempt, cancellationToken) =>
+            result.Candidate is TOutput output
+                ? acceptance(
+                    new OutputAcceptanceObservation<TState, TOutput>(
+                        ToContext(message),
+                        acceptedOutputId,
+                        output,
+                        tools.Select(ToPublic).ToHashSet(),
+                        attempt
+                    ),
+                    cancellationToken
+                )
+                : ValueTask.FromException(
+                    new InvalidOperationException(
+                        $"Configured acceptance expected '{typeof(TOutput).Name}' but received "
+                            + $"'{result.Candidate?.GetType().Name ?? "null"}'."
+                    )
+                );
 
     private static AgentStructuredOutputResult<TState> ToCore<TState>(
         StructuredOutputResult<TState> result

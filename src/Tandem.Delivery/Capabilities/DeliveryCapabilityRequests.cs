@@ -15,5 +15,7 @@ public sealed record SubmitReportRequest(
 public sealed record WriteCheckpointRequest(
     string Summary,
     IReadOnlyList<string> Completed,
-    IReadOnlyList<string> Next
+    IReadOnlyList<string> InspectedFiles,
+    IReadOnlyList<string> Uncertainties,
+    string NextAction
 );

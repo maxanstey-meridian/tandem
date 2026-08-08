@@ -20,7 +20,27 @@ internal sealed record AgentBlockConfig<TState>(
     Func<PipelineMessage<TState>, BlockOutcome, bool>? RetainConversation = null,
     Func<PipelineMessage<TState>, string>? ContextUserMessage = null,
     AgentImplementationFactory? ImplementationFactory = null,
-    TimeSpan? Timeout = null
+    TimeSpan? Timeout = null,
+    IReadOnlyList<AgentStateGuardDescriptor<TState>>? StateGuards = null,
+    IReadOnlyList<AgentLatchedGateDescriptor>? LatchedGates = null
+);
+
+internal sealed record AgentStateGuardDescriptor<TState>(
+    string Id,
+    Func<TState, bool> IsActive,
+    IReadOnlySet<ToolEffect> BlockedEffects,
+    string Message,
+    string? RemediationCapabilityName
+);
+
+internal sealed record AgentLatchedGateDescriptor(
+    string Id,
+    Func<AgentUsage, bool> Trigger,
+    IReadOnlySet<ToolEffect> BlockedEffects,
+    string Message,
+    string ReleaseCapabilityId,
+    string ReleaseCapabilityName,
+    bool ResetSessionAfterRelease
 );
 
 internal sealed record AgentStructuredOutputDescriptor<TState>(
@@ -29,9 +49,19 @@ internal sealed record AgentStructuredOutputDescriptor<TState>(
         PipelineMessage<TState>,
         AgentStructuredOutputResult<TState>,
         IReadOnlySet<ToolObservationDescriptor>,
+        string,
         int,
         IReadOnlyList<AgentStructuredOutputProblem>
     >? Accept = null,
+    Func<
+        PipelineMessage<TState>,
+        AgentStructuredOutputResult<TState>,
+        IReadOnlySet<ToolObservationDescriptor>,
+        string,
+        int,
+        CancellationToken,
+        ValueTask
+    >? AcceptAsync = null,
     string? CorrectionRequiredToolName = null,
     Type? OutputType = null
 );

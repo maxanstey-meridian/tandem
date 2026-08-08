@@ -22,6 +22,14 @@ internal static class ReviewerAgent
                         ReviewerPolicies.ApplyDecision
                     )
                     .RequireOutputAcceptance(ReviewerPolicies.RepositoryGrounded())
+                    .WithOutputAcceptance<DeliveryState, ReviewDecision>(
+                        (observation, cancellationToken) =>
+                            agents.Records.AcceptReviewDecisionAsync(
+                                observation.AcceptedOutputId,
+                                observation.Output,
+                                cancellationToken
+                            )
+                    )
                     .WithMessageAugmentation(ReviewerPolicies.IncludeCandidateDiff(diffAcquisition))
                     .WithConversationPolicy(ReviewerPolicies.DiscardAfterDecision)
         );

@@ -37,7 +37,7 @@ public static class ExecutorPrompts
             ? $"\nPrevious checkpoint (context was compacted, continue from here):\n"
                 + $"Summary: {fact.Checkpoint.Summary}\n"
                 + $"Completed: {string.Join("; ", fact.Checkpoint.Completed)}\n"
-                + $"Next: {string.Join("; ", fact.Checkpoint.Next)}"
+                + $"Next: {fact.Checkpoint.NextAction}"
             : "";
         return $"""
             Packet: {state.Packet.Title}
@@ -65,7 +65,9 @@ public static class ExecutorPrompts
 
         Your context window is approaching its limit. You must write a checkpoint
         of your current work state using the write_checkpoint tool. Summarize
-        what you have completed and what remains to be done next.
+        what you completed, files you inspected, remaining uncertainties, and the
+        next action. Changed files, outcomes, and accepted constraints are derived
+        by Tandem and must not be supplied by you.
 
         This is the only action available. Do not attempt other work.
         """;

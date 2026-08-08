@@ -18,7 +18,13 @@ public sealed class PipelineMessageSerializationTests
                 new SubmitReportRequest("summary", ["outcome"], ["evidence"])
             ),
             new ExecutorTransition.CheckpointWritten(
-                new WriteCheckpointRequest("summary", ["completed"], ["next"])
+                new WriteCheckpointRequest(
+                    "summary",
+                    ["completed"],
+                    ["README.md"],
+                    ["uncertain"],
+                    "next"
+                )
             ),
         ];
 

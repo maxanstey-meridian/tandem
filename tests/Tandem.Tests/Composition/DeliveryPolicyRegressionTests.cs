@@ -1,8 +1,8 @@
 using FluentAssertions;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using Tandem.Domain;
 using Tandem.Infrastructure;
-using AdvancedToolEffect = Tandem.Advanced.ToolEffect;
 using RuntimeToolEffect = Tandem.Infrastructure.ToolEffect;
 using RuntimeToolEvidence = Tandem.Infrastructure.ToolEvidence;
 
@@ -12,44 +12,6 @@ namespace Tandem.Tests.Composition;
 
 public sealed class DeliveryPolicyRegressionTests
 {
-    [Theory]
-    [InlineData(AdvancedToolEffect.Read, false)]
-    [InlineData(AdvancedToolEffect.LifecycleTransition, false)]
-    [InlineData(AdvancedToolEffect.WorkspaceMutation, true)]
-    [InlineData(AdvancedToolEffect.Unclassified, true)]
-    public async Task ExecutorMutationGate_IsSemanticAndFailClosed(
-        AdvancedToolEffect effect,
-        bool blocked
-    )
-    {
-        var gate = ExecutorPolicies.CreateMutationGate();
-        var context = new AgentMessageContext<DeliveryState>(Guid.NewGuid(), CreateState(), null);
-
-        var result = await gate(
-            context,
-            new ToolInvocation("tool", effect),
-            CancellationToken.None
-        );
-
-        (result is ToolInterceptionResult.Blocked).Should().Be(blocked);
-    }
-
-    [Fact]
-    public async Task ExecutorMutationGate_AllowsMutationAfterAuthorityIsAccepted()
-    {
-        var gate = ExecutorPolicies.CreateMutationGate();
-        var state = CreateState() with { MutationAuthorized = true };
-        var context = new AgentMessageContext<DeliveryState>(Guid.NewGuid(), state, null);
-
-        var result = await gate(
-            context,
-            new ToolInvocation("file_access_write", AdvancedToolEffect.WorkspaceMutation),
-            CancellationToken.None
-        );
-
-        result.Should().BeNull();
-    }
-
     [Fact]
     public void HarnessToolEffects_ClassifyTheCompletePinnedFileToolSet()
     {
@@ -137,7 +99,11 @@ public sealed class DeliveryPolicyRegressionTests
             );
             var capabilities = TestDeliveryCapabilities.Create();
             var executor = ExecutorAgent.Create(
-                new DeliveryAgentFactory(_ => client, _ => new DeliveryAgentProfile(1000, 100, 80)),
+                new DeliveryAgentFactory(
+                    _ => client,
+                    _ => new DeliveryAgentProfile(1000, 100, 80),
+                    new FakeDeliveryRecordSink()
+                ),
                 capabilities.AskPlanner,
                 capabilities.SubmitReport,
                 capabilities.WriteCheckpoint
@@ -164,6 +130,100 @@ public sealed class DeliveryPolicyRegressionTests
         {
             Directory.Delete(workspace, recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task MultipleToolCalls_UseTheGateSnapshotFromRequestStart()
+    {
+        var workspace = Path.Combine(
+            Path.GetTempPath(),
+            "tandem-gate-snapshot-" + Guid.NewGuid().ToString("N")
+        );
+        Directory.CreateDirectory(workspace);
+        try
+        {
+            var client = new ScriptedChatClient(
+                new ChatResponse(
+                    new ChatMessage(
+                        ChatRole.Assistant,
+                        [
+                            new FunctionCallContent(
+                                "write-1",
+                                FileAccessProvider.WriteToolName,
+                                new Dictionary<string, object?>()
+                            ),
+                            new FunctionCallContent(
+                                "write-2",
+                                FileAccessProvider.WriteToolName,
+                                new Dictionary<string, object?>()
+                            ),
+                        ]
+                    )
+                )
+                {
+                    FinishReason = ChatFinishReason.ToolCalls,
+                    ModelId = "test-model",
+                },
+                ToolCall(
+                    "report",
+                    "submit_report",
+                    new Dictionary<string, object?>
+                    {
+                        ["summary"] = "Both writes remained blocked.",
+                        ["outcomes"] = new[] { "No repository changes." },
+                        ["evidence"] = new[] { "Both calls used the closed snapshot." },
+                    }
+                )
+            );
+            var capabilities = TestDeliveryCapabilities.Create();
+            var executor = ExecutorAgent.Create(
+                new DeliveryAgentFactory(
+                    _ => client,
+                    _ => new DeliveryAgentProfile(1000, 100, 80),
+                    new FakeDeliveryRecordSink()
+                ),
+                capabilities.AskPlanner,
+                capabilities.SubmitReport,
+                capabilities.WriteCheckpoint
+            );
+            var complete = PipelineNodes.Complete<DeliveryState>("complete");
+            var pipeline = Pipeline
+                .Start(executor, "executor-snapshot")
+                .Route(executor.Success, complete, "accepted")
+                .Build(complete);
+
+            var result = await new PipelineRunner().RunAsync(
+                pipeline,
+                CreateState() with
+                {
+                    WorkspacePath = workspace,
+                }
+            );
+
+            result.Status.Should().Be(PipelineRunStatus.Succeeded);
+            client.CallCount.Should().Be(2);
+            Directory.EnumerateFileSystemEntries(workspace).Should().BeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(workspace, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void GateLatches_AreRunIsolatedAndIndependentFromPlannerAuthority()
+    {
+        var first = PipelineRuntime
+            .Create(Guid.CreateVersion7())
+            .WithGateLatch("executor", "checkpoint-required");
+        var second = PipelineRuntime.Create(Guid.CreateVersion7());
+        var authorized = CreateState() with { MutationAuthorized = true };
+
+        first.IsGateLatched("executor", "checkpoint-required").Should().BeTrue();
+        second.IsGateLatched("executor", "checkpoint-required").Should().BeFalse();
+        authorized.MutationAuthorized.Should().BeTrue();
+        first.WithoutGateLatch("executor", "checkpoint-required").GateLatches.Should().BeEmpty();
+        authorized.MutationAuthorized.Should().BeTrue();
     }
 
     private static void AssertEffect(
