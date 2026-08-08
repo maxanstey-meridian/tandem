@@ -344,6 +344,8 @@ public sealed class PackageConsumerTests
         var complete = PipelineNodes.Complete<SupportState>("direct-complete");
         var direct = Pipeline
             .Start(participants.CustomerReply, "direct-interaction")
+            .Persist(participants.CustomerReply)
+            .DoNotPersist(participants.CustomerReply)
             .Route(participants.CustomerReply, complete, "answered")
             .Build(complete);
         var directResult = await new PipelineRunner().RunAsync(

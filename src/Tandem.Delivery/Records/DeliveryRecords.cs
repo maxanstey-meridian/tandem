@@ -1,11 +1,5 @@
 namespace Tandem.Delivery;
 
-public sealed record CapabilityAcceptedRecord<TRequest>(string CapabilityName, TRequest Request);
-
-public sealed record PlannerDecisionRecord(PlannerDecision Decision);
-
-public sealed record ReviewDecisionRecord(ReviewDecision Decision);
-
 public sealed record OutcomeProgress(
     string Id,
     string Description,
@@ -29,11 +23,6 @@ public sealed record ProgressCheckpointRecord(
     string NextAction
 );
 
-public sealed record AcceptedImplementationReportDocument(
-    string AcceptedCallId,
-    SubmitReportRequest Report
-);
-
 public sealed record PublicationCandidateDocument(
     string AcceptedCandidateId,
     string Repository,
@@ -42,8 +31,6 @@ public sealed record PublicationCandidateDocument(
     string PinnedBaseSha,
     string CandidateSha
 );
-
-public sealed record TerminalOutcomeRecord(string Status, string? CandidateSha, string? Error);
 
 public sealed record PublicationResultRecord(
     string Repository,

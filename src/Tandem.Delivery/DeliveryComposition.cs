@@ -24,6 +24,7 @@ public sealed class DeliveryComposition
                 name: "delivery",
                 description: "Plan, implement, verify, and review a software change."
             )
+            .Persist()
             .Route(
                 on: delivery.PrepareWorkspace.Success,
                 to: delivery.Executor,

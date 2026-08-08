@@ -2,9 +2,9 @@ using Tandem.Ledger;
 
 namespace Tandem.Tool;
 
-internal sealed class LedgerPipelineObserver(RunLedger ledger) : IPipelineObserver
+internal sealed class LedgerPipelineObserver(RunLedger ledger) : IPipelinePersistenceObserver
 {
-    private static readonly LedgerStream<RuntimeJournalRecord> _journal = new(
+    internal static readonly LedgerStream<RuntimeJournalRecord> Journal = new(
         "runtime.journal",
         "tandem.runtime-journal"
     );
@@ -12,11 +12,16 @@ internal sealed class LedgerPipelineObserver(RunLedger ledger) : IPipelineObserv
     private long _nextEntry;
 
     public ValueTask RecordRunStartedAsync(CancellationToken cancellationToken) =>
-        AppendAsync(new RuntimeJournalRecord(RuntimeJournalKind.RunStarted, ""), cancellationToken);
+        AppendAsync(
+            new RuntimeJournalRecord(RuntimeJournalKind.RunStarted, ""),
+            entryId: null,
+            cancellationToken
+        );
 
     public ValueTask RecordRunCompletedAsync(string result, CancellationToken cancellationToken) =>
         AppendAsync(
             new RuntimeJournalRecord(RuntimeJournalKind.RunCompleted, "", Result: result),
+            entryId: null,
             cancellationToken
         );
 
@@ -35,7 +40,13 @@ internal sealed class LedgerPipelineObserver(RunLedger ledger) : IPipelineObserv
                 RuntimeJournalKind.StepCompleted,
                 value.StepId,
                 Result: value.Outcome.Summary,
-                OutcomeKind: value.Outcome.Kind
+                OutcomeKind: value.Outcome.Kind,
+                ValueType: value.PersistPayload && value.Outcome.Kind == StandardOutcomeKinds.Failed
+                    ? typeof(FailureEvidence).FullName
+                    : null,
+                Payload: value.PersistPayload && value.Outcome.Kind == StandardOutcomeKinds.Failed
+                    ? value.Outcome.Payload
+                    : null
             ),
             PipelineStepFaulted value => new RuntimeJournalRecord(
                 RuntimeJournalKind.StepFaulted,
@@ -50,13 +61,17 @@ internal sealed class LedgerPipelineObserver(RunLedger ledger) : IPipelineObserv
                 RuntimeJournalKind.InteractionRequested,
                 value.StepId,
                 value.RequestId,
-                value.RequestType
+                value.RequestType,
+                ValueType: value.RequestType,
+                Payload: value.Payload
             ),
             PipelineInteractionAnsweredObservation value => new RuntimeJournalRecord(
                 RuntimeJournalKind.InteractionAnswered,
                 value.StepId,
                 value.RequestId,
-                value.ResponseType
+                value.ResponseType,
+                ValueType: value.ResponseType,
+                Payload: value.Payload
             ),
             PipelineCommandOutput value => new RuntimeJournalRecord(
                 RuntimeJournalKind.CommandCompleted,
@@ -90,22 +105,42 @@ internal sealed class LedgerPipelineObserver(RunLedger ledger) : IPipelineObserv
                 RuntimeJournalKind.StructuredOutputAccepted,
                 value.StepId,
                 value.AcceptedOutputId,
-                OutcomeKind: value.OutcomeKind
+                OutcomeKind: value.OutcomeKind,
+                ValueType: value.OutputType,
+                Payload: value.Payload
             ),
             PipelineCapabilityAccepted value => new RuntimeJournalRecord(
                 RuntimeJournalKind.CapabilityAccepted,
                 value.StepId,
-                value.InvocationId,
+                value.AcceptedCallId ?? value.InvocationId,
                 value.CapabilityName,
-                OutcomeKind: value.CapabilityId
+                OutcomeKind: value.CapabilityId,
+                ValueType: value.RequestType,
+                Payload: value.Payload
             ),
             _ => null,
         };
-        return record is null ? ValueTask.CompletedTask : AppendAsync(record, cancellationToken);
+        return record is null
+            ? ValueTask.CompletedTask
+            : AppendAsync(record, EntryId(observation), cancellationToken);
     }
+
+    private static string? EntryId(PipelineObservation observation) =>
+        observation switch
+        {
+            PipelineStructuredOutputAccepted value => $"accepted-output--{value.AcceptedOutputId}",
+            PipelineCapabilityAccepted value =>
+                $"accepted-capability--{value.AcceptedCallId ?? value.InvocationId}",
+            PipelineInteractionRequestedObservation value =>
+                $"interaction-request--{value.RequestId}",
+            PipelineInteractionAnsweredObservation value =>
+                $"interaction-response--{value.RequestId}",
+            _ => null,
+        };
 
     private async ValueTask AppendAsync(
         RuntimeJournalRecord record,
+        string? entryId,
         CancellationToken cancellationToken
     )
     {
@@ -113,7 +148,12 @@ internal sealed class LedgerPipelineObserver(RunLedger ledger) : IPipelineObserv
         try
         {
             var entry = ++_nextEntry;
-            await ledger.AppendAsync(_journal, $"runtime--{entry:D12}", record, cancellationToken);
+            await ledger.AppendAsync(
+                Journal,
+                entryId ?? $"runtime--{entry:D12}",
+                record,
+                cancellationToken
+            );
         }
         finally
         {
@@ -122,14 +162,17 @@ internal sealed class LedgerPipelineObserver(RunLedger ledger) : IPipelineObserv
     }
 }
 
-internal sealed class CompositePipelineObserver(params IPipelineObserver[] observers)
-    : IPipelineObserver
+internal sealed class CompositePipelineObserver(
+    IPipelinePersistenceObserver persistenceObserver,
+    params IPipelineObserver[] observers
+) : IPipelinePersistenceObserver
 {
     public async ValueTask ObserveAsync(
         PipelineObservation observation,
         CancellationToken cancellationToken
     )
     {
+        await persistenceObserver.ObserveAsync(observation, cancellationToken);
         foreach (var observer in observers)
         {
             await observer.ObserveAsync(observation, cancellationToken);

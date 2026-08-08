@@ -4,67 +4,29 @@ namespace Tandem.Delivery;
 
 internal static class DeliveryCapabilities
 {
-    internal static DeliveryCapabilitySet Create(
-        IDeliveryRecordSink records,
-        CheckpointAcceptance checkpointAcceptance
-    )
+    internal static DeliveryCapabilitySet Create(CheckpointAcceptance checkpointAcceptance)
     {
-        var askPlanner = AgentCapabilities
-            .Create<DeliveryState, AskPlannerRequest>(
-                new AskPlannerCapability(),
-                (state, request) => state.RecordPlannerRequest(request)
-            )
-            .WithAcceptance(
-                (context, cancellationToken) =>
-                    records.AcceptCapabilityAsync(
-                        context.AcceptedCallId,
-                        "ask_planner",
-                        context.Request,
-                        cancellationToken
-                    )
-            );
-        var submitReport = AgentCapabilities
-            .Create<DeliveryState, SubmitReportRequest>(
-                new SubmitReportCapability(),
-                (state, request) => state.RecordImplementationReport(request)
-            )
-            .WithAcceptance(
-                async (context, cancellationToken) =>
-                {
-                    await records.AcceptReportAsync(
-                        context.AcceptedCallId,
-                        context.Request,
-                        cancellationToken
-                    );
-                    await records.AcceptCapabilityAsync(
-                        context.AcceptedCallId,
-                        "submit_report",
-                        context.Request,
-                        cancellationToken
-                    );
-                }
-            );
+        var askPlanner = AgentCapabilities.Create<DeliveryState, AskPlannerRequest>(
+            new AskPlannerCapability(),
+            (state, request) => state.RecordPlannerRequest(request)
+        );
+        var submitReport = AgentCapabilities.Create<DeliveryState, SubmitReportRequest>(
+            new SubmitReportCapability(),
+            (state, request) => state.RecordImplementationReport(request)
+        );
         var writeCheckpoint = AgentCapabilities
             .Create<DeliveryState, WriteCheckpointRequest>(
                 new WriteCheckpointCapability(),
                 (state, request) => state.RecordCheckpoint(request)
             )
             .WithAcceptance(
-                async (context, cancellationToken) =>
-                {
-                    await checkpointAcceptance.AcceptAsync(
+                (context, cancellationToken) =>
+                    checkpointAcceptance.AcceptAsync(
                         $"{context.AcceptedCallId}--checkpoint",
                         context.State,
                         context.Request,
                         cancellationToken
-                    );
-                    await records.AcceptCapabilityAsync(
-                        context.AcceptedCallId,
-                        "write_checkpoint",
-                        context.Request,
-                        cancellationToken
-                    );
-                }
+                    )
             );
         return new DeliveryCapabilitySet(askPlanner, submitReport, writeCheckpoint);
     }

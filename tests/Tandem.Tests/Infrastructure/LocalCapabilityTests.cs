@@ -262,6 +262,36 @@ public sealed class LocalCapabilityTests
     }
 
     [Fact]
+    public async Task PersistentStep_ObservesAcceptedCapabilityPayload()
+    {
+        var observations = new List<PipelineObservation>();
+        var observer = new RecordingPersistenceObserver(observations);
+        var runId = Guid.CreateVersion7();
+        var input = new PipelineMessage<TestState>(PipelineRuntime.Create(runId), new TestState(0))
+        {
+            RunContext = new PipelineRunContext(
+                runId,
+                observer,
+                persistentStepIds: new HashSet<string>(StringComparer.Ordinal) { "agent" }
+            ),
+        };
+        var client = new ScriptedChatClient(
+            ToolCall("call", "increment", new Dictionary<string, object?> { ["amount"] = 3 })
+        );
+
+        await CreateBlock(client, CreateCapability()).ExecuteAsync(input, CancellationToken.None);
+
+        var accepted = observations
+            .OfType<PipelineCapabilityAccepted>()
+            .Should()
+            .ContainSingle()
+            .Which;
+        accepted.AcceptedCallId.Should().Contain(accepted.CapabilityId);
+        accepted.RequestType.Should().Be(typeof(IncrementRequest).FullName);
+        accepted.Payload!.Value.GetProperty("amount").GetInt32().Should().Be(3);
+    }
+
+    [Fact]
     public async Task AcceptedCapability_SkipsConfiguredStructuredOutputAndCorrection()
     {
         var validator = new InlineValidator<IncrementRequest>();
@@ -292,7 +322,7 @@ public sealed class LocalCapabilityTests
     }
 
     [Fact]
-    public async Task DeliveryCapabilities_ApplyTypedAcceptedFactsInProcess()
+    public async Task DeliveryCapabilities_ApplyTypedTransitionsInProcess()
     {
         var records = new FakeDeliveryRecordSink();
         var services = new ServiceCollection();
@@ -359,14 +389,6 @@ public sealed class LocalCapabilityTests
         );
         planner.State.ExecutorTransition.Should().BeOfType<ExecutorTransition.PlannerRequested>();
         report.State.ExecutorTransition.Should().BeOfType<ExecutorTransition.ReportSubmitted>();
-        records
-            .CapabilityAttempts.Select(attempt => attempt.CapabilityName)
-            .Should()
-            .Equal("ask_planner", "submit_report");
-        records
-            .CapabilityAttempts.Select(attempt => attempt.AcceptedCallId)
-            .Should()
-            .OnlyHaveUniqueItems();
     }
 
     [Fact]
@@ -872,6 +894,19 @@ public sealed class LocalCapabilityTests
             observation is PipelineCapabilityAccepted
                 ? ValueTask.FromException(new IOException("Journal failed."))
                 : ValueTask.CompletedTask;
+    }
+
+    private sealed class RecordingPersistenceObserver(List<PipelineObservation> observations)
+        : IPipelinePersistenceObserver
+    {
+        public ValueTask ObserveAsync(
+            PipelineObservation observation,
+            CancellationToken cancellationToken
+        )
+        {
+            observations.Add(observation);
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class InlineAcceptanceUnitOfWork(SqliteLedgerStore store)

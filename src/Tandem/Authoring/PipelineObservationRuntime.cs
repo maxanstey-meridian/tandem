@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Text.Json;
 using Tandem.Domain;
 
 namespace Tandem;
@@ -10,13 +12,20 @@ public interface IPipelineObserver
     );
 }
 
+[EditorBrowsable(EditorBrowsableState.Never)]
+public interface IPipelinePersistenceObserver : IPipelineObserver;
+
 public abstract record PipelineObservation(Guid RunId, string StepId);
 
 public sealed record PipelineStepStarted(Guid RunId, string StepId)
     : PipelineObservation(RunId, StepId);
 
-public sealed record PipelineStepCompleted(Guid RunId, string StepId, PipelineRunOutcome Outcome)
-    : PipelineObservation(RunId, StepId);
+public sealed record PipelineStepCompleted(
+    Guid RunId,
+    string StepId,
+    PipelineRunOutcome Outcome,
+    bool PersistPayload = false
+) : PipelineObservation(RunId, StepId);
 
 public sealed record PipelineStepFaulted(Guid RunId, string StepId, string Error)
     : PipelineObservation(RunId, StepId);
@@ -39,40 +48,46 @@ public abstract record PipelineInteractionRequestedObservation(
     Guid RunId,
     string StepId,
     string RequestId,
-    string RequestType
+    string RequestType,
+    JsonElement? Payload = null
 ) : PipelineObservation(RunId, StepId);
 
 public sealed record PipelineInteractionRequested<TRequest>(
     Guid RunId,
     string StepId,
     string RequestId,
-    TRequest Request
+    TRequest Request,
+    JsonElement? Payload = null
 )
     : PipelineInteractionRequestedObservation(
         RunId,
         StepId,
         RequestId,
-        typeof(TRequest).FullName ?? typeof(TRequest).Name
+        typeof(TRequest).FullName ?? typeof(TRequest).Name,
+        Payload
     );
 
 public abstract record PipelineInteractionAnsweredObservation(
     Guid RunId,
     string StepId,
     string RequestId,
-    string ResponseType
+    string ResponseType,
+    JsonElement? Payload = null
 ) : PipelineObservation(RunId, StepId);
 
 public sealed record PipelineInteractionAnswered<TResponse>(
     Guid RunId,
     string StepId,
     string RequestId,
-    TResponse Response
+    TResponse Response,
+    JsonElement? Payload = null
 )
     : PipelineInteractionAnsweredObservation(
         RunId,
         StepId,
         RequestId,
-        typeof(TResponse).FullName ?? typeof(TResponse).Name
+        typeof(TResponse).FullName ?? typeof(TResponse).Name,
+        Payload
     );
 
 public sealed record PipelineAgentUsage(
@@ -104,7 +119,9 @@ public sealed record PipelineStructuredOutputAccepted(
     Guid RunId,
     string StepId,
     string AcceptedOutputId,
-    string OutcomeKind
+    string OutcomeKind,
+    string? OutputType = null,
+    JsonElement? Payload = null
 ) : PipelineObservation(RunId, StepId);
 
 public sealed record PipelineCapabilityAccepted(
@@ -112,16 +129,22 @@ public sealed record PipelineCapabilityAccepted(
     string StepId,
     string InvocationId,
     string CapabilityId,
-    string CapabilityName
+    string CapabilityName,
+    string? AcceptedCallId = null,
+    string? RequestType = null,
+    JsonElement? Payload = null
 ) : PipelineObservation(RunId, StepId);
 
 internal sealed class PipelineRunContext(
     Guid runId,
     IPipelineObserver? observer,
-    IPipelineAcceptanceUnitOfWork? unitOfWork = null
+    IPipelineAcceptanceUnitOfWork? unitOfWork = null,
+    IReadOnlySet<string>? persistentStepIds = null
 )
 {
     public Guid RunId { get; } = runId;
+
+    public bool ShouldPersist(string stepId) => persistentStepIds?.Contains(stepId) is true;
 
     public ValueTask ObserveAsync(
         PipelineObservation observation,
@@ -187,7 +210,8 @@ internal static class PipelineObservationPublisher
                     new PipelineStepCompleted(
                         runContext.RunId,
                         stepId,
-                        ToOutcome(stepId, output, TimeProvider.System.GetElapsedTime(started))
+                        ToOutcome(stepId, output, TimeProvider.System.GetElapsedTime(started)),
+                        runContext.ShouldPersist(stepId)
                     ),
                     cancellationToken
                 );

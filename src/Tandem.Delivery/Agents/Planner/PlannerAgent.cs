@@ -17,14 +17,6 @@ internal static class PlannerAgent
                         (state, decision) => state.RecordPlannerDecision(decision)
                     )
                     .RequireOutputAcceptance(PlannerPolicies.RepositoryGrounded())
-                    .WithOutputAcceptance<DeliveryState, PlannerDecision>(
-                        (observation, cancellationToken) =>
-                            agents.Records.AcceptPlannerDecisionAsync(
-                                observation.AcceptedOutputId,
-                                observation.Output,
-                                cancellationToken
-                            )
-                    )
                     .ContinueSession()
         );
 }

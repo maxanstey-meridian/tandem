@@ -2,7 +2,7 @@ using Tandem.Delivery;
 
 namespace Tandem.Tool;
 
-internal sealed class TerminalHumanInteraction(IDeliveryRecordSink records)
+internal sealed class TerminalHumanInteraction
 {
     private readonly object _sync = new();
     private Pending? _pending;
@@ -38,11 +38,11 @@ internal sealed class TerminalHumanInteraction(IDeliveryRecordSink records)
         }
     }
 
-    public async Task SubmitAsync(Guid runId, string? answerText)
+    public Task SubmitAsync(Guid runId, string? answerText)
     {
         if (string.IsNullOrWhiteSpace(answerText))
         {
-            return;
+            return Task.CompletedTask;
         }
 
         Pending pending;
@@ -69,21 +69,6 @@ internal sealed class TerminalHumanInteraction(IDeliveryRecordSink records)
         }
 
         var answer = new HumanAnswer(answerText.Trim());
-        try
-        {
-            await records.AcceptHumanAnswerAsync(
-                pending.Context.RequestId,
-                pending.Context.InteractionId,
-                pending.Context.Request,
-                answer,
-                CancellationToken.None
-            );
-        }
-        catch
-        {
-            pending.ReleaseSubmission();
-            throw;
-        }
 
         lock (_sync)
         {
@@ -98,6 +83,7 @@ internal sealed class TerminalHumanInteraction(IDeliveryRecordSink records)
                 $"Interaction '{pending.Context.InteractionId}' no longer accepts answers."
             );
         }
+        return Task.CompletedTask;
     }
 
     private sealed class Pending(PipelineInteractionContext<HumanQuestion, HumanAnswer> context)

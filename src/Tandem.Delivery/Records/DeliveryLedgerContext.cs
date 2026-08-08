@@ -9,10 +9,10 @@ public enum DeliveryLedgerRole
 
 public sealed record DeliveryLedgerContext(
     OutcomeProgressDocument? Outcomes,
-    AcceptedImplementationReportDocument? Report,
+    SubmitReportRequest? Report,
     ProgressCheckpointRecord? LatestCheckpoint,
-    IReadOnlyList<PlannerDecisionRecord> PlannerDecisions,
-    IReadOnlyList<ReviewDecisionRecord> Reviews,
-    IReadOnlyList<VerificationResultRecord> VerificationResults,
+    IReadOnlyList<PlannerDecision> PlannerDecisions,
+    IReadOnlyList<ReviewDecision> Reviews,
+    IReadOnlyList<VerificationResult> VerificationResults,
     IReadOnlyList<HumanAnswerRecord> HumanAnswers
 );

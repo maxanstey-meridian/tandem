@@ -167,6 +167,43 @@ public sealed class StructuredOutputTests
     }
 
     [Fact]
+    public async Task PersistentPipeline_ObservesAcceptedTypedOutputPayload()
+    {
+        var observations = new List<PipelineObservation>();
+        var agent = Agent
+            .Create<MappingState>(
+                "agent",
+                "Decide.",
+                new ScriptedChatClient(Response("{\"value\":7}"))
+            )
+            .WithMessage(_ => "Return a value.")
+            .WithOutput(
+                new MappingOutputDefinition(),
+                (state, output) => state with { Value = output.Value }
+            )
+            .Build();
+        var pipeline = Pipeline.Start(agent, "persistent-output").Persist().Build(agent);
+
+        await new PipelineRunner().RunAsync(
+            pipeline,
+            new MappingState(0),
+            new PipelineRunOptions(
+                Observer: new InlinePersistenceObserver(observation =>
+                    observations.Add(observation)
+                )
+            )
+        );
+
+        var accepted = observations
+            .OfType<PipelineStructuredOutputAccepted>()
+            .Should()
+            .ContainSingle()
+            .Which;
+        accepted.OutputType.Should().Be(typeof(MappingOutput).FullName);
+        accepted.Payload!.Value.GetProperty("value").GetInt32().Should().Be(7);
+    }
+
+    [Fact]
     public async Task JournalFailure_DoesNotInvokeOutputMapper()
     {
         var mappings = 0;
@@ -730,6 +767,19 @@ public sealed class StructuredOutputTests
             observation is PipelineStructuredOutputAccepted
                 ? ValueTask.FromException(new IOException("Journal failed."))
                 : ValueTask.CompletedTask;
+    }
+
+    private sealed class InlinePersistenceObserver(Action<PipelineObservation> observe)
+        : IPipelinePersistenceObserver
+    {
+        public ValueTask ObserveAsync(
+            PipelineObservation observation,
+            CancellationToken cancellationToken
+        )
+        {
+            observe(observation);
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class CountingAcceptanceUnitOfWork

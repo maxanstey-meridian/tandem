@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Tandem.Domain;
 
 namespace Tandem;
@@ -120,11 +121,16 @@ internal interface IInteractionRequest
     public Type ResponseType { get; }
     public object Request { get; }
     public object CreateResponse(object response);
-    public PipelineObservation CreateRequestedObservation(Guid runId, string requestId);
+    public PipelineObservation CreateRequestedObservation(
+        Guid runId,
+        string requestId,
+        bool persist
+    );
     public PipelineObservation CreateAnsweredObservation(
         Guid runId,
         string requestId,
-        object response
+        object response,
+        bool persist
     );
 }
 
@@ -149,16 +155,31 @@ internal sealed record InteractionRequest<TState, TRequest, TResponse>(
 
     PipelineObservation IInteractionRequest.CreateRequestedObservation(
         Guid runId,
-        string requestId
-    ) => new PipelineInteractionRequested<TRequest>(runId, InteractionId, requestId, Value);
+        string requestId,
+        bool persist
+    ) =>
+        new PipelineInteractionRequested<TRequest>(
+            runId,
+            InteractionId,
+            requestId,
+            Value,
+            persist ? JsonSerializer.SerializeToElement(Value, JsonSerializerOptions.Web) : null
+        );
 
     PipelineObservation IInteractionRequest.CreateAnsweredObservation(
         Guid runId,
         string requestId,
-        object response
+        object response,
+        bool persist
     ) =>
         response is TResponse typed
-            ? new PipelineInteractionAnswered<TResponse>(runId, InteractionId, requestId, typed)
+            ? new PipelineInteractionAnswered<TResponse>(
+                runId,
+                InteractionId,
+                requestId,
+                typed,
+                persist ? JsonSerializer.SerializeToElement(typed, JsonSerializerOptions.Web) : null
+            )
             : throw new InvalidOperationException(
                 $"Interaction '{InteractionId}' cannot observe response type "
                     + $"'{response.GetType().FullName}'."

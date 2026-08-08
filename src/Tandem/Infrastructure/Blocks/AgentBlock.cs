@@ -296,7 +296,12 @@ internal sealed class AgentBlock<TState>(
                                         runtime.RunId,
                                         config.BlockId,
                                         acceptedOutputId,
-                                        structuredResult.Outcome!.Kind
+                                        structuredResult.Outcome!.Kind,
+                                        config.StructuredOutput!.OutputType?.FullName
+                                            ?? config.StructuredOutput.OutputType?.Name,
+                                        observedRunContext.ShouldPersist(config.BlockId)
+                                            ? structuredResult.Outcome!.Payload
+                                            : null
                                     ),
                                     cancellationToken
                                 );

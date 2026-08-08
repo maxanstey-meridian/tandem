@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Tandem.Delivery;
 using Tandem.Ledger;
 
@@ -6,18 +7,6 @@ namespace Tandem.Tool;
 internal sealed class DeliveryLedger(RunLedger ledger) : IDeliveryRecordSink
 {
     private const int RecentRecordLimit = 5;
-    private static readonly LedgerStream<PlannerDecisionRecord> _plannerDecisions = new(
-        "delivery.planner-decisions",
-        "delivery.planner-decision"
-    );
-    private static readonly LedgerStream<ReviewDecisionRecord> _reviewDecisions = new(
-        "delivery.review-decisions",
-        "delivery.review-decision"
-    );
-    private static readonly LedgerStream<HumanAnswerRecord> _humanAnswers = new(
-        "delivery.human-answers",
-        "delivery.human-answer"
-    );
     private static readonly LedgerStream<VerificationResultRecord> _verificationResults = new(
         "delivery.verification-results",
         "delivery.verification-result"
@@ -25,10 +14,6 @@ internal sealed class DeliveryLedger(RunLedger ledger) : IDeliveryRecordSink
     private static readonly LedgerStream<ProgressCheckpointRecord> _checkpoints = new(
         "delivery.progress-checkpoints",
         "delivery.progress-checkpoint"
-    );
-    private static readonly LedgerStream<TerminalOutcomeRecord> _terminalOutcomes = new(
-        "delivery.terminal-outcomes",
-        "delivery.terminal-outcome"
     );
     private static readonly LedgerStream<PublicationResultRecord> _publicationResults = new(
         "delivery.publication-results",
@@ -38,10 +23,6 @@ internal sealed class DeliveryLedger(RunLedger ledger) : IDeliveryRecordSink
         "delivery.outcomes",
         "delivery.outcome-progress"
     );
-    private static readonly LedgerDocument<AcceptedImplementationReportDocument> _report = new(
-        "delivery.implementation-report",
-        "delivery.implementation-report"
-    );
     private static readonly LedgerDocument<PublicationCandidateDocument> _publicationCandidate =
         new("delivery.publication-candidate", "delivery.publication-candidate");
 
@@ -50,27 +31,43 @@ internal sealed class DeliveryLedger(RunLedger ledger) : IDeliveryRecordSink
         CancellationToken cancellationToken
     )
     {
-        var outcomes = (await ledger.ReadDocumentAsync(_outcomes, cancellationToken))?.Value;
+        var baseline = (await ledger.ReadDocumentAsync(_outcomes, cancellationToken))?.Value;
+        var journal = (await ledger.ReadAsync(LedgerPipelineObserver.Journal, cancellationToken))
+            .Select(entry => entry.Value)
+            .ToArray();
+        var plannerDecisions = journal
+            .Where(record =>
+                record.Kind == RuntimeJournalKind.StructuredOutputAccepted
+                && record.StepId == DeliveryIds.Planner
+                && record.Payload is not null
+            )
+            .Select(Deserialize<PlannerDecision>)
+            .TakeLast(RecentRecordLimit)
+            .ToArray();
+        var reviews = journal
+            .Where(record =>
+                record.Kind == RuntimeJournalKind.StructuredOutputAccepted
+                && record.StepId == DeliveryIds.Reviewer
+                && record.Payload is not null
+            )
+            .Select(record => (Record: record, Decision: Deserialize<ReviewDecision>(record)))
+            .TakeLast(RecentRecordLimit)
+            .ToArray();
+        var outcomes = ProjectOutcomes(baseline, reviews.LastOrDefault());
         var report =
             role == DeliveryLedgerRole.Reviewer
-                ? (await ledger.ReadDocumentAsync(_report, cancellationToken))?.Value
+                ? journal.LastOrDefault(record =>
+                    record.Kind == RuntimeJournalKind.CapabilityAccepted
+                    && record.Name == "submit_report"
+                    && record.Payload is not null
+                )
+                    is { } acceptedReport
+                    ? Deserialize<SubmitReportRequest>(acceptedReport)
+                    : null
                 : null;
         var checkpoints =
             role == DeliveryLedgerRole.Executor
                 ? await ledger.ReadRecentAsync(_checkpoints, 1, cancellationToken)
-                : [];
-        var plannerDecisions = await ledger.ReadRecentAsync(
-            _plannerDecisions,
-            RecentRecordLimit,
-            cancellationToken
-        );
-        var reviews =
-            role == DeliveryLedgerRole.Reviewer
-                ? await ledger.ReadRecentAsync(
-                    _reviewDecisions,
-                    RecentRecordLimit,
-                    cancellationToken
-                )
                 : [];
         var verification = role is DeliveryLedgerRole.Executor or DeliveryLedgerRole.Reviewer
             ? await ledger.ReadRecentAsync(
@@ -81,17 +78,94 @@ internal sealed class DeliveryLedger(RunLedger ledger) : IDeliveryRecordSink
             : [];
         var humanAnswers =
             role == DeliveryLedgerRole.Reviewer
-                ? await ledger.ReadRecentAsync(_humanAnswers, RecentRecordLimit, cancellationToken)
+                ? ProjectHumanAnswers(journal).TakeLast(RecentRecordLimit).ToArray()
                 : [];
         return new DeliveryLedgerContext(
             outcomes,
             report,
             checkpoints.LastOrDefault()?.Value,
-            plannerDecisions.Select(entry => entry.Value).ToArray(),
-            reviews.Select(entry => entry.Value).ToArray(),
-            verification.Select(entry => entry.Value).ToArray(),
-            humanAnswers.Select(entry => entry.Value).ToArray()
+            plannerDecisions,
+            role == DeliveryLedgerRole.Reviewer
+                ? reviews.Select(entry => entry.Decision).ToArray()
+                : [],
+            verification.Select(entry => entry.Value.Result).ToArray(),
+            humanAnswers
         );
+    }
+
+    private static OutcomeProgressDocument? ProjectOutcomes(
+        OutcomeProgressDocument? baseline,
+        (RuntimeJournalRecord? Record, ReviewDecision? Decision) latestReview
+    )
+    {
+        if (baseline is null || latestReview.Record is null)
+        {
+            return baseline;
+        }
+        var assessments = latestReview.Decision!.Outcomes.ToDictionary(
+            outcome => outcome.OutcomeId,
+            StringComparer.Ordinal
+        );
+        return new OutcomeProgressDocument(
+            latestReview.Record.Identity ?? baseline.AcceptedDecisionId,
+            baseline
+                .Outcomes.Select(outcome =>
+                    assessments.TryGetValue(outcome.Id, out var assessment)
+                        ? outcome with
+                        {
+                            Delivered = assessment.Delivered,
+                            Evidence = assessment.Evidence,
+                        }
+                        : outcome
+                )
+                .ToArray()
+        );
+    }
+
+    private static IEnumerable<HumanAnswerRecord> ProjectHumanAnswers(
+        IReadOnlyList<RuntimeJournalRecord> journal
+    )
+    {
+        var requests = journal
+            .Where(record =>
+                record.Kind == RuntimeJournalKind.InteractionRequested
+                && record.Payload is not null
+                && record.Identity is not null
+            )
+            .ToDictionary(record => record.Identity!, StringComparer.Ordinal);
+        foreach (
+            var answer in journal.Where(record =>
+                record.Kind == RuntimeJournalKind.InteractionAnswered
+                && record.Payload is not null
+                && record.Identity is not null
+            )
+        )
+        {
+            if (requests.TryGetValue(answer.Identity!, out var request))
+            {
+                yield return new HumanAnswerRecord(
+                    answer.Identity!,
+                    answer.StepId,
+                    Deserialize<HumanQuestion>(request),
+                    Deserialize<HumanAnswer>(answer)
+                );
+            }
+        }
+    }
+
+    private static T Deserialize<T>(RuntimeJournalRecord record)
+        where T : class
+    {
+        if (record.Payload is not { } payload)
+        {
+            throw new InvalidOperationException(
+                $"Runtime journal record '{record.Identity}' has no '{typeof(T).Name}' payload."
+            );
+        }
+        return payload.Deserialize<T>(JsonSerializerOptions.Web)
+            ?? throw new InvalidOperationException(
+                $"Runtime journal record '{record.Identity}' contains an invalid '{typeof(T).Name}' payload."
+            );
     }
 
     public async ValueTask InitializeAsync(Packet packet, CancellationToken cancellationToken)
@@ -115,94 +189,11 @@ internal sealed class DeliveryLedger(RunLedger ledger) : IDeliveryRecordSink
         );
     }
 
-    public async ValueTask AcceptCapabilityAsync<TRequest>(
-        string acceptedCallId,
-        string capabilityName,
-        TRequest request,
-        CancellationToken cancellationToken
-    )
-        where TRequest : class =>
-        await ledger.AppendAsync(
-            new LedgerStream<CapabilityAcceptedRecord<TRequest>>(
-                $"delivery.capabilities.{capabilityName}",
-                $"delivery.capability.{capabilityName}"
-            ),
-            acceptedCallId,
-            new CapabilityAcceptedRecord<TRequest>(capabilityName, request),
-            cancellationToken
-        );
-
-    public async ValueTask AcceptPlannerDecisionAsync(
-        string acceptedOutputId,
-        PlannerDecision decision,
-        CancellationToken cancellationToken
-    ) =>
-        await ledger.AppendAsync(
-            _plannerDecisions,
-            acceptedOutputId,
-            new PlannerDecisionRecord(decision),
-            cancellationToken
-        );
-
-    public async ValueTask AcceptReviewDecisionAsync(
-        string acceptedOutputId,
-        ReviewDecision decision,
-        CancellationToken cancellationToken
-    )
-    {
-        await ledger.AppendAsync(
-            _reviewDecisions,
-            acceptedOutputId,
-            new ReviewDecisionRecord(decision),
-            cancellationToken
-        );
-        var current = await ledger.ReadDocumentAsync(_outcomes, cancellationToken);
-        if (current is null)
-        {
-            throw new InvalidOperationException("Delivery outcomes were not initialized.");
-        }
-        var descriptions = current.Value.Outcomes.ToDictionary(
-            outcome => outcome.Id,
-            outcome => outcome.Description,
-            StringComparer.Ordinal
-        );
-        await WriteAcceptedDocumentAsync(
-            _outcomes,
-            new OutcomeProgressDocument(
-                acceptedOutputId,
-                decision
-                    .Outcomes.Select(outcome => new OutcomeProgress(
-                        outcome.OutcomeId,
-                        descriptions[outcome.OutcomeId],
-                        outcome.Delivered,
-                        outcome.Evidence
-                    ))
-                    .ToArray()
-            ),
-            acceptedOutputId,
-            document => document.AcceptedDecisionId,
-            cancellationToken
-        );
-    }
-
     public async ValueTask AcceptCheckpointAsync(
         string acceptedCallId,
         ProgressCheckpointRecord checkpoint,
         CancellationToken cancellationToken
     ) => await ledger.AppendAsync(_checkpoints, acceptedCallId, checkpoint, cancellationToken);
-
-    public async ValueTask AcceptReportAsync(
-        string acceptedCallId,
-        SubmitReportRequest report,
-        CancellationToken cancellationToken
-    ) =>
-        await WriteAcceptedDocumentAsync(
-            _report,
-            new AcceptedImplementationReportDocument(acceptedCallId, report),
-            acceptedCallId,
-            document => document.AcceptedCallId,
-            cancellationToken
-        );
 
     public async ValueTask AcceptPublicationCandidateAsync(
         string acceptedCandidateId,
@@ -229,26 +220,6 @@ internal sealed class DeliveryLedger(RunLedger ledger) : IDeliveryRecordSink
             _publicationResults,
             $"publication--{result.Branch}--{result.CandidateSha}",
             result,
-            cancellationToken
-        );
-
-    public async ValueTask AcceptTerminalOutcomeAsync(
-        string terminalOutcomeId,
-        TerminalOutcomeRecord outcome,
-        CancellationToken cancellationToken
-    ) => await ledger.AppendAsync(_terminalOutcomes, terminalOutcomeId, outcome, cancellationToken);
-
-    public async ValueTask AcceptHumanAnswerAsync(
-        string requestId,
-        string interactionId,
-        HumanQuestion question,
-        HumanAnswer answer,
-        CancellationToken cancellationToken
-    ) =>
-        await ledger.AppendAsync(
-            _humanAnswers,
-            $"interaction--{requestId}",
-            new HumanAnswerRecord(requestId, interactionId, question, answer),
             cancellationToken
         );
 

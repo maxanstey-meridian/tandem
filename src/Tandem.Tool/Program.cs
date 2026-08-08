@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Tandem;
@@ -39,11 +40,27 @@ var publishCommand = new Command("publish", "Publish a Ready candidate as a loca
     branchOption,
     debugOption,
 };
+var inspectRunIdArgument = new Argument<string>("run-id") { Description = "Run ID to inspect." };
+var acceptedOption = new Option<bool>("--accepted") { Description = "Show accepted values only." };
+var stepOption = new Option<string?>("--step") { Description = "Filter by semantic step ID." };
+var typeOption = new Option<string?>("--type") { Description = "Filter by value type." };
+var toolsOption = new Option<bool>("--tools") { Description = "Include operational tool events." };
+var jsonOption = new Option<bool>("--json") { Description = "Write machine-readable JSON." };
+var inspectCommand = new Command("inspect", "Inspect a persisted run timeline")
+{
+    inspectRunIdArgument,
+    acceptedOption,
+    stepOption,
+    typeOption,
+    toolsOption,
+    jsonOption,
+};
 
 var rootCommand = new RootCommand("Tandem — agentic pipeline runner")
 {
     runCommand,
     publishCommand,
+    inspectCommand,
 };
 
 runCommand.SetAction(
@@ -90,6 +107,29 @@ publishCommand.SetAction(
             {
                 Console.Error.WriteLine(ex.StackTrace);
             }
+            return 1;
+        }
+    }
+);
+
+inspectCommand.SetAction(
+    async (ParseResult parseResult, CancellationToken cancellationToken) =>
+    {
+        try
+        {
+            return await InspectAsync(
+                parseResult.GetRequiredValue(inspectRunIdArgument),
+                parseResult.GetValue(acceptedOption),
+                parseResult.GetValue(stepOption),
+                parseResult.GetValue(typeOption),
+                parseResult.GetValue(toolsOption),
+                parseResult.GetValue(jsonOption),
+                cancellationToken
+            );
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error: {ex.Message}");
             return 1;
         }
     }
@@ -190,7 +230,7 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
         await journalObserver.RecordRunStartedAsync(cancellationToken);
 
         using var runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var humanInteraction = new TerminalHumanInteraction(deliveryLedger);
+        var humanInteraction = new TerminalHumanInteraction();
         var interactions = new PipelineInteractionHandlers()
             .Handle(composition.PlannerHumanInput, humanInteraction.WaitAsync)
             .Handle(composition.ReviewerHumanInput, humanInteraction.WaitAsync);
@@ -215,7 +255,6 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
                 final,
                 eventStore,
                 ledgerStore,
-                deliveryLedger,
                 journalObserver,
                 CancellationToken.None
             );
@@ -292,7 +331,6 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
             runPaths.RunId,
             eventStore,
             ledgerStore,
-            deliveryLedger,
             journalObserver,
             Tandem.Delivery.RunStatus.Cancelled,
             "Run cancelled."
@@ -309,7 +347,6 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
             runPaths.RunId,
             eventStore,
             ledgerStore,
-            deliveryLedger,
             journalObserver,
             Tandem.Delivery.RunStatus.Faulted,
             reportedException.Message
@@ -376,7 +413,6 @@ static async Task PersistTerminalAsync(
     PipelineRunResult<DeliveryState> final,
     EventStore eventStore,
     SqliteLedgerStore ledgerStore,
-    DeliveryLedger deliveryLedger,
     LedgerPipelineObserver journalObserver,
     CancellationToken cancellationToken
 )
@@ -386,15 +422,6 @@ static async Task PersistTerminalAsync(
         final.Status == PipelineRunStatus.Succeeded
             ? Tandem.Delivery.RunStatus.Ready
             : Tandem.Delivery.RunStatus.Failed;
-    await deliveryLedger.AcceptTerminalOutcomeAsync(
-        $"terminal--{status}",
-        new TerminalOutcomeRecord(
-            status.ToString(),
-            final.State.CandidateSha,
-            final.Outcome?.Summary
-        ),
-        cancellationToken
-    );
     await journalObserver.RecordRunCompletedAsync(status.ToString(), cancellationToken);
     await ledgerStore.CompleteRunAsync(
         runId,
@@ -419,7 +446,6 @@ static async Task TryPersistInterruptedRunAsync(
     Guid runId,
     EventStore eventStore,
     SqliteLedgerStore ledgerStore,
-    DeliveryLedger deliveryLedger,
     LedgerPipelineObserver journalObserver,
     Tandem.Delivery.RunStatus status,
     string reason
@@ -427,11 +453,6 @@ static async Task TryPersistInterruptedRunAsync(
 {
     try
     {
-        await deliveryLedger.AcceptTerminalOutcomeAsync(
-            $"terminal--{status}",
-            new TerminalOutcomeRecord(status.ToString(), null, reason),
-            CancellationToken.None
-        );
         await journalObserver.RecordRunCompletedAsync(status.ToString(), CancellationToken.None);
         await ledgerStore.CompleteRunAsync(
             runId,
@@ -456,6 +477,73 @@ static async Task TryPersistInterruptedRunAsync(
             $"Warning: failed to persist terminal run state: {persistenceError.Message}"
         );
     }
+}
+
+static async Task<int> InspectAsync(
+    string runIdArg,
+    bool acceptedOnly,
+    string? step,
+    string? valueType,
+    bool includeTools,
+    bool json,
+    CancellationToken cancellationToken
+)
+{
+    if (!Guid.TryParse(runIdArg, out var runId))
+    {
+        throw new InvalidOperationException($"Invalid run ID '{runIdArg}'.");
+    }
+    var tandemHome = TandemHomeResolver.Resolve();
+    var store = new SqliteLedgerStore(Path.Combine(tandemHome, "ledger.sqlite3"));
+    await store.InitializeAsync(cancellationToken);
+    var inspection = await new RunInspector(store, tandemHome).InspectAsync(
+        runId,
+        acceptedOnly,
+        step,
+        valueType,
+        includeTools,
+        cancellationToken
+    );
+
+    if (json)
+    {
+        Console.WriteLine(
+            JsonSerializer.Serialize(
+                inspection,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }
+            )
+        );
+        return 0;
+    }
+
+    Console.WriteLine($"Run {inspection.RunId:N}  {inspection.Composition}  {inspection.Status}");
+    foreach (var item in inspection.Items)
+    {
+        var name = item.Name ?? item.ValueType;
+        Console.WriteLine(
+            $"{item.Timestamp:O}  [{item.Category}] {item.Kind}  {item.StepId}"
+                + (string.IsNullOrWhiteSpace(name) ? "" : $"  {name}")
+                + (string.IsNullOrWhiteSpace(item.Result) ? "" : $"  {item.Result}")
+                + (string.IsNullOrWhiteSpace(item.Identity) ? "" : $"  id={item.Identity}")
+                + (
+                    string.IsNullOrWhiteSpace(item.OutcomeKind)
+                        ? ""
+                        : $"  outcome={item.OutcomeKind}"
+                )
+        );
+        if (item.Payload is { } payload)
+        {
+            var formatted = JsonSerializer.Serialize(
+                payload,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }
+            );
+            foreach (var line in formatted.Split(Environment.NewLine))
+            {
+                Console.WriteLine($"    {line}");
+            }
+        }
+    }
+    return 0;
 }
 
 static async Task<int> PublishAsync(

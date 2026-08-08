@@ -140,7 +140,12 @@ internal sealed class InProcessPipelineRunner
             initialState
         )
         {
-            RunContext = new PipelineRunContext(runId, observer, unitOfWork),
+            RunContext = new PipelineRunContext(
+                runId,
+                observer,
+                unitOfWork,
+                pipeline.PersistentStepIds
+            ),
         };
         await using var run = await InProcessExecution.Concurrent.RunStreamingAsync(
             PipelineMafBridge.GetWorkflow(pipeline),
@@ -353,7 +358,11 @@ internal sealed class InProcessPipelineRunner
             if (interactionRunContext is not null)
             {
                 await interactionRunContext.ObserveAsync(
-                    interaction!.CreateRequestedObservation(runId, request.RequestId),
+                    interaction!.CreateRequestedObservation(
+                        runId,
+                        request.RequestId,
+                        interactionRunContext.ShouldPersist(interaction.InteractionId)
+                    ),
                     cancellationToken
                 );
             }
@@ -384,17 +393,22 @@ internal sealed class InProcessPipelineRunner
                 ?? throw new InvalidOperationException(
                     $"Answer for request '{request.RequestId}' produced a null response."
                 );
+            if (interactionRunContext is not null)
+            {
+                await interactionRunContext.ObserveAsync(
+                    interaction!.CreateAnsweredObservation(
+                        runId,
+                        request.RequestId,
+                        response,
+                        interactionRunContext.ShouldPersist(interaction.InteractionId)
+                    ),
+                    cancellationToken
+                );
+            }
             await responsesMaySend.WaitAsync(cancellationToken);
             await run.SendResponseAsync(
                 request.CreateResponse(interaction?.CreateResponse(response) ?? response)
             );
-            if (interactionRunContext is not null)
-            {
-                await interactionRunContext.ObserveAsync(
-                    interaction!.CreateAnsweredObservation(runId, request.RequestId, response),
-                    cancellationToken
-                );
-            }
         }
         catch (OperationCanceledException)
         {

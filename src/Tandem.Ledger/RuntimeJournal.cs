@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Tandem.Ledger;
 
 public enum RuntimeJournalKind
@@ -28,5 +30,7 @@ public sealed record RuntimeJournalRecord(
     string? OutcomeKind = null,
     int? InputTokens = null,
     int? OutputTokens = null,
-    int? CurrentContextTokens = null
+    int? CurrentContextTokens = null,
+    string? ValueType = null,
+    JsonElement? Payload = null
 );

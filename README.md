@@ -151,7 +151,8 @@ Tandem currently targets .NET 10. Reference the core package and its source gene
 3. Keep deterministic operations in ordinary `[PipelineStage]` classes.
 4. Model external decisions with `PipelineNodes.WaitFor<TState, TRequest, TResponse>()`.
 5. Compose the lifecycle with explicit `.Route(...)` calls.
-6. Run it with a typed interaction handler:
+6. Add `.Persist()` when the host must retain accepted typed values.
+7. Run it with a typed interaction handler:
 
 ```csharp
 // This handler connects human-review to the host's UI, CLI, chat, or API.
@@ -171,6 +172,23 @@ var result = await new PipelineRunner().RunAsync(
 Console.WriteLine(result.Status); // Succeeded or Failed
 Console.WriteLine(result.State.ProposedChange);
 ```
+
+A persistent pipeline requires a host persistence observer. The bundled Tool
+provides one automatically and records accepted outputs, capability requests, and
+interaction values without application save callbacks. Inspect a completed run with:
+
+```sh
+dotnet run --project src/Tandem.Tool -- inspect <run-id>
+```
+
+Use `--accepted` for accepted semantic values only, `--step <id>` and
+`--type <name>` to filter them, `--tools` to include optional operational tool
+telemetry, and `--json` for the versioned machine-readable projection. Malformed
+telemetry does not prevent inspection of the authoritative SQLite history.
+
+Use `.DoNotPersist(step)` for a sensitive participant, or `.Persist(step)` to retain
+one participant in an otherwise ephemeral pipeline. Tandem does not persist `TState`,
+prompts, reasoning, streaming prose, or arbitrary tool response bodies.
 
 `Tandem.Advanced` is an explicit opt-in for execution-aware concerns such as
 Harness workspaces, tool authority, output acceptance, checkpoints, and custom

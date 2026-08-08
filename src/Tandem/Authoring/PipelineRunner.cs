@@ -155,6 +155,12 @@ public sealed class PipelineRunner
         ArgumentNullException.ThrowIfNull(pipeline);
         ArgumentNullException.ThrowIfNull(initialState);
         options ??= new PipelineRunOptions();
+        if (pipeline.RequiresPersistence && options.Observer is not IPipelinePersistenceObserver)
+        {
+            throw new InvalidOperationException(
+                $"Pipeline '{pipeline.Inspect().Name}' requires accepted-value persistence, but this host has no persistence observer."
+            );
+        }
         var runId = options.RunId ?? Guid.CreateVersion7();
         var runner = new InProcessPipelineRunner();
         var output = options.Interactions is null

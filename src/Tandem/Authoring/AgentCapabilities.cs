@@ -258,7 +258,10 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
                             _invocation.BlockId,
                             _invocation.InvocationId,
                             _capabilityId,
-                            _name
+                            _name,
+                            $"{_invocation.RunId:N}:{_invocation.BlockId}:{_invocation.InvocationId}:{_capabilityId}",
+                            typeof(TRequest).FullName ?? typeof(TRequest).Name,
+                            observedRunContext.ShouldPersist(_invocation.BlockId) ? payload : null
                         ),
                         ct
                     );

@@ -28,10 +28,7 @@ public static class DeliveryRegistration
         services.TryAddSingleton<GitProcess>();
         services.AddSingleton<CheckpointAcceptance>();
         services.AddSingleton(sp =>
-            DeliveryCapabilities.Create(
-                options.Records,
-                sp.GetRequiredService<CheckpointAcceptance>()
-            )
+            DeliveryCapabilities.Create(sp.GetRequiredService<CheckpointAcceptance>())
         );
         services.AddSingleton<AgentCapability<DeliveryState>>(sp =>
             sp.GetRequiredService<DeliveryCapabilitySet>().AskPlanner

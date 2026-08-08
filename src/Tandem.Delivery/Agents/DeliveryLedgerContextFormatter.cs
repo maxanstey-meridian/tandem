@@ -33,29 +33,27 @@ internal static class DeliveryLedgerContextFormatter
             Append(
                 text,
                 "Accepted report",
-                [report.Report.Summary, $"Evidence: {string.Join("; ", report.Report.Evidence)}"]
+                [report.Summary, $"Evidence: {string.Join("; ", report.Evidence)}"]
             );
         }
         Append(
             text,
             "Planner decisions",
-            context.PlannerDecisions.Select(record =>
-                $"{record.Decision.Decision}: {record.Decision.Rationale}; constraints={string.Join("; ", record.Decision.Constraints)}"
+            context.PlannerDecisions.Select(decision =>
+                $"{decision.Decision}: {decision.Rationale}; constraints={string.Join("; ", decision.Constraints)}"
             )
         );
         Append(
             text,
             "Verification",
-            context.VerificationResults.Select(record =>
-                $"{record.Result.Command}: exit={record.Result.ExitCode}; stderr={record.Result.Stderr}"
+            context.VerificationResults.Select(result =>
+                $"{result.Command}: exit={result.ExitCode}; stderr={result.Stderr}"
             )
         );
         Append(
             text,
             "Reviews",
-            context.Reviews.Select(record =>
-                $"{record.Decision.Decision}: {record.Decision.Summary}"
-            )
+            context.Reviews.Select(decision => $"{decision.Decision}: {decision.Summary}")
         );
         Append(
             text,

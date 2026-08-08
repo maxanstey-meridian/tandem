@@ -27,6 +27,84 @@ public sealed class InProcessPipelineRunnerTests
     }
 
     [Fact]
+    public async Task PersistentPipeline_RequiresPersistenceObserverBeforeExecution()
+    {
+        var increment = new IncrementStage();
+        var pipeline = Pipeline.Start(increment, "persistent").Persist().Build(increment);
+
+        var run = async () => await new PipelineRunner().RunAsync(pipeline, new RunnerState(1));
+
+        await run.Should()
+            .ThrowAsync<InvalidOperationException>()
+            .WithMessage("*requires accepted-value persistence*");
+    }
+
+    [Fact]
+    public async Task PersistencePolicy_IsInspectableAndSupportsStepOptOut()
+    {
+        var increment = new IncrementStage();
+        var pipeline = Pipeline
+            .Start(increment, "persistent-opt-out")
+            .Persist()
+            .DoNotPersist(increment)
+            .Build(increment);
+
+        var result = await new PipelineRunner().RunAsync(pipeline, new RunnerState(1));
+
+        result.State.Count.Should().Be(2);
+        pipeline.Inspect().PersistentStepIds.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task PersistenceObserver_SatisfiesPersistentPipelineRequirement()
+    {
+        var increment = new IncrementStage();
+        var pipeline = Pipeline.Start(increment, "persistent").Persist().Build(increment);
+
+        var result = await new PipelineRunner().RunAsync(
+            pipeline,
+            new RunnerState(1),
+            new PipelineRunOptions(Observer: new InlinePersistenceObserver())
+        );
+
+        result.State.Count.Should().Be(2);
+        pipeline.Inspect().PersistentStepIds.Should().Equal("runner-increment");
+    }
+
+    [Fact]
+    public async Task StepPersistence_EnablesOneParticipantInEphemeralPipeline()
+    {
+        var increment = new IncrementStage();
+        var pipeline = Pipeline
+            .Start(increment, "step-persistence")
+            .Persist(increment)
+            .Build(increment);
+
+        await new PipelineRunner().RunAsync(
+            pipeline,
+            new RunnerState(1),
+            new PipelineRunOptions(Observer: new InlinePersistenceObserver())
+        );
+
+        pipeline.Inspect().PersistentStepIds.Should().Equal("runner-increment");
+    }
+
+    [Fact]
+    public void PersistenceOverride_RejectsUnregisteredParticipant()
+    {
+        var increment = new IncrementStage();
+        var unregistered = new FaultStage();
+        var builder = Pipeline.Start(increment, "invalid-persistence").Persist(unregistered);
+
+        var build = () => builder.Build(increment);
+
+        build
+            .Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage("*unregistered step 'runner-fault'*");
+    }
+
+    [Fact]
     public async Task RunAsync_ReturnsDeclaredFailureAsOutput()
     {
         var failure = new DeclaredFailureStage();
@@ -189,6 +267,160 @@ public sealed class InProcessPipelineRunnerTests
             .OfType<PipelineStepFaulted>()
             .Should()
             .ContainSingle(observation => observation.StepId == "probe-input");
+    }
+
+    [Fact]
+    public async Task PersistentInteraction_ObservesRequestAndResponseBeforeStateApply()
+    {
+        var start = new InteractionStartStage();
+        var interaction = PipelineNodes.WaitFor<RunnerState, ProbeQuestion, ProbeAnswer>(
+            "probe-input",
+            state => new ProbeQuestion($"Current count: {state.Count}"),
+            (state, answer) => state with { Answer = answer.Text }
+        );
+        var complete = PipelineNodes.Complete<RunnerState>("complete");
+        var pipeline = Pipeline
+            .Start(start, "persistent-interaction")
+            .Persist()
+            .Route(on: start.Success, to: interaction, label: "ask")
+            .Route(when: _ => true, from: interaction, to: complete, label: "answered")
+            .Build(complete);
+        var observations = new List<PipelineObservation>();
+        var observer = new InlinePersistenceObserver(observations.Add);
+        var handler = new InlineExternalRequestHandler(request => new ExternalRequestAnswer(
+            request.RunId,
+            request.RequestId,
+            JsonSerializer.SerializeToElement(new ProbeAnswer("accepted"))
+        ));
+
+        var result = await new InProcessPipelineRunner().RunAsync(
+            pipeline,
+            Guid.CreateVersion7(),
+            new RunnerState(0),
+            handler,
+            observer,
+            CancellationToken.None
+        );
+
+        result.State.Answer.Should().Be("accepted");
+        observations
+            .OfType<PipelineInteractionRequestedObservation>()
+            .Should()
+            .ContainSingle()
+            .Which.Payload.Should()
+            .NotBeNull();
+        observations
+            .OfType<PipelineInteractionAnsweredObservation>()
+            .Should()
+            .ContainSingle()
+            .Which.Payload!.Value.GetProperty("text")
+            .GetString()
+            .Should()
+            .Be("accepted");
+    }
+
+    [Fact]
+    public async Task PersistentInteraction_RequestPersistenceFailurePreventsHandlerDispatch()
+    {
+        var pipeline = BuildPersistentInteractionPipeline(_ => { });
+        var handlerCalled = false;
+        var handler = new InlineExternalRequestHandler(request =>
+        {
+            handlerCalled = true;
+            return new ExternalRequestAnswer(
+                request.RunId,
+                request.RequestId,
+                JsonSerializer.SerializeToElement(new ProbeAnswer("accepted"))
+            );
+        });
+        var observer = new FailingPersistenceObserver<PipelineInteractionRequestedObservation>();
+
+        var run = async () =>
+            await new InProcessPipelineRunner().RunAsync(
+                pipeline,
+                Guid.CreateVersion7(),
+                new RunnerState(0),
+                handler,
+                observer,
+                CancellationToken.None
+            );
+
+        await run.Should().ThrowAsync<IOException>().WithMessage("persistence failed");
+        handlerCalled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task PersistentInteraction_ResponsePersistenceFailurePreventsStateApply()
+    {
+        var applyCount = 0;
+        var pipeline = BuildPersistentInteractionPipeline(_ => applyCount++);
+        var handler = new InlineExternalRequestHandler(request => new ExternalRequestAnswer(
+            request.RunId,
+            request.RequestId,
+            JsonSerializer.SerializeToElement(new ProbeAnswer("accepted"))
+        ));
+        var observer = new FailingPersistenceObserver<PipelineInteractionAnsweredObservation>();
+
+        var run = async () =>
+            await new InProcessPipelineRunner().RunAsync(
+                pipeline,
+                Guid.CreateVersion7(),
+                new RunnerState(0),
+                handler,
+                observer,
+                CancellationToken.None
+            );
+
+        await run.Should().ThrowAsync<IOException>().WithMessage("persistence failed");
+        applyCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task InteractionOptOut_PreservesObservationsWithoutPayloads()
+    {
+        var start = new InteractionStartStage();
+        var interaction = PipelineNodes.WaitFor<RunnerState, ProbeQuestion, ProbeAnswer>(
+            "probe-input",
+            state => new ProbeQuestion($"Current count: {state.Count}"),
+            (state, answer) => state with { Answer = answer.Text }
+        );
+        var complete = PipelineNodes.Complete<RunnerState>("complete");
+        var pipeline = Pipeline
+            .Start(start, "interaction-opt-out")
+            .Persist()
+            .DoNotPersist(interaction)
+            .Route(on: start.Success, to: interaction, label: "ask")
+            .Route(when: _ => true, from: interaction, to: complete, label: "answered")
+            .Build(complete);
+        var observations = new List<PipelineObservation>();
+        var handler = new InlineExternalRequestHandler(request => new ExternalRequestAnswer(
+            request.RunId,
+            request.RequestId,
+            JsonSerializer.SerializeToElement(new ProbeAnswer("accepted"))
+        ));
+
+        var result = await new InProcessPipelineRunner().RunAsync(
+            pipeline,
+            Guid.CreateVersion7(),
+            new RunnerState(0),
+            handler,
+            new InlinePersistenceObserver(observations.Add),
+            CancellationToken.None
+        );
+
+        result.State.Answer.Should().Be("accepted");
+        observations
+            .OfType<PipelineInteractionRequestedObservation>()
+            .Should()
+            .ContainSingle()
+            .Which.Payload.Should()
+            .BeNull();
+        observations
+            .OfType<PipelineInteractionAnsweredObservation>()
+            .Should()
+            .ContainSingle()
+            .Which.Payload.Should()
+            .BeNull();
     }
 
     [Fact]
@@ -505,6 +737,29 @@ public sealed class InProcessPipelineRunnerTests
         return broker.PendingRequests.Single();
     }
 
+    private static Pipeline<RunnerState> BuildPersistentInteractionPipeline(
+        Action<RunnerState> apply
+    )
+    {
+        var start = new InteractionStartStage();
+        var interaction = PipelineNodes.WaitFor<RunnerState, ProbeQuestion, ProbeAnswer>(
+            "probe-input",
+            state => new ProbeQuestion($"Current count: {state.Count}"),
+            (state, answer) =>
+            {
+                apply(state);
+                return state with { Answer = answer.Text };
+            }
+        );
+        var complete = PipelineNodes.Complete<RunnerState>("complete");
+        return Pipeline
+            .Start(start, "persistent-interaction-failure")
+            .Persist()
+            .Route(on: start.Success, to: interaction, label: "ask")
+            .Route(when: _ => true, from: interaction, to: complete, label: "answered")
+            .Build(complete);
+    }
+
     private sealed class InlineExternalRequestHandler(
         Func<PendingExternalRequest, ExternalRequestAnswer> answer
     ) : IExternalRequestHandler
@@ -526,6 +781,31 @@ public sealed class InProcessPipelineRunnerTests
             observe(observation);
             return ValueTask.CompletedTask;
         }
+    }
+
+    private sealed class InlinePersistenceObserver(Action<PipelineObservation>? observe = null)
+        : IPipelinePersistenceObserver
+    {
+        public ValueTask ObserveAsync(
+            PipelineObservation observation,
+            CancellationToken cancellationToken
+        )
+        {
+            observe?.Invoke(observation);
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class FailingPersistenceObserver<TObservation> : IPipelinePersistenceObserver
+        where TObservation : PipelineObservation
+    {
+        public ValueTask ObserveAsync(
+            PipelineObservation observation,
+            CancellationToken cancellationToken
+        ) =>
+            observation is TObservation
+                ? ValueTask.FromException(new IOException("persistence failed"))
+                : ValueTask.CompletedTask;
     }
 
     private sealed class ProbeCompletion : IPipelineCompletion<RunnerState>

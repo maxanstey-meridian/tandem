@@ -250,6 +250,28 @@ such as `ChangesRequested`.
 
 ## Composition And Routing
 
+Persistence is declared once at composition. A persistent pipeline durably records
+accepted typed outputs, capability requests, interactions, and authored outcome
+payloads through the host's persistence observer:
+
+```csharp
+var pipeline = Pipeline
+    .Start(planner, "delivery")
+    .Persist()
+    .DoNotPersist(credentialsAgent)
+    .Route(...)
+    .Build(complete);
+```
+
+`.DoNotPersist(step)` is a narrow retention exception; it does not change live
+execution. `.Persist(step)` enables one participant in an otherwise ephemeral
+pipeline. A pipeline requiring persistence fails before execution when its host has
+no persistence observer. Application values need no persistence interfaces or save
+callbacks.
+
+Tandem persists accepted semantic boundaries, not state snapshots, failed candidates,
+prompts, reasoning, streaming prose, or arbitrary tool bodies.
+
 Every successor is explicit. An unconditional output route starts with the source
 step itself:
 

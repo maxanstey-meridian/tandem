@@ -627,21 +627,26 @@ public sealed class Pipeline<TState>
     private readonly IReadOnlyList<string> _outputStepIds;
     private readonly IReadOnlyList<PipelineRouteInspection> _routes;
     private readonly IReadOnlyList<PipelineInteractionInspection> _interactions;
+    private readonly IReadOnlySet<string> _persistentStepIds;
 
     internal Pipeline(
         Workflow workflow,
         IReadOnlyList<string> outputStepIds,
         IReadOnlyList<PipelineRouteInspection> routes,
-        IReadOnlyList<PipelineInteractionInspection> interactions
+        IReadOnlyList<PipelineInteractionInspection> interactions,
+        IReadOnlySet<string>? persistentStepIds = null
     )
     {
         Workflow = workflow;
         _outputStepIds = outputStepIds;
         _routes = routes;
         _interactions = interactions;
+        _persistentStepIds = persistentStepIds ?? new HashSet<string>(StringComparer.Ordinal);
     }
 
     internal Workflow Workflow { get; }
+    internal IReadOnlySet<string> PersistentStepIds => _persistentStepIds;
+    internal bool RequiresPersistence => _persistentStepIds.Count > 0;
 
     public PipelineInspection Inspect()
     {
@@ -697,6 +702,7 @@ public sealed class Pipeline<TState>
             _interactions,
             semanticRoutes,
             _outputStepIds,
+            stepIds.Where(_persistentStepIds.Contains).ToArray(),
             RenderMermaid(stepIds, semanticRoutes, startStepId, _outputStepIds),
             RenderDot(stepIds, semanticRoutes, startStepId, _outputStepIds)
         );
@@ -793,6 +799,7 @@ public sealed record PipelineInspection(
     IReadOnlyList<PipelineInteractionInspection> Interactions,
     IReadOnlyList<PipelineRouteInspection> Routes,
     IReadOnlyList<string> OutputStepIds,
+    IReadOnlyList<string> PersistentStepIds,
     string Mermaid,
     string Dot
 );
@@ -854,6 +861,14 @@ public sealed class PipelineBuilder<TState>
     private readonly Dictionary<IPipelineNode, List<PipelineRouteRegistration>> _routes = new(
         PipelineStepReferenceComparer.Instance
     );
+    private readonly Dictionary<IPipelineNode, bool> _persistenceOverrides = new(
+        PipelineStepReferenceComparer.Instance
+    );
+    private readonly Dictionary<
+        IPipelineInteractionDefinition,
+        bool
+    > _interactionPersistenceOverrides = new(ReferenceEqualityComparer.Instance);
+    private bool _persistByDefault;
     private bool _built;
 
     private PipelineBuilder(WorkflowBuilder builder)
@@ -908,6 +923,34 @@ public sealed class PipelineBuilder<TState>
         result.EnsureInteraction(start);
         return result;
     }
+
+    public PipelineBuilder<TState> Persist()
+    {
+        EnsureNotBuilt();
+        _persistByDefault = true;
+        return this;
+    }
+
+    public PipelineBuilder<TState> DoNotPersist()
+    {
+        EnsureNotBuilt();
+        _persistByDefault = false;
+        return this;
+    }
+
+    public PipelineBuilder<TState> Persist(IPipelineNode<TState> step) =>
+        SetPersistence(step, persist: true);
+
+    public PipelineBuilder<TState> DoNotPersist(IPipelineNode<TState> step) =>
+        SetPersistence(step, persist: false);
+
+    public PipelineBuilder<TState> Persist<TRequest, TResponse>(
+        PipelineInteraction<TState, TRequest, TResponse> interaction
+    ) => SetPersistence(interaction, persist: true);
+
+    public PipelineBuilder<TState> DoNotPersist<TRequest, TResponse>(
+        PipelineInteraction<TState, TRequest, TResponse> interaction
+    ) => SetPersistence(interaction, persist: false);
 
     public PipelineBuilder<TState> Route<TTargetResult>(
         PipelineOutcomeSelector<TState> on,
@@ -1096,10 +1139,78 @@ public sealed class PipelineBuilder<TState>
                     interaction.ResponseType.FullName ?? interaction.ResponseType.Name
                 ))
                 .OrderBy(interaction => interaction.Id, StringComparer.Ordinal)
-                .ToArray()
+                .ToArray(),
+            ResolvePersistentStepIds()
         );
         _built = true;
         return pipeline;
+    }
+
+    private PipelineBuilder<TState> SetPersistence(IPipelineNode<TState> step, bool persist)
+    {
+        EnsureNotBuilt();
+        ArgumentNullException.ThrowIfNull(step);
+        _persistenceOverrides[step] = persist;
+        return this;
+    }
+
+    private PipelineBuilder<TState> SetPersistence(
+        IPipelineInteractionDefinition interaction,
+        bool persist
+    )
+    {
+        EnsureNotBuilt();
+        ArgumentNullException.ThrowIfNull(interaction);
+        _interactionPersistenceOverrides[interaction] = persist;
+        return this;
+    }
+
+    private IReadOnlySet<string> ResolvePersistentStepIds()
+    {
+        foreach (var step in _persistenceOverrides.Keys)
+        {
+            if (!_bindings.ContainsKey(step))
+            {
+                throw new InvalidOperationException(
+                    $"Persistence policy references unregistered step '{step.Id}'."
+                );
+            }
+        }
+        foreach (var interaction in _interactionPersistenceOverrides.Keys)
+        {
+            if (!_interactions.Contains(interaction))
+            {
+                throw new InvalidOperationException(
+                    $"Persistence policy references unregistered interaction '{interaction.Id}'."
+                );
+            }
+        }
+
+        var interactionIds = _interactions
+            .Select(value => value.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        string SemanticId(string id) =>
+            interactionIds.FirstOrDefault(interactionId =>
+                id == interactionId
+                || id == $"{interactionId}--request"
+                || id == $"{interactionId}--resume"
+            ) ?? id;
+        var policies = _bindings
+            .Keys.Select(step => SemanticId(step.Id))
+            .Distinct(StringComparer.Ordinal)
+            .ToDictionary(id => id, _ => _persistByDefault, StringComparer.Ordinal);
+        foreach (var (step, persist) in _persistenceOverrides)
+        {
+            policies[SemanticId(step.Id)] = persist;
+        }
+        foreach (var (interaction, persist) in _interactionPersistenceOverrides)
+        {
+            policies[interaction.Id] = persist;
+        }
+        return policies
+            .Where(entry => entry.Value)
+            .Select(entry => entry.Key)
+            .ToHashSet(StringComparer.Ordinal);
     }
 
     private PipelineBuilder<TState> RouteOutcome(
