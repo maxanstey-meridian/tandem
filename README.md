@@ -207,8 +207,11 @@ telemetry does not prevent inspection of the authoritative SQLite history.
 
 The bundled Tool provides the required host persistence observer automatically. Use
 `.DoNotPersist(step)` for a sensitive participant, or `.Persist(step)` to retain one
-participant in an otherwise ephemeral pipeline. Tandem does not persist `TState`,
-prompts, reasoning, streaming prose, or arbitrary tool response bodies.
+participant in an otherwise ephemeral pipeline. For ordinary state-returning stages,
+the returned state is the accepted typed value. Tandem records that value at the
+stage boundary; it does not periodically snapshot ambient `TState`, make runs
+resumable, or retain prompts, reasoning, streaming prose, or arbitrary tool response
+bodies.
 
 `Tandem.Advanced` is an explicit opt-in for execution-aware concerns such as
 Harness workspaces, tool authority, output acceptance, checkpoints, and custom

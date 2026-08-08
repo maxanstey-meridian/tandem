@@ -435,7 +435,8 @@ internal sealed class GeneratedStateStepExecutor<TState>
                     ),
                 };
             },
-            cancellationToken
+            cancellationToken,
+            acceptedValue: output => PipelineAcceptedValue.From(output.State)
         );
     }
 }
@@ -496,7 +497,11 @@ internal sealed class GeneratedOutcomeStepExecutor<TState>
                     _ => throw new InvalidOperationException("Unknown standard outcome."),
                 };
             },
-            cancellationToken
+            cancellationToken,
+            acceptedValue: output =>
+                output.LatestOutcome?.Kind == StandardOutcomeKinds.Success
+                    ? PipelineAcceptedValue.From(output.State)
+                    : null
         );
     }
 

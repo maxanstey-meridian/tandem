@@ -24,8 +24,23 @@ public sealed record PipelineStepCompleted(
     Guid RunId,
     string StepId,
     PipelineRunOutcome Outcome,
-    bool PersistPayload = false
+    PipelineAcceptedValue? AcceptedValue = null
 ) : PipelineObservation(RunId, StepId);
+
+public sealed record PipelineAcceptedValue(string ValueType, JsonElement Payload)
+{
+    internal static PipelineAcceptedValue From<TValue>(TValue value)
+    {
+        var valueType = value?.GetType() ?? typeof(TValue);
+        return new(
+            valueType.FullName ?? valueType.Name,
+            JsonSerializer.SerializeToElement(value, valueType, JsonSerializerOptions.Web)
+        );
+    }
+
+    internal static PipelineAcceptedValue FromPayload<TValue>(JsonElement payload) =>
+        new(typeof(TValue).FullName ?? typeof(TValue).Name, payload);
+}
 
 public sealed record PipelineStepFaulted(Guid RunId, string StepId, string Error)
     : PipelineObservation(RunId, StepId);
@@ -185,7 +200,8 @@ internal static class PipelineObservationPublisher
         PipelineObservationMode mode,
         TInput input,
         Func<ValueTask<TOutput>> execute,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        Func<TOutput, PipelineAcceptedValue?>? acceptedValue = null
     )
     {
         var runContext = (input as IPipelineRunContextCarrier)?.RunContext;
@@ -206,13 +222,24 @@ internal static class PipelineObservationPublisher
             var output = await execute();
             if (mode is PipelineObservationMode.Full or PipelineObservationMode.CompleteOnly)
             {
+                var outcome = ToOutcome(
+                    stepId,
+                    output,
+                    TimeProvider.System.GetElapsedTime(started)
+                );
+                PipelineAcceptedValue? accepted = null;
+                if (runContext.ShouldPersist(stepId))
+                {
+                    accepted = acceptedValue?.Invoke(output);
+                    if (accepted is null && outcome.Kind == StandardOutcomeKinds.Failed)
+                    {
+                        accepted = PipelineAcceptedValue.FromPayload<FailureEvidence>(
+                            outcome.Payload
+                        );
+                    }
+                }
                 await runContext.ObserveAsync(
-                    new PipelineStepCompleted(
-                        runContext.RunId,
-                        stepId,
-                        ToOutcome(stepId, output, TimeProvider.System.GetElapsedTime(started)),
-                        runContext.ShouldPersist(stepId)
-                    ),
+                    new PipelineStepCompleted(runContext.RunId, stepId, outcome, accepted),
                     cancellationToken
                 );
             }

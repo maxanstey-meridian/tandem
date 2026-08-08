@@ -621,7 +621,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task RuntimeJournal_PersistsFailureEvidenceWithoutDuplicatingSuccessPayload()
+    public async Task RuntimeJournal_PersistsAcceptedStateAndFailureEvidence()
     {
         var store = await CreateStoreAsync(DatabasePath());
         var runId = Guid.CreateVersion7();
@@ -645,7 +645,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
                     successPayload,
                     TimeSpan.Zero
                 ),
-                PersistPayload: true
+                PipelineAcceptedValue.FromPayload<RunnerState>(successPayload)
             ),
             CancellationToken.None
         );
@@ -660,14 +660,89 @@ public sealed class SqliteLedgerStoreTests : IDisposable
                     failurePayload,
                     TimeSpan.Zero
                 ),
-                PersistPayload: true
+                PipelineAcceptedValue.FromPayload<FailureEvidence>(failurePayload)
             ),
             CancellationToken.None
         );
 
         var records = await store.ForRun(runId).ReadAsync(LedgerPipelineObserver.Journal);
-        records[0].Value.Payload.Should().BeNull();
+        records[0].Value.ValueType.Should().Be(typeof(RunnerState).FullName);
+        records[0].Value.Payload!.Value.GetRawText().Should().Be(successPayload.GetRawText());
         records[1].Value.Payload!.Value.GetRawText().Should().Be(failurePayload.GetRawText());
+    }
+
+    [Fact]
+    public async Task PersistentStateStage_PersistsReturnedStateThroughRealLedger()
+    {
+        var path = DatabasePath();
+        var store = await CreateStoreAsync(path);
+        var runId = Guid.CreateVersion7();
+        await store.CreateRunAsync(runId, "state-stage");
+        var stage = new IncrementStage();
+        var pipeline = Pipeline.Start(stage, "state-stage").Persist().Build(stage);
+
+        await new PipelineRunner().RunAsync(
+            pipeline,
+            new RunnerState(4),
+            new PipelineRunOptions(runId, Observer: new LedgerPipelineObserver(store.ForRun(runId)))
+        );
+
+        var reopened = await CreateStoreAsync(path);
+        var records = await reopened.ForRun(runId).ReadAsync(LedgerPipelineObserver.Journal);
+        var completed = records
+            .Select(entry => entry.Value)
+            .Single(record => record.Kind == RuntimeJournalKind.StepCompleted);
+        completed.ValueType.Should().Be(typeof(RunnerState).FullName);
+        completed.Payload!.Value.GetProperty("count").GetInt32().Should().Be(5);
+    }
+
+    [Fact]
+    public async Task PersistentSuccessfulOutcomeStage_PersistsReturnedStateThroughRealLedger()
+    {
+        var path = DatabasePath();
+        var store = await CreateStoreAsync(path);
+        var runId = Guid.CreateVersion7();
+        await store.CreateRunAsync(runId, "outcome-stage");
+        var stage = new SuccessfulOutcomeStage();
+        var pipeline = Pipeline.Start(stage, "outcome-stage").Persist().Build(stage);
+
+        await new PipelineRunner().RunAsync(
+            pipeline,
+            new RunnerState(4),
+            new PipelineRunOptions(runId, Observer: new LedgerPipelineObserver(store.ForRun(runId)))
+        );
+
+        var reopened = await CreateStoreAsync(path);
+        var records = await reopened.ForRun(runId).ReadAsync(LedgerPipelineObserver.Journal);
+        var completed = records
+            .Select(entry => entry.Value)
+            .Single(record => record.Kind == RuntimeJournalKind.StepCompleted);
+        completed.ValueType.Should().Be(typeof(RunnerState).FullName);
+        completed.Payload!.Value.GetProperty("count").GetInt32().Should().Be(6);
+    }
+
+    [Fact]
+    public async Task PersistentStateStage_PersistsRuntimeStateType()
+    {
+        var path = DatabasePath();
+        var store = await CreateStoreAsync(path);
+        var runId = Guid.CreateVersion7();
+        await store.CreateRunAsync(runId, "polymorphic-state-stage");
+        var stage = new PolymorphicStateStage();
+        var pipeline = Pipeline.Start(stage, "polymorphic-state-stage").Persist().Build(stage);
+
+        await new PipelineRunner().RunAsync(
+            pipeline,
+            new RunnerBaseState(1),
+            new PipelineRunOptions(runId, Observer: new LedgerPipelineObserver(store.ForRun(runId)))
+        );
+
+        var reopened = await CreateStoreAsync(path);
+        var completed = (await reopened.ForRun(runId).ReadAsync(LedgerPipelineObserver.Journal))
+            .Select(entry => entry.Value)
+            .Single(record => record.Kind == RuntimeJournalKind.StepCompleted);
+        completed.ValueType.Should().Be(typeof(RunnerDerivedState).FullName);
+        completed.Payload!.Value.GetProperty("detail").GetString().Should().Be("persisted");
     }
 
     [Fact]

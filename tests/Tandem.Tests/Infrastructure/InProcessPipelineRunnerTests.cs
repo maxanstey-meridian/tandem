@@ -43,16 +43,31 @@ public sealed class InProcessPipelineRunnerTests
     public async Task PersistencePolicy_IsInspectableAndSupportsStepOptOut()
     {
         var increment = new IncrementStage();
+        var observations = new List<PipelineObservation>();
         var pipeline = Pipeline
             .Start(increment, "persistent-opt-out")
             .Persist()
             .DoNotPersist(increment)
             .Build(increment);
 
-        var result = await new PipelineRunner().RunAsync(pipeline, new RunnerState(1));
+        var result = await new PipelineRunner().RunAsync(
+            pipeline,
+            new RunnerState(1),
+            new PipelineRunOptions(
+                Observer: new InlinePersistenceObserver(observation =>
+                    observations.Add(observation)
+                )
+            )
+        );
 
         result.State.Count.Should().Be(2);
         pipeline.Inspect().PersistentStepIds.Should().BeEmpty();
+        observations
+            .OfType<PipelineStepCompleted>()
+            .Should()
+            .ContainSingle()
+            .Which.AcceptedValue.Should()
+            .BeNull();
     }
 
     [Fact]
@@ -87,6 +102,31 @@ public sealed class InProcessPipelineRunnerTests
         );
 
         pipeline.Inspect().PersistentStepIds.Should().Equal("runner-increment");
+    }
+
+    [Fact]
+    public async Task PersistentStage_PersistenceFailurePreventsDownstreamRouting()
+    {
+        var increment = new IncrementStage();
+        var completion = new ProbeCompletion();
+        var complete = PipelineNodes.Complete(completion);
+        var pipeline = Pipeline
+            .Start(increment, "persistence-before-routing")
+            .Persist(increment)
+            .Route(when: _ => true, from: increment, to: complete, label: "complete")
+            .Build(complete);
+
+        var run = async () =>
+            await new PipelineRunner().RunAsync(
+                pipeline,
+                new RunnerState(1),
+                new PipelineRunOptions(
+                    Observer: new FailingPersistenceObserver<PipelineStepCompleted>()
+                )
+            );
+
+        await run.Should().ThrowAsync<Exception>();
+        completion.ApplyCount.Should().Be(0);
     }
 
     [Fact]
@@ -839,6 +879,10 @@ public sealed class InProcessPipelineRunnerTests
 
 public sealed record RunnerState(int Count, string? Answer = null);
 
+public record RunnerBaseState(int Count);
+
+public sealed record RunnerDerivedState(int Count, string Detail) : RunnerBaseState(Count);
+
 public sealed record ProbeQuestion(string Text);
 
 public sealed record ProbeAnswer(string Text);
@@ -858,6 +902,22 @@ public sealed partial class IncrementStage
 {
     public ValueTask<RunnerState> ExecuteAsync(RunnerState state, CancellationToken _) =>
         ValueTask.FromResult(state with { Count = state.Count + 1 });
+}
+
+[PipelineStage("runner-successful-outcome")]
+public sealed partial class SuccessfulOutcomeStage
+{
+    public ValueTask<Outcome<RunnerState>> ExecuteAsync(RunnerState state, CancellationToken _) =>
+        ValueTask.FromResult<Outcome<RunnerState>>(
+            new Outcome<RunnerState>.Success(state with { Count = state.Count + 2 })
+        );
+}
+
+[PipelineStage("runner-polymorphic-state")]
+public sealed partial class PolymorphicStateStage
+{
+    public ValueTask<RunnerBaseState> ExecuteAsync(RunnerBaseState state, CancellationToken _) =>
+        ValueTask.FromResult<RunnerBaseState>(new RunnerDerivedState(state.Count + 1, "persisted"));
 }
 
 [PipelineStage("runner-fault")]

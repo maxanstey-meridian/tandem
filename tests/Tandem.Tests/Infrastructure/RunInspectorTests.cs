@@ -59,7 +59,11 @@ public sealed class RunInspectorTests : IDisposable
                     ),
                     TimeSpan.Zero
                 ),
-                PersistPayload: true
+                PipelineAcceptedValue.FromPayload<FailureEvidence>(
+                    JsonSerializer.SerializeToElement(
+                        new FailureEvidence("failed", "Verification failed")
+                    )
+                )
             ),
             CancellationToken.None
         );
@@ -85,6 +89,42 @@ public sealed class RunInspectorTests : IDisposable
         accepted.Items.Should().ContainSingle().Which.Category.Should().Be("accepted");
         accepted.Items[0].Payload.Should().NotBeNull();
         typed.Items.Should().ContainSingle().Which.Category.Should().Be("accepted");
+    }
+
+    [Fact]
+    public async Task Inspect_AcceptedIncludesSuccessfulStageState()
+    {
+        var (store, runId) = await CreateRunAsync();
+        var payload = JsonSerializer.SerializeToElement(new RunnerState(3));
+        await new LedgerPipelineObserver(store.ForRun(runId)).ObserveAsync(
+            new PipelineStepCompleted(
+                runId,
+                "increment",
+                new PipelineRunOutcome(
+                    StandardOutcomeKinds.Success,
+                    "increment",
+                    "Succeeded",
+                    default,
+                    TimeSpan.Zero
+                ),
+                PipelineAcceptedValue.FromPayload<RunnerState>(payload)
+            ),
+            CancellationToken.None
+        );
+
+        var inspection = await new RunInspector(store, _home).InspectAsync(
+            runId,
+            true,
+            null,
+            null,
+            false,
+            CancellationToken.None
+        );
+
+        var accepted = inspection.Items.Should().ContainSingle().Which;
+        accepted.Category.Should().Be("accepted");
+        accepted.ValueType.Should().Be(typeof(RunnerState).FullName);
+        accepted.Payload!.Value.GetProperty("Count").GetInt32().Should().Be(3);
     }
 
     [Fact]

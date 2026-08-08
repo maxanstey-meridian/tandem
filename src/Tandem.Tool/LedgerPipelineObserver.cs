@@ -41,12 +41,8 @@ internal sealed class LedgerPipelineObserver(RunLedger ledger) : IPipelinePersis
                 value.StepId,
                 Result: value.Outcome.Summary,
                 OutcomeKind: value.Outcome.Kind,
-                ValueType: value.PersistPayload && value.Outcome.Kind == StandardOutcomeKinds.Failed
-                    ? typeof(FailureEvidence).FullName
-                    : null,
-                Payload: value.PersistPayload && value.Outcome.Kind == StandardOutcomeKinds.Failed
-                    ? value.Outcome.Payload
-                    : null
+                ValueType: value.AcceptedValue?.ValueType,
+                Payload: value.AcceptedValue?.Payload
             ),
             PipelineStepFaulted value => new RuntimeJournalRecord(
                 RuntimeJournalKind.StepFaulted,

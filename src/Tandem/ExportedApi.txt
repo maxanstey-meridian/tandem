@@ -38,6 +38,7 @@ Tandem.AgentUpdate+ToolStarted
 Tandem.AgentUpdate+Usage
 Tandem.IPipelineObserver
 Tandem.IPipelinePersistenceObserver
+Tandem.PipelineAcceptedValue
 Tandem.PipelineActionAttempted
 Tandem.PipelineActionCompleted
 Tandem.PipelineAgentUpdated

@@ -124,9 +124,7 @@ internal sealed class RunInspector(SqliteLedgerStore store, string tandemHome)
                 or RuntimeJournalKind.CapabilityAccepted
                 or RuntimeJournalKind.InteractionRequested
                 or RuntimeJournalKind.InteractionAnswered
-        || record.Kind == RuntimeJournalKind.StepCompleted
-            && record.OutcomeKind == StandardOutcomeKinds.Failed
-            && record.Payload is not null;
+        || record.Kind == RuntimeJournalKind.StepCompleted && record.Payload is not null;
 
     private static int CompareItems(RunInspectionItem left, RunInspectionItem right)
     {
