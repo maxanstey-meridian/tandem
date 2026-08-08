@@ -297,7 +297,7 @@ public sealed class PackageConsumerTests
         using Tandem;
         using Tandem.Sample.Songwriter;
 
-        var steps = SongwriterDefinitions.Create(
+        var participants = SongwriterDefinitions.Create(
             new AgentFactory(),
             new SongwriterClients(
                 new ScriptedChatClient(
@@ -312,7 +312,7 @@ public sealed class PackageConsumerTests
             )
         );
         var result = await new PipelineRunner().RunAsync(
-            new SongwriterComposition(steps).Build(),
+            new SongwriterComposition(participants).Build(),
             new SongwriterState("Rebuild after a storm."),
             cancellationToken: CancellationToken.None
         );
@@ -323,7 +323,7 @@ public sealed class PackageConsumerTests
         using Tandem;
         using Tandem.Sample.Support;
 
-        var steps = SupportDefinitions.Create(
+        var participants = SupportDefinitions.Create(
             new AgentFactory(),
             new SupportOptions(
                 new ScriptedChatClient(ScriptedChatClient.Text("{\"category\":\"billing\"}")),
@@ -332,16 +332,33 @@ public sealed class PackageConsumerTests
             new AccountLookup()
         );
         var handlers = new PipelineInteractionHandlers().Handle(
-            steps.CustomerReply,
+            participants.CustomerReply,
             (_, _) => ValueTask.FromResult(new CustomerReply("Resolved.", true))
         );
         var result = await new PipelineRunner().RunAsync(
-            new SupportComposition(steps).Build(),
+            new SupportComposition(participants).Build(),
             new SupportState("Duplicate charge", "customer-1"),
             new PipelineRunOptions(Interactions: handlers),
             CancellationToken.None
         );
         if (!result.Succeeded || result.State.FinalDisposition != "closed") throw new Exception("Support package proof failed.");
+
+        var complete = PipelineNodes.Complete<SupportState>("direct-complete");
+        var direct = Pipeline
+            .Start(participants.CustomerReply, "direct-interaction")
+            .Route(participants.CustomerReply, complete, "answered")
+            .Build(complete);
+        var directResult = await new PipelineRunner().RunAsync(
+            direct,
+            new SupportState(
+                "Direct question",
+                "customer-2",
+                ProposedResolution: "Resolve directly."
+            ),
+            new PipelineRunOptions(Interactions: handlers),
+            CancellationToken.None
+        );
+        if (directResult.Status != PipelineRunStatus.Succeeded) throw new Exception("Interaction-start package proof failed.");
 
         sealed class AccountLookup : IAccountLookup
         {
@@ -370,7 +387,7 @@ public sealed class PackageConsumerTests
                 [new FunctionCallContent("verdict-1", "submit_verdict", new Dictionary<string, object?> { ["verdict"] = "Affirmed", ["reason"] = "Accepted." })]
             )
         ) { FinishReason = ChatFinishReason.ToolCalls, ModelId = "package-proof" };
-        var steps = DebateDefinitions.Create(
+        var participants = DebateDefinitions.Create(
             new AgentFactory(),
             new DebateOptions(
                 new ScriptedChatClient(ScriptedChatClient.Text("{\"text\":\"Initial case\"}"), ScriptedChatClient.Text("{\"text\":\"Revised case\"}")),
@@ -380,7 +397,7 @@ public sealed class PackageConsumerTests
             verdict
         );
         var result = await new PipelineRunner().RunAsync(
-            new DebateComposition(steps).Build(),
+            new DebateComposition(participants).Build(),
             new DebateState("Should we proceed?", [], 0, null),
             cancellationToken: CancellationToken.None
         );

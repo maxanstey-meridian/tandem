@@ -7,6 +7,45 @@ namespace Tandem.Tests.Composition;
 
 public sealed class ProjectBoundaryTests
 {
+    [Fact]
+    public void Delivery_ModelsTheCanonicalPipelineAuthoringShape()
+    {
+        var root = Path("src/Tandem.Delivery");
+        new[]
+        {
+            "DeliveryState.cs",
+            "DeliveryParticipants.cs",
+            "DeliveryParticipantsFactory.cs",
+            "DeliveryComposition.cs",
+            "DeliveryRegistration.cs",
+        }
+            .Should()
+            .OnlyContain(file => File.Exists(System.IO.Path.Combine(root, file)));
+        new[]
+        {
+            "Agents",
+            "Capabilities",
+            "Stages",
+            "Interactions",
+            "Observation",
+            "Infrastructure",
+            "Harness",
+        }
+            .Should()
+            .OnlyContain(directory => Directory.Exists(System.IO.Path.Combine(root, directory)));
+        new[]
+        {
+            "DeliverySteps.cs",
+            "DeliveryStepsFactory.cs",
+            "DeliveryPrompts.cs",
+            "DeliveryPolicies.cs",
+            "StructuredDecisionPolicies.cs",
+            "StructuredDecisionValidators.cs",
+        }
+            .Should()
+            .NotContain(file => File.Exists(System.IO.Path.Combine(root, file)));
+    }
+
     private static readonly string _root = System.IO.Path.GetFullPath(
         System.IO.Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..")
     );
@@ -196,7 +235,7 @@ public sealed class ProjectBoundaryTests
         }
 
         var songwriter = File.ReadAllText(
-            Path("samples/Tandem.Sample.Songwriter/SongwriterSteps.cs")
+            Path("samples/Tandem.Sample.Songwriter/SongwriterParticipants.cs")
         );
         songwriter.Should().Contain("AgentDefinition<SongwriterState> Songwriter");
         songwriter.Should().NotContain("class SongwriterAgent");
@@ -217,11 +256,13 @@ public sealed class ProjectBoundaryTests
         generator.Should().NotContain("GetMembers(\"Runtime\")");
         generator.Should().NotContain("GetMembers(\"Outcome\")");
 
-        var deliverySteps = File.ReadAllText(Path("src/Tandem.Delivery/DeliverySteps.cs"));
-        deliverySteps.Should().Contain("IPipelineNode<DeliveryState> CompleteRun");
-        deliverySteps.Should().Contain("IPipelineNode<DeliveryState> FailRun");
-        deliverySteps.Should().NotContain("IRawPipelineNode");
-        deliverySteps.Should().NotContain("AdvancedPipelineNodes.Stage");
+        var deliveryParticipants = File.ReadAllText(
+            Path("src/Tandem.Delivery/DeliveryParticipants.cs")
+        );
+        deliveryParticipants.Should().Contain("IPipelineNode<DeliveryState> CompleteRun");
+        deliveryParticipants.Should().Contain("IPipelineNode<DeliveryState> FailRun");
+        deliveryParticipants.Should().NotContain("IRawPipelineNode");
+        deliveryParticipants.Should().NotContain("AdvancedPipelineNodes.Stage");
     }
 
     [Fact]
@@ -282,9 +323,12 @@ public sealed class ProjectBoundaryTests
     [Fact]
     public void SessionContinuation_IsExplicitAndOrdinaryAgentsDefaultFresh()
     {
-        var source = File.ReadAllText(Path("src/Tandem.Delivery/DeliveryStepsFactory.cs"));
-        source.Should().Contain("continueSession: true");
-        source.Should().Contain("builder.ContinueSession()");
+        var source = string.Join(
+            '\n',
+            File.ReadAllText(Path("src/Tandem.Delivery/Agents/Executor/ExecutorAgent.cs")),
+            File.ReadAllText(Path("src/Tandem.Delivery/Agents/Planner/PlannerAgent.cs"))
+        );
+        source.Should().Contain(".ContinueSession()");
         source.Should().NotContain("WithSessionPolicy");
 
         var debate = string.Join('\n', SourceLines("samples/Tandem.Sample.Debate"));
@@ -303,10 +347,12 @@ public sealed class ProjectBoundaryTests
     {
         var source = new[]
         {
-            "src/Tandem.Delivery/DeliverySteps.cs",
-            "samples/Tandem.Sample.Debate/DebateSteps.cs",
-            "samples/Tandem.Sample.Support/SupportSteps.cs",
-            "samples/Tandem.Sample.Songwriter/SongwriterSteps.cs",
+            "src/Tandem.Delivery/Stages/Workspace/PrepareWorkspaceStage.cs",
+            "src/Tandem.Delivery/Stages/Candidate/CaptureCandidateStage.cs",
+            "src/Tandem.Delivery/Stages/Verification/VerificationStage.cs",
+            "samples/Tandem.Sample.Debate/DebateParticipants.cs",
+            "samples/Tandem.Sample.Support/SupportParticipants.cs",
+            "samples/Tandem.Sample.Songwriter/SongwriterParticipants.cs",
         }
             .Select(Path)
             .Select(File.ReadAllText)

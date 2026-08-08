@@ -1,6 +1,6 @@
 namespace Tandem.Sample.Support;
 
-public sealed record SupportSteps(
+public sealed record SupportParticipants(
     AgentDefinition<SupportState> Classify,
     LoadAccountStage LoadAccount,
     AgentDefinition<SupportState> Resolve,

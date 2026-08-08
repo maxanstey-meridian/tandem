@@ -22,7 +22,7 @@
     <ItemGroup>
         <InternalsVisibleTo Include="Tandem.Tests" />
         <EmbeddedResource
-            Include="DELIVERY_HARNESS.md"
+            Include="Harness/DELIVERY_HARNESS.md"
             LogicalName="Tandem.Delivery.DELIVERY_HARNESS.md"
         />
     </ItemGroup>

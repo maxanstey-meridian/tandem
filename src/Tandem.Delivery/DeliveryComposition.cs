@@ -1,14 +1,12 @@
-using Tandem.Domain;
-
 namespace Tandem.Delivery;
 
 public sealed class DeliveryComposition
 {
-    private readonly DeliverySteps _delivery;
+    private readonly DeliveryParticipants _delivery;
 
-    public DeliveryComposition(DeliveryStepsFactory stepsFactory)
+    public DeliveryComposition(DeliveryParticipantsFactory participantsFactory)
     {
-        _delivery = stepsFactory.Create();
+        _delivery = participantsFactory.Create();
     }
 
     public PipelineInteraction<DeliveryState, HumanQuestion, HumanAnswer> HumanInput =>

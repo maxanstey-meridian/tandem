@@ -107,7 +107,7 @@ public sealed class GeneratedAuthoringVerticalTests
         );
 
         output.State.Count.Should().Be(expected);
-        output.Disposition.Should().BeNull();
+        output.Status.Should().Be(PipelineRunStatus.Succeeded);
     }
 
     [Fact]
@@ -131,7 +131,7 @@ public sealed class GeneratedAuthoringVerticalTests
             .LatestOutcome.Payload.Deserialize<FailureEvidence>()
             .Should()
             .Be(new FailureEvidence("test.failure", "Expected failure"));
-        output.Disposition.Should().Be(PipelineRunDisposition.Failed);
+        output.Status.Should().Be(PipelineRunStatus.Failed);
     }
 
     [Theory]
@@ -164,11 +164,11 @@ public sealed class GeneratedAuthoringVerticalTests
         );
 
         output.State.Count.Should().Be(expectedCount);
-        output.Disposition.Should().Be(matches ? null : PipelineRunDisposition.Failed);
+        output.Status.Should().Be(matches ? PipelineRunStatus.Succeeded : PipelineRunStatus.Failed);
         var roundTrip = JsonSerializer.Deserialize<PipelineMessage<CounterState>>(
             JsonSerializer.Serialize(output)
         );
-        roundTrip!.Disposition.Should().Be(output.Disposition);
+        roundTrip!.Status.Should().Be(output.Status);
     }
 
     [Fact]
@@ -190,7 +190,7 @@ public sealed class GeneratedAuthoringVerticalTests
         );
 
         output.State.Count.Should().Be(11);
-        output.Disposition.Should().BeNull();
+        output.Status.Should().Be(PipelineRunStatus.Succeeded);
     }
 
     [Fact]
@@ -245,8 +245,8 @@ public sealed class GeneratedAuthoringVerticalTests
         );
 
         outputs[0].State.Count.Should().Be(10);
-        outputs[0].Disposition.Should().BeNull();
-        outputs[1].Disposition.Should().Be(PipelineRunDisposition.Failed);
+        outputs[0].Status.Should().Be(PipelineRunStatus.Succeeded);
+        outputs[1].Status.Should().Be(PipelineRunStatus.Failed);
     }
 
     [Theory]
@@ -300,8 +300,8 @@ public sealed class GeneratedAuthoringVerticalTests
         );
 
         outputs[0].State.Count.Should().Be(10);
-        outputs[0].Disposition.Should().BeNull();
-        outputs[1].Disposition.Should().Be(PipelineRunDisposition.Failed);
+        outputs[0].Status.Should().Be(PipelineRunStatus.Succeeded);
+        outputs[1].Status.Should().Be(PipelineRunStatus.Failed);
     }
 
     [Fact]

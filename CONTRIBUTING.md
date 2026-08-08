@@ -78,10 +78,16 @@ validation inside handlers.
 ## Naming Grammar
 
 Use a semantic name followed by one role suffix: `Agent`, `Stage`, `Port`,
-`Action`, `Policies`, `Prompts`, `Decision`, `Composition`, `Steps`, `Result`,
+`Action`, `Policies`, `Prompts`, `Decision`, `Composition`, `Participants`, `Result`,
 `State`, or `Registration`. Examples include `ReviewerAgent`,
 `VerificationStage`, `HumanInputPort`, `SubmitReportAction`,
-`DeliveryComposition`, and `DeliverySteps`.
+`DeliveryComposition`, and `DeliveryParticipants`.
+
+`Participants` is the typed authored inventory used by composition. It is not a
+second graph: composition still registers every route directly with MAF through
+Tandem. Keep the pipeline spine at the package root and group optional concerns
+under `Agents`, `Capabilities`, `Stages`, `Interactions`, `Observation`, and
+`Infrastructure` as described in `docs/pipeline-authoring.md`.
 
 The generator infers pass-through, state-updating, or standard `Outcome<TState>`
 authoring from `ExecuteAsync`. Use only standard `Success` and `Failed` as step

@@ -1,6 +1,6 @@
 namespace Tandem.Sample.Support;
 
-public sealed class SupportComposition(SupportSteps support)
+public sealed class SupportComposition(SupportParticipants support)
 {
     public Pipeline<SupportState> Build()
     {

@@ -51,7 +51,6 @@ public sealed class DebateCompositionTests
         inspection
             .StepIds.Should()
             .BeEquivalentTo("open", "proposer", "critic", "judge", "complete", "debate-failed");
-        inspection.Ports.Should().BeEmpty();
         inspection.OutputStepIds.Should().Equal("complete", "debate-failed");
         inspection.Routes.Should().HaveCount(6);
         inspection

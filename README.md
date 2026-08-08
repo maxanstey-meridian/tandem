@@ -266,8 +266,8 @@ code, not a node-authoring hierarchy.
 
 ## Inspect And Run
 
-`Inspect()` describes the exact built workflow, including start and output nodes,
-routes, conditions, request ports, and Mermaid/DOT diagrams:
+`Inspect()` describes Tandem's semantic pipeline, including start and output nodes,
+routes, typed interactions, and Mermaid/DOT diagrams:
 
 ```csharp
 var inspection = composition.Build().Inspect();

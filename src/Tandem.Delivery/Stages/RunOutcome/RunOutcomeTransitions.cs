@@ -1,11 +1,11 @@
 namespace Tandem.Delivery;
 
-public sealed class CompleteBlock
+public sealed class CompleteRunTransition
 {
     public DeliveryState Execute(DeliveryState state) => state with { Status = RunStatus.Ready };
 }
 
-public sealed class FailedBlock
+public sealed class FailRunTransition
 {
     public DeliveryState Execute(DeliveryState state) => state with { Status = RunStatus.Failed };
 

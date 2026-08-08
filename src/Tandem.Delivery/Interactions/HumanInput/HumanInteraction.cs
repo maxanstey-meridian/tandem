@@ -1,5 +1,3 @@
-using Tandem.Domain;
-
 namespace Tandem.Delivery;
 
 public static class HumanInteraction

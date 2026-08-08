@@ -12,11 +12,11 @@ public sealed record PipelineRunOptions(
 public sealed record PipelineRunResult<TState>(
     Guid RunId,
     TState State,
-    PipelineRunDisposition? Disposition,
+    PipelineRunStatus Status,
     PipelineRunOutcome? Outcome
 )
 {
-    public bool Succeeded => Disposition is null;
+    public bool Succeeded => Status is PipelineRunStatus.Succeeded;
 }
 
 public sealed record PipelineRunOutcome(
@@ -179,7 +179,7 @@ public sealed class PipelineRunner
                 output.LatestOutcome.Payload,
                 output.LatestOutcome.Duration
             );
-        return new PipelineRunResult<TState>(runId, output.State, output.Disposition, outcome);
+        return new PipelineRunResult<TState>(runId, output.State, output.Status, outcome);
     }
 
     private sealed class TypedInteractionHandler(PipelineInteractionHandlers handlers)

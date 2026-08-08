@@ -1,6 +1,6 @@
 namespace Tandem.Sample.Debate;
 
-public sealed class DebateComposition(DebateSteps debate)
+public sealed class DebateComposition(DebateParticipants debate)
 {
     public Pipeline<DebateState> Build()
     {

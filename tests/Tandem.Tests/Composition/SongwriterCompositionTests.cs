@@ -78,7 +78,7 @@ public sealed class SongwriterCompositionTests
         var output = await RunAsync(pipeline, input);
 
         order.Should().Equal("songwriter", "proofreader", "proofreader");
-        output.Disposition.Should().Be(PipelineRunDisposition.Failed);
+        output.Status.Should().Be(PipelineRunStatus.Failed);
         output.LatestOutcome!.Kind.Should().Be(StandardOutcomeKinds.Failed);
         output.LatestResult!.CaseId.Should().Be("Failed");
         output

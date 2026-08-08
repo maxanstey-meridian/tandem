@@ -189,7 +189,7 @@ boundary. A per-agent timeout is useful policy, not a universal runtime law.
 - `AgentRuntime` manufactures immutable definitions; it is not a runtime.
 - `TandemWorkflow.Start(...)` creates a `PipelineBuilder` for a product that calls
   its configured graphs pipelines.
-- ordinary `Outcome<TState>`, `FailureEvidence`, `PipelineRunDisposition`, and
+- ordinary `Outcome<TState>`, `FailureEvidence`, `PipelineRunStatus`, and
   `StandardOutcomeKinds` expose `Tandem.Domain` as part of basic authoring.
 
 These are not architectural failures, but they should be resolved before API
@@ -472,7 +472,7 @@ Recommended direction:
 - rename `AgentRuntime` to `AgentFactory`;
 - replace `TandemWorkflow.Start(...)` with `Pipeline.Start(...)` if the resulting
   C# call site remains unambiguous and pleasant;
-- move `Outcome<TState>`, `FailureEvidence`, `PipelineRunDisposition`, and
+- move `Outcome<TState>`, `FailureEvidence`, `PipelineRunStatus`, and
   `StandardOutcomeKinds` into the primary `Tandem` namespace; and
 - avoid compatibility aliases for unpublished names.
 

@@ -1,6 +1,6 @@
 namespace Tandem.Sample.Songwriter;
 
-public sealed record SongwriterSteps(
+public sealed record SongwriterParticipants(
     AgentDefinition<SongwriterState> Songwriter,
     LintStage Lint,
     AgentDefinition<SongwriterState> Proofreader,

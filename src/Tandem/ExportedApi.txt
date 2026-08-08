@@ -17,12 +17,11 @@ Tandem.PipelineInteractionInspection
 Tandem.PipelineInteraction`3
 Tandem.PipelineNodes
 Tandem.PipelineOutcomeSelector`1
-Tandem.PipelinePortInspection
 Tandem.PipelineRouteInspection
 Tandem.PipelineStageAttribute
 Tandem.Pipeline
 Tandem.Pipeline`1
-Tandem.PipelineRunDisposition
+Tandem.PipelineRunStatus
 Tandem.StandardOutcomeKinds
 Tandem.TandemRegistration
 

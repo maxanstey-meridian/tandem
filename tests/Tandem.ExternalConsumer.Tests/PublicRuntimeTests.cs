@@ -8,6 +8,36 @@ namespace Tandem.ExternalConsumer.Tests;
 public sealed class PublicRuntimeTests
 {
     [Fact]
+    public async Task Interaction_CanBeTheSemanticPipelineStart()
+    {
+        var interaction = PipelineNodes.WaitFor<PublicState, PublicQuestion, PublicAnswer>(
+            "starting-input",
+            _ => new PublicQuestion("answer"),
+            (state, answer) => state with { Answer = answer.Text }
+        );
+        var complete = PipelineNodes.Complete<PublicState>("complete");
+        var pipeline = Pipeline
+            .Start(interaction, "interaction-start")
+            .Route(interaction, complete, "answered")
+            .Build(complete);
+        var handlers = new PipelineInteractionHandlers().Handle(
+            interaction,
+            (_, _) => ValueTask.FromResult(new PublicAnswer("received"))
+        );
+
+        var result = await new PipelineRunner().RunAsync(
+            pipeline,
+            new PublicState(0, new NonSerializableReference()),
+            new PipelineRunOptions(Interactions: handlers)
+        );
+
+        result.Succeeded.Should().BeTrue();
+        result.Status.Should().Be(PipelineRunStatus.Succeeded);
+        result.State.Answer.Should().Be("received");
+        pipeline.Inspect().StartStepId.Should().Be("starting-input");
+    }
+
+    [Fact]
     public async Task SameTypedInteractions_DispatchBySemanticIdentity()
     {
         var start = new PublicStartStage();
@@ -117,7 +147,6 @@ public sealed class PublicRuntimeTests
                     typeof(PublicAnswer).FullName!
                 )
             );
-        pipeline.Inspect().Ports.Should().BeEmpty();
         observer
             .Observations.OfType<PipelineInteractionRequested<PublicQuestion>>()
             .Should()

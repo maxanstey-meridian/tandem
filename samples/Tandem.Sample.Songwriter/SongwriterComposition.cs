@@ -1,6 +1,6 @@
 namespace Tandem.Sample.Songwriter;
 
-public sealed class SongwriterComposition(SongwriterSteps song)
+public sealed class SongwriterComposition(SongwriterParticipants song)
 {
     public Pipeline<SongwriterState> Build()
     {

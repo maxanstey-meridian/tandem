@@ -1,4 +1,4 @@
-using Tandem.Domain;
+using Tandem.Delivery;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 

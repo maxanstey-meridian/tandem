@@ -1,6 +1,6 @@
 namespace Tandem.Sample.Debate;
 
-public sealed record DebateSteps(
+public sealed record DebateParticipants(
     OpenDebateStage Open,
     AgentDefinition<DebateState> Proposer,
     AgentDefinition<DebateState> Critic,

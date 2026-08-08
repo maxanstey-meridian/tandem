@@ -1,5 +1,4 @@
 using FluentAssertions;
-using Tandem.Domain;
 
 namespace Tandem.Tests.Composition;
 
@@ -10,8 +9,8 @@ public sealed class DeliveryPolicyRegressionTests
     {
         var state = CreateState() with { MutationAuthorized = true };
 
-        DeliveryPolicies.AllowsWorkspaceMutation(BlockIds.Planner, state).Should().BeFalse();
-        DeliveryPolicies.AllowsWorkspaceMutation(BlockIds.Reviewer, state).Should().BeFalse();
+        ExecutorPolicies.AllowsWorkspaceMutation(BlockIds.Planner, state).Should().BeFalse();
+        ExecutorPolicies.AllowsWorkspaceMutation(BlockIds.Reviewer, state).Should().BeFalse();
     }
 
     [Fact]
@@ -19,8 +18,8 @@ public sealed class DeliveryPolicyRegressionTests
     {
         var state = CreateState();
 
-        DeliveryPolicies.AllowsWorkspaceMutation(BlockIds.Executor, state).Should().BeFalse();
-        DeliveryPolicies
+        ExecutorPolicies.AllowsWorkspaceMutation(BlockIds.Executor, state).Should().BeFalse();
+        ExecutorPolicies
             .AllowsWorkspaceMutation(BlockIds.Executor, state with { MutationAuthorized = true })
             .Should()
             .BeTrue();
@@ -34,7 +33,7 @@ public sealed class DeliveryPolicyRegressionTests
     [InlineData("file_access_create")]
     public void ExecutorMutationGate_CoversEveryRegisteredWorkspaceMutationTool(string toolName)
     {
-        DeliveryPolicies.IsWorkspaceMutationTool(toolName).Should().BeTrue();
+        ExecutorPolicies.IsWorkspaceMutationTool(toolName).Should().BeTrue();
     }
 
     [Theory]
@@ -43,15 +42,15 @@ public sealed class DeliveryPolicyRegressionTests
     [InlineData("file_access_list")]
     public void WorkspaceReadTools_AreNotTreatedAsMutation(string toolName)
     {
-        DeliveryPolicies.IsWorkspaceMutationTool(toolName).Should().BeFalse();
+        ExecutorPolicies.IsWorkspaceMutationTool(toolName).Should().BeFalse();
     }
 
     [Fact]
     public void CheckpointPolicy_IsOwnedOnlyByExecutor()
     {
-        DeliveryPolicies.OwnsCheckpointPolicy(BlockIds.Executor).Should().BeTrue();
-        DeliveryPolicies.OwnsCheckpointPolicy(BlockIds.Planner).Should().BeFalse();
-        DeliveryPolicies.OwnsCheckpointPolicy(BlockIds.Reviewer).Should().BeFalse();
+        ExecutorPolicies.OwnsCheckpoint(BlockIds.Executor).Should().BeTrue();
+        ExecutorPolicies.OwnsCheckpoint(BlockIds.Planner).Should().BeFalse();
+        ExecutorPolicies.OwnsCheckpoint(BlockIds.Reviewer).Should().BeFalse();
     }
 
     private static DeliveryState CreateState() =>

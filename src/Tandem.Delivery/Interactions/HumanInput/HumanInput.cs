@@ -1,4 +1,4 @@
-namespace Tandem.Domain;
+namespace Tandem.Delivery;
 
 public sealed record HumanQuestion(string SourceBlockId, string Question, string Reason);
 

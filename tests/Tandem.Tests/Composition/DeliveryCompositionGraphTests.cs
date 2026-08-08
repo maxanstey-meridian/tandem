@@ -2,7 +2,6 @@ using FluentAssertions;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Extensions.AI;
-using Tandem.Domain;
 
 namespace Tandem.Tests.Composition;
 
@@ -69,21 +68,24 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
     }
 
     [Fact]
-    public void DeliverySteps_ExposeStateSafeTerminalNodes()
+    public void DeliveryParticipants_ExposeStateSafeTerminalNodes()
     {
-        typeof(DeliverySteps)
-            .GetProperty(nameof(DeliverySteps.CompleteRun))!
+        typeof(DeliveryParticipants)
+            .GetProperty(nameof(DeliveryParticipants.CompleteRun))!
             .PropertyType.Should()
             .Be(typeof(IPipelineNode<DeliveryState>));
-        typeof(DeliverySteps)
-            .GetProperty(nameof(DeliverySteps.FailRun))!
+        typeof(DeliveryParticipants)
+            .GetProperty(nameof(DeliveryParticipants.FailRun))!
             .PropertyType.Should()
             .Be(typeof(IPipelineNode<DeliveryState>));
-        typeof(DeliverySteps)
+        typeof(DeliveryParticipants)
             .Assembly.GetType("Tandem.Delivery.CompleteRunStage")
             .Should()
             .BeNull();
-        typeof(DeliverySteps).Assembly.GetType("Tandem.Delivery.FailRunStage").Should().BeNull();
+        typeof(DeliveryParticipants)
+            .Assembly.GetType("Tandem.Delivery.FailRunStage")
+            .Should()
+            .BeNull();
     }
 
     [Fact]
@@ -118,7 +120,6 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
             .Routes.SelectMany(route => new[] { route.SourceId, route.TargetId })
             .Should()
             .BeSubsetOf(inspection.StepIds);
-        inspection.Ports.Should().BeEmpty();
         inspection.Mermaid.Should().StartWith("flowchart").And.Contain(BlockIds.Prepare);
         inspection.Dot.Should().StartWith("digraph");
     }
@@ -190,7 +191,6 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
     public void HumanInputInspection_ExposesAuthoredTypesWithoutPrivatePortTypes()
     {
         var inspection = _pipeline.Inspect();
-        inspection.Ports.Should().BeEmpty();
         inspection
             .Interactions.Should()
             .ContainSingle()
@@ -496,7 +496,7 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
 
     private static DeliveryAgentProfile MakeProfile() => new(200000, 32000, 80);
 
-    private static DeliveryStepsFactory CreateFactory(
+    private static DeliveryParticipantsFactory CreateFactory(
         AgentFactory runtime,
         Func<string, IChatClient> clients,
         Func<string, DeliveryAgentProfile> profiles,
@@ -506,7 +506,7 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
     )
     {
         var capabilities = TestDeliveryCapabilities.Create();
-        return new DeliveryStepsFactory(
+        return new DeliveryParticipantsFactory(
             runtime,
             clients,
             profiles,

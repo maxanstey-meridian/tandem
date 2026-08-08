@@ -5,7 +5,7 @@ namespace Tandem.Sample.Debate;
 
 public static class DebateDefinitions
 {
-    public static DebateSteps Create(
+    public static DebateParticipants Create(
         AgentFactory agentRuntime,
         DebateOptions options,
         AgentCapability<DebateState> verdict

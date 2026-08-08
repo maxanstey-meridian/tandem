@@ -3,7 +3,8 @@ using System.Text.Json.Serialization;
 namespace Tandem;
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
-public enum PipelineRunDisposition
+public enum PipelineRunStatus
 {
+    Succeeded,
     Failed,
 }

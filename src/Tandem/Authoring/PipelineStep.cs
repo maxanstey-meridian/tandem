@@ -102,7 +102,7 @@ internal sealed class TerminalFailedNode<TState>(string id)
         CorePipelineNodes.Stage<PipelineMessage<TState>, PipelineMessage<TState>>(
             id,
             (message, _, _) =>
-                ValueTask.FromResult(message with { Disposition = PipelineRunDisposition.Failed })
+                ValueTask.FromResult(message with { Status = PipelineRunStatus.Failed })
         );
 }
 
@@ -171,7 +171,7 @@ internal sealed class StateTransitionFailedNode<TState>(
                                 ?? JsonSerializer.SerializeToElement(new { }),
                             stopwatch.Elapsed
                         ),
-                        Disposition = PipelineRunDisposition.Failed,
+                        Status = PipelineRunStatus.Failed,
                     }
                 );
             }
@@ -509,11 +509,13 @@ internal sealed class GeneratedOutcomeStepExecutor<TState>
                 nameof(Outcome<TState>.Failed),
                 failed.Failure
             ),
-            Disposition = null,
+            Status = PipelineRunStatus.Succeeded,
         };
         return result with
         {
-            Disposition = _routeAwareness.Matches(result) ? null : PipelineRunDisposition.Failed,
+            Status = _routeAwareness.Matches(result)
+                ? PipelineRunStatus.Succeeded
+                : PipelineRunStatus.Failed,
         };
     }
 }
@@ -666,17 +668,6 @@ public sealed class Pipeline<TState>
                 }
             )
             .ToArray();
-        var ports = Workflow
-            .ReflectPorts()
-            .Where(entry => !interactionIds.Contains(entry.Key))
-            .Select(entry => entry.Value)
-            .Select(port => new PipelinePortInspection(
-                port.PortId,
-                port.RequestType.TypeName,
-                port.ResponseType.TypeName
-            ))
-            .OrderBy(port => port.Id, StringComparer.Ordinal)
-            .ToArray();
         var stepIds = physicalStepIds
             .Select(SemanticId)
             .Distinct(StringComparer.Ordinal)
@@ -687,17 +678,17 @@ public sealed class Pipeline<TState>
             .ThenBy(route => route.TargetId, StringComparer.Ordinal)
             .ThenBy(route => route.Conditional)
             .ToArray();
+        var startStepId = SemanticId(Workflow.StartExecutorId);
         return new PipelineInspection(
             Workflow.Name ?? throw new InvalidOperationException("Pipeline name is unavailable."),
             Workflow.Description,
-            Workflow.StartExecutorId,
+            startStepId,
             stepIds,
-            ports,
             _interactions,
             semanticRoutes,
             _outputStepIds,
-            RenderMermaid(stepIds, semanticRoutes, Workflow.StartExecutorId, _outputStepIds),
-            RenderDot(stepIds, semanticRoutes, Workflow.StartExecutorId, _outputStepIds)
+            RenderMermaid(stepIds, semanticRoutes, startStepId, _outputStepIds),
+            RenderDot(stepIds, semanticRoutes, startStepId, _outputStepIds)
         );
     }
 
@@ -789,7 +780,6 @@ public sealed record PipelineInspection(
     string? Description,
     string StartStepId,
     IReadOnlyList<string> StepIds,
-    IReadOnlyList<PipelinePortInspection> Ports,
     IReadOnlyList<PipelineInteractionInspection> Interactions,
     IReadOnlyList<PipelineRouteInspection> Routes,
     IReadOnlyList<string> OutputStepIds,
@@ -803,8 +793,6 @@ public sealed record PipelineRouteInspection(
     bool Conditional,
     string? Label = null
 );
-
-public sealed record PipelinePortInspection(string Id, string InputType, string OutputType);
 
 public sealed record PipelineInteractionInspection(
     string Id,
@@ -821,6 +809,12 @@ public static class Pipeline
 {
     public static PipelineBuilder<TState> Start<TState, TResult>(
         IGeneratedPipelineStep<TState, TResult> at,
+        string name,
+        string? description = null
+    ) => PipelineBuilder<TState>.Create(at, name, description);
+
+    public static PipelineBuilder<TState> Start<TState, TRequest, TResponse>(
+        PipelineInteraction<TState, TRequest, TResponse> at,
         string name,
         string? description = null
     ) => PipelineBuilder<TState>.Create(at, name, description);
@@ -883,6 +877,25 @@ public sealed class PipelineBuilder<TState>
         {
             result._failureRouteAwareness.Add(start, awareness);
         }
+        return result;
+    }
+
+    internal static PipelineBuilder<TState> Create<TRequest, TResponse>(
+        PipelineInteraction<TState, TRequest, TResponse> start,
+        string name,
+        string? description
+    )
+    {
+        var binding = start.Request.Descriptor.Bind();
+        var workflowBuilder = new WorkflowBuilder(binding).WithName(name);
+        if (!string.IsNullOrWhiteSpace(description))
+        {
+            workflowBuilder = workflowBuilder.WithDescription(description);
+        }
+        var result = new PipelineBuilder<TState>(workflowBuilder);
+        result._bindings.Add(start.Request, binding);
+        result._descriptors.Add(start.Request, start.Request.Descriptor);
+        result.EnsureInteraction(start);
         return result;
     }
 
@@ -968,6 +981,28 @@ public sealed class PipelineBuilder<TState>
         EnsureRouteMode(from, RouteMode.Output);
         TrackFailureRoute(from, pipeline => when(pipeline.State));
         AddRoute(from, to, pipeline => when(pipeline.State), label);
+        return this;
+    }
+
+    public PipelineBuilder<TState> Route<TRequest, TResponse>(
+        PipelineInteraction<TState, TRequest, TResponse> from,
+        IPipelineNode<TState> to,
+        string label
+    )
+    {
+        EnsureInteraction(from);
+        AddRoute(from.Resume, to, _ => true, label, unconditional: true);
+        return this;
+    }
+
+    public PipelineBuilder<TState> Route<TRequest, TResponse, TTargetResult>(
+        PipelineInteraction<TState, TRequest, TResponse> from,
+        IGeneratedPipelineStep<TState, TTargetResult> to,
+        string label
+    )
+    {
+        EnsureInteraction(from);
+        AddRoute(from.Resume, to, _ => true, label, unconditional: true);
         return this;
     }
 

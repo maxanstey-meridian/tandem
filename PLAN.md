@@ -1,8 +1,9 @@
 # Tandem Pipeline Authoring
 
-> Historical implementation plan. Runtime durability, restart, scheduler, and
-> attach statements are superseded by `IN_PROCESS_RUNTIME_PLAN.md` and are not
-> current product contracts.
+> Historical implementation plan. Its completed slices preserve the vocabulary
+> and target shape used during that campaign. Current authoring guidance lives in
+> `docs/pipeline-authoring.md` and `CONTRIBUTING.md`. Runtime durability, restart,
+> scheduler, and attach statements are superseded by `IN_PROCESS_RUNTIME_PLAN.md`.
 
 ## Goal
 

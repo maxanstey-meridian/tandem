@@ -155,6 +155,11 @@ internal sealed class AgentBlock<TState>(
                     structuredToolNames.Add(toolName);
                 }
 
+                if (capabilityInvocation.Accepted is not null)
+                {
+                    break;
+                }
+
                 if (config.StructuredOutput is not null)
                 {
                     structuredResult = config.StructuredOutput.Parse(

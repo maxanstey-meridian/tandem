@@ -70,7 +70,6 @@ public sealed class SupportCompositionTests
                 "support-escalate",
                 "support-failed"
             );
-        inspection.Ports.Should().BeEmpty();
         inspection
             .OutputStepIds.Should()
             .Equal("support-close", "support-escalate", "support-failed");

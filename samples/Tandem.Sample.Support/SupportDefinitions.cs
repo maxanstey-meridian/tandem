@@ -2,7 +2,7 @@ namespace Tandem.Sample.Support;
 
 public static class SupportDefinitions
 {
-    public static SupportSteps Create(
+    public static SupportParticipants Create(
         AgentFactory agentRuntime,
         SupportOptions options,
         IAccountLookup accountLookup
@@ -32,7 +32,7 @@ public static class SupportDefinitions
             SupportPolicies.ApplyCustomerReply
         );
 
-        return new SupportSteps(
+        return new SupportParticipants(
             classifier,
             new LoadAccountStage(accountLookup),
             resolver,

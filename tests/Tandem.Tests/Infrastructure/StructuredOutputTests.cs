@@ -315,8 +315,8 @@ public sealed class StructuredOutputTests
 
         resumed.State.ReviewerHumanAnswer.Should().Be("Keep public behavior.");
         resumed.State.HumanAnswerSourceBlockId.Should().Be(BlockIds.Reviewer);
-        DeliveryPrompts
-            .BuildReviewerMessage(resumed.State)
+        ReviewerPrompts
+            .BuildMessage(resumed.State)
             .Should()
             .Contain("Human answer for this review:")
             .And.Contain("Keep public behavior.");

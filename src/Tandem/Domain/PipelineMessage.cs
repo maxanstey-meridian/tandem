@@ -12,7 +12,7 @@ internal sealed record PipelineMessage<TState>(
     TState State,
     BlockOutcome? LatestOutcome = null,
     PipelineResult? LatestResult = null,
-    PipelineRunDisposition? Disposition = null
+    PipelineRunStatus Status = PipelineRunStatus.Succeeded
 ) : IOutcomeBearingMessage, IPipelineRunContextCarrier
 {
     internal PipelineRunContext? RunContext { get; init; }

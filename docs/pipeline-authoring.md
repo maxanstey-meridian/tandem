@@ -28,11 +28,66 @@ Use the compiled examples in this order:
    inferred return forms below.
 5. Configure agents per pipeline build with state-first prompts, parsers, and
    ordinary policies.
-6. Put executable instances in a DI-constructed `<Name>Steps` record or factory.
+6. Put executable instances in a typed `<Name>Participants` record. Add a
+   `<Name>ParticipantsFactory` when assembly needs injected clients or infrastructure.
 7. Declare every successor in `<Name>Composition` with `Route`; fluent order does
    not imply edges.
 8. Test inspection, typed state behavior, and real in-process execution for the
    capabilities the pipeline uses.
+
+## Canonical Pipeline Shape
+
+A pipeline package should be copyable as an authored feature, not assembled as a
+flat collection of framework files. Start with this spine:
+
+```text
+MyPipeline/
+├── MyPipelineState.cs
+├── MyPipelineParticipants.cs
+├── MyPipelineParticipantsFactory.cs  # when assembly is non-trivial
+├── MyPipelineComposition.cs
+├── MyPipelineRegistration.cs
+├── Agents/
+├── Capabilities/
+├── Stages/
+├── Interactions/
+├── Observation/
+└── Infrastructure/
+```
+
+The root files explain the complete pipeline:
+
+- `State` contains immutable lifecycle facts and semantic routing decisions.
+- `Participants` is the typed inventory of agents, deterministic stages,
+  interactions, and terminal nodes available to composition.
+- `ParticipantsFactory`, when needed, assembles those immutable definitions from
+  DI-provided clients and infrastructure. Small samples may construct participants
+  directly in `<Name>Definitions`.
+- `Composition` declares the complete route map.
+- `Registration` wires clients, infrastructure, definitions, and hosting entry
+  points.
+
+Optional folders are organized by authored meaning:
+
+- `Agents/<Role>` owns that agent's definition, instructions, state-derived
+  message, typed output model, validator, and policies.
+- `Capabilities` owns typed capability requests, validators, summaries, and
+  state transitions.
+- `Stages/<Concern>` owns deterministic application operations and their narrow
+  infrastructure dependencies.
+- `Interactions/<Name>` owns a semantic request/response contract and the state
+  transitions around waiting and resumption.
+- `Observation` owns pipeline-specific projections for hosts and operators.
+- `Infrastructure` owns repository, process, storage, and external-system
+  mechanics used by authored stages or policies.
+
+Do not add empty folders merely to satisfy the template. A minimal pipeline may
+need only the spine and `Agents`; a richer pipeline grows the optional areas when
+their concepts are real.
+
+Use [`Tandem.Delivery`](../src/Tandem.Delivery) as the complete advanced example.
+Its repository Harness contract is Delivery-owned application configuration, not
+part of the generic template.
 
 ## Inferred ExecuteAsync Forms
 

@@ -39,7 +39,7 @@ public sealed class InProcessPipelineRunnerTests
             CancellationToken.None
         );
 
-        output.Disposition.Should().Be(PipelineRunDisposition.Failed);
+        output.Status.Should().Be(PipelineRunStatus.Failed);
         output.LatestResult!.CaseId.Should().Be(nameof(Outcome<RunnerState>.Failed));
     }
 

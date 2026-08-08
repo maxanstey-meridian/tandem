@@ -6,7 +6,7 @@ public sealed record SongwriterClients(IChatClient Songwriter, IChatClient Proof
 
 public static class SongwriterDefinitions
 {
-    public static SongwriterSteps Create(AgentFactory agents, SongwriterClients clients) =>
+    public static SongwriterParticipants Create(AgentFactory agents, SongwriterClients clients) =>
         new(
             Create(
                 "songwriter",
