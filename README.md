@@ -173,12 +173,31 @@ Console.WriteLine(result.Status); // Succeeded or Failed
 Console.WriteLine(result.State.ProposedChange);
 ```
 
-A persistent pipeline requires a host persistence observer. The bundled Tool
-provides one automatically and records accepted outputs, capability requests, and
-interaction values without application save callbacks. Inspect a completed run with:
+## Inspect What Happened
+
+Persistent pipelines retain the accepted semantic values that shaped a run:
+structured decisions, accepted capability requests, human interaction values, and
+declared failure evidence. This provides an auditable account of what the pipeline
+accepted without application save callbacks.
+
+Inspect a completed run with:
 
 ```sh
-dotnet run --project src/Tandem.Tool -- inspect <run-id>
+dotnet run --project src/Tandem.Tool -- inspect <run-id> --accepted --json
+```
+
+A representative accepted item from the coding pipeline above looks like:
+
+```json
+{
+  "category": "accepted",
+  "kind": "StructuredOutputAccepted",
+  "stepId": "coder",
+  "valueType": "CodingDecision",
+  "payload": {
+    "proposedChange": "Add a friendly greeting to the home page."
+  }
+}
 ```
 
 Use `--accepted` for accepted semantic values only, `--step <id>` and
@@ -186,8 +205,9 @@ Use `--accepted` for accepted semantic values only, `--step <id>` and
 telemetry, and `--json` for the versioned machine-readable projection. Malformed
 telemetry does not prevent inspection of the authoritative SQLite history.
 
-Use `.DoNotPersist(step)` for a sensitive participant, or `.Persist(step)` to retain
-one participant in an otherwise ephemeral pipeline. Tandem does not persist `TState`,
+The bundled Tool provides the required host persistence observer automatically. Use
+`.DoNotPersist(step)` for a sensitive participant, or `.Persist(step)` to retain one
+participant in an otherwise ephemeral pipeline. Tandem does not persist `TState`,
 prompts, reasoning, streaming prose, or arbitrary tool response bodies.
 
 `Tandem.Advanced` is an explicit opt-in for execution-aware concerns such as
