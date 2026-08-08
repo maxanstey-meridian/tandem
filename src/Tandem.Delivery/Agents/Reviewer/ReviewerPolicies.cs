@@ -4,13 +4,6 @@ namespace Tandem.Delivery;
 
 public static class ReviewerPolicies
 {
-    public static DeliveryState ApplyDecision(DeliveryState state, ReviewDecision decision) =>
-        state with
-        {
-            ReviewerDecision = decision,
-            ReviewerHumanAnswer = null,
-        };
-
     public static AgentConversationDecision DiscardAfterDecision(
         AgentMessageContext<DeliveryState> _,
         AgentMessageOutcome __

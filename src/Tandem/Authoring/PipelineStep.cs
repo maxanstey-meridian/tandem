@@ -35,22 +35,14 @@ public static class PipelineNodes
     public static IPipelineNode<TState> Failed<TState>(string id) =>
         new TerminalFailedNode<TState>(id);
 
-    public static IPipelineNode<TState> Failed<TState>(
-        string id,
-        Func<TState, TState> transition,
-        string outcomeKind,
-        Func<string, string, string> summarize
-    ) => new StateTransitionFailedNode<TState>(id, transition, outcomeKind, summarize);
+    public static IPipelineNode<TState> Failed<TState>(IPipelineFailure<TState> failure) =>
+        new DefinitionFailedNode<TState>(failure);
 
     public static IPipelineNode<TState> Complete<TState>(string id) =>
         new TerminalCompleteNode<TState>(id);
 
-    public static IPipelineNode<TState> Complete<TState>(
-        string id,
-        Func<TState, TState> transition,
-        string outcomeKind,
-        string summary
-    ) => new StateTransitionCompleteNode<TState>(id, transition, outcomeKind, summary);
+    public static IPipelineNode<TState> Complete<TState>(IPipelineCompletion<TState> completion) =>
+        new DefinitionCompleteNode<TState>(completion);
 
     public static PipelineInteraction<TState, TRequest, TResponse> WaitFor<
         TState,
@@ -102,35 +94,60 @@ internal sealed class TerminalFailedNode<TState>(string id)
         CorePipelineNodes.Stage<PipelineMessage<TState>, PipelineMessage<TState>>(
             id,
             (message, _, _) =>
-                ValueTask.FromResult(message with { Status = PipelineRunStatus.Failed })
+                ValueTask.FromResult(
+                    message with
+                    {
+                        LatestOutcome = new BlockOutcome(
+                            StandardOutcomeKinds.Failed,
+                            id,
+                            "Failed",
+                            JsonSerializer.SerializeToElement(new { })
+                        ),
+                        Status = PipelineRunStatus.Failed,
+                    }
+                )
         );
 }
 
-internal sealed class StateTransitionCompleteNode<TState>(
-    string id,
-    Func<TState, TState> transition,
-    string outcomeKind,
-    string summary
-) : IPipelineNode<TState>
+public interface IPipelineCompletion<TState>
 {
-    public string Id => id;
+    public string Id { get; }
+
+    public string Summarize(TState state);
+
+    public TState Complete(TState state) => state;
+}
+
+public interface IPipelineFailure<TState>
+{
+    public string Id { get; }
+
+    public string Summarize(TState state);
+
+    public TState Fail(TState state) => state;
+}
+
+internal sealed class DefinitionCompleteNode<TState>(IPipelineCompletion<TState> completion)
+    : IPipelineNode<TState>
+{
+    public string Id => completion.Id;
 
     public PipelineNodeDescriptor Descriptor { get; } =
         new DelegatePipelineNodeDescriptor<PipelineMessage<TState>, PipelineMessage<TState>>(
-            id,
+            completion.Id,
             (message, _, _) =>
             {
                 var stopwatch = Stopwatch.StartNew();
-                var state = transition(message.State);
+                var state = completion.Complete(message.State);
                 stopwatch.Stop();
                 return ValueTask.FromResult(
                     new PipelineMessage<TState>(
                         message.Runtime,
                         state,
                         new BlockOutcome(
-                            outcomeKind,
-                            id,
-                            summary,
+                            StandardOutcomeKinds.Success,
+                            completion.Id,
+                            completion.Summarize(state),
                             JsonSerializer.SerializeToElement(new { }),
                             stopwatch.Elapsed
                         )
@@ -140,35 +157,28 @@ internal sealed class StateTransitionCompleteNode<TState>(
         );
 }
 
-internal sealed class StateTransitionFailedNode<TState>(
-    string id,
-    Func<TState, TState> transition,
-    string outcomeKind,
-    Func<string, string, string> summarize
-) : IPipelineNode<TState>
+internal sealed class DefinitionFailedNode<TState>(IPipelineFailure<TState> failure)
+    : IPipelineNode<TState>
 {
-    public string Id => id;
+    public string Id => failure.Id;
 
     public PipelineNodeDescriptor Descriptor { get; } =
         new DelegatePipelineNodeDescriptor<PipelineMessage<TState>, PipelineMessage<TState>>(
-            id,
+            failure.Id,
             (message, _, _) =>
             {
-                var sourceBlock = message.LatestOutcome?.BlockId ?? "unknown";
-                var sourceKind = message.LatestOutcome?.Kind ?? "unknown";
                 var stopwatch = Stopwatch.StartNew();
-                var state = transition(message.State);
+                var state = failure.Fail(message.State);
                 stopwatch.Stop();
                 return ValueTask.FromResult(
                     message with
                     {
                         State = state,
                         LatestOutcome = new BlockOutcome(
-                            outcomeKind,
-                            id,
-                            summarize(sourceBlock, sourceKind),
-                            message.LatestOutcome?.Payload
-                                ?? JsonSerializer.SerializeToElement(new { }),
+                            StandardOutcomeKinds.Failed,
+                            failure.Id,
+                            failure.Summarize(state),
+                            JsonSerializer.SerializeToElement(new { }),
                             stopwatch.Elapsed
                         ),
                         Status = PipelineRunStatus.Failed,

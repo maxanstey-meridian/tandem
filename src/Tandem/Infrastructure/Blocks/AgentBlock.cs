@@ -51,6 +51,7 @@ internal sealed class AgentBlock<TState>(
         var runtime = ApplyPreInvocationPolicies(message);
         message = message with { Runtime = runtime };
         var invocationId = runtime.NextInvocationId(config.BlockId);
+        var acceptedOutputId = $"{invocationId}--output";
         var requiresCheckpointRelease = IsCheckpointReleaseRequired(runtime);
         var capabilityInvocation = new CapabilityInvocationState<TState>(
             runtime.RunId,
@@ -79,7 +80,14 @@ internal sealed class AgentBlock<TState>(
 
             var instructions = requiresCheckpointRelease
                 ? config.Checkpoint!.Instructions
-                : config.SystemInstructions;
+                : string.Join(
+                    "\n\n",
+                    new[]
+                    {
+                        config.SystemInstructions,
+                        config.StructuredOutput?.Instructions,
+                    }.Where(value => !string.IsNullOrWhiteSpace(value))
+                );
             var tools = capabilityFunctions.Cast<AITool>().ToList();
             var boundCapabilityNames = capabilityFunctions
                 .Select(function => function.Name)
@@ -94,6 +102,7 @@ internal sealed class AgentBlock<TState>(
                 collector: collector,
                 boundCapabilityNames: boundCapabilityNames
             );
+            var freshSession = !runtime.AgentSessions.ContainsKey(config.BlockId);
             var session = await RestoreOrCreateSessionAsync(agent, runtime, cts.Token);
             var baseMessage = requiresCheckpointRelease
                 ? config.Checkpoint!.UserMessage(
@@ -102,12 +111,41 @@ internal sealed class AgentBlock<TState>(
                 )
                 : config.ContextUserMessage?.Invoke(message) ?? config.UserMessage!(message.State);
 
-            var augmentation = config.MessageAugmentation is not null
-                ? await config.MessageAugmentation(message, cts.Token)
-                : null;
-            var userMessage = augmentation is not null
-                ? $"{baseMessage}\n\n{augmentation}"
-                : baseMessage;
+            var augmentations = new List<string>();
+            if (!requiresCheckpointRelease)
+            {
+                foreach (var augment in config.MessageAugmentations ?? [])
+                {
+                    if (await augment(message, cts.Token) is { } value)
+                    {
+                        augmentations.Add(value);
+                    }
+                }
+            }
+            var userMessage =
+                augmentations.Count > 0
+                    ? $"{baseMessage}\n\n{string.Join("\n\n", augmentations)}"
+                    : baseMessage;
+            IReadOnlyList<ChatMessage>? initialMessages = null;
+            if (
+                freshSession
+                && !requiresCheckpointRelease
+                && config.StructuredOutput?.Examples?.Invoke(message.State)
+                    is { Count: > 0 } examples
+            )
+            {
+                initialMessages =
+                [
+                    .. examples.SelectMany(example =>
+                        new[]
+                        {
+                            new ChatMessage(ChatRole.User, example.Input),
+                            new ChatMessage(ChatRole.Assistant, example.Output),
+                        }
+                    ),
+                    new ChatMessage(ChatRole.User, userMessage),
+                ];
+            }
 
             long? inputTokens = null;
             long? outputTokens = null;
@@ -131,7 +169,9 @@ internal sealed class AgentBlock<TState>(
                 var turnSw = Stopwatch.StartNew();
 
                 await foreach (
-                    var update in agent.RunStreamingAsync(userMessage, session, null, cts.Token)
+                    var update in initialMessages is null
+                        ? agent.RunStreamingAsync(userMessage, session, null, cts.Token)
+                        : agent.RunStreamingAsync(initialMessages, session, null, cts.Token)
                 )
                 {
                     foreach (var content in update.Contents)
@@ -155,6 +195,7 @@ internal sealed class AgentBlock<TState>(
                 }
 
                 turnSw.Stop();
+                initialMessages = null;
                 inputTokens = turnInputTokens;
                 outputTokens = turnOutputTokens;
                 cumulativeInputTokens += turnInputTokens ?? 0;
@@ -215,13 +256,13 @@ internal sealed class AgentBlock<TState>(
                         turnText.ToString(),
                         message.State
                     );
-                    if (config.StructuredOutput.Accept is not null)
+                    if (structuredResult.Success && config.StructuredOutput.Accept is not null)
                     {
                         var problems = config.StructuredOutput.Accept(
                             message,
                             structuredResult,
                             structuredToolObservations,
-                            $"{runtime.NextInvocationId(config.BlockId)}--output",
+                            acceptedOutputId,
                             structuredAttempt
                         );
                         if (problems.Count > 0)
@@ -233,29 +274,47 @@ internal sealed class AgentBlock<TState>(
                             };
                         }
                     }
-                    if (structuredResult.Success && config.StructuredOutput.AcceptAsync is not null)
+                    if (structuredResult.Success)
                     {
                         async ValueTask<bool> AcceptAsync(CancellationToken cancellationToken)
                         {
-                            await config.StructuredOutput.AcceptAsync(
-                                message,
-                                structuredResult,
-                                structuredToolObservations,
-                                $"{runtime.NextInvocationId(config.BlockId)}--output",
-                                structuredAttempt,
-                                cancellationToken
-                            );
+                            if (config.StructuredOutput.AcceptAsync is not null)
+                            {
+                                await config.StructuredOutput.AcceptAsync(
+                                    message,
+                                    structuredResult,
+                                    structuredToolObservations,
+                                    acceptedOutputId,
+                                    structuredAttempt,
+                                    cancellationToken
+                                );
+                            }
                             if (message.RunContext is { } observedRunContext)
                             {
                                 await observedRunContext.ObserveAsync(
                                     new PipelineStructuredOutputAccepted(
                                         runtime.RunId,
                                         config.BlockId,
-                                        $"{runtime.NextInvocationId(config.BlockId)}--output",
+                                        acceptedOutputId,
                                         structuredResult.Outcome!.Kind
                                     ),
                                     cancellationToken
                                 );
+                            }
+                            cancellationToken.ThrowIfCancellationRequested();
+                            if (
+                                config.StructuredOutput.Apply is { } apply
+                                && structuredResult.Candidate is { } candidate
+                            )
+                            {
+                                var mapped = apply(message.State, candidate);
+                                structuredResult = structuredResult with
+                                {
+                                    Outcome = structuredResult.Outcome! with
+                                    {
+                                        UpdatedState = mapped,
+                                    },
+                                };
                             }
                             return true;
                         }
@@ -268,20 +327,6 @@ internal sealed class AgentBlock<TState>(
                         {
                             await AcceptAsync(cts.Token);
                         }
-                    }
-                    else if (
-                        structuredResult.Success && message.RunContext is { } structuredRunContext
-                    )
-                    {
-                        await structuredRunContext.ObserveAsync(
-                            new PipelineStructuredOutputAccepted(
-                                runtime.RunId,
-                                config.BlockId,
-                                $"{runtime.NextInvocationId(config.BlockId)}--output",
-                                structuredResult.Outcome!.Kind
-                            ),
-                            cts.Token
-                        );
                     }
                     if (structuredResult.Success || structuredAttempt >= 1)
                     {

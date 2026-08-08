@@ -17,13 +17,11 @@ public sealed class SupportCompositionTests
     {
         var input = Input();
 
-        var classification = SupportPolicies.ApplyClassification(
-            input.State,
+        var classification = input.State.RecordClassification(
             new ClassificationDecision("billing")
         );
         var classified = classification;
-        var resolution = SupportPolicies.ApplyResolution(
-            classified,
+        var resolution = classified.RecordResolution(
             new ResolutionDecision("The duplicate charge was reversed.")
         );
 

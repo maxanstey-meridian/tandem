@@ -96,11 +96,13 @@ public sealed class RegistrationTests : IDisposable
     public void Capabilities_ApplyRepeatedAttachmentOnce()
     {
         var validator = new InlineValidator<IncrementRequest>();
-        var first = AgentCapabilities.Create<FirstScope.SharedState, IncrementRequest>(
-            "increment",
-            "Increment once.",
-            validator,
-            _ => "incremented",
+        var first = AgentCapabilities.Create(
+            new TestCapabilityDefinition<FirstScope.SharedState, IncrementRequest>(
+                "increment",
+                "Increment once.",
+                validator,
+                _ => "incremented"
+            ),
             (state, request) => state with { Count = state.Count + request.Amount }
         );
         var builder = Agent

@@ -373,11 +373,8 @@ public sealed class PackageConsumerTests
         using Tandem.Sample.Debate;
 
         var verdict = AgentCapabilities.Create<DebateState, SubmitVerdict>(
-            "submit_verdict",
-            "Submit the verdict.",
-            new SubmitVerdictValidator(),
-            request => request.Verdict,
-            DebatePolicies.ApplyVerdict
+            new SubmitVerdictCapability(),
+            (state, request) => state.RecordVerdict(request)
         );
         var judgeResponse = new ChatResponse(
             new ChatMessage(

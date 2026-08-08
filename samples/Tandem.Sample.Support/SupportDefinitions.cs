@@ -11,7 +11,10 @@ public static class SupportDefinitions
                 options.ClassifierClient
             )
             .WithMessage(SupportPrompts.ClassificationMessage)
-            .WithOutput(new ClassificationDecisionValidator(), SupportPolicies.ApplyClassification)
+            .WithOutput(
+                new ClassificationDecisionOutput(),
+                (state, value) => state.RecordClassification(value)
+            )
             .Build();
         var resolver = Agent
             .Create<SupportState>(
@@ -20,12 +23,15 @@ public static class SupportDefinitions
                 options.ResolverClient
             )
             .WithMessage(SupportPrompts.ResolutionMessage)
-            .WithOutput(new ResolutionDecisionValidator(), SupportPolicies.ApplyResolution)
+            .WithOutput(
+                new ResolutionDecisionOutput(),
+                (state, value) => state.RecordResolution(value)
+            )
             .Build();
         var customerReply = PipelineNodes.WaitFor<SupportState, CustomerQuestion, CustomerReply>(
             SupportIds.CustomerReply,
-            SupportPolicies.BuildCustomerQuestion,
-            SupportPolicies.ApplyCustomerReply
+            state => state.CreateCustomerQuestion(),
+            (state, reply) => state.RecordCustomerReply(reply)
         );
 
         return new SupportParticipants(

@@ -9,27 +9,6 @@ public static class DebatePolicies
         AgentMessageContext<DebateState> _,
         AgentMessageOutcome __
     ) => new(AgentConversationRetention.Discard);
-
-    public static DebateState ApplyProposal(DebateState state, ProposalDecision decision) =>
-        state with
-        {
-            Arguments = [.. state.Arguments, new DebateArgument("proposer", decision.Text)],
-            Round = state.Round + 1,
-            CritiqueAccepted = null,
-        };
-
-    public static DebateState ApplyCritique(DebateState state, CritiqueDecision decision) =>
-        state with
-        {
-            Arguments = [.. state.Arguments, new DebateArgument("critic", decision.Critique)],
-            CritiqueAccepted = decision.Accepted,
-        };
-
-    public static DebateState ApplyVerdict(DebateState state, SubmitVerdict verdict) =>
-        state with
-        {
-            Verdict = new DebateVerdict(verdict.Verdict, verdict.Reason),
-        };
 }
 
 public sealed class ProposalDecisionValidator : AbstractValidator<ProposalDecision>
@@ -40,10 +19,22 @@ public sealed class ProposalDecisionValidator : AbstractValidator<ProposalDecisi
     }
 }
 
+public sealed class ProposalDecisionOutput : IAgentOutputDefinition<DebateState, ProposalDecision>
+{
+    public string Instructions => "Return the proposed debate argument.";
+    public IValidator<ProposalDecision> Validator { get; } = new ProposalDecisionValidator();
+}
+
 public sealed class CritiqueDecisionValidator : AbstractValidator<CritiqueDecision>
 {
     public CritiqueDecisionValidator()
     {
         RuleFor(decision => decision.Critique).NotEmpty();
     }
+}
+
+public sealed class CritiqueDecisionOutput : IAgentOutputDefinition<DebateState, CritiqueDecision>
+{
+    public string Instructions => "Return the critique and whether the proposal is accepted.";
+    public IValidator<CritiqueDecision> Validator { get; } = new CritiqueDecisionValidator();
 }

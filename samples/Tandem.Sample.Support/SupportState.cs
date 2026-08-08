@@ -8,7 +8,34 @@ public sealed record SupportState(
     string? ProposedResolution = null,
     string? CustomerReply = null,
     string? FinalDisposition = null
-);
+)
+{
+    public SupportState RecordClassification(ClassificationDecision decision) =>
+        this with
+        {
+            Category = decision.Category,
+        };
+
+    public SupportState RecordResolution(ResolutionDecision decision) =>
+        this with
+        {
+            ProposedResolution = decision.ProposedResolution,
+        };
+
+    public CustomerQuestion CreateCustomerQuestion() =>
+        new(
+            Ticket,
+            ProposedResolution
+                ?? throw new InvalidOperationException("A proposed resolution is required.")
+        );
+
+    public SupportState RecordCustomerReply(CustomerReply reply) =>
+        this with
+        {
+            CustomerReply = reply.Text,
+            FinalDisposition = reply.Resolved ? "closed" : "escalated",
+        };
+}
 
 public sealed record ClassificationDecision(string Category);
 

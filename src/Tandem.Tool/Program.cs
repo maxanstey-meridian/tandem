@@ -383,7 +383,7 @@ static async Task PersistTerminalAsync(
 {
     var projector = new RunEventProjector(runId, "", eventStore);
     var status =
-        final.Outcome?.Kind == OutcomeKinds.RunReady
+        final.Status == PipelineRunStatus.Succeeded
             ? Tandem.Delivery.RunStatus.Ready
             : Tandem.Delivery.RunStatus.Failed;
     await deliveryLedger.AcceptTerminalOutcomeAsync(
@@ -555,7 +555,7 @@ file sealed class StreamRenderer
 
     public Tandem.Delivery.RunStatus? TerminalStatus =>
         _finalMessage is null ? null
-        : _finalMessage.Outcome?.Kind == OutcomeKinds.RunReady ? Tandem.Delivery.RunStatus.Ready
+        : _finalMessage.Status == PipelineRunStatus.Succeeded ? Tandem.Delivery.RunStatus.Ready
         : Tandem.Delivery.RunStatus.Failed;
 
     public void RenderTerminalMessage(PipelineRunResult<DeliveryState>? msg)

@@ -7,9 +7,27 @@ public sealed record SongwriterState(
     string? ProofreaderFeedback = null,
     int Revision = 0,
     bool? ProofreaderAccepted = null
-);
+)
+{
+    public SongwriterState RecordSong(SongDecision decision) =>
+        this with
+        {
+            Lyrics = decision.Lyrics,
+            Revision = Revision + 1,
+            ProofreaderAccepted = null,
+        };
 
-public sealed record SongDecision(string Lyrics);
+    public SongwriterState RecordProofread(ProofreaderDecision decision) =>
+        this with
+        {
+            ProofreaderFeedback = decision.Feedback,
+            ProofreaderAccepted = decision.Accepted,
+        };
+}
+
+public sealed record SongDecision(
+    [property: System.ComponentModel.Description("The complete song lyrics.")] string Lyrics
+);
 
 public sealed record LintDecision(bool Passed, string Feedback);
 

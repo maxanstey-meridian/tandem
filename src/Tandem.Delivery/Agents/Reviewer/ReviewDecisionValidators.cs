@@ -67,6 +67,37 @@ public sealed class ReviewDecisionValidator : AbstractValidator<ReviewDecision>
     }
 }
 
+public sealed class ReviewDecisionOutput : IAgentOutputDefinition<DeliveryState, ReviewDecision>
+{
+    public string Instructions =>
+        "Return an evidence-grounded review decision covering every packet outcome.";
+
+    public IValidator<ReviewDecision> Validator { get; } = new ReviewDecisionValidator();
+
+    public IValidator<ReviewDecision> ValidatorFor(DeliveryState state) =>
+        new ReviewDecisionValidator(state.Packet.Outcomes.Select(outcome => outcome.Id));
+
+    public IReadOnlyList<AgentOutputExample<ReviewDecision>> Examples(DeliveryState state) =>
+        [
+            new(
+                "Review the verified candidate against every packet outcome.",
+                new ReviewDecision(
+                    ReviewDecisionValue.Accept,
+                    "The verified candidate delivers every requested outcome with repository evidence.",
+                    state
+                        .Packet.Outcomes.Select(outcome => new ReviewOutcomeAssessment(
+                            outcome.Id,
+                            true,
+                            ["Verified candidate contains the requested implementation."]
+                        ))
+                        .ToArray(),
+                    [],
+                    null
+                )
+            ),
+        ];
+}
+
 public sealed class ReviewOutcomeAssessmentValidator : AbstractValidator<ReviewOutcomeAssessment>
 {
     public ReviewOutcomeAssessmentValidator()

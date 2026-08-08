@@ -213,7 +213,7 @@ internal static class StructuredOutputDescriptors
     ) =>
         new(
             (response, state) => ToCore(parser(response, state)),
-            acceptancePolicy is null
+            Accept: acceptancePolicy is null
                 ? null
                 : (message, result, tools, _, attempt) =>
                     acceptancePolicy(

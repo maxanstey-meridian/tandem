@@ -18,9 +18,6 @@ public sealed class DeliveryParticipantsFactory(
     public DeliveryParticipants Create()
     {
         var agents = new DeliveryAgentFactory(chatClients, profileResolver, records);
-        var complete = new CompleteRunTransition();
-        var failed = new FailRunTransition();
-
         return new DeliveryParticipants(
             new PrepareWorkspaceStage(workspacePreparation),
             ExecutorAgent.Create(agents, askPlanner, submitReport, writeCheckpoint),
@@ -28,18 +25,8 @@ public sealed class DeliveryParticipantsFactory(
             new CaptureCandidateStage(git, records),
             new VerificationStage(new VerificationOperation(git, records)),
             ReviewerAgent.Create(agents, diffAcquisition),
-            PipelineNodes.Complete<DeliveryState>(
-                DeliveryIds.Complete,
-                complete.Execute,
-                OutcomeKinds.RunReady,
-                "Run ready"
-            ),
-            PipelineNodes.Failed<DeliveryState>(
-                DeliveryIds.Failed,
-                failed.Execute,
-                OutcomeKinds.RunFailed,
-                failed.Summarize
-            ),
+            PipelineNodes.Complete(new RunReady()),
+            PipelineNodes.Failed(new RunFailed()),
             PipelineNodes.WaitFor<DeliveryState, HumanQuestion, HumanAnswer>(
                 "PlannerHumanInput",
                 HumanInteraction.BuildPlannerQuestion,

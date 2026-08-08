@@ -16,10 +16,8 @@ internal static class ReviewerAgent
                 builder
                     .WithMessage(ReviewerPrompts.BuildMessage)
                     .WithOutput(
-                        state => new ReviewDecisionValidator(
-                            state.Packet.Outcomes.Select(outcome => outcome.Id)
-                        ),
-                        ReviewerPolicies.ApplyDecision
+                        new ReviewDecisionOutput(),
+                        (state, decision) => state.RecordReviewDecision(decision)
                     )
                     .RequireOutputAcceptance(ReviewerPolicies.RepositoryGrounded())
                     .WithOutputAcceptance<DeliveryState, ReviewDecision>(

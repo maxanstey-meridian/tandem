@@ -4,22 +4,6 @@ namespace Tandem.Delivery;
 
 public static class PlannerPolicies
 {
-    public static DeliveryState ApplyDecision(DeliveryState state, PlannerDecision decision)
-    {
-        var authorizesMutation =
-            decision.Decision
-            is PlannerDecisionValue.Proceed
-                or PlannerDecisionValue.ProceedWithConstraints;
-        return state with
-        {
-            PlannerDecision = decision,
-            PlannerConstraints =
-                decision.Constraints.Count > 0 ? decision.Constraints : state.PlannerConstraints,
-            MutationAuthorized = authorizesMutation || state.MutationAuthorized,
-            PlannerHumanAnswer = null,
-        };
-    }
-
     public static OutputAcceptancePolicy<DeliveryState, PlannerDecision> RepositoryGrounded() =>
         observation =>
             observation.Output.Decision

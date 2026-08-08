@@ -34,6 +34,47 @@ public sealed record DeliveryState(
             PlannerHumanAnswer: null,
             ReviewerHumanAnswer: null
         );
+
+    public DeliveryState RecordPlannerDecision(PlannerDecision decision)
+    {
+        var authorizesMutation =
+            decision.Decision
+            is PlannerDecisionValue.Proceed
+                or PlannerDecisionValue.ProceedWithConstraints;
+        return this with
+        {
+            PlannerDecision = decision,
+            PlannerConstraints =
+                decision.Constraints.Count > 0 ? decision.Constraints : PlannerConstraints,
+            MutationAuthorized = authorizesMutation || MutationAuthorized,
+            PlannerHumanAnswer = null,
+        };
+    }
+
+    public DeliveryState RecordReviewDecision(ReviewDecision decision) =>
+        this with
+        {
+            ReviewerDecision = decision,
+            ReviewerHumanAnswer = null,
+        };
+
+    public DeliveryState RecordPlannerRequest(AskPlannerRequest request) =>
+        this with
+        {
+            ExecutorTransition = new ExecutorTransition.PlannerRequested(request),
+        };
+
+    public DeliveryState RecordImplementationReport(SubmitReportRequest request) =>
+        this with
+        {
+            ExecutorTransition = new ExecutorTransition.ReportSubmitted(request),
+        };
+
+    public DeliveryState RecordCheckpoint(WriteCheckpointRequest request) =>
+        this with
+        {
+            ExecutorTransition = new ExecutorTransition.CheckpointWritten(request),
+        };
 }
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]

@@ -7,8 +7,6 @@ public static class OutcomeKinds
     public const string CheckpointWritten = "checkpoint.written";
     public const string CommandPassed = "command.passed";
     public const string CommandFailed = "command.failed";
-    public const string RunReady = "run.ready";
-    public const string RunFailed = "run.failed";
 }
 
 public static class DeliveryIds

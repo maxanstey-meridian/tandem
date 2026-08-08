@@ -89,17 +89,53 @@ public sealed class LocalCapabilityTests
     }
 
     [Fact]
+    public async Task ContextualValidation_RunsAfterIntrinsic_AndBeforeAcceptanceOrMapping()
+    {
+        var order = new List<string>();
+        var capability = AgentCapabilities
+            .Create(
+                new OrderedCapabilityDefinition(order),
+                (state, request) =>
+                {
+                    order.Add("map");
+                    return state with { Count = state.Count + request.Amount };
+                }
+            )
+            .WithAcceptance(
+                (_, _) =>
+                {
+                    order.Add("accept");
+                    return ValueTask.CompletedTask;
+                }
+            );
+        var invocation = new CapabilityInvocationState<TestState>(
+            Guid.CreateVersion7(),
+            "agent",
+            "invocation-1",
+            new TestState(0)
+        );
+
+        var result = await capability.Bind(invocation).InvokeAsync(Arguments(1));
+
+        IsError(result).Should().BeTrue();
+        order.Should().Equal("intrinsic", "contextual");
+        invocation.Accepted.Should().BeNull();
+    }
+
+    [Fact]
     public async Task AcceptanceFailure_DoesNotTransitionAndAllowsLaterCorrectedCall()
     {
         var attempts = 0;
         var validator = new InlineValidator<IncrementRequest>();
         validator.RuleFor(request => request.Amount).GreaterThan(0);
         var capability = AgentCapabilities
-            .Create<TestState, IncrementRequest>(
-                "increment",
-                "Increment the state.",
-                validator,
-                request => $"Incremented by {request.Amount}",
+            .Create(
+                new TestCapabilityDefinition<TestState, IncrementRequest>(
+                    "increment",
+                    "Increment the state.",
+                    validator,
+                    request => $"Incremented by {request.Amount}"
+                ),
                 (state, request) => state with { Count = state.Count + request.Amount }
             )
             .WithAcceptance(
@@ -237,7 +273,7 @@ public sealed class LocalCapabilityTests
             .Create<TestState>("agent", "Choose a result.", client)
             .WithMessage(_ => "Increment the state.")
             .WithOutput(
-                validator,
+                new TestOutputDefinition<TestState, IncrementRequest>("", validator),
                 (state, request) => state with { Count = state.Count + request.Amount + 100 }
             )
             .WithCapability(CreateCapability())
@@ -342,11 +378,13 @@ public sealed class LocalCapabilityTests
         var validator = new InlineValidator<IncrementRequest>();
         validator.RuleFor(request => request.Amount).GreaterThan(0);
         var capability = AgentCapabilities
-            .Create<TestState, IncrementRequest>(
-                "increment",
-                "Increment the state.",
-                validator,
-                request => $"Incremented by {request.Amount}",
+            .Create(
+                new TestCapabilityDefinition<TestState, IncrementRequest>(
+                    "increment",
+                    "Increment the state.",
+                    validator,
+                    request => $"Incremented by {request.Amount}"
+                ),
                 (state, request) => state with { Count = state.Count + request.Amount }
             )
             .WithAcceptance(
@@ -385,11 +423,13 @@ public sealed class LocalCapabilityTests
         var validator = new InlineValidator<IncrementRequest>();
         validator.RuleFor(request => request.Amount).GreaterThan(0);
         var capability = AgentCapabilities
-            .Create<TestState, IncrementRequest>(
-                "increment",
-                "Increment the state.",
-                validator,
-                request => $"Incremented by {request.Amount}",
+            .Create(
+                new TestCapabilityDefinition<TestState, IncrementRequest>(
+                    "increment",
+                    "Increment the state.",
+                    validator,
+                    request => $"Incremented by {request.Amount}"
+                ),
                 (state, request) => state with { Count = state.Count + request.Amount }
             )
             .WithAcceptance(
@@ -437,11 +477,13 @@ public sealed class LocalCapabilityTests
         using var cancellation = new CancellationTokenSource();
         var applied = false;
         var capability = AgentCapabilities
-            .Create<TestState, IncrementRequest>(
-                "increment",
-                "Increment the state.",
-                new InlineValidator<IncrementRequest>(),
-                request => $"Incremented by {request.Amount}",
+            .Create(
+                new TestCapabilityDefinition<TestState, IncrementRequest>(
+                    "increment",
+                    "Increment the state.",
+                    new InlineValidator<IncrementRequest>(),
+                    request => $"Incremented by {request.Amount}"
+                ),
                 (state, request) =>
                 {
                     applied = true;
@@ -494,11 +536,13 @@ public sealed class LocalCapabilityTests
     {
         var validator = new InlineValidator<IncrementRequest>();
         validator.RuleFor(request => request.Amount).GreaterThan(0);
-        var checkpoint = AgentCapabilities.Create<TestState, IncrementRequest>(
-            "checkpoint",
-            "Checkpoint progress.",
-            validator,
-            request => $"Checkpointed {request.Amount}",
+        var checkpoint = AgentCapabilities.Create(
+            new TestCapabilityDefinition<TestState, IncrementRequest>(
+                "checkpoint",
+                "Checkpoint progress.",
+                validator,
+                request => $"Checkpointed {request.Amount}"
+            ),
             (state, request) => state with { Count = state.Count + request.Amount }
         );
         var client = new ScriptedChatClient(
@@ -517,6 +561,11 @@ public sealed class LocalCapabilityTests
                 _ => "Normal turn.",
                 null,
                 null,
+                StructuredOutput: new AgentStructuredOutputDescriptor<TestState>(
+                    (_, _) => throw new InvalidOperationException("Checkpoint turn parsed output."),
+                    Examples: _ =>
+                        [new AgentOutputExampleDescriptor("ordinary example", "example output")]
+                ),
                 Checkpoint: new AgentCheckpointDescriptor<TestState>(
                     100,
                     20,
@@ -525,6 +574,10 @@ public sealed class LocalCapabilityTests
                     "Write a checkpoint.",
                     (_, _) => "Checkpoint now."
                 ),
+                MessageAugmentations:
+                [
+                    (_, _) => ValueTask.FromResult<string?>("ordinary augmentation"),
+                ],
                 ContinueSession: true
             ),
             client
@@ -544,6 +597,16 @@ public sealed class LocalCapabilityTests
             .ContainSingle()
             .Which.Should()
             .BeEquivalentTo(["increment", "checkpoint"]);
+        client.Requests.Should().ContainSingle();
+        client
+            .Requests.Single()
+            .Select(message => message.Text)
+            .Should()
+            .NotContain(text =>
+                text.Contains("ordinary augmentation", StringComparison.Ordinal)
+                || text.Contains("ordinary example", StringComparison.Ordinal)
+                || text.Contains("example output", StringComparison.Ordinal)
+            );
         output.State.Count.Should().Be(5);
         output.LatestOutcome!.Kind.Should().Be(CapabilityKind("checkpoint"));
         output.Runtime.AgentSessions.Should().NotContainKey("agent");
@@ -553,11 +616,13 @@ public sealed class LocalCapabilityTests
     [Fact]
     public async Task UsageThreshold_LatchesForTheNextRequest_AndAcceptedCheckpointReleasesIt()
     {
-        var checkpoint = AgentCapabilities.Create<TestState, IncrementRequest>(
-            "checkpoint",
-            "Checkpoint progress.",
-            new InlineValidator<IncrementRequest>(),
-            request => $"Checkpointed {request.Amount}",
+        var checkpoint = AgentCapabilities.Create(
+            new TestCapabilityDefinition<TestState, IncrementRequest>(
+                "checkpoint",
+                "Checkpoint progress.",
+                new InlineValidator<IncrementRequest>(),
+                request => $"Checkpointed {request.Amount}"
+            ),
             (state, request) => state with { Count = state.Count + request.Amount }
         );
         var policy = new AgentCheckpointDescriptor<TestState>(
@@ -641,11 +706,13 @@ public sealed class LocalCapabilityTests
     {
         var validator = new InlineValidator<IncrementRequest>();
         validator.RuleFor(request => request.Amount).GreaterThan(0);
-        return AgentCapabilities.Create<TestState, IncrementRequest>(
-            "increment",
-            "Increment the state.",
-            validator,
-            request => $"Incremented by {request.Amount}",
+        return AgentCapabilities.Create(
+            new TestCapabilityDefinition<TestState, IncrementRequest>(
+                "increment",
+                "Increment the state.",
+                validator,
+                request => $"Incremented by {request.Amount}"
+            ),
             (state, request) =>
             {
                 accepted?.Invoke(request);
@@ -760,6 +827,42 @@ public sealed class LocalCapabilityTests
 
     private sealed record IncrementRequest(int Amount);
 
+    private sealed class OrderedCapabilityDefinition(List<string> order)
+        : IAgentCapabilityDefinition<TestState, IncrementRequest>
+    {
+        public string ToolName => "increment";
+        public string Instructions => "Increment the state.";
+        public IValidator<IncrementRequest> Validator { get; } =
+            CreateValidator("intrinsic", order);
+
+        public IValidator<IncrementRequest> ValidatorFor(TestState state) =>
+            CreateValidator("contextual", order, fail: true);
+
+        public string Summarize(IncrementRequest request) => $"Incremented by {request.Amount}";
+
+        private static IValidator<IncrementRequest> CreateValidator(
+            string name,
+            List<string> order,
+            bool fail = false
+        )
+        {
+            var validator = new InlineValidator<IncrementRequest>();
+            validator
+                .RuleFor(request => request.Amount)
+                .Custom(
+                    (_, context) =>
+                    {
+                        order.Add(name);
+                        if (fail)
+                        {
+                            context.AddFailure("Context rejected the amount.");
+                        }
+                    }
+                );
+            return validator;
+        }
+    }
+
     private sealed class FailingAcceptanceObserver : IPipelineObserver
     {
         public ValueTask ObserveAsync(
@@ -786,6 +889,7 @@ public sealed class LocalCapabilityTests
 
         public int CallCount { get; private set; }
         public List<IReadOnlyList<string>> AdvertisedTools { get; } = [];
+        public List<IReadOnlyList<ChatMessage>> Requests { get; } = [];
 
         public Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages,
@@ -799,6 +903,7 @@ public sealed class LocalCapabilityTests
             [EnumeratorCancellation] CancellationToken cancellationToken = default
         )
         {
+            Requests.Add(messages.ToArray());
             AdvertisedTools.Add(options?.Tools?.Select(tool => tool.Name).ToArray() ?? []);
             foreach (var update in Dequeue().ToChatResponseUpdates())
             {

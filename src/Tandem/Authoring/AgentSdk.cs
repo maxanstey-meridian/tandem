@@ -99,11 +99,9 @@ public sealed class AgentBuilder<TState>
     private Func<TState, bool>? _allowMutation;
     private AgentStructuredOutputDescriptor<TState>? _structuredOutput;
     private AgentCheckpointDescriptor<TState>? _checkpoint;
-    private Func<
-        PipelineMessage<TState>,
-        CancellationToken,
-        ValueTask<string?>
-    >? _messageAugmentation;
+    private IReadOnlyList<
+        Func<PipelineMessage<TState>, CancellationToken, ValueTask<string?>>
+    > _messageAugmentations = [];
     private AgentTurnDescriptor<TState>? _turnPolicy;
     private IReadOnlyList<AgentCapabilityDescriptor<TState>> _capabilities = [];
     private bool _continueSession;
@@ -213,35 +211,64 @@ public sealed class AgentBuilder<TState>
     }
 
     public AgentBuilder<TState> WithOutput<TOutput>(
-        IValidator<TOutput> validator,
-        Func<TState, TOutput, TState> apply
-    ) => WithOutput(_ => validator, apply);
-
-    public AgentBuilder<TState> WithOutput<TOutput>(
-        Func<TState, IValidator<TOutput>> validator,
+        IAgentOutputDefinition<TState, TOutput> output,
         Func<TState, TOutput, TState> apply
     )
     {
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(apply);
         _structuredOutput = new AgentStructuredOutputDescriptor<TState>(
             (response, state) =>
-                AgentStructuredOutputPolicy.Parse(
+                AgentStructuredOutputPolicy.Parse<TOutput, TState>(
                     response,
-                    state,
                     _structuredOutputJsonOptions,
-                    validator(state),
-                    (output, current) =>
-                        new AgentStructuredOutcome<TState>(
-                            StandardOutcomeKinds.Success,
-                            "Succeeded",
-                            JsonSerializer.SerializeToElement(output, _structuredOutputJsonOptions),
-                            apply(current, output)
-                        )
+                    output.Validator,
+                    output.ValidatorFor(state)
                 ),
-            OutputType: typeof(TOutput)
+            Apply: (state, candidate) => apply(state, (TOutput)candidate),
+            OutputType: typeof(TOutput),
+            Instructions: output.Instructions,
+            Examples: state =>
+                output
+                    .Examples(state)
+                    .Select(example =>
+                    {
+                        ValidateExample(
+                            example.Output,
+                            output.Validator,
+                            output.ValidatorFor(state)
+                        );
+                        return new AgentOutputExampleDescriptor(
+                            example.Input,
+                            JsonSerializer.Serialize(example.Output, _structuredOutputJsonOptions)
+                        );
+                    })
+                    .ToArray()
         );
         _configureChatOptions = options =>
-            options.ResponseFormat = ChatResponseFormat.ForJsonSchema<TOutput>();
+            options.ResponseFormat = ChatResponseFormat.ForJsonSchema<TOutput>(
+                serializerOptions: _structuredOutputJsonOptions
+            );
         return this;
+    }
+
+    private static void ValidateExample<TOutput>(
+        TOutput example,
+        IValidator<TOutput> intrinsic,
+        IValidator<TOutput>? contextual
+    )
+    {
+        var failures = intrinsic
+            .Validate(example)
+            .Errors.Concat(contextual?.Validate(example).Errors ?? [])
+            .Select(error => error.ErrorMessage)
+            .ToArray();
+        if (failures.Length > 0)
+        {
+            throw new InvalidOperationException(
+                $"Output example is invalid: {string.Join("; ", failures)}"
+            );
+        }
     }
 
     public AgentBuilder<TState> WithCapability(AgentCapability<TState> capability)
@@ -390,7 +417,7 @@ public sealed class AgentBuilder<TState>
         Func<PipelineMessage<TState>, CancellationToken, ValueTask<string?>> augmentation
     )
     {
-        _messageAugmentation = augmentation;
+        _messageAugmentations = [.. _messageAugmentations, augmentation];
         return this;
     }
 
@@ -444,7 +471,7 @@ public sealed class AgentBuilder<TState>
             _allowMutation,
             _structuredOutput,
             _checkpoint,
-            _messageAugmentation,
+            _messageAugmentations,
             _turnPolicy,
             _continueSession,
             _profilePolicy,

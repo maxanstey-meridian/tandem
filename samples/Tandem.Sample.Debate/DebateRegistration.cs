@@ -18,11 +18,8 @@ public static class DebateRegistration
     )
     {
         var verdict = AgentCapabilities.Create<DebateState, SubmitVerdict>(
-            "submit_verdict",
-            "Submit the final debate verdict and end the judge turn.",
-            new SubmitVerdictValidator(),
-            request => $"Verdict submitted: {request.Verdict}",
-            DebatePolicies.ApplyVerdict
+            new SubmitVerdictCapability(),
+            (state, request) => state.RecordVerdict(request)
         );
         services.AddSingleton(verdict);
         services.AddSingleton(options);
@@ -43,4 +40,13 @@ public sealed class SubmitVerdictValidator : AbstractValidator<SubmitVerdict>
         RuleFor(request => request.Verdict).NotEmpty();
         RuleFor(request => request.Reason).NotEmpty();
     }
+}
+
+public sealed class SubmitVerdictCapability : IAgentCapabilityDefinition<DebateState, SubmitVerdict>
+{
+    public string ToolName => "submit_verdict";
+    public string Instructions => "Submit the final debate verdict and end the judge turn.";
+    public IValidator<SubmitVerdict> Validator { get; } = new SubmitVerdictValidator();
+
+    public string Summarize(SubmitVerdict request) => $"Verdict submitted: {request.Verdict}";
 }

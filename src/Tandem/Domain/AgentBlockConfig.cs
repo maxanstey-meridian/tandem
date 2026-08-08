@@ -12,8 +12,9 @@ internal sealed record AgentBlockConfig<TState>(
     Func<TState, bool>? AllowMutation,
     AgentStructuredOutputDescriptor<TState>? StructuredOutput = null,
     AgentCheckpointDescriptor<TState>? Checkpoint = null,
-    Func<PipelineMessage<TState>, CancellationToken, ValueTask<string?>>? MessageAugmentation =
-        null,
+    IReadOnlyList<
+        Func<PipelineMessage<TState>, CancellationToken, ValueTask<string?>>
+    >? MessageAugmentations = null,
     AgentTurnDescriptor<TState>? TurnPolicy = null,
     bool ContinueSession = false,
     Func<TState, AgentProfileSelection>? ProfilePolicy = null,
@@ -45,6 +46,7 @@ internal sealed record AgentLatchedGateDescriptor(
 
 internal sealed record AgentStructuredOutputDescriptor<TState>(
     Func<string, TState, AgentStructuredOutputResult<TState>> Parse,
+    Func<TState, object, TState>? Apply = null,
     Func<
         PipelineMessage<TState>,
         AgentStructuredOutputResult<TState>,
@@ -63,8 +65,12 @@ internal sealed record AgentStructuredOutputDescriptor<TState>(
         ValueTask
     >? AcceptAsync = null,
     string? CorrectionRequiredToolName = null,
-    Type? OutputType = null
+    Type? OutputType = null,
+    string? Instructions = null,
+    Func<TState, IReadOnlyList<AgentOutputExampleDescriptor>>? Examples = null
 );
+
+internal sealed record AgentOutputExampleDescriptor(string Input, string Output);
 
 internal sealed record AgentTurnDescriptor<TState>(
     int MaxContinuationAttempts,

@@ -33,3 +33,25 @@ public sealed class PlannerDecisionValidator : AbstractValidator<PlannerDecision
     internal static bool BeMeaningful(string? value) =>
         !string.IsNullOrWhiteSpace(value) && !_placeholders.Contains(value.Trim());
 }
+
+public sealed class PlannerDecisionOutput : IAgentOutputDefinition<DeliveryState, PlannerDecision>
+{
+    public string Instructions =>
+        "Return a validated planning decision grounded in the packet and repository evidence.";
+
+    public IValidator<PlannerDecision> Validator { get; } = new PlannerDecisionValidator();
+
+    public IReadOnlyList<AgentOutputExample<PlannerDecision>> Examples(DeliveryState state) =>
+        [
+            new(
+                state.Packet.Title,
+                new PlannerDecision(
+                    PlannerDecisionValue.Proceed,
+                    "The packet is actionable and repository evidence supports direct implementation.",
+                    [],
+                    ["README.md"],
+                    null
+                )
+            ),
+        ];
+}

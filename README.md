@@ -4,12 +4,6 @@ Tandem is a typed .NET SDK for building agentic applications as explicit pipelin
 Agents, ordinary C# stages, and human interactions share immutable application state;
 routes define what happens next.
 
-```text
-agent -> C# stage -> human -> agent
-  |                              |
-  +----------- explicit loop ---+
-```
-
 The configured pipeline is the lifecycle. There is no hidden application-level
 coordinator deciding which participant runs next.
 
@@ -41,7 +35,24 @@ public sealed record CodingState(
     string Instructions,
     string? ProposedChange = null,
     bool Approved = false,
-    string? ReviewNotes = null);
+    string? ReviewNotes = null)
+{
+    // State owns the pure transition and clears review facts made stale by a new proposal.
+    public CodingState RecordProposedChange(CodingDecision decision) =>
+        this with
+        {
+            ProposedChange = decision.ProposedChange,
+            Approved = false,
+            ReviewNotes = null,
+        };
+}
+
+// A named terminal owns application-facing identity and summary; Tandem owns success mechanics.
+public sealed class CodingComplete : IPipelineCompletion<CodingState>
+{
+    public string Id => "complete";
+    public string Summarize(CodingState state) => "Coding task approved";
+}
 
 // The coder turns the instructions and any review notes into a proposed change.
 var coder = Agent
@@ -54,9 +65,11 @@ var coder = Agent
         $"Instructions: {state.Instructions}\n"
         + $"Current change: {state.ProposedChange}\n"
         + $"Review notes: {state.ReviewNotes}")
-    // Require the agent to return a CodingDecision.
-    // Validate that decision, then use ApplyDecision to update CodingState.
-    .WithOutput(new CodingDecisionValidator(), CodingPolicies.ApplyDecision)
+    // The output definition owns instructions, validation, and representative examples.
+    // Tandem applies the state transition once, only after the decision is accepted.
+    .WithOutput(
+        new CodingDecisionOutput(),
+        (state, decision) => state.RecordProposedChange(decision))
     .Build();
 
 // Human review pauses the pipeline and returns an approval decision with optional notes.
@@ -71,9 +84,9 @@ var humanReview = PipelineNodes.WaitFor<CodingState, ChangeReview, ReviewAnswer>
         ReviewNotes = answer.Notes,
     });
 
-// Deterministic checks remain ordinary C#; Complete marks the successful terminal.
+// Deterministic checks remain ordinary C#; the definition gives completion application meaning.
 var checks = new CodeCheckStage();
-var complete = PipelineNodes.Complete<CodingState>("complete");
+var complete = PipelineNodes.Complete(new CodingComplete());
 
 // The pipeline starts with the coder and declares every possible transition.
 var pipeline = Pipeline
@@ -97,10 +110,11 @@ var pipeline = Pipeline
 ```
 
 The model produces a typed `CodingDecision`. Tandem validates it before
-`CodingPolicies.ApplyDecision` can update state. The human interaction suspends the
+`CodingState.RecordProposedChange` can update state. The human interaction suspends the
 run without inventing a service call, and the final two routes make the loop visible.
-`CodingDecisionValidator`, `CodingPolicies`, and the review request/answer records are
-ordinary application code; the runnable samples show their complete definitions.
+`CodingDecisionOutput`, `CodingDecisionValidator`, `CodingComplete`, and the review
+request/answer records are ordinary application code; the runnable samples show their
+complete definitions.
 
 Deterministic work uses an ordinary generated stage:
 

@@ -274,7 +274,10 @@ public sealed class ProjectBoundaryTests
         typeof(AgentDefinition<>).GetProperty("Operation").Should().BeNull();
         typeof(AgentCapabilities)
             .GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Single(method => method.Name == nameof(AgentCapabilities.Create))
+            .Single(method =>
+                method.Name == nameof(AgentCapabilities.Create)
+                && method.GetParameters().Length == 2
+            )
             .GetParameters()
             .Select(parameter => parameter.ParameterType)
             .Should()

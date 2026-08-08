@@ -11,15 +11,8 @@ internal static class DeliveryCapabilities
     {
         var askPlanner = AgentCapabilities
             .Create<DeliveryState, AskPlannerRequest>(
-                "ask_planner",
-                "Ask the planner agent for guidance and end the current turn.",
-                new AskPlannerRequestValidator(),
-                request => $"Planner asked: {request.Question}",
-                (state, request) =>
-                    state with
-                    {
-                        ExecutorTransition = new ExecutorTransition.PlannerRequested(request),
-                    }
+                new AskPlannerCapability(),
+                (state, request) => state.RecordPlannerRequest(request)
             )
             .WithAcceptance(
                 (context, cancellationToken) =>
@@ -32,15 +25,8 @@ internal static class DeliveryCapabilities
             );
         var submitReport = AgentCapabilities
             .Create<DeliveryState, SubmitReportRequest>(
-                "submit_report",
-                "Submit the implementation report and end the current turn.",
-                new SubmitReportRequestValidator(),
-                request => $"Report submitted: {request.Summary}",
-                (state, request) =>
-                    state with
-                    {
-                        ExecutorTransition = new ExecutorTransition.ReportSubmitted(request),
-                    }
+                new SubmitReportCapability(),
+                (state, request) => state.RecordImplementationReport(request)
             )
             .WithAcceptance(
                 async (context, cancellationToken) =>
@@ -60,15 +46,8 @@ internal static class DeliveryCapabilities
             );
         var writeCheckpoint = AgentCapabilities
             .Create<DeliveryState, WriteCheckpointRequest>(
-                "write_checkpoint",
-                "Write a checkpoint of current work state and end the current turn.",
-                new WriteCheckpointRequestValidator(),
-                request => $"Checkpoint written: {request.Summary}",
-                (state, request) =>
-                    state with
-                    {
-                        ExecutorTransition = new ExecutorTransition.CheckpointWritten(request),
-                    }
+                new WriteCheckpointCapability(),
+                (state, request) => state.RecordCheckpoint(request)
             )
             .WithAcceptance(
                 async (context, cancellationToken) =>
@@ -96,3 +75,38 @@ internal sealed record DeliveryCapabilitySet(
     AgentCapability<DeliveryState> SubmitReport,
     AgentCapability<DeliveryState> WriteCheckpoint
 );
+
+internal sealed class AskPlannerCapability
+    : IAgentCapabilityDefinition<DeliveryState, AskPlannerRequest>
+{
+    public string ToolName => "ask_planner";
+    public string Instructions => "Ask the planner agent for guidance and end the current turn.";
+    public FluentValidation.IValidator<AskPlannerRequest> Validator { get; } =
+        new AskPlannerRequestValidator();
+
+    public string Summarize(AskPlannerRequest request) => $"Planner asked: {request.Question}";
+}
+
+internal sealed class SubmitReportCapability
+    : IAgentCapabilityDefinition<DeliveryState, SubmitReportRequest>
+{
+    public string ToolName => "submit_report";
+    public string Instructions => "Submit the implementation report and end the current turn.";
+    public FluentValidation.IValidator<SubmitReportRequest> Validator { get; } =
+        new SubmitReportRequestValidator();
+
+    public string Summarize(SubmitReportRequest request) => $"Report submitted: {request.Summary}";
+}
+
+internal sealed class WriteCheckpointCapability
+    : IAgentCapabilityDefinition<DeliveryState, WriteCheckpointRequest>
+{
+    public string ToolName => "write_checkpoint";
+    public string Instructions =>
+        "Write a checkpoint of current work state and end the current turn.";
+    public FluentValidation.IValidator<WriteCheckpointRequest> Validator { get; } =
+        new WriteCheckpointRequestValidator();
+
+    public string Summarize(WriteCheckpointRequest request) =>
+        $"Checkpoint written: {request.Summary}";
+}

@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FluentAssertions;
+using FluentValidation;
 using Microsoft.Extensions.AI;
 using Tandem.Domain;
 using Tandem.Infrastructure.Blocks;
@@ -28,7 +29,10 @@ public sealed class StructuredOutputTests
         var agent = Agent
             .Create<DeliveryState>("planner", "Plan.", client)
             .WithMessage(_ => "Decide.")
-            .WithOutput(new PlannerDecisionValidator(), PlannerPolicies.ApplyDecision)
+            .WithOutput(
+                new PlannerDecisionOutput(),
+                (state, decision) => state.RecordPlannerDecision(decision)
+            )
             .RequireOutputAcceptance(PlannerPolicies.RepositoryGrounded())
             .Build();
         var complete = PipelineNodes.Complete<DeliveryState>("complete");
@@ -59,7 +63,10 @@ public sealed class StructuredOutputTests
         var agent = Agent
             .Create<DeliveryState>("planner", "Plan.", client)
             .WithMessage(_ => "Decide.")
-            .WithOutput(new PlannerDecisionValidator(), PlannerPolicies.ApplyDecision)
+            .WithOutput(
+                new PlannerDecisionOutput(),
+                (state, decision) => state.RecordPlannerDecision(decision)
+            )
             .WithOutputAcceptance<DeliveryState, PlannerDecision>(
                 (observation, _) =>
                 {
@@ -87,6 +94,7 @@ public sealed class StructuredOutputTests
     [Fact]
     public async Task AsyncOutputAcceptanceFailure_PreventsMappedStateAndRouting()
     {
+        var mappings = 0;
         var client = new ScriptedChatClient(
             Response(
                 "{\"decision\":\"Proceed\",\"rationale\":\"Proceed.\","
@@ -97,7 +105,14 @@ public sealed class StructuredOutputTests
         var agent = Agent
             .Create<DeliveryState>("planner", "Plan.", client)
             .WithMessage(_ => "Decide.")
-            .WithOutput(new PlannerDecisionValidator(), PlannerPolicies.ApplyDecision)
+            .WithOutput(
+                new PlannerDecisionOutput(),
+                (state, decision) =>
+                {
+                    Interlocked.Increment(ref mappings);
+                    return state.RecordPlannerDecision(decision);
+                }
+            )
             .WithOutputAcceptance<DeliveryState, PlannerDecision>(
                 (_, _) => ValueTask.FromException(new IOException("Ledger unavailable."))
             )
@@ -113,6 +128,147 @@ public sealed class StructuredOutputTests
 
         var exception = await run.Should().ThrowAsync<PipelineRunException>();
         exception.Which.InnerException.Should().BeOfType<IOException>();
+        mappings.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task SynchronousRejection_DoesNotMap_AndCorrectedOutputMapsExactlyOnce()
+    {
+        var mappings = 0;
+        var client = new ScriptedChatClient(Response("{\"value\":1}"), Response("{\"value\":2}"));
+        var agent = Agent
+            .Create<MappingState>("agent", "Decide.", client)
+            .WithMessage(_ => "Return a value.")
+            .WithOutput(
+                new MappingOutputDefinition(),
+                (state, output) =>
+                {
+                    Interlocked.Increment(ref mappings);
+                    return state with { Value = output.Value };
+                }
+            )
+            .RequireOutputAcceptance<MappingState, MappingOutput>(observation =>
+                observation.Attempt == 0
+                    ? [new StructuredOutputProblem("value", "Use the corrected value.")]
+                    : []
+            )
+            .Build();
+        var complete = PipelineNodes.Complete<MappingState>("complete");
+        var pipeline = Pipeline
+            .Start(agent, "synchronous-output-rejection")
+            .Route(agent.Success, complete, "accepted")
+            .Build(complete);
+
+        var result = await new PipelineRunner().RunAsync(pipeline, new MappingState(0));
+
+        result.State.Value.Should().Be(2);
+        mappings.Should().Be(1);
+        client.CallCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task JournalFailure_DoesNotInvokeOutputMapper()
+    {
+        var mappings = 0;
+        var agent = Agent
+            .Create<MappingState>(
+                "agent",
+                "Decide.",
+                new ScriptedChatClient(Response("{\"value\":1}"))
+            )
+            .WithMessage(_ => "Return a value.")
+            .WithOutput(
+                new MappingOutputDefinition(),
+                (state, output) =>
+                {
+                    Interlocked.Increment(ref mappings);
+                    return state with { Value = output.Value };
+                }
+            )
+            .Build();
+        var complete = PipelineNodes.Complete<MappingState>("complete");
+        var pipeline = Pipeline
+            .Start(agent, "journal-output-failure")
+            .Route(agent.Success, complete, "accepted")
+            .Build(complete);
+        var unitOfWork = new CountingAcceptanceUnitOfWork();
+        var options = new PipelineRunOptions(
+            Observer: new FailingOutputJournalObserver()
+        ).WithAcceptanceUnitOfWork(unitOfWork);
+
+        var run = async () =>
+            await new PipelineRunner().RunAsync(pipeline, new MappingState(0), options);
+
+        await run.Should().ThrowAsync<PipelineRunException>();
+        unitOfWork.ExecutionCount.Should().Be(1);
+        mappings.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ContextualValidation_RunsAfterIntrinsic_AndBeforeAcceptanceAndMapping()
+    {
+        var order = new List<string>();
+        var definition = new OrderedMappingOutputDefinition(order);
+        var agent = Agent
+            .Create<MappingState>(
+                "agent",
+                "Decide.",
+                new ScriptedChatClient(Response("{\"value\":1}"), Response("{\"value\":1}"))
+            )
+            .WithMessage(_ => "Return a value.")
+            .WithOutput(
+                definition,
+                (state, output) =>
+                {
+                    order.Add("map");
+                    return state with { Value = output.Value };
+                }
+            )
+            .WithOutputAcceptance<MappingState, MappingOutput>(
+                (_, _) =>
+                {
+                    order.Add("accept");
+                    return ValueTask.CompletedTask;
+                }
+            )
+            .Build();
+        var pipeline = Pipeline.Start(agent, "contextual-output-validation").Build(agent);
+
+        var result = await new PipelineRunner().RunAsync(pipeline, new MappingState(0));
+
+        result.Status.Should().Be(PipelineRunStatus.Failed);
+        order.Should().Equal("intrinsic", "contextual", "intrinsic", "contextual");
+        order.Should().NotContain("accept").And.NotContain("map");
+    }
+
+    [Fact]
+    public async Task InvalidOutput_DoesNotReachSynchronousAcceptance()
+    {
+        var acceptances = 0;
+        var validationOrder = new List<string>();
+        var agent = Agent
+            .Create<MappingState>(
+                "agent",
+                "Decide.",
+                new ScriptedChatClient(Response("{\"value\":0}"), Response("{\"value\":0}"))
+            )
+            .WithMessage(_ => "Return a value.")
+            .WithOutput(
+                new OrderedMappingOutputDefinition(validationOrder),
+                (state, output) => state with { Value = output.Value }
+            )
+            .RequireOutputAcceptance<MappingState, MappingOutput>(_ =>
+            {
+                Interlocked.Increment(ref acceptances);
+                return [];
+            })
+            .Build();
+        var pipeline = Pipeline.Start(agent, "invalid-output-acceptance").Build(agent);
+
+        var result = await new PipelineRunner().RunAsync(pipeline, new MappingState(0));
+
+        result.Status.Should().Be(PipelineRunStatus.Failed);
+        acceptances.Should().Be(0);
     }
 
     [Fact]
@@ -121,7 +277,10 @@ public sealed class StructuredOutputTests
         var builder = Agent
             .Create<DeliveryState>("planner", "Plan.", new ScriptedChatClient())
             .WithMessage(_ => "Decide.")
-            .WithOutput(new PlannerDecisionValidator(), PlannerPolicies.ApplyDecision);
+            .WithOutput(
+                new PlannerDecisionOutput(),
+                (state, decision) => state.RecordPlannerDecision(decision)
+            );
 
         var act = () => builder.RequireOutputAcceptance(ReviewerPolicies.RepositoryGrounded());
 
@@ -422,7 +581,7 @@ public sealed class StructuredOutputTests
                     StandardOutcomeKinds.Success,
                     "Succeeded",
                     JsonSerializer.SerializeToElement(decision, _jsonOptions),
-                    PlannerPolicies.ApplyDecision(current, decision)
+                    current.RecordPlannerDecision(decision)
                 )
         );
 
@@ -440,7 +599,7 @@ public sealed class StructuredOutputTests
                     StandardOutcomeKinds.Success,
                     "Succeeded",
                     JsonSerializer.SerializeToElement(decision, _jsonOptions),
-                    ReviewerPolicies.ApplyDecision(current, decision)
+                    current.RecordReviewDecision(decision)
                 )
         );
 
@@ -517,6 +676,75 @@ public sealed class StructuredOutputTests
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
 
         public void Dispose() { }
+    }
+
+    private sealed record MappingState(int Value);
+
+    private sealed record MappingOutput(int Value);
+
+    private sealed class MappingOutputDefinition
+        : IAgentOutputDefinition<MappingState, MappingOutput>
+    {
+        public string Instructions => "Return a value.";
+        public IValidator<MappingOutput> Validator { get; } = new InlineValidator<MappingOutput>();
+    }
+
+    private sealed class OrderedMappingOutputDefinition(List<string> order)
+        : IAgentOutputDefinition<MappingState, MappingOutput>
+    {
+        public string Instructions => "Return a value.";
+        public IValidator<MappingOutput> Validator { get; } = CreateValidator("intrinsic", order);
+
+        public IValidator<MappingOutput> ValidatorFor(MappingState state) =>
+            CreateValidator("contextual", order, fail: true);
+
+        private static IValidator<MappingOutput> CreateValidator(
+            string name,
+            List<string> order,
+            bool fail = false
+        )
+        {
+            var validator = new InlineValidator<MappingOutput>();
+            validator
+                .RuleFor(output => output.Value)
+                .Custom(
+                    (_, context) =>
+                    {
+                        order.Add(name);
+                        if (fail)
+                        {
+                            context.AddFailure("Context rejected the value.");
+                        }
+                    }
+                );
+            return validator;
+        }
+    }
+
+    private sealed class FailingOutputJournalObserver : IPipelineObserver
+    {
+        public ValueTask ObserveAsync(
+            PipelineObservation observation,
+            CancellationToken cancellationToken
+        ) =>
+            observation is PipelineStructuredOutputAccepted
+                ? ValueTask.FromException(new IOException("Journal failed."))
+                : ValueTask.CompletedTask;
+    }
+
+    private sealed class CountingAcceptanceUnitOfWork
+        : Tandem.Advanced.IPipelineAcceptanceUnitOfWork
+    {
+        public int ExecutionCount { get; private set; }
+
+        public ValueTask<T> ExecuteAsync<T>(
+            Func<CancellationToken, ValueTask<T>> operation,
+            CancellationToken cancellationToken
+        )
+        {
+            ExecutionCount++;
+            return operation(cancellationToken);
+        }
     }
 
     private sealed class TemporaryDirectory : IDisposable

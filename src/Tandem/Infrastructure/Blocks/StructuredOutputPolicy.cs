@@ -8,10 +8,9 @@ internal static class AgentStructuredOutputPolicy
 {
     public static AgentStructuredOutputResult<TState> Parse<T, TState>(
         string response,
-        TState state,
         JsonSerializerOptions options,
         IValidator<T> validator,
-        Func<T, TState, AgentStructuredOutcome<TState>> map
+        IValidator<T>? contextualValidator = null
     )
     {
         string json;
@@ -55,7 +54,35 @@ internal static class AgentStructuredOutputPolicy
             );
         }
 
-        return new AgentStructuredOutputResult<TState>(map(value, state), [], response, value);
+        if (contextualValidator is not null)
+        {
+            validation = contextualValidator.Validate(value);
+            if (!validation.IsValid)
+            {
+                return new AgentStructuredOutputResult<TState>(
+                    null,
+                    validation
+                        .Errors.Select(error => new AgentStructuredOutputProblem(
+                            ToCamelCase(error.PropertyName),
+                            error.ErrorMessage
+                        ))
+                        .ToArray(),
+                    response,
+                    value
+                );
+            }
+        }
+
+        return new AgentStructuredOutputResult<TState>(
+            new AgentStructuredOutcome<TState>(
+                StandardOutcomeKinds.Success,
+                "Succeeded",
+                JsonSerializer.SerializeToElement(value, options)
+            ),
+            [],
+            response,
+            value
+        );
     }
 
     private static AgentStructuredOutputResult<TState> Failure<TState>(

@@ -27,6 +27,7 @@ public sealed class AgentCapability<TState, TRequest> : AgentCapability<TState>
     private readonly string _name;
     private readonly string _description;
     private readonly IValidator<TRequest> _validator;
+    private readonly Func<TState, IValidator<TRequest>?> _contextualValidator;
     private readonly Func<TRequest, string> _summarize;
     private readonly Func<TState, TRequest, TState> _apply;
 
@@ -34,28 +35,41 @@ public sealed class AgentCapability<TState, TRequest> : AgentCapability<TState>
         string name,
         string description,
         IValidator<TRequest> validator,
+        Func<TState, IValidator<TRequest>?> contextualValidator,
         Func<TRequest, string> summarize,
         Func<TState, TRequest, TState> apply,
         Func<CapabilityAcceptanceContext<TState, TRequest>, CancellationToken, ValueTask>? accept =
             null
     )
-        : base(CreateDescriptor(name, description, validator, summarize, apply, accept))
+        : base(
+            CreateDescriptor(
+                name,
+                description,
+                validator,
+                contextualValidator,
+                summarize,
+                apply,
+                accept
+            )
+        )
     {
         _name = name;
         _description = description;
         _validator = validator;
+        _contextualValidator = contextualValidator;
         _summarize = summarize;
         _apply = apply;
     }
 
     internal AgentCapability<TState, TRequest> WithAcceptance(
         Func<CapabilityAcceptanceContext<TState, TRequest>, CancellationToken, ValueTask> accept
-    ) => new(_name, _description, _validator, _summarize, _apply, accept);
+    ) => new(_name, _description, _validator, _contextualValidator, _summarize, _apply, accept);
 
     private static AgentCapabilityDescriptor<TState> CreateDescriptor(
         string name,
         string description,
         IValidator<TRequest> validator,
+        Func<TState, IValidator<TRequest>?> contextualValidator,
         Func<TRequest, string> summarize,
         Func<TState, TRequest, TState> apply,
         Func<CapabilityAcceptanceContext<TState, TRequest>, CancellationToken, ValueTask>? accept
@@ -70,6 +84,7 @@ public sealed class AgentCapability<TState, TRequest> : AgentCapability<TState>
                 name,
                 description,
                 validator,
+                contextualValidator,
                 summarize,
                 apply,
                 accept,
@@ -82,24 +97,22 @@ public sealed class AgentCapability<TState, TRequest> : AgentCapability<TState>
 public static class AgentCapabilities
 {
     public static AgentCapability<TState, TRequest> Create<TState, TRequest>(
-        string name,
-        string description,
-        IValidator<TRequest> validator,
-        Func<TRequest, string> summarize,
+        IAgentCapabilityDefinition<TState, TRequest> capability,
         Func<TState, TRequest, TState> apply
     )
         where TRequest : class
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ArgumentException.ThrowIfNullOrWhiteSpace(description);
-        ArgumentNullException.ThrowIfNull(validator);
-        ArgumentNullException.ThrowIfNull(summarize);
+        ArgumentNullException.ThrowIfNull(capability);
+        ArgumentException.ThrowIfNullOrWhiteSpace(capability.ToolName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(capability.Instructions);
+        ArgumentNullException.ThrowIfNull(capability.Validator);
         ArgumentNullException.ThrowIfNull(apply);
         return new AgentCapability<TState, TRequest>(
-            name,
-            description,
-            validator,
-            summarize,
+            capability.ToolName,
+            capability.Instructions,
+            capability.Validator,
+            capability.ValidatorFor,
+            capability.Summarize,
             apply
         );
     }
@@ -125,6 +138,7 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
     private readonly string _name;
     private readonly string _description;
     private readonly IValidator<TRequest> _validator;
+    private readonly Func<TState, IValidator<TRequest>?> _contextualValidator;
     private readonly Func<TRequest, string> _summarize;
     private readonly Func<TState, TRequest, TState> _apply;
     private readonly Func<
@@ -140,6 +154,7 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
         string name,
         string description,
         IValidator<TRequest> validator,
+        Func<TState, IValidator<TRequest>?> contextualValidator,
         Func<TRequest, string> summarize,
         Func<TState, TRequest, TState> apply,
         Func<CapabilityAcceptanceContext<TState, TRequest>, CancellationToken, ValueTask>? accept,
@@ -150,6 +165,7 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
         _name = name;
         _description = description;
         _validator = validator;
+        _contextualValidator = contextualValidator;
         _summarize = summarize;
         _apply = apply;
         _accept = accept;
@@ -188,6 +204,17 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
                 $"invalid {_name} call",
                 validation.Errors.Select(error => error.ErrorMessage)
             );
+        }
+        if (_contextualValidator(_invocation.State) is { } contextualValidator)
+        {
+            validation = await contextualValidator.ValidateAsync(request, cancellationToken);
+            if (!validation.IsValid)
+            {
+                return Error(
+                    $"invalid {_name} call",
+                    validation.Errors.Select(error => error.ErrorMessage)
+                );
+            }
         }
 
         string summary;

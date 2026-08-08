@@ -44,6 +44,84 @@ public sealed class InProcessPipelineRunnerTests
     }
 
     [Fact]
+    public async Task CompletionDefinition_InfersState_AppliesOnce_AndPublishesStandardCompletionOnce()
+    {
+        var definition = new ProbeCompletion();
+        var complete = PipelineNodes.Complete(definition);
+        var start = new IncrementStage();
+        var pipeline = Pipeline
+            .Start(start, "definition-completion")
+            .Route(when: _ => true, from: start, to: complete, label: "complete")
+            .Build(complete);
+        var observations = new List<PipelineObservation>();
+
+        var result = await new PipelineRunner().RunAsync(
+            pipeline,
+            new RunnerState(1),
+            new PipelineRunOptions(
+                Observer: new InlinePipelineObserver(observation => observations.Add(observation))
+            )
+        );
+
+        definition.ApplyCount.Should().Be(1);
+        result.State.Count.Should().Be(12);
+        result.Status.Should().Be(PipelineRunStatus.Succeeded);
+        result
+            .Outcome.Should()
+            .Match<PipelineRunOutcome>(outcome =>
+                outcome.Kind == StandardOutcomeKinds.Success
+                && outcome.StepId == definition.Id
+                && outcome.Summary == "Completed at 12"
+            );
+        observations
+            .OfType<PipelineStepCompleted>()
+            .Should()
+            .ContainSingle(observation =>
+                observation.StepId == definition.Id
+                && observation.Outcome.Kind == StandardOutcomeKinds.Success
+            );
+    }
+
+    [Fact]
+    public async Task FailureDefinition_InfersState_AppliesOnce_AndPublishesStandardFailureOnce()
+    {
+        var definition = new ProbeFailure();
+        var failed = PipelineNodes.Failed(definition);
+        var start = new IncrementStage();
+        var pipeline = Pipeline
+            .Start(start, "definition-failure")
+            .Route(when: _ => true, from: start, to: failed, label: "fail")
+            .Build(failed);
+        var observations = new List<PipelineObservation>();
+
+        var result = await new PipelineRunner().RunAsync(
+            pipeline,
+            new RunnerState(1),
+            new PipelineRunOptions(
+                Observer: new InlinePipelineObserver(observation => observations.Add(observation))
+            )
+        );
+
+        definition.ApplyCount.Should().Be(1);
+        result.State.Count.Should().Be(-1);
+        result.Status.Should().Be(PipelineRunStatus.Failed);
+        result
+            .Outcome.Should()
+            .Match<PipelineRunOutcome>(outcome =>
+                outcome.Kind == StandardOutcomeKinds.Failed
+                && outcome.StepId == definition.Id
+                && outcome.Summary == "Failed at -1"
+            );
+        observations
+            .OfType<PipelineStepCompleted>()
+            .Should()
+            .ContainSingle(observation =>
+                observation.StepId == definition.Id
+                && observation.Outcome.Kind == StandardOutcomeKinds.Failed
+            );
+    }
+
+    [Fact]
     public async Task RunAsync_PropagatesExecutionFault()
     {
         var fault = new FaultStage();
@@ -447,6 +525,34 @@ public sealed class InProcessPipelineRunnerTests
         {
             observe(observation);
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class ProbeCompletion : IPipelineCompletion<RunnerState>
+    {
+        public string Id => "definition-complete";
+        public int ApplyCount { get; private set; }
+
+        public string Summarize(RunnerState state) => $"Completed at {state.Count}";
+
+        public RunnerState Complete(RunnerState state)
+        {
+            ApplyCount++;
+            return state with { Count = state.Count + 10 };
+        }
+    }
+
+    private sealed class ProbeFailure : IPipelineFailure<RunnerState>
+    {
+        public string Id => "definition-failed";
+        public int ApplyCount { get; private set; }
+
+        public string Summarize(RunnerState state) => $"Failed at {state.Count}";
+
+        public RunnerState Fail(RunnerState state)
+        {
+            ApplyCount++;
+            return state with { Count = -1 };
         }
     }
 }

@@ -5,12 +5,17 @@ Tandem.AgentCapability`1
 Tandem.AgentCapability`2
 Tandem.AgentDefinition`1
 Tandem.Agent
+Tandem.AgentOutputExample`1
 Tandem.FailureEvidence
+Tandem.IAgentCapabilityDefinition`2
+Tandem.IAgentOutputDefinition`2
 Tandem.Outcome`1
 Tandem.Outcome`1+Failed
 Tandem.Outcome`1+Success
 Tandem.IPipelineNode
 Tandem.IPipelineNode`1
+Tandem.IPipelineCompletion`1
+Tandem.IPipelineFailure`1
 Tandem.PipelineBuilder`1
 Tandem.PipelineInspection
 Tandem.PipelineInteractionInspection

@@ -14,14 +14,14 @@ public static class DebateDefinitions
             CreateStructured(
                 "proposer",
                 options.ProposerClient,
-                new ProposalDecisionValidator(),
-                DebatePolicies.ApplyProposal
+                new ProposalDecisionOutput(),
+                (state, decision) => state.RecordProposal(decision)
             ),
             CreateStructured(
                 "critic",
                 options.CriticClient,
-                new CritiqueDecisionValidator(),
-                DebatePolicies.ApplyCritique
+                new CritiqueDecisionOutput(),
+                (state, decision) => state.RecordCritique(decision)
             ),
             Agent
                 .Create<DebateState>(
@@ -40,13 +40,13 @@ public static class DebateDefinitions
     private static AgentDefinition<DebateState> CreateStructured<TOutput>(
         string id,
         IChatClient client,
-        FluentValidation.IValidator<TOutput> validator,
+        IAgentOutputDefinition<DebateState, TOutput> output,
         Func<DebateState, TOutput, DebateState> apply
     ) =>
         Agent
             .Create<DebateState>(id, $"Act as the debate {id} and return structured JSON.", client)
             .WithMessage(state => $"Question: {state.Question}; round: {state.Round}")
-            .WithOutput(validator, apply)
+            .WithOutput(output, apply)
             .ContinueSession()
             .Build();
 }

@@ -88,7 +88,7 @@ public sealed class PipelineMessageSerializationTests
             runtime,
             state,
             new BlockOutcome(
-                OutcomeKinds.RunReady,
+                StandardOutcomeKinds.Success,
                 DeliveryIds.Complete,
                 "ready",
                 JsonSerializer.SerializeToElement(new { candidate = "candidate-sha" }),

@@ -211,6 +211,76 @@ public sealed class DeliveryPolicyRegressionTests
     }
 
     [Fact]
+    public async Task ReviewerRequest_IncludesDurableContextAndCandidateDiff()
+    {
+        var workspace = Path.Combine(
+            Path.GetTempPath(),
+            "tandem-review-context-" + Guid.NewGuid().ToString("N")
+        );
+        Directory.CreateDirectory(workspace);
+        try
+        {
+            var git = new GitProcess();
+            await RunGitAsync(git, workspace, "init");
+            await RunGitAsync(git, workspace, "config", "user.email", "test@example.com");
+            await RunGitAsync(git, workspace, "config", "user.name", "Tandem Test");
+            await File.WriteAllTextAsync(Path.Combine(workspace, "README.md"), "base\n");
+            await RunGitAsync(git, workspace, "add", "README.md");
+            await RunGitAsync(git, workspace, "commit", "-m", "base");
+            var baseSha = (await RunGitAsync(git, workspace, "rev-parse", "HEAD")).Stdout.Trim();
+            await File.WriteAllTextAsync(Path.Combine(workspace, "README.md"), "candidate\n");
+            await RunGitAsync(git, workspace, "commit", "-am", "candidate");
+            var candidateSha = (
+                await RunGitAsync(git, workspace, "rev-parse", "HEAD")
+            ).Stdout.Trim();
+            var client = new ScriptedChatClient(
+                TextResponse(
+                    "{\"decision\":\"NeedsHuman\",\"summary\":\"A human decision is required.\","
+                        + "\"outcomes\":[{\"outcomeId\":\"outcome\",\"delivered\":true,"
+                        + "\"evidence\":[\"README.md changed\"]}],\"findings\":[],"
+                        + "\"humanQuestion\":\"Should this candidate be accepted?\"}"
+                )
+            );
+            var records = new FakeDeliveryRecordSink();
+            var reviewer = ReviewerAgent.Create(
+                new DeliveryAgentFactory(
+                    _ => client,
+                    _ => new DeliveryAgentProfile(1000, 100, 80),
+                    records
+                ),
+                new DeliveryDiffAcquisition(git)
+            );
+            var pipeline = Pipeline.Start(reviewer, "review-context").Build(reviewer);
+            var state = DeliveryState.Create(
+                new Packet(
+                    "Review context",
+                    workspace,
+                    baseSha,
+                    [new Outcome("outcome", "Change README.")],
+                    [],
+                    [],
+                    ""
+                ),
+                baseSha,
+                workspace
+            ) with
+            {
+                CandidateSha = candidateSha,
+            };
+
+            await new PipelineRunner().RunAsync(pipeline, state);
+
+            var request = client.Requests.Should().ContainSingle().Which.Last().Text;
+            request.Should().Contain("<durable-delivery-context>");
+            request.Should().Contain("Changed files:").And.Contain("README.md");
+        }
+        finally
+        {
+            Directory.Delete(workspace, recursive: true);
+        }
+    }
+
+    [Fact]
     public void GateLatches_AreRunIsolatedAndIndependentFromPlannerAuthority()
     {
         var first = PipelineRuntime
@@ -257,12 +327,31 @@ public sealed class DeliveryPolicyRegressionTests
             ModelId = "test-model",
         };
 
+    private static ChatResponse TextResponse(string text) =>
+        new(new ChatMessage(ChatRole.Assistant, text))
+        {
+            FinishReason = ChatFinishReason.Stop,
+            ModelId = "test-model",
+        };
+
+    private static async Task<GitResult> RunGitAsync(
+        GitProcess git,
+        string workspace,
+        params string[] arguments
+    )
+    {
+        var result = await git.RunAsync(workspace, arguments, CancellationToken.None);
+        result.ExitCode.Should().Be(0, result.Stderr);
+        return result;
+    }
+
     private sealed class ScriptedChatClient(params ChatResponse[] responses) : IChatClient
     {
         private readonly Queue<ChatResponse> _responses = new(responses);
 
         public int CallCount { get; private set; }
         public List<IReadOnlyList<string>> AdvertisedTools { get; } = [];
+        public List<IReadOnlyList<ChatMessage>> Requests { get; } = [];
 
         public Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages,
@@ -277,6 +366,7 @@ public sealed class DeliveryPolicyRegressionTests
                 CancellationToken cancellationToken = default
         )
         {
+            Requests.Add(messages.ToArray());
             AdvertisedTools.Add(options?.Tools?.Select(tool => tool.Name).ToArray() ?? []);
             foreach (var update in Dequeue().ToChatResponseUpdates())
             {

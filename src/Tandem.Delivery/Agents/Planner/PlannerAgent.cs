@@ -12,7 +12,10 @@ internal static class PlannerAgent
             builder =>
                 builder
                     .WithMessage(PlannerPrompts.BuildMessage)
-                    .WithOutput(new PlannerDecisionValidator(), PlannerPolicies.ApplyDecision)
+                    .WithOutput(
+                        new PlannerDecisionOutput(),
+                        (state, decision) => state.RecordPlannerDecision(decision)
+                    )
                     .RequireOutputAcceptance(PlannerPolicies.RepositoryGrounded())
                     .WithOutputAcceptance<DeliveryState, PlannerDecision>(
                         (observation, cancellationToken) =>

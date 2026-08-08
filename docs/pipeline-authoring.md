@@ -99,12 +99,22 @@ The generator recognizes exactly these ordinary signatures.
 ValueTask ExecuteAsync(TState state, CancellationToken cancellationToken)
 ```
 
-Completion preserves state and produces standard success. Empty terminal classes
-are replaced by an SDK node:
+Completion preserves state and produces standard success. A named terminal definition
+owns its application-facing ID, summary, and optional pure state transition; Tandem owns
+terminal execution and classification:
 
 ```csharp
-var complete = PipelineNodes.Complete<SongwriterState>("complete");
+public sealed class SongComplete : IPipelineCompletion<SongwriterState>
+{
+    public string Id => "complete";
+    public string Summarize(SongwriterState state) => "Song accepted";
+}
+
+var complete = PipelineNodes.Complete(new SongComplete());
 ```
+
+Use `PipelineNodes.Complete<TState>("complete")` when an anonymous terminal needs no
+application-specific summary or transition.
 
 ### State-Updating
 
@@ -210,7 +220,9 @@ var classifier = Agent
         options.ClassifierClient
     )
     .WithMessage(SupportPrompts.ClassificationMessage)
-    .WithOutput(new ClassificationDecisionValidator(), SupportPolicies.ApplyClassification)
+    .WithOutput(
+        new ClassificationDecisionOutput(),
+        (state, decision) => state.RecordClassification(decision))
     .Build();
 ```
 
@@ -221,7 +233,9 @@ The returned `AgentDefinition<SupportState>` is directly composable and exposes
 The callbacks above are state-first:
 
 - `WithMessage` accepts `Func<TState, string>`.
-- `WithOutput<T>` owns schema, deserialization, correction, and raw failure evidence.
+- `WithOutput<T>` consumes one output definition containing instructions, intrinsic and
+  contextual validation, and typed examples. Tandem owns schema, exact serialization,
+  correction, acceptance, and deferred state mapping.
 - agents start fresh by default; `.ContinueSession()` explicitly retains conversation.
 - `WithWorkspace` accepts state-first path and mutation predicates.
 - ordinary `Route` predicates accept `Func<TState, bool>`.
@@ -297,8 +311,8 @@ Support creates a typed request handoff with the compiled API:
 ```csharp
 var customerReply = PipelineNodes.WaitFor<SupportState, CustomerQuestion, CustomerReply>(
     SupportIds.CustomerReply,
-    SupportPolicies.BuildCustomerQuestion,
-    SupportPolicies.ApplyCustomerReply
+    state => state.CreateCustomerQuestion(),
+    (state, reply) => state.RecordCustomerReply(reply)
 );
 ```
 
@@ -391,11 +405,8 @@ name, typed request validation, summary, and typed state transition:
 
 ```csharp
 var verdict = AgentCapabilities.Create<DebateState, SubmitVerdict>(
-    "submit_verdict",
-    "Submit the final verdict and end the judge turn.",
-    new SubmitVerdictValidator(),
-    request => $"Verdict submitted: {request.Verdict}",
-    DebatePolicies.ApplyVerdict
+    new SubmitVerdictCapability(),
+    (state, request) => state.RecordVerdict(request)
 );
 ```
 

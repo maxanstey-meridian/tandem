@@ -37,7 +37,7 @@ public sealed class CompositionProofTests
             DeliveryIds.Reviewer,
             ProofOutcomeKinds.ReviewAccepted
         );
-        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, OutcomeKinds.RunReady);
+        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, StandardOutcomeKinds.Success);
 
         var prepareB = prepare.BindExecutor();
         var executorB = executor.BindExecutor();
@@ -109,7 +109,7 @@ public sealed class CompositionProofTests
             DeliveryIds.Reviewer,
             ProofOutcomeKinds.ReviewAccepted
         );
-        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, OutcomeKinds.RunReady);
+        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, StandardOutcomeKinds.Success);
 
         var prepareB = prepare.BindExecutor();
         var executorB = executor.BindExecutor();
@@ -190,7 +190,7 @@ public sealed class CompositionProofTests
             DeliveryIds.Reviewer,
             ProofOutcomeKinds.ReviewAccepted
         );
-        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, OutcomeKinds.RunReady);
+        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, StandardOutcomeKinds.Success);
 
         var prepareB = prepare.BindExecutor();
         var executorB = executor.BindExecutor();
@@ -252,8 +252,8 @@ public sealed class CompositionProofTests
             DeliveryIds.Reviewer,
             ProofOutcomeKinds.ReviewAccepted
         );
-        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, OutcomeKinds.RunReady);
-        var failed = new ScriptedOutcomeBlock(DeliveryIds.Failed, OutcomeKinds.RunFailed);
+        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, StandardOutcomeKinds.Success);
+        var failed = new ScriptedOutcomeBlock(DeliveryIds.Failed, StandardOutcomeKinds.Failed);
 
         var prepareB = prepare.BindExecutor();
         var executorB = executor.BindExecutor();
@@ -330,7 +330,10 @@ public sealed class CompositionProofTests
             .Be(2, "executor runs once for report, once for remediation after failure");
         output
             .LatestOutcome!.Kind.Should()
-            .Be(OutcomeKinds.RunFailed, "the second executor outcome has no route except failed");
+            .Be(
+                StandardOutcomeKinds.Failed,
+                "the second executor outcome has no route except failed"
+            );
     }
 
     // Proof 5: Passing both commands routes to reviewer.
@@ -349,7 +352,7 @@ public sealed class CompositionProofTests
             DeliveryIds.Reviewer,
             ProofOutcomeKinds.ReviewAccepted
         );
-        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, OutcomeKinds.RunReady);
+        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, StandardOutcomeKinds.Success);
 
         var prepareB = prepare.BindExecutor();
         var executorB = executor.BindExecutor();
@@ -388,7 +391,7 @@ public sealed class CompositionProofTests
             StandardOutcomeKinds.Success
         );
         var verify = new ScriptedVerificationOperation(true);
-        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, OutcomeKinds.RunReady);
+        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, StandardOutcomeKinds.Success);
 
         var prepareB = prepare.BindExecutor();
         var executorB = executor.BindExecutor();
@@ -436,7 +439,7 @@ public sealed class CompositionProofTests
         var ctx = CreateMessage(Guid.CreateVersion7(), packet, PinnedBase, Workspace);
         var output = await CompositionRunner.RunAsync(workflow, ctx, "proof-6");
 
-        output.LatestOutcome!.Kind.Should().Be(OutcomeKinds.RunReady);
+        output.LatestOutcome!.Kind.Should().Be(StandardOutcomeKinds.Success);
         complete.InvocationCount.Should().Be(1, "complete must run after verification passes");
     }
 
@@ -460,7 +463,7 @@ public sealed class CompositionProofTests
             "capture-candidate-2",
             StandardOutcomeKinds.Success
         );
-        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, OutcomeKinds.RunReady);
+        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, StandardOutcomeKinds.Success);
 
         var prepareB = prepare.BindExecutor();
         var executorB = executor.BindExecutor();
@@ -543,7 +546,7 @@ public sealed class CompositionProofTests
             )
         );
         var secondAgent = new ScriptedOutcomeBlock("agent-zh", ProofOutcomeKinds.ReviewAccepted);
-        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, OutcomeKinds.RunReady);
+        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, StandardOutcomeKinds.Success);
 
         var prepareB = prepare.BindExecutor();
         var executorB = executor.BindExecutor();
@@ -611,7 +614,7 @@ public sealed class CompositionProofTests
             DeliveryIds.Reviewer,
             ProofOutcomeKinds.ReviewAccepted
         );
-        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, OutcomeKinds.RunReady);
+        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, StandardOutcomeKinds.Success);
         var checkpointExecutor = new ScriptedOutcomeBlock(
             "checkpoint-only",
             OutcomeKinds.CheckpointWritten
@@ -723,7 +726,7 @@ public sealed class CompositionProofTests
             DeliveryIds.Reviewer,
             ProofOutcomeKinds.ReviewAccepted
         );
-        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, OutcomeKinds.RunReady);
+        var complete = new ScriptedOutcomeBlock(DeliveryIds.Complete, StandardOutcomeKinds.Success);
 
         var prepareB = prepare.BindExecutor();
         var checkpointB = checkpointExecutor.BindExecutor();

@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using FluentAssertions;
+using FluentValidation;
 using Microsoft.Extensions.AI;
 using Tandem.Domain;
 using Tandem.Infrastructure.Blocks;
@@ -110,7 +111,85 @@ public sealed class AgentSessionTests
         retained.Should().Be(continueSession);
     }
 
+    [Fact]
+    public async Task TypedExamples_AreFreshSessionTurns_AndAreNotResentForCorrectionOrRetention()
+    {
+        var client = new RecordingChatClient("{\"value\":0}", "{\"value\":1}", "{\"value\":2}");
+        var agent = Agent
+            .Create<ExampleState>("agent", "Respond.", client)
+            .WithMessage(state => $"live request {state.Value}")
+            .WithOutput(
+                new ExampleOutputDefinition(),
+                (state, output) => state with { Value = output.Value }
+            )
+            .ContinueSession()
+            .WithMessageAugmentation((_, _) => ValueTask.FromResult<string?>("first augmentation"))
+            .WithMessageAugmentation((_, _) => ValueTask.FromResult<string?>("second augmentation"))
+            .Build();
+        var complete = PipelineNodes.Complete<ExampleState>("complete");
+        var pipeline = Pipeline
+            .Start(agent, "typed-example-session")
+            .Route(agent.Success, state => state.Value < 2, agent, "continue")
+            .Route(agent.Success, state => state.Value == 2, complete, "complete")
+            .Build(complete);
+
+        var result = await new PipelineRunner().RunAsync(pipeline, new ExampleState(0));
+
+        result.State.Value.Should().Be(2);
+        client.Requests.Should().HaveCount(3);
+        client
+            .Requests[0]
+            .Select(message => (message.Role, message.Text))
+            .Should()
+            .ContainInOrder(
+                (ChatRole.User, "example input"),
+                (ChatRole.Assistant, "{\"value\":7}"),
+                (ChatRole.User, "live request 0\n\nfirst augmentation\n\nsecond augmentation")
+            );
+        client
+            .Requests[1]
+            .Last(message => message.Role == ChatRole.User)
+            .Text.Should()
+            .Contain("greater than '0'");
+        client
+            .Requests[2]
+            .Last(message => message.Role == ChatRole.User)
+            .Text.Should()
+            .Be("live request 1\n\nfirst augmentation\n\nsecond augmentation");
+        client
+            .Requests.Should()
+            .OnlyContain(request =>
+                request.Count(message =>
+                    message.Role == ChatRole.User && message.Text == "example input"
+                ) == 1
+                && request.Count(message =>
+                    message.Role == ChatRole.Assistant && message.Text == "{\"value\":7}"
+                ) == 1
+            );
+    }
+
     private sealed record TestState(int Count);
+
+    private sealed record ExampleState(int Value);
+
+    private sealed record ExampleOutput(int Value);
+
+    private sealed class ExampleOutputDefinition
+        : IAgentOutputDefinition<ExampleState, ExampleOutput>
+    {
+        public string Instructions => "Return a positive value.";
+        public IValidator<ExampleOutput> Validator { get; } = CreateValidator();
+
+        public IReadOnlyList<AgentOutputExample<ExampleOutput>> Examples(ExampleState state) =>
+            [new("example input", new ExampleOutput(7))];
+
+        private static IValidator<ExampleOutput> CreateValidator()
+        {
+            var validator = new InlineValidator<ExampleOutput>();
+            validator.RuleFor(output => output.Value).GreaterThan(0);
+            return validator;
+        }
+    }
 
     private sealed class RecordingChatClient(params string[] responses) : IChatClient
     {
