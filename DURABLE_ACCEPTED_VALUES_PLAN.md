@@ -21,8 +21,8 @@ If a value crosses a declared semantic pipeline boundary successfully,
 and persistence resolves on for that step, it appears in the run ledger.
 ```
 
-This is not workflow resume, `TState` persistence, event sourcing, or a second
-application record framework.
+This is not workflow resume, periodic ambient-state snapshotting, event sourcing,
+or a second application record framework.
 
 ## Settled Product Decisions
 
@@ -135,7 +135,7 @@ today. Rejected and corrected-away candidates never produce this observation.
 identity derivable as:
 
 ```text
-{RunId:N}:{BlockId}:{InvocationId}:{CapabilityId}
+{RunId:N}:{StepId}:{InvocationId}:{CapabilityId}
 ```
 
 Enrich `PipelineCapabilityAccepted` with the accepted-call ID, request type, and
@@ -174,14 +174,11 @@ ValueTask<TState>
 ValueTask<Outcome<TState>>
 ```
 
-There is no independent typed stage-result value to archive without persisting
-`TState`. Do not invent one in this campaign.
-
-`PipelineStepCompleted` already carries a `PipelineRunOutcome` with a JSON payload.
-Persist that payload only for declared standard failure evidence. Agent success and
-capability outcome payloads duplicate their dedicated accepted-value records;
-successful state-only stages and current terminal definitions generally emit `{}`.
-No `TState` snapshot or fictional terminal value is added.
+For `ValueTask<TState>` and successful `ValueTask<Outcome<TState>>`, the returned
+state is the stage's accepted typed value. A persistent stage records that returned
+value before routing. This is boundary acceptance, not periodic snapshotting of
+ambient live state. Pass-through `ValueTask` stages have no accepted value, and
+failed outcomes retain their declared `FailureEvidence`.
 
 `PipelineCommandOutput` contains potentially large stdout/stderr. Keep the current
 metadata-only runtime journal behavior; Delivery's validated `VerificationResult`
@@ -308,22 +305,23 @@ When the semantic step resolves persistent:
 - accepted typed capability request payload;
 - typed interaction request payload;
 - typed interaction response payload;
+- returned state from successful state-returning stages;
 - declared standard failure evidence from `PipelineRunOutcome.Payload`; and
 - all existing provenance, lifecycle, usage, action, and terminal metadata already
   recorded by the runtime journal.
 
 Tandem does not automatically persist:
 
-- `TState` snapshots;
+- ambient or periodic `TState` snapshots;
 - internal helper results;
 - invalid, rejected, blocked, or corrected-away values;
 - model reasoning, ordinary streamed prose, full prompts, or session history;
 - arbitrary tool response bodies or source-file reads;
-- raw command stdout/stderr beyond existing operational `events.jsonl`; or
+- raw command stdout/stderr; or
 - gate latches, routes, resume positions, and other runtime bookkeeping.
 
-`events.jsonl` remains dashboard and debugging telemetry. Agents consume curated
-accepted-value projections, not that file.
+The dashboard reads committed facts from SQLite. Agents consume curated
+accepted-value projections, not the runtime journal directly.
 
 ## Delivery Simplification
 
@@ -401,8 +399,8 @@ Default output reads `runtime.journal` and presents one chronological timeline:
 - command status and usage; and
 - terminal status.
 
-Operational tool arguments and streaming diagnostics remain in `events.jsonl`.
-Join them only for `--tools` or an explicitly operational view, and label them as
+Operational tool arguments and streaming diagnostics remain process-local.
+Do not join them into inspection or expose them as an operational view; label any live diagnostics as
 telemetry rather than accepted facts.
 
 Initial filters:
@@ -411,7 +409,6 @@ Initial filters:
 --accepted
 --step <id>
 --type <name>
---tools
 --json
 ```
 
@@ -518,8 +515,8 @@ Initial filters:
     behavior.
 20. Declared standard failure evidence persists without duplicating accepted
     output or capability payloads.
-21. `TState`, successful state-return payloads, reasoning, prompts, and arbitrary
-    tool bodies remain absent.
+21. Ambient state snapshots, reasoning, prompts, and arbitrary tool bodies remain
+    absent; successful persistent state-returning stages retain their returned value.
 
 ### Delivery
 
@@ -536,8 +533,8 @@ Initial filters:
 
 27. `tandem inspect <run-id>` shows accepted values chronologically after process
     exit.
-28. Filters select accepted values, step, type, tools, and JSON output correctly.
-29. Operational events are visibly distinct from accepted facts.
+28. Filters select accepted values, step, type, and JSON output correctly.
+29. Runtime journal entries are visibly distinct from accepted facts.
 30. Inspector output does not require original CLR types to be loadable.
 
 ### Repository
@@ -550,9 +547,9 @@ Initial filters:
 
 ## Non-Goals
 
-- Persisting every CLR return value.
+- Persisting return values from non-persistent participants.
 - Adding independent typed stage results in this campaign.
-- Persisting `TState` or reconstructing a dead workflow.
+- Periodically snapshotting ambient `TState` or reconstructing a dead workflow.
 - Workflow resume or Durable Task replacement.
 - Event sourcing application state.
 - Persisting model reasoning, full prompts, streaming prose, or arbitrary tool

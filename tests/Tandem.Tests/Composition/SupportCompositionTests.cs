@@ -107,8 +107,8 @@ public sealed class SupportCompositionTests
         output.State.AccountContext.Should().Be("Customer is active; duplicate charge is pending.");
         output.State.ProposedResolution.Should().Contain("reversed");
         output.State.FinalDisposition.Should().Be(disposition);
-        output.LatestResult!.StepId.Should().Be(terminalStep);
-        output.LatestResult.CaseId.Should().Be("Success");
+        output.LatestOutcome!.StepId.Should().Be(terminalStep);
+        output.LatestOutcome.Kind.Should().Be(StandardOutcomeKinds.Success);
         output.Runtime.AgentSessions.Should().ContainKeys("support-classify", "support-resolve");
         output.Runtime.AgentUsage.Should().ContainKeys("support-classify", "support-resolve");
         fixture.Lookup.ReceivedState!.Category.Should().Be("billing");
@@ -211,13 +211,14 @@ public sealed class SupportCompositionTests
             CancellationToken cancellationToken
         )
         {
-            request.RequestType.Should().Be(typeof(CustomerQuestion).FullName);
+            request.RequestType.Should().Be(typeof(CustomerQuestion));
             request.Value.Should().BeOfType<CustomerQuestion>();
             return ValueTask.FromResult(
                 new ExternalRequestAnswer(
                     request.RunId,
                     request.RequestId,
-                    JsonSerializer.SerializeToElement(reply)
+                    typeof(CustomerReply),
+                    reply
                 )
             );
         }

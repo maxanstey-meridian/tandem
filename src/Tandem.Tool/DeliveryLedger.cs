@@ -7,7 +7,7 @@ namespace Tandem.Tool;
 internal sealed class DeliveryLedger(RunLedger ledger) : IDeliveryRecordSink
 {
     private const int RecentRecordLimit = 5;
-    private static readonly LedgerStream<VerificationResultRecord> _verificationResults = new(
+    internal static readonly LedgerStream<VerificationResultRecord> VerificationResults = new(
         "delivery.verification-results",
         "delivery.verification-result"
     );
@@ -15,7 +15,7 @@ internal sealed class DeliveryLedger(RunLedger ledger) : IDeliveryRecordSink
         "delivery.progress-checkpoints",
         "delivery.progress-checkpoint"
     );
-    private static readonly LedgerStream<PublicationResultRecord> _publicationResults = new(
+    internal static readonly LedgerStream<PublicationResultRecord> PublicationResults = new(
         "delivery.publication-results",
         "delivery.publication-result"
     );
@@ -23,7 +23,7 @@ internal sealed class DeliveryLedger(RunLedger ledger) : IDeliveryRecordSink
         "delivery.outcomes",
         "delivery.outcome-progress"
     );
-    private static readonly LedgerDocument<PublicationCandidateDocument> _publicationCandidate =
+    internal static readonly LedgerDocument<PublicationCandidateDocument> PublicationCandidate =
         new("delivery.publication-candidate", "delivery.publication-candidate");
 
     public async ValueTask<DeliveryLedgerContext> ReadContextAsync(
@@ -71,7 +71,7 @@ internal sealed class DeliveryLedger(RunLedger ledger) : IDeliveryRecordSink
                 : [];
         var verification = role is DeliveryLedgerRole.Executor or DeliveryLedgerRole.Reviewer
             ? await ledger.ReadRecentAsync(
-                _verificationResults,
+                VerificationResults,
                 RecentRecordLimit,
                 cancellationToken
             )
@@ -201,7 +201,7 @@ internal sealed class DeliveryLedger(RunLedger ledger) : IDeliveryRecordSink
         CancellationToken cancellationToken
     ) =>
         await WriteAcceptedDocumentAsync(
-            _publicationCandidate,
+            PublicationCandidate,
             candidate,
             acceptedCandidateId,
             document => document.AcceptedCandidateId,
@@ -210,14 +210,14 @@ internal sealed class DeliveryLedger(RunLedger ledger) : IDeliveryRecordSink
 
     public async ValueTask<PublicationCandidateDocument?> ReadPublicationCandidateAsync(
         CancellationToken cancellationToken
-    ) => (await ledger.ReadDocumentAsync(_publicationCandidate, cancellationToken))?.Value;
+    ) => (await ledger.ReadDocumentAsync(PublicationCandidate, cancellationToken))?.Value;
 
     public async ValueTask AcceptPublicationResultAsync(
         PublicationResultRecord result,
         CancellationToken cancellationToken
     ) =>
         await ledger.AppendAsync(
-            _publicationResults,
+            PublicationResults,
             $"publication--{result.Branch}--{result.CandidateSha}",
             result,
             cancellationToken
@@ -229,7 +229,7 @@ internal sealed class DeliveryLedger(RunLedger ledger) : IDeliveryRecordSink
         CancellationToken cancellationToken
     ) =>
         await ledger.AppendAsync(
-            _verificationResults,
+            VerificationResults,
             acceptedResultId,
             new VerificationResultRecord(result),
             cancellationToken

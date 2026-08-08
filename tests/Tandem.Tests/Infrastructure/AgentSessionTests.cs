@@ -126,7 +126,7 @@ public sealed class AgentSessionTests
             .WithMessageAugmentation((_, _) => ValueTask.FromResult<string?>("first augmentation"))
             .WithMessageAugmentation((_, _) => ValueTask.FromResult<string?>("second augmentation"))
             .Build();
-        var complete = PipelineNodes.Complete<ExampleState>("complete");
+        var complete = PipelineNodes.Complete(new TestCompletion<ExampleState>("complete"));
         var pipeline = Pipeline
             .Start(agent, "typed-example-session")
             .Route(agent.Success, state => state.Value < 2, agent, "continue")

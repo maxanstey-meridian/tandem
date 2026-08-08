@@ -1,23 +1,25 @@
-using Tandem.Domain;
+using Tandem.Ledger;
+using Tandem.Tool;
 
 namespace Tandem.Infrastructure.Dashboard;
 
 public enum DashboardOutcome
 {
-    Detached,
-    AnswerSubmitted,
-    PublishRequested,
+    Completed,
+    Cancelled,
 }
 
-public sealed class DashboardLoop(
-    string runDirectory,
+internal sealed class DashboardLoop(
+    SqliteLedgerStore store,
+    Guid runId,
+    LiveTranscript liveTranscript,
+    Func<bool> canSubmitAnswer,
     Func<string?, Task> onAnswerSubmitted,
     Func<Task> onPublishRequested,
-    Func<Task> onDetach,
+    Func<Task> onCancel,
     DashboardRenderer? renderer = null
 )
 {
-    private readonly DashboardEventFeed _feed = new(runDirectory);
     private readonly DashboardRenderer _renderer = renderer ?? new DashboardRenderer();
 
     public Task<DashboardOutcome> RunAsync(
@@ -29,9 +31,8 @@ public sealed class DashboardLoop(
         {
             return RunCoreAsync(seed, ct);
         }
-
-        DashboardOutcome outcome = DashboardOutcome.Detached;
-        var previousControlC = Console.TreatControlCAsInput;
+        DashboardOutcome outcome = DashboardOutcome.Cancelled;
+        var previous = Console.TreatControlCAsInput;
         Console.TreatControlCAsInput = true;
         try
         {
@@ -41,93 +42,80 @@ public sealed class DashboardLoop(
         }
         finally
         {
-            Console.TreatControlCAsInput = previousControlC;
+            Console.TreatControlCAsInput = previous;
         }
-
         return Task.FromResult(outcome);
     }
 
     private async Task<DashboardOutcome> RunCoreAsync(DashboardModel? seed, CancellationToken ct)
     {
-        DashboardModel model = seed ?? new DashboardModel();
-
-        var existing = await _feed.ReadExistingAsync(ct);
-        model = DashboardReducer.FromEvents(existing, model);
-        _renderer.Render(model);
-        var lastRender = DateTimeOffset.UtcNow;
-        var width = _renderer.Width;
-        var height = _renderer.Height;
-
+        var model = seed ?? new DashboardModel();
+        var ledger = store.ForRun(runId);
+        long journalSequence = 0;
         while (!ct.IsCancellationRequested)
         {
-            var fresh = await _feed.PollNewAsync(ct);
-            if (fresh.Count > 0)
+            var journal = await ledger.ReadAfterAsync(
+                LedgerPipelineObserver.Journal,
+                journalSequence,
+                ct
+            );
+            if (journal.Count > 0)
             {
-                model = DashboardReducer.FromEvents(fresh, model);
-                _renderer.Render(model);
-                lastRender = DateTimeOffset.UtcNow;
+                journalSequence = journal[^1].Sequence;
             }
+            model = DashboardReducer.ApplyJournal(model, journal);
+            model = DashboardReducer.ApplyRun(model, await store.GetRunAsync(runId, ct));
+            model = DashboardReducer.ApplyDelivery(
+                model,
+                (await ledger.ReadDocumentAsync(DeliveryLedger.PublicationCandidate, ct))?.Value,
+                await ledger.ReadAsync(DeliveryLedger.VerificationResults, ct),
+                await ledger.ReadAsync(DeliveryLedger.PublicationResults, ct)
+            );
+            model = DashboardReducer.ApplyTranscript(model, liveTranscript.Snapshot());
+            _renderer.Render(model);
 
-            var resized = width != _renderer.Width || height != _renderer.Height;
-            if (resized || DateTimeOffset.UtcNow - lastRender >= TimeSpan.FromSeconds(1))
+            if (
+                ShouldExitAfterTerminal(
+                    model.IsTerminal,
+                    Console.IsInputRedirected,
+                    Console.IsOutputRedirected
+                )
+            )
             {
-                width = _renderer.Width;
-                height = _renderer.Height;
-                _renderer.Render(model);
-                lastRender = DateTimeOffset.UtcNow;
+                return DashboardOutcome.Completed;
             }
-
-            if (model.IsTerminal && Console.IsInputRedirected)
-            {
-                await onDetach();
-                return DashboardOutcome.Detached;
-            }
-
-            if (Console.IsInputRedirected)
+            if (Console.IsInputRedirected || !Console.KeyAvailable)
             {
                 await Task.Delay(100, ct);
                 continue;
             }
-
-            if (!Console.KeyAvailable)
-            {
-                await Task.Delay(100, ct);
-                continue;
-            }
-
             var key = Console.ReadKey(intercept: true);
             switch (key.Key)
             {
                 case ConsoleKey.UpArrow:
                     _renderer.ScrollLines(1);
-                    _renderer.Render(model);
                     break;
                 case ConsoleKey.DownArrow:
                     _renderer.ScrollLines(-1);
-                    _renderer.Render(model);
                     break;
                 case ConsoleKey.PageUp:
                     _renderer.ScrollPage(1);
-                    _renderer.Render(model);
                     break;
                 case ConsoleKey.PageDown:
                     _renderer.ScrollPage(-1);
-                    _renderer.Render(model);
                     break;
                 case ConsoleKey.Home:
                     _renderer.ScrollHome();
-                    _renderer.Render(model);
                     break;
                 case ConsoleKey.End:
                     _renderer.ScrollEnd();
-                    _renderer.Render(model);
                     break;
                 case ConsoleKey.Q:
                 case ConsoleKey.C when (key.Modifiers & ConsoleModifiers.Control) != 0:
-                    await onDetach();
-                    return DashboardOutcome.Detached;
-                case ConsoleKey.Enter when model.PendingHumanRequest is not null:
-                    _renderer.Render(model);
+                    await onCancel();
+                    return DashboardOutcome.Cancelled;
+                case ConsoleKey.Enter
+                    when model.PendingHumanRequest is not null && canSubmitAnswer():
                     await onAnswerSubmitted(model.DraftAnswer);
                     model = model with { DraftAnswer = null };
                     break;
@@ -135,17 +123,14 @@ public sealed class DashboardLoop(
                     await onPublishRequested();
                     break;
                 default:
-                    if (model.PendingHumanRequest is not null && key.Key != ConsoleKey.Enter)
+                    if (model.PendingHumanRequest is not null)
                     {
                         model = AppendAnswerChar(model, key);
-                        _renderer.Render(model);
                     }
                     break;
             }
         }
-
-        await onDetach();
-        return DashboardOutcome.Detached;
+        return DashboardOutcome.Cancelled;
     }
 
     private static DashboardModel AppendAnswerChar(DashboardModel model, ConsoleKeyInfo key)
@@ -161,4 +146,10 @@ public sealed class DashboardLoop(
         }
         return model with { DraftAnswer = draft };
     }
+
+    internal static bool ShouldExitAfterTerminal(
+        bool isTerminal,
+        bool inputRedirected,
+        bool outputRedirected
+    ) => isTerminal && (inputRedirected || outputRedirected);
 }

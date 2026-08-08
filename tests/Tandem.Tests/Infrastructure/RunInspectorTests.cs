@@ -7,6 +7,31 @@ namespace Tandem.Tests.Infrastructure;
 
 public sealed class RunInspectorTests : IDisposable
 {
+    [Fact]
+    public async Task Inspect_AcceptedExcludesNonPersistentInteractionMetadata()
+    {
+        var (store, runId) = await CreateRunAsync();
+        await new LedgerPipelineObserver(store.ForRun(runId)).ObserveAsync(
+            new PipelineInteractionRequested<HumanQuestion>(
+                runId,
+                "human-review",
+                "request-1",
+                new HumanQuestion("Proceed?", "Approval required")
+            ),
+            CancellationToken.None
+        );
+
+        var inspection = await new RunInspector(store).InspectAsync(
+            runId,
+            true,
+            null,
+            null,
+            CancellationToken.None
+        );
+
+        inspection.Items.Should().BeEmpty();
+    }
+
     private readonly string _home = Path.Combine(
         Path.GetTempPath(),
         $"tandem-inspector-{Guid.NewGuid():N}"
@@ -28,12 +53,11 @@ public sealed class RunInspectorTests : IDisposable
             new RuntimeJournalRecord(RuntimeJournalKind.StepStarted, "first")
         );
 
-        var inspection = await new RunInspector(store, _home).InspectAsync(
+        var inspection = await new RunInspector(store).InspectAsync(
             runId,
             false,
             null,
             null,
-            false,
             CancellationToken.None
         );
 
@@ -42,7 +66,7 @@ public sealed class RunInspectorTests : IDisposable
     }
 
     [Fact]
-    public async Task Inspect_AcceptedIncludesFailureEvidenceAndAppliesTypeFilterToTools()
+    public async Task Inspect_AcceptedIncludesFailureEvidenceAndAppliesTypeFilter()
     {
         var (store, runId) = await CreateRunAsync();
         var observer = new LedgerPipelineObserver(store.ForRun(runId));
@@ -67,22 +91,19 @@ public sealed class RunInspectorTests : IDisposable
             ),
             CancellationToken.None
         );
-        await WriteEventsAsync(runId, "{not-json}");
 
-        var accepted = await new RunInspector(store, _home).InspectAsync(
+        var accepted = await new RunInspector(store).InspectAsync(
             runId,
             true,
             null,
             null,
-            true,
             CancellationToken.None
         );
-        var typed = await new RunInspector(store, _home).InspectAsync(
+        var typed = await new RunInspector(store).InspectAsync(
             runId,
             false,
             null,
             "FailureEvidence",
-            true,
             CancellationToken.None
         );
 
@@ -112,12 +133,11 @@ public sealed class RunInspectorTests : IDisposable
             CancellationToken.None
         );
 
-        var inspection = await new RunInspector(store, _home).InspectAsync(
+        var inspection = await new RunInspector(store).InspectAsync(
             runId,
             true,
             null,
             null,
-            false,
             CancellationToken.None
         );
 
@@ -125,43 +145,6 @@ public sealed class RunInspectorTests : IDisposable
         accepted.Category.Should().Be("accepted");
         accepted.ValueType.Should().Be(typeof(RunnerState).FullName);
         accepted.Payload!.Value.GetProperty("Count").GetInt32().Should().Be(3);
-    }
-
-    [Fact]
-    public async Task Inspect_SkipsMalformedTelemetryAndFiltersValidToolsByStep()
-    {
-        var (store, runId) = await CreateRunAsync();
-        await store
-            .ForRun(runId)
-            .AppendAsync(
-                LedgerPipelineObserver.Journal,
-                "runtime-1",
-                new RuntimeJournalRecord(RuntimeJournalKind.RunStarted, "")
-            );
-        await WriteEventsAsync(
-            runId,
-            "{not-json}",
-            "{}",
-            """
-            {"timestamp":"2026-08-08T12:00:00Z","kind":"tool.completed","blockId":"executor","data":{"name":"read"}}
-            """,
-            """
-            {"timestamp":"2026-08-08T12:00:00Z","kind":"tool.completed","blockId":"planner","data":{"name":"search"}}
-            """
-        );
-
-        var inspection = await new RunInspector(store, _home).InspectAsync(
-            runId,
-            false,
-            "executor",
-            null,
-            true,
-            CancellationToken.None
-        );
-
-        inspection.Items.Should().ContainSingle();
-        inspection.Items[0].Category.Should().Be("telemetry");
-        inspection.Items[0].Name.Should().Be("read");
     }
 
     [Fact]
@@ -180,12 +163,11 @@ public sealed class RunInspectorTests : IDisposable
             ),
             CancellationToken.None
         );
-        var inspection = await new RunInspector(store, _home).InspectAsync(
+        var inspection = await new RunInspector(store).InspectAsync(
             runId,
             false,
             null,
             null,
-            false,
             CancellationToken.None
         );
 
@@ -226,13 +208,6 @@ public sealed class RunInspectorTests : IDisposable
         var runId = Guid.CreateVersion7();
         await store.CreateRunAsync(runId, "delivery");
         return (store, runId);
-    }
-
-    private async ValueTask WriteEventsAsync(Guid runId, params string[] lines)
-    {
-        var directory = Path.Combine(_home, "runs", runId.ToString("N"));
-        Directory.CreateDirectory(directory);
-        await File.WriteAllLinesAsync(Path.Combine(directory, "events.jsonl"), lines);
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider

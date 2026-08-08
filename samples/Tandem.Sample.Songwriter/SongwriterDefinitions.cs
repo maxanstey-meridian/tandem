@@ -23,8 +23,8 @@ public static class SongwriterDefinitions
                 new ProofreaderDecisionOutput(),
                 (state, decision) => state.RecordProofread(decision)
             ),
-            PipelineNodes.Complete<SongwriterState>("complete"),
-            PipelineNodes.Failed<SongwriterState>("songwriter-failed")
+            PipelineNodes.Complete(new SongwriterComplete()),
+            PipelineNodes.Failed(new SongwriterFailed())
         );
 
     private static AgentDefinition<SongwriterState> Create<TOutput>(
@@ -42,4 +42,20 @@ public static class SongwriterDefinitions
             )
             .WithOutput(output, apply)
             .Build();
+}
+
+public sealed class SongwriterComplete : IPipelineCompletion<SongwriterState>
+{
+    public string Id => "complete";
+
+    public string Summarize(SongwriterState state) =>
+        $"Song accepted after {state.Revision} revision(s)";
+}
+
+public sealed class SongwriterFailed : IPipelineFailure<SongwriterState>
+{
+    public string Id => "songwriter-failed";
+
+    public string Summarize(SongwriterState state) =>
+        state.ProofreaderFeedback ?? "Songwriting failed";
 }

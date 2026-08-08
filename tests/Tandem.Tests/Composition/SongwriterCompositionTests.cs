@@ -49,8 +49,8 @@ public sealed class SongwriterCompositionTests
         output.State.Revision.Should().Be(3);
         output.State.LintFeedback.Should().BeNull();
         output.State.ProofreaderFeedback.Should().Be("Accepted.");
-        output.LatestResult!.StepId.Should().Be("complete");
-        output.LatestResult.CaseId.Should().Be("Success");
+        output.LatestOutcome!.StepId.Should().Be("complete");
+        output.LatestOutcome.Kind.Should().Be(StandardOutcomeKinds.Success);
     }
 
     [Fact]

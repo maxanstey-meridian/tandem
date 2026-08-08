@@ -68,16 +68,8 @@ public sealed class PipelineInteractionHandlers
         CancellationToken cancellationToken
     )
     {
-        var requestType =
-            request.RequestClrType
-            ?? throw new InvalidOperationException(
-                $"Interaction '{request.PortId}' has no request CLR type."
-            );
-        var responseType =
-            request.ResponseClrType
-            ?? throw new InvalidOperationException(
-                $"Interaction '{request.PortId}' has no response CLR type."
-            );
+        var requestType = request.RequestType;
+        var responseType = request.ResponseType;
         if (
             !_registrations.TryGetValue(
                 new InteractionKey(request.PortId, requestType, responseType),
@@ -185,7 +177,7 @@ public sealed class PipelineRunner
             ? null
             : new PipelineRunOutcome(
                 output.LatestOutcome.Kind,
-                output.LatestOutcome.BlockId,
+                output.LatestOutcome.StepId,
                 output.LatestOutcome.Summary,
                 output.LatestOutcome.Payload,
                 output.LatestOutcome.Duration
@@ -202,10 +194,12 @@ public sealed class PipelineRunner
         )
         {
             var response = await handlers.DispatchAsync(request, cancellationToken);
-            return new ExternalRequestAnswer(request.RunId, request.RequestId, default)
-            {
-                Value = response,
-            };
+            return new ExternalRequestAnswer(
+                request.RunId,
+                request.RequestId,
+                request.ResponseType,
+                response
+            );
         }
     }
 }

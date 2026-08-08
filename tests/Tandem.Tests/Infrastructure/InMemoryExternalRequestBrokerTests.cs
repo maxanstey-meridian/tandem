@@ -1,4 +1,3 @@
-using System.Text.Json;
 using FluentAssertions;
 using Tandem.Infrastructure;
 
@@ -18,14 +17,15 @@ public sealed class InMemoryExternalRequestBrokerTests
             new ExternalRequestAnswer(
                 request.RunId,
                 request.RequestId,
-                JsonSerializer.SerializeToElement(new ProbeAnswer("continue"))
+                typeof(ProbeAnswer),
+                new ProbeAnswer("continue")
             )
         );
 
         pending.Should().Be(request);
         var answer = await wait;
         answer.RequestId.Should().Be(request.RequestId);
-        answer.Payload.Deserialize<ProbeAnswer>()!.Text.Should().Be("continue");
+        answer.Value.Should().Be(new ProbeAnswer("continue"));
         broker.PendingCount.Should().Be(0);
     }
 
@@ -56,12 +56,14 @@ public sealed class InMemoryExternalRequestBrokerTests
         var wrong = new ExternalRequestAnswer(
             Guid.CreateVersion7(),
             request.RequestId,
-            JsonSerializer.SerializeToElement(new ProbeAnswer("wrong"))
+            typeof(ProbeAnswer),
+            new ProbeAnswer("wrong")
         );
         var answer = new ExternalRequestAnswer(
             request.RunId,
             request.RequestId,
-            JsonSerializer.SerializeToElement(new ProbeAnswer("continue"))
+            typeof(ProbeAnswer),
+            new ProbeAnswer("continue")
         );
 
         var wrongAct = () => broker.Answer(wrong);
@@ -100,12 +102,12 @@ public sealed class InMemoryExternalRequestBrokerTests
 
         broker.Answer(Answer(secondRequest, "second"));
 
-        (await second).Payload.Deserialize<ProbeAnswer>()!.Text.Should().Be("second");
+        (await second).Value.Should().Be(new ProbeAnswer("second"));
         first.IsCompleted.Should().BeFalse();
         broker.PendingRequests.Should().ContainSingle().Which.Should().Be(firstRequest);
 
         broker.Answer(Answer(firstRequest, "first"));
-        (await first).Payload.Deserialize<ProbeAnswer>()!.Text.Should().Be("first");
+        (await first).Value.Should().Be(new ProbeAnswer("first"));
         broker.PendingCount.Should().Be(0);
     }
 
@@ -131,15 +133,11 @@ public sealed class InMemoryExternalRequestBrokerTests
             Guid.CreateVersion7(),
             Guid.NewGuid().ToString("N"),
             "human-input",
-            typeof(ProbeQuestion).FullName!,
-            typeof(ProbeAnswer).FullName!,
-            JsonSerializer.SerializeToElement(new ProbeQuestion("Continue?"))
+            typeof(ProbeQuestion),
+            typeof(ProbeAnswer),
+            new ProbeQuestion("Continue?")
         );
 
     private static ExternalRequestAnswer Answer(PendingExternalRequest request, string text) =>
-        new(
-            request.RunId,
-            request.RequestId,
-            JsonSerializer.SerializeToElement(new ProbeAnswer(text))
-        );
+        new(request.RunId, request.RequestId, typeof(ProbeAnswer), new ProbeAnswer(text));
 }

@@ -46,90 +46,90 @@ internal sealed record PipelineRuntime(
             new HashSet<string>(StringComparer.Ordinal)
         );
 
-    public string NextInvocationId(string blockId) =>
-        $"{RunId:N}--{blockId}--{InvocationCounts.GetValueOrDefault(blockId) + 1}";
+    public string NextInvocationId(string stepId) =>
+        $"{RunId:N}--{stepId}--{InvocationCounts.GetValueOrDefault(stepId) + 1}";
 
-    public PipelineRuntime IncrementInvocations(string blockId) =>
+    public PipelineRuntime IncrementInvocations(string stepId) =>
         this with
         {
             InvocationCounts = new Dictionary<string, int>(InvocationCounts)
             {
-                [blockId] = InvocationCounts.GetValueOrDefault(blockId) + 1,
+                [stepId] = InvocationCounts.GetValueOrDefault(stepId) + 1,
             },
         };
 
-    public PipelineRuntime WithSession(string blockId, JsonElement session) =>
+    public PipelineRuntime WithSession(string stepId, JsonElement session) =>
         this with
         {
             AgentSessions = new Dictionary<string, JsonElement>(AgentSessions)
             {
-                [blockId] = session,
+                [stepId] = session,
             },
         };
 
-    public PipelineRuntime WithoutSession(string blockId) =>
+    public PipelineRuntime WithoutSession(string stepId) =>
         this with
         {
             AgentSessions = AgentSessions
-                .Where(kvp => kvp.Key != blockId)
+                .Where(kvp => kvp.Key != stepId)
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
         };
 
-    public PipelineRuntime WithUsage(string blockId, AgentUsage usage) =>
+    public PipelineRuntime WithUsage(string stepId, AgentUsage usage) =>
         this with
         {
-            AgentUsage = new Dictionary<string, AgentUsage>(AgentUsage) { [blockId] = usage },
+            AgentUsage = new Dictionary<string, AgentUsage>(AgentUsage) { [stepId] = usage },
         };
 
-    public PipelineRuntime WithoutUsage(string blockId) =>
+    public PipelineRuntime WithoutUsage(string stepId) =>
         this with
         {
             AgentUsage = AgentUsage
-                .Where(kvp => kvp.Key != blockId)
+                .Where(kvp => kvp.Key != stepId)
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
         };
 
-    public PipelineRuntime WithProfile(string blockId, AgentProfileSelection decision) =>
+    public PipelineRuntime WithProfile(string stepId, AgentProfileSelection decision) =>
         this with
         {
             AgentProfiles = new Dictionary<string, AgentProfileSelection>(AgentProfiles)
             {
-                [blockId] = decision,
+                [stepId] = decision,
             },
         };
 
-    public PipelineRuntime WithoutProfile(string blockId) =>
+    public PipelineRuntime WithoutProfile(string stepId) =>
         this with
         {
             AgentProfiles = AgentProfiles
-                .Where(kvp => kvp.Key != blockId)
+                .Where(kvp => kvp.Key != stepId)
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
         };
 
-    public bool IsGateLatched(string blockId, string gateId) =>
-        GateLatches.Contains($"{blockId}:{gateId}");
+    public bool IsGateLatched(string stepId, string gateId) =>
+        GateLatches.Contains($"{stepId}:{gateId}");
 
-    public PipelineRuntime WithGateLatch(string blockId, string gateId) =>
+    public PipelineRuntime WithGateLatch(string stepId, string gateId) =>
         this with
         {
             GateLatches = new HashSet<string>(GateLatches, StringComparer.Ordinal)
             {
-                $"{blockId}:{gateId}",
+                $"{stepId}:{gateId}",
             },
         };
 
-    public PipelineRuntime WithoutGateLatch(string blockId, string gateId) =>
+    public PipelineRuntime WithoutGateLatch(string stepId, string gateId) =>
         this with
         {
             GateLatches = GateLatches
-                .Where(key => !string.Equals(key, $"{blockId}:{gateId}", StringComparison.Ordinal))
+                .Where(key => !string.Equals(key, $"{stepId}:{gateId}", StringComparison.Ordinal))
                 .ToHashSet(StringComparer.Ordinal),
         };
 }
 
 internal sealed record BlockOutcome(
     string Kind,
-    string BlockId,
+    string StepId,
     string Summary,
     JsonElement Payload = default,
     TimeSpan Duration = default

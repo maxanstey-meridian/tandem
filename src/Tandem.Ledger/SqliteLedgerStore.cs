@@ -481,6 +481,58 @@ public sealed class SqliteLedgerStore
         return entries;
     }
 
+    internal async ValueTask<IReadOnlyList<AcceptedLedgerEntry<TEntry>>> ReadAfterAsync<TEntry>(
+        Guid runId,
+        LedgerStream<TEntry> stream,
+        long sequence,
+        CancellationToken cancellationToken
+    )
+    {
+        if (sequence < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sequence));
+        }
+        await RetryLockedAsync(
+            async ct =>
+            {
+                await EnsureContractAsync(
+                    stream.ValidatedName,
+                    "stream",
+                    stream.ValidatedContract,
+                    stream.ValidatedVersion,
+                    ct
+                );
+                return true;
+            },
+            cancellationToken
+        );
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT sequence, entry_id, payload, recorded_at
+            FROM run_entries
+            WHERE run_id = $run_id AND stream = $stream AND sequence > $sequence
+            ORDER BY sequence;
+            """;
+        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
+        command.Parameters.AddWithValue("$stream", stream.ValidatedName);
+        command.Parameters.AddWithValue("$sequence", sequence);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var entries = new List<AcceptedLedgerEntry<TEntry>>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            entries.Add(
+                new AcceptedLedgerEntry<TEntry>(
+                    reader.GetInt64(0),
+                    reader.GetString(1),
+                    Deserialize<TEntry>((byte[])reader[2]),
+                    FromUnix(reader.GetInt64(3))
+                )
+            );
+        }
+        return entries;
+    }
+
     internal async ValueTask<IReadOnlyList<AcceptedLedgerEntry<TEntry>>> ReadRecentAsync<TEntry>(
         Guid runId,
         LedgerStream<TEntry> stream,

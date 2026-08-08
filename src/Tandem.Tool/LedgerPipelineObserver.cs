@@ -108,7 +108,7 @@ internal sealed class LedgerPipelineObserver(RunLedger ledger) : IPipelinePersis
             PipelineCapabilityAccepted value => new RuntimeJournalRecord(
                 RuntimeJournalKind.CapabilityAccepted,
                 value.StepId,
-                value.AcceptedCallId ?? value.InvocationId,
+                value.AcceptedCallId,
                 value.CapabilityName,
                 OutcomeKind: value.CapabilityId,
                 ValueType: value.RequestType,
@@ -125,8 +125,7 @@ internal sealed class LedgerPipelineObserver(RunLedger ledger) : IPipelinePersis
         observation switch
         {
             PipelineStructuredOutputAccepted value => $"accepted-output--{value.AcceptedOutputId}",
-            PipelineCapabilityAccepted value =>
-                $"accepted-capability--{value.AcceptedCallId ?? value.InvocationId}",
+            PipelineCapabilityAccepted value => $"accepted-capability--{value.AcceptedCallId}",
             PipelineInteractionRequestedObservation value =>
                 $"interaction-request--{value.RequestId}",
             PipelineInteractionAnsweredObservation value =>

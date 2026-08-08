@@ -1,0 +1,495 @@
+[ordinary-authoring]
+T Tandem.Agent
+M static Tandem.AgentBuilder<TState> Create<TState>(System.String id, System.String instructions, Microsoft.Extensions.AI.IChatClient chatClient)
+T Tandem.AgentBuilder<TState>
+M Tandem.AgentBuilder<TState> ContinueSession()
+M Tandem.AgentBuilder<TState> WithCapability(Tandem.AgentCapability<TState> capability)
+M Tandem.AgentBuilder<TState> WithMessage(System.Func<TState,System.String> message)
+M Tandem.AgentBuilder<TState> WithOutput<TOutput>(Tandem.IAgentOutputDefinition<TState,TOutput> output, System.Func<TState,TOutput,TState> apply)
+M Tandem.AgentBuilder<TState> WithTimeout(System.TimeSpan timeout)
+M Tandem.AgentDefinition<TState> Build()
+T Tandem.AgentCapabilities
+M static Tandem.AgentCapability<TState,TRequest> Create<TState,TRequest>(Tandem.IAgentCapabilityDefinition<TState,TRequest> capability, System.Func<TState,TRequest,TState> apply) where TRequest : class
+T Tandem.AgentCapability<TState>
+T Tandem.AgentCapability<TState,TRequest> where TRequest : class
+T Tandem.AgentDefinition<TState>
+P System.String Id { get; }
+P Tandem.PipelineNodeDescriptor Descriptor { get; }
+P Tandem.PipelineOutcomeSelector<TState> Failed { get; }
+P Tandem.PipelineOutcomeSelector<TState> Success { get; }
+T Tandem.AgentOutputExample<TOutput>
+C (System.String Input, TOutput Output)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.AgentOutputExample<TOutput>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Input, out TOutput Output)
+M Tandem.AgentOutputExample<TOutput> <Clone>$()
+P System.String Input { get; set; }
+P TOutput Output { get; set; }
+T Tandem.FailureEvidence
+C (System.String Code, System.String Summary, System.String? Detail = null)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.FailureEvidence? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Code, out System.String Summary, out System.String? Detail)
+M Tandem.FailureEvidence <Clone>$()
+P System.String Code { get; set; }
+P System.String Summary { get; set; }
+P System.String? Detail { get; set; }
+T Tandem.IAgentCapabilityDefinition<TState,TRequest> where TRequest : class
+M FluentValidation.IValidator<TRequest>? ValidatorFor(TState state)
+M System.String Summarize(TRequest request)
+P FluentValidation.IValidator<TRequest> Validator { get; }
+P System.String Instructions { get; }
+P System.String ToolName { get; }
+T Tandem.IAgentOutputDefinition<TState,TOutput>
+M FluentValidation.IValidator<TOutput>? ValidatorFor(TState state)
+M System.Collections.Generic.IReadOnlyList<Tandem.AgentOutputExample<TOutput>> Examples(TState state)
+P FluentValidation.IValidator<TOutput> Validator { get; }
+P System.String Instructions { get; }
+T Tandem.IPipelineCompletion<TState>
+M System.String Summarize(TState state)
+M TState Complete(TState state)
+P System.String Id { get; }
+T Tandem.IPipelineFailure<TState>
+M System.String Summarize(TState state)
+M TState Fail(TState state)
+P System.String Id { get; }
+T Tandem.IPipelineNode
+P System.String Id { get; }
+P Tandem.PipelineNodeDescriptor Descriptor { get; }
+T Tandem.IPipelineNode<TState>
+T Tandem.Outcome<TState>
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Outcome<TState>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M Tandem.Outcome<TState> <Clone>$()
+T Tandem.Outcome<TState>
+C (TState State, Tandem.FailureEvidence Failure)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Outcome<TState>? other)
+M System.Boolean Equals(Tandem.Outcome<TState>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out TState State, out Tandem.FailureEvidence Failure)
+M Tandem.Outcome<TState> <Clone>$()
+P TState State { get; set; }
+P Tandem.FailureEvidence Failure { get; set; }
+T Tandem.Outcome<TState>
+C (TState State)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Outcome<TState>? other)
+M System.Boolean Equals(Tandem.Outcome<TState>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out TState State)
+M Tandem.Outcome<TState> <Clone>$()
+P TState State { get; set; }
+T Tandem.Pipeline
+M static Tandem.PipelineBuilder<TState> Start<TState,TRequest,TResponse>(Tandem.PipelineInteraction<TState,TRequest,TResponse> at, System.String name, System.String? description = null)
+M static Tandem.PipelineBuilder<TState> Start<TState,TResult>(Tandem.IGeneratedPipelineStep<TState,TResult> at, System.String name, System.String? description = null)
+T Tandem.PipelineBuilder<TState>
+M Tandem.Pipeline<TState> Build(params Tandem.IPipelineNode<TState>[] outputs)
+M Tandem.PipelineBuilder<TState> DoNotPersist()
+M Tandem.PipelineBuilder<TState> DoNotPersist(Tandem.IPipelineNode<TState> step)
+M Tandem.PipelineBuilder<TState> DoNotPersist<TRequest,TResponse>(Tandem.PipelineInteraction<TState,TRequest,TResponse> interaction)
+M Tandem.PipelineBuilder<TState> Persist()
+M Tandem.PipelineBuilder<TState> Persist(Tandem.IPipelineNode<TState> step)
+M Tandem.PipelineBuilder<TState> Persist<TRequest,TResponse>(Tandem.PipelineInteraction<TState,TRequest,TResponse> interaction)
+M Tandem.PipelineBuilder<TState> Route(Tandem.PipelineOutcomeSelector<TState> on, System.Func<TState,System.Boolean> when, Tandem.IPipelineNode<TState> to, System.String label)
+M Tandem.PipelineBuilder<TState> Route(Tandem.PipelineOutcomeSelector<TState> on, Tandem.IPipelineNode<TState> to, System.String label)
+M Tandem.PipelineBuilder<TState> Route<TRequest,TResponse>(System.Func<TState,System.Boolean> when, Tandem.PipelineInteraction<TState,TRequest,TResponse> from, Tandem.IPipelineNode<TState> to, System.String label)
+M Tandem.PipelineBuilder<TState> Route<TRequest,TResponse>(Tandem.PipelineInteraction<TState,TRequest,TResponse> from, Tandem.IPipelineNode<TState> to, System.String label)
+M Tandem.PipelineBuilder<TState> Route<TRequest,TResponse>(Tandem.PipelineOutcomeSelector<TState> on, System.Func<TState,System.Boolean> when, Tandem.PipelineInteraction<TState,TRequest,TResponse> to, System.String label)
+M Tandem.PipelineBuilder<TState> Route<TRequest,TResponse>(Tandem.PipelineOutcomeSelector<TState> on, Tandem.PipelineInteraction<TState,TRequest,TResponse> to, System.String label)
+M Tandem.PipelineBuilder<TState> Route<TSourceResult>(System.Func<TState,System.Boolean> when, Tandem.IGeneratedPipelineStep<TState,TSourceResult> from, Tandem.IPipelineNode<TState> to, System.String label)
+M Tandem.PipelineBuilder<TState> Route<TSourceResult>(Tandem.IGeneratedPipelineStep<TState,TSourceResult> on, Tandem.IPipelineNode<TState> to, System.String label)
+T Tandem.PipelineInspection
+C (System.String Name, System.String? Description, System.String StartStepId, System.Collections.Generic.IReadOnlyList<System.String> StepIds, System.Collections.Generic.IReadOnlyList<Tandem.PipelineInteractionInspection> Interactions, System.Collections.Generic.IReadOnlyList<Tandem.PipelineRouteInspection> Routes, System.Collections.Generic.IReadOnlyList<System.String> OutputStepIds, System.Collections.Generic.IReadOnlyList<System.String> PersistentStepIds, System.String Mermaid, System.String Dot)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineInspection? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Name, out System.String? Description, out System.String StartStepId, out System.Collections.Generic.IReadOnlyList<System.String> StepIds, out System.Collections.Generic.IReadOnlyList<Tandem.PipelineInteractionInspection> Interactions, out System.Collections.Generic.IReadOnlyList<Tandem.PipelineRouteInspection> Routes, out System.Collections.Generic.IReadOnlyList<System.String> OutputStepIds, out System.Collections.Generic.IReadOnlyList<System.String> PersistentStepIds, out System.String Mermaid, out System.String Dot)
+M Tandem.PipelineInspection <Clone>$()
+P System.Collections.Generic.IReadOnlyList<System.String> OutputStepIds { get; set; }
+P System.Collections.Generic.IReadOnlyList<System.String> PersistentStepIds { get; set; }
+P System.Collections.Generic.IReadOnlyList<System.String> StepIds { get; set; }
+P System.Collections.Generic.IReadOnlyList<Tandem.PipelineInteractionInspection> Interactions { get; set; }
+P System.Collections.Generic.IReadOnlyList<Tandem.PipelineRouteInspection> Routes { get; set; }
+P System.String Dot { get; set; }
+P System.String Mermaid { get; set; }
+P System.String Name { get; set; }
+P System.String StartStepId { get; set; }
+P System.String? Description { get; set; }
+T Tandem.PipelineInteractionInspection
+C (System.String Id, System.String RequestType, System.String ResponseType)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineInteractionInspection? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Id, out System.String RequestType, out System.String ResponseType)
+M Tandem.PipelineInteractionInspection <Clone>$()
+P System.String Id { get; set; }
+P System.String RequestType { get; set; }
+P System.String ResponseType { get; set; }
+T Tandem.PipelineInteraction<TState,TRequest,TResponse>
+P System.String Id { get; }
+T Tandem.PipelineNodes
+M static Tandem.IPipelineNode<TState> Complete<TState>(Tandem.IPipelineCompletion<TState> completion)
+M static Tandem.IPipelineNode<TState> Failed<TState>(Tandem.IPipelineFailure<TState> failure)
+M static Tandem.PipelineInteraction<TState,TRequest,TResponse> WaitFor<TState,TRequest,TResponse>(System.String id, System.Func<TState,TRequest> createRequest, System.Func<TState,TResponse,TState> applyResponse)
+T Tandem.PipelineOutcomeSelector<TState>
+C (Tandem.IStandardOutcomePipelineStep<TState> source, System.Boolean failed)
+T Tandem.PipelineRouteInspection
+C (System.String SourceId, System.String TargetId, System.Boolean Conditional, System.String? Label = null)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineRouteInspection? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String SourceId, out System.String TargetId, out System.Boolean Conditional, out System.String? Label)
+M Tandem.PipelineRouteInspection <Clone>$()
+P System.Boolean Conditional { get; set; }
+P System.String SourceId { get; set; }
+P System.String TargetId { get; set; }
+P System.String? Label { get; set; }
+T Tandem.PipelineRunStatus
+F System.Int32 value__
+F static Tandem.PipelineRunStatus Failed
+F static Tandem.PipelineRunStatus Succeeded
+T Tandem.PipelineStageAttribute
+C (System.String id)
+P System.String Id { get; }
+T Tandem.Pipeline<TState>
+M Tandem.PipelineInspection Inspect()
+T Tandem.StandardOutcomeKinds
+F static System.String Failed
+F static System.String Success
+
+[runtime-hosting]
+T Tandem.AgentUpdate
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.AgentUpdate? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M Tandem.AgentUpdate <Clone>$()
+T Tandem.AgentUpdate+Reasoning
+C (System.String Value)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.AgentUpdate+Reasoning? other)
+M System.Boolean Equals(Tandem.AgentUpdate? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Value)
+M Tandem.AgentUpdate+Reasoning <Clone>$()
+P System.String Value { get; set; }
+T Tandem.AgentUpdate+Text
+C (System.String Value)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.AgentUpdate+Text? other)
+M System.Boolean Equals(Tandem.AgentUpdate? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Value)
+M Tandem.AgentUpdate+Text <Clone>$()
+P System.String Value { get; set; }
+T Tandem.AgentUpdate+ToolCompleted
+C (System.String CallId, System.String? Result, System.String? Error)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.AgentUpdate+ToolCompleted? other)
+M System.Boolean Equals(Tandem.AgentUpdate? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String CallId, out System.String? Result, out System.String? Error)
+M Tandem.AgentUpdate+ToolCompleted <Clone>$()
+P System.Boolean Succeeded { get; }
+P System.String CallId { get; set; }
+P System.String? Error { get; set; }
+P System.String? Result { get; set; }
+T Tandem.AgentUpdate+ToolStarted
+C (System.String CallId, System.String Name, System.Text.Json.JsonElement Arguments)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.AgentUpdate+ToolStarted? other)
+M System.Boolean Equals(Tandem.AgentUpdate? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String CallId, out System.String Name, out System.Text.Json.JsonElement Arguments)
+M Tandem.AgentUpdate+ToolStarted <Clone>$()
+P System.String CallId { get; set; }
+P System.String Name { get; set; }
+P System.Text.Json.JsonElement Arguments { get; set; }
+T Tandem.AgentUpdate+Usage
+C (System.Nullable<System.Int64>? InputTokens, System.Nullable<System.Int64>? OutputTokens, System.Nullable<System.Int64>? ReasoningTokens)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.AgentUpdate+Usage? other)
+M System.Boolean Equals(Tandem.AgentUpdate? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Nullable<System.Int64>? InputTokens, out System.Nullable<System.Int64>? OutputTokens, out System.Nullable<System.Int64>? ReasoningTokens)
+M Tandem.AgentUpdate+Usage <Clone>$()
+P System.Nullable<System.Int64>? InputTokens { get; set; }
+P System.Nullable<System.Int64>? OutputTokens { get; set; }
+P System.Nullable<System.Int64>? ReasoningTokens { get; set; }
+T Tandem.IPipelineObserver
+M System.Threading.Tasks.ValueTask ObserveAsync(Tandem.PipelineObservation observation, System.Threading.CancellationToken cancellationToken)
+T Tandem.IPipelinePersistenceObserver
+T Tandem.PipelineAcceptedValue
+C (System.String ValueType, System.Text.Json.JsonElement Payload)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineAcceptedValue? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String ValueType, out System.Text.Json.JsonElement Payload)
+M Tandem.PipelineAcceptedValue <Clone>$()
+P System.String ValueType { get; set; }
+P System.Text.Json.JsonElement Payload { get; set; }
+T Tandem.PipelineActionAttempted
+C (System.Guid RunId, System.String StepId, System.String InvocationId, System.String ActionName, System.String Effect)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineActionAttempted? other)
+M System.Boolean Equals(Tandem.PipelineObservation? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String InvocationId, out System.String ActionName, out System.String Effect)
+M Tandem.PipelineActionAttempted <Clone>$()
+P System.String ActionName { get; set; }
+P System.String Effect { get; set; }
+P System.String InvocationId { get; set; }
+T Tandem.PipelineActionCompleted
+C (System.Guid RunId, System.String StepId, System.String InvocationId, System.String ActionName, System.String Effect, System.String Result)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineActionCompleted? other)
+M System.Boolean Equals(Tandem.PipelineObservation? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String InvocationId, out System.String ActionName, out System.String Effect, out System.String Result)
+M Tandem.PipelineActionCompleted <Clone>$()
+P System.String ActionName { get; set; }
+P System.String Effect { get; set; }
+P System.String InvocationId { get; set; }
+P System.String Result { get; set; }
+T Tandem.PipelineAgentUpdated
+C (System.Guid RunId, System.String StepId, Tandem.AgentUpdate Update)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineAgentUpdated? other)
+M System.Boolean Equals(Tandem.PipelineObservation? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out Tandem.AgentUpdate Update)
+M Tandem.PipelineAgentUpdated <Clone>$()
+P Tandem.AgentUpdate Update { get; set; }
+T Tandem.PipelineAgentUsage
+C (System.Guid RunId, System.String StepId, System.Int32 InputTokens, System.Int32 OutputTokens, System.Int32 CurrentContextTokens)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineAgentUsage? other)
+M System.Boolean Equals(Tandem.PipelineObservation? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.Int32 InputTokens, out System.Int32 OutputTokens, out System.Int32 CurrentContextTokens)
+M Tandem.PipelineAgentUsage <Clone>$()
+P System.Int32 CurrentContextTokens { get; set; }
+P System.Int32 InputTokens { get; set; }
+P System.Int32 OutputTokens { get; set; }
+T Tandem.PipelineCapabilityAccepted
+C (System.Guid RunId, System.String StepId, System.String InvocationId, System.String CapabilityId, System.String CapabilityName, System.String AcceptedCallId, System.String? RequestType = null, System.Nullable<System.Text.Json.JsonElement>? Payload = default)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineCapabilityAccepted? other)
+M System.Boolean Equals(Tandem.PipelineObservation? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String InvocationId, out System.String CapabilityId, out System.String CapabilityName, out System.String AcceptedCallId, out System.String? RequestType, out System.Nullable<System.Text.Json.JsonElement>? Payload)
+M Tandem.PipelineCapabilityAccepted <Clone>$()
+P System.Nullable<System.Text.Json.JsonElement>? Payload { get; set; }
+P System.String AcceptedCallId { get; set; }
+P System.String CapabilityId { get; set; }
+P System.String CapabilityName { get; set; }
+P System.String InvocationId { get; set; }
+P System.String? RequestType { get; set; }
+T Tandem.PipelineCommandOutput
+C (System.Guid RunId, System.String StepId, System.String Command, System.String Output, System.Int32 ExitCode)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineCommandOutput? other)
+M System.Boolean Equals(Tandem.PipelineObservation? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String Command, out System.String Output, out System.Int32 ExitCode)
+M Tandem.PipelineCommandOutput <Clone>$()
+P System.Int32 ExitCode { get; set; }
+P System.String Command { get; set; }
+P System.String Output { get; set; }
+T Tandem.PipelineInteractionAnsweredObservation
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineInteractionAnsweredObservation? other)
+M System.Boolean Equals(Tandem.PipelineObservation? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String RequestId, out System.String ResponseType, out System.Nullable<System.Text.Json.JsonElement>? Payload)
+M Tandem.PipelineInteractionAnsweredObservation <Clone>$()
+P System.Nullable<System.Text.Json.JsonElement>? Payload { get; set; }
+P System.String RequestId { get; set; }
+P System.String ResponseType { get; set; }
+T Tandem.PipelineInteractionAnswered<TResponse>
+C (System.Guid RunId, System.String StepId, System.String RequestId, TResponse Response, System.Nullable<System.Text.Json.JsonElement>? Payload = default)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineInteractionAnswered<TResponse>? other)
+M System.Boolean Equals(Tandem.PipelineInteractionAnsweredObservation? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String RequestId, out TResponse Response, out System.Nullable<System.Text.Json.JsonElement>? Payload)
+M Tandem.PipelineInteractionAnswered<TResponse> <Clone>$()
+P TResponse Response { get; set; }
+T Tandem.PipelineInteractionContext<TRequest,TResponse>
+C (System.Guid RunId, System.String RequestId, System.String InteractionId, TRequest Request)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineInteractionContext<TRequest,TResponse>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String RequestId, out System.String InteractionId, out TRequest Request)
+M Tandem.PipelineInteractionContext<TRequest,TResponse> <Clone>$()
+P System.Guid RunId { get; set; }
+P System.String InteractionId { get; set; }
+P System.String RequestId { get; set; }
+P TRequest Request { get; set; }
+T Tandem.PipelineInteractionHandlers
+C ()
+M Tandem.PipelineInteractionHandlers Handle<TState,TRequest,TResponse>(Tandem.PipelineInteraction<TState,TRequest,TResponse> interaction, System.Func<Tandem.PipelineInteractionContext<TRequest,TResponse>,System.Threading.CancellationToken,System.Threading.Tasks.ValueTask<TResponse>> handler)
+T Tandem.PipelineInteractionRequestedObservation
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineInteractionRequestedObservation? other)
+M System.Boolean Equals(Tandem.PipelineObservation? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String RequestId, out System.String RequestType, out System.Nullable<System.Text.Json.JsonElement>? Payload)
+M Tandem.PipelineInteractionRequestedObservation <Clone>$()
+P System.Nullable<System.Text.Json.JsonElement>? Payload { get; set; }
+P System.String RequestId { get; set; }
+P System.String RequestType { get; set; }
+T Tandem.PipelineInteractionRequested<TRequest>
+C (System.Guid RunId, System.String StepId, System.String RequestId, TRequest Request, System.Nullable<System.Text.Json.JsonElement>? Payload = default)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineInteractionRequested<TRequest>? other)
+M System.Boolean Equals(Tandem.PipelineInteractionRequestedObservation? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String RequestId, out TRequest Request, out System.Nullable<System.Text.Json.JsonElement>? Payload)
+M Tandem.PipelineInteractionRequested<TRequest> <Clone>$()
+P TRequest Request { get; set; }
+T Tandem.PipelineObservation
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineObservation? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId)
+M Tandem.PipelineObservation <Clone>$()
+P System.Guid RunId { get; set; }
+P System.String StepId { get; set; }
+T Tandem.PipelineRunException
+C (System.String message, System.Exception? inner = null)
+T Tandem.PipelineRunOptions
+C (System.Nullable<System.Guid>? RunId = default, Tandem.PipelineInteractionHandlers? Interactions = null, Tandem.IPipelineObserver? Observer = null)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineRunOptions? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Nullable<System.Guid>? RunId, out Tandem.PipelineInteractionHandlers? Interactions, out Tandem.IPipelineObserver? Observer)
+M Tandem.PipelineRunOptions <Clone>$()
+P System.Nullable<System.Guid>? RunId { get; set; }
+P Tandem.IPipelineObserver? Observer { get; set; }
+P Tandem.PipelineInteractionHandlers? Interactions { get; set; }
+T Tandem.PipelineRunOutcome
+C (System.String Kind, System.String StepId, System.String Summary, System.Text.Json.JsonElement Payload, System.TimeSpan Duration)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineRunOutcome? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Kind, out System.String StepId, out System.String Summary, out System.Text.Json.JsonElement Payload, out System.TimeSpan Duration)
+M Tandem.PipelineRunOutcome <Clone>$()
+P System.String Kind { get; set; }
+P System.String StepId { get; set; }
+P System.String Summary { get; set; }
+P System.Text.Json.JsonElement Payload { get; set; }
+P System.TimeSpan Duration { get; set; }
+T Tandem.PipelineRunResult<TState>
+C (System.Guid RunId, TState State, Tandem.PipelineRunStatus Status, Tandem.PipelineRunOutcome? Outcome)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineRunResult<TState>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out TState State, out Tandem.PipelineRunStatus Status, out Tandem.PipelineRunOutcome? Outcome)
+M Tandem.PipelineRunResult<TState> <Clone>$()
+P System.Boolean Succeeded { get; }
+P System.Guid RunId { get; set; }
+P TState State { get; set; }
+P Tandem.PipelineRunOutcome? Outcome { get; set; }
+P Tandem.PipelineRunStatus Status { get; set; }
+T Tandem.PipelineRunner
+C ()
+M System.Threading.Tasks.Task<Tandem.PipelineRunResult<TState>> RunAsync<TState>(Tandem.Pipeline<TState> pipeline, TState initialState, Tandem.PipelineRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
+T Tandem.PipelineStepCancelled
+C (System.Guid RunId, System.String StepId)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineObservation? other)
+M System.Boolean Equals(Tandem.PipelineStepCancelled? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId)
+M Tandem.PipelineStepCancelled <Clone>$()
+T Tandem.PipelineStepCompleted
+C (System.Guid RunId, System.String StepId, Tandem.PipelineRunOutcome Outcome, Tandem.PipelineAcceptedValue? AcceptedValue = null)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineObservation? other)
+M System.Boolean Equals(Tandem.PipelineStepCompleted? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out Tandem.PipelineRunOutcome Outcome, out Tandem.PipelineAcceptedValue? AcceptedValue)
+M Tandem.PipelineStepCompleted <Clone>$()
+P Tandem.PipelineAcceptedValue? AcceptedValue { get; set; }
+P Tandem.PipelineRunOutcome Outcome { get; set; }
+T Tandem.PipelineStepFaulted
+C (System.Guid RunId, System.String StepId, System.String Error)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineObservation? other)
+M System.Boolean Equals(Tandem.PipelineStepFaulted? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String Error)
+M Tandem.PipelineStepFaulted <Clone>$()
+P System.String Error { get; set; }
+T Tandem.PipelineStepStarted
+C (System.Guid RunId, System.String StepId)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineObservation? other)
+M System.Boolean Equals(Tandem.PipelineStepStarted? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId)
+M Tandem.PipelineStepStarted <Clone>$()
+T Tandem.PipelineStructuredOutputAccepted
+C (System.Guid RunId, System.String StepId, System.String AcceptedOutputId, System.String OutcomeKind, System.String? OutputType = null, System.Nullable<System.Text.Json.JsonElement>? Payload = default)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineObservation? other)
+M System.Boolean Equals(Tandem.PipelineStructuredOutputAccepted? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String AcceptedOutputId, out System.String OutcomeKind, out System.String? OutputType, out System.Nullable<System.Text.Json.JsonElement>? Payload)
+M Tandem.PipelineStructuredOutputAccepted <Clone>$()
+P System.Nullable<System.Text.Json.JsonElement>? Payload { get; set; }
+P System.String AcceptedOutputId { get; set; }
+P System.String OutcomeKind { get; set; }
+P System.String? OutputType { get; set; }
+
+[generator-abi]
+T Tandem.GeneratedOutcomeStepDescriptor<TState>
+C (System.String id, System.Func<TState,System.Threading.CancellationToken,System.Threading.Tasks.ValueTask<Tandem.Outcome<TState>>> execute)
+T Tandem.GeneratedPassThroughStepDescriptor<TState>
+C (System.String id, System.Func<TState,System.Threading.CancellationToken,System.Threading.Tasks.ValueTask> execute)
+T Tandem.GeneratedStateStepDescriptor<TState>
+C (System.String id, System.Func<TState,System.Threading.CancellationToken,System.Threading.Tasks.ValueTask<TState>> execute)
+T Tandem.GeneratedStepCompletion
+T Tandem.IGeneratedPipelineStep<TState,TResult>
+T Tandem.IPipelineStep<TResult>
+T Tandem.IStandardOutcomePipelineStep<TState>
+T Tandem.PipelineNodeDescriptor

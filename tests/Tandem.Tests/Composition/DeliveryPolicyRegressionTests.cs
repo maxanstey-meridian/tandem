@@ -108,7 +108,7 @@ public sealed class DeliveryPolicyRegressionTests
                 capabilities.SubmitReport,
                 capabilities.WriteCheckpoint
             );
-            var complete = PipelineNodes.Complete<DeliveryState>("complete");
+            var complete = PipelineNodes.Complete(new TestCompletion<DeliveryState>("complete"));
             var pipeline = Pipeline
                 .Start(executor, "executor-authority")
                 .Route(executor.Success, complete, "accepted")
@@ -186,7 +186,7 @@ public sealed class DeliveryPolicyRegressionTests
                 capabilities.SubmitReport,
                 capabilities.WriteCheckpoint
             );
-            var complete = PipelineNodes.Complete<DeliveryState>("complete");
+            var complete = PipelineNodes.Complete(new TestCompletion<DeliveryState>("complete"));
             var pipeline = Pipeline
                 .Start(executor, "executor-snapshot")
                 .Route(executor.Success, complete, "accepted")

@@ -41,6 +41,7 @@ public sealed class RegistrationTests : IDisposable
         );
 
         provider.GetRequiredService<DeliveryComposition>().Should().NotBeNull();
+        provider.GetServices<AgentCapability<DeliveryState>>().Should().BeEmpty();
     }
 
     [Fact]
@@ -79,7 +80,7 @@ public sealed class RegistrationTests : IDisposable
                 "Test profile selection."
             ))
             .Build();
-        var complete = PipelineNodes.Complete<TestState>("complete");
+        var complete = PipelineNodes.Complete(new TestCompletion<TestState>("complete"));
         var pipeline = Pipeline
             .Start(agent, "profile-selection")
             .Route(agent.Success, complete, "complete")
@@ -127,8 +128,8 @@ public sealed class RegistrationTests : IDisposable
             .Create<TestState>("classify", "Classify the ticket.", new FakeChatClient())
             .WithMessage(state => state.Message)
             .Build();
-        var complete = PipelineNodes.Complete<TestState>("complete");
-        var failed = PipelineNodes.Failed<TestState>("failed");
+        var complete = PipelineNodes.Complete(new TestCompletion<TestState>("complete"));
+        var failed = PipelineNodes.Failed(new TestFailure<TestState>("failed"));
 
         var inspection = Pipeline
             .Start(definition, "direct-agent-definition")

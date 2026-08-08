@@ -19,7 +19,7 @@ internal sealed record AcceptedCapability<TState>(
 
 internal sealed class CapabilityInvocationState<TState>(
     Guid runId,
-    string blockId,
+    string stepId,
     string invocationId,
     TState state,
     PipelineRunContext? runContext = null
@@ -29,7 +29,7 @@ internal sealed class CapabilityInvocationState<TState>(
     private bool _reserved;
 
     public Guid RunId { get; } = runId;
-    public string BlockId { get; } = blockId;
+    public string StepId { get; } = stepId;
     public string InvocationId { get; } = invocationId;
     public TState State { get; } = state;
     public PipelineRunContext? RunContext { get; } = runContext;

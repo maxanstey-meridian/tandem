@@ -201,9 +201,9 @@ A representative accepted item from the coding pipeline above looks like:
 ```
 
 Use `--accepted` for accepted semantic values only, `--step <id>` and
-`--type <name>` to filter them, `--tools` to include optional operational tool
-telemetry, and `--json` for the versioned machine-readable projection. Malformed
-telemetry does not prevent inspection of the authoritative SQLite history.
+`--type <name>` to filter them, and `--json` for the versioned machine-readable
+projection. Inspection reads only the authoritative SQLite history; streaming text,
+reasoning, and generic tool payloads are process-local and are not inspectable.
 
 The bundled Tool provides the required host persistence observer automatically. Use
 `.DoNotPersist(step)` for a sensitive participant, or `.Persist(step)` to retain one

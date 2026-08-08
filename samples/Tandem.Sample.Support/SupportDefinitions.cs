@@ -39,9 +39,30 @@ public static class SupportDefinitions
             new LoadAccountStage(accountLookup),
             resolver,
             customerReply,
-            PipelineNodes.Complete<SupportState>("support-close"),
-            PipelineNodes.Complete<SupportState>("support-escalate"),
-            PipelineNodes.Failed<SupportState>("support-failed")
+            PipelineNodes.Complete(new SupportClosed()),
+            PipelineNodes.Complete(new SupportEscalated()),
+            PipelineNodes.Failed(new SupportFailed())
         );
     }
+}
+
+public sealed class SupportClosed : IPipelineCompletion<SupportState>
+{
+    public string Id => "support-close";
+
+    public string Summarize(SupportState state) => "Customer issue resolved";
+}
+
+public sealed class SupportEscalated : IPipelineCompletion<SupportState>
+{
+    public string Id => "support-escalate";
+
+    public string Summarize(SupportState state) => "Customer issue escalated";
+}
+
+public sealed class SupportFailed : IPipelineFailure<SupportState>
+{
+    public string Id => "support-failed";
+
+    public string Summarize(SupportState state) => "Support workflow failed";
 }

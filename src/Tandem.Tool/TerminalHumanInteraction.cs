@@ -86,6 +86,14 @@ internal sealed class TerminalHumanInteraction
         return Task.CompletedTask;
     }
 
+    public bool HasPending(Guid runId)
+    {
+        lock (_sync)
+        {
+            return _pending?.Context.RunId == runId;
+        }
+    }
+
     private sealed class Pending(PipelineInteractionContext<HumanQuestion, HumanAnswer> context)
     {
         private int _submitting;

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows;
 using Tandem.Domain;
@@ -318,7 +317,7 @@ public sealed class InProcessPipelineRunnerTests
             state => new ProbeQuestion($"Current count: {state.Count}"),
             (state, answer) => state with { Answer = answer.Text }
         );
-        var complete = PipelineNodes.Complete<RunnerState>("complete");
+        var complete = PipelineNodes.Complete(new TestCompletion<RunnerState>("complete"));
         var pipeline = Pipeline
             .Start(start, "persistent-interaction")
             .Persist()
@@ -330,7 +329,8 @@ public sealed class InProcessPipelineRunnerTests
         var handler = new InlineExternalRequestHandler(request => new ExternalRequestAnswer(
             request.RunId,
             request.RequestId,
-            JsonSerializer.SerializeToElement(new ProbeAnswer("accepted"))
+            typeof(ProbeAnswer),
+            new ProbeAnswer("accepted")
         ));
 
         var result = await new InProcessPipelineRunner().RunAsync(
@@ -370,7 +370,8 @@ public sealed class InProcessPipelineRunnerTests
             return new ExternalRequestAnswer(
                 request.RunId,
                 request.RequestId,
-                JsonSerializer.SerializeToElement(new ProbeAnswer("accepted"))
+                typeof(ProbeAnswer),
+                new ProbeAnswer("accepted")
             );
         });
         var observer = new FailingPersistenceObserver<PipelineInteractionRequestedObservation>();
@@ -397,7 +398,8 @@ public sealed class InProcessPipelineRunnerTests
         var handler = new InlineExternalRequestHandler(request => new ExternalRequestAnswer(
             request.RunId,
             request.RequestId,
-            JsonSerializer.SerializeToElement(new ProbeAnswer("accepted"))
+            typeof(ProbeAnswer),
+            new ProbeAnswer("accepted")
         ));
         var observer = new FailingPersistenceObserver<PipelineInteractionAnsweredObservation>();
 
@@ -424,7 +426,7 @@ public sealed class InProcessPipelineRunnerTests
             state => new ProbeQuestion($"Current count: {state.Count}"),
             (state, answer) => state with { Answer = answer.Text }
         );
-        var complete = PipelineNodes.Complete<RunnerState>("complete");
+        var complete = PipelineNodes.Complete(new TestCompletion<RunnerState>("complete"));
         var pipeline = Pipeline
             .Start(start, "interaction-opt-out")
             .Persist()
@@ -436,7 +438,8 @@ public sealed class InProcessPipelineRunnerTests
         var handler = new InlineExternalRequestHandler(request => new ExternalRequestAnswer(
             request.RunId,
             request.RequestId,
-            JsonSerializer.SerializeToElement(new ProbeAnswer("accepted"))
+            typeof(ProbeAnswer),
+            new ProbeAnswer("accepted")
         ));
 
         var result = await new InProcessPipelineRunner().RunAsync(
@@ -472,7 +475,7 @@ public sealed class InProcessPipelineRunnerTests
             state => new ProbeQuestion($"Current count: {state.Count}"),
             (state, answer) => state with { Answer = answer.Text }
         );
-        var complete = PipelineNodes.Complete<RunnerState>("complete");
+        var complete = PipelineNodes.Complete(new TestCompletion<RunnerState>("complete"));
         var pipeline = Pipeline
             .Start(start, "in-process-interaction")
             .Route(on: start.Success, to: interaction, label: "ask")
@@ -485,7 +488,8 @@ public sealed class InProcessPipelineRunnerTests
             return new ExternalRequestAnswer(
                 request.RunId,
                 request.RequestId,
-                JsonSerializer.SerializeToElement(new ProbeAnswer("continue"))
+                typeof(ProbeAnswer),
+                new ProbeAnswer("continue")
             );
         });
 
@@ -499,8 +503,8 @@ public sealed class InProcessPipelineRunnerTests
 
         observed.Should().NotBeNull();
         observed!.PortId.Should().Be("probe-input");
-        observed.RequestType.Should().Be(typeof(ProbeQuestion).FullName);
-        observed.ResponseType.Should().Be(typeof(ProbeAnswer).FullName);
+        observed.RequestType.Should().Be(typeof(ProbeQuestion));
+        observed.ResponseType.Should().Be(typeof(ProbeAnswer));
         observed.Value.Should().Be(new ProbeQuestion("Current count: 3"));
         output.State.Answer.Should().Be("continue");
     }
@@ -514,7 +518,7 @@ public sealed class InProcessPipelineRunnerTests
             state => new ProbeQuestion($"Current count: {state.Count}"),
             (state, answer) => state with { Answer = answer.Text }
         );
-        var complete = PipelineNodes.Complete<RunnerState>("complete");
+        var complete = PipelineNodes.Complete(new TestCompletion<RunnerState>("complete"));
         var pipeline = Pipeline
             .Start(start, "in-process-wrong-answer")
             .Route(on: start.Success, to: interaction, label: "ask")
@@ -523,7 +527,8 @@ public sealed class InProcessPipelineRunnerTests
         var handler = new InlineExternalRequestHandler(_ => new ExternalRequestAnswer(
             Guid.CreateVersion7(),
             "another-request",
-            JsonSerializer.SerializeToElement(new ProbeAnswer("continue"))
+            typeof(ProbeAnswer),
+            new ProbeAnswer("continue")
         ));
         var observations = new List<PipelineObservation>();
         var observer = new InlinePipelineObserver(observation => observations.Add(observation));
@@ -579,7 +584,8 @@ public sealed class InProcessPipelineRunnerTests
             new ExternalRequestAnswer(
                 pending.RunId,
                 pending.RequestId,
-                JsonSerializer.SerializeToElement(new ProbeAnswer("resumed"))
+                typeof(ProbeAnswer),
+                new ProbeAnswer("resumed")
             )
         );
         var waitingOutput = await waitingRun;
@@ -597,11 +603,9 @@ public sealed class InProcessPipelineRunnerTests
             new InlineExternalRequestHandler(request => new ExternalRequestAnswer(
                 request.RunId,
                 request.RequestId,
-                default
-            )
-            {
-                Value = new ProbeAnswer("first"),
-            }),
+                typeof(ProbeAnswer),
+                new ProbeAnswer("first")
+            )),
             CancellationToken.None
         );
         var secondRun = new InProcessPipelineRunner().RunAsync(
@@ -611,11 +615,9 @@ public sealed class InProcessPipelineRunnerTests
             new InlineExternalRequestHandler(request => new ExternalRequestAnswer(
                 request.RunId,
                 request.RequestId,
-                default
-            )
-            {
-                Value = new ProbeAnswer("second"),
-            }),
+                typeof(ProbeAnswer),
+                new ProbeAnswer("second")
+            )),
             CancellationToken.None
         );
 
@@ -714,14 +716,18 @@ public sealed class InProcessPipelineRunnerTests
             Interlocked.Increment(ref invocationCount);
             return request.Value switch
             {
-                FirstQuestion => new ExternalRequestAnswer(runId, request.RequestId, default)
-                {
-                    Value = new FirstAnswer("first"),
-                },
-                SecondQuestion => new ExternalRequestAnswer(runId, request.RequestId, default)
-                {
-                    Value = new SecondAnswer("second"),
-                },
+                FirstQuestion => new ExternalRequestAnswer(
+                    runId,
+                    request.RequestId,
+                    typeof(FirstAnswer),
+                    new FirstAnswer("first")
+                ),
+                SecondQuestion => new ExternalRequestAnswer(
+                    runId,
+                    request.RequestId,
+                    typeof(SecondAnswer),
+                    new SecondAnswer("second")
+                ),
                 _ => throw new InvalidOperationException("Unexpected request type."),
             };
         });
@@ -756,7 +762,7 @@ public sealed class InProcessPipelineRunnerTests
             state => new ProbeQuestion($"Current count: {state.Count}"),
             (state, answer) => state with { Answer = answer.Text }
         );
-        var complete = PipelineNodes.Complete<RunnerState>("complete");
+        var complete = PipelineNodes.Complete(new TestCompletion<RunnerState>("complete"));
         return Pipeline
             .Start(start, name)
             .Route(on: start.Success, to: interaction, label: "ask")
@@ -791,7 +797,7 @@ public sealed class InProcessPipelineRunnerTests
                 return state with { Answer = answer.Text };
             }
         );
-        var complete = PipelineNodes.Complete<RunnerState>("complete");
+        var complete = PipelineNodes.Complete(new TestCompletion<RunnerState>("complete"));
         return Pipeline
             .Start(start, "persistent-interaction-failure")
             .Persist()

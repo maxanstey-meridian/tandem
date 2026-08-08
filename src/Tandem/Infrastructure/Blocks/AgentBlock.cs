@@ -25,7 +25,7 @@ internal sealed class AgentBlock<TState>(
     Func<string, IChatClient>? chatClientFactory = null
 )
     : Executor<PipelineMessage<TState>, PipelineMessage<TState>>(
-        config.BlockId,
+        config.StepId,
         options: null,
         declareCrossRunShareable: true
     )
@@ -50,12 +50,12 @@ internal sealed class AgentBlock<TState>(
 
         var runtime = ApplyPreInvocationPolicies(message);
         message = message with { Runtime = runtime };
-        var invocationId = runtime.NextInvocationId(config.BlockId);
+        var invocationId = runtime.NextInvocationId(config.StepId);
         var acceptedOutputId = $"{invocationId}--output";
         var requiresCheckpointRelease = IsCheckpointReleaseRequired(runtime);
         var capabilityInvocation = new CapabilityInvocationState<TState>(
             runtime.RunId,
-            config.BlockId,
+            config.StepId,
             invocationId,
             message.State,
             message.RunContext
@@ -71,7 +71,7 @@ internal sealed class AgentBlock<TState>(
         )
         {
             throw new InvalidOperationException(
-                $"Agent '{config.BlockId}' has a capability that collides with a Harness file tool."
+                $"Agent '{config.StepId}' has a capability that collides with a Harness file tool."
             );
         }
 
@@ -102,12 +102,12 @@ internal sealed class AgentBlock<TState>(
                 collector: collector,
                 boundCapabilityNames: boundCapabilityNames
             );
-            var freshSession = !runtime.AgentSessions.ContainsKey(config.BlockId);
+            var freshSession = !runtime.AgentSessions.ContainsKey(config.StepId);
             var session = await RestoreOrCreateSessionAsync(agent, runtime, cts.Token);
             var baseMessage = requiresCheckpointRelease
                 ? config.Checkpoint!.UserMessage(
                     message.State,
-                    runtime.AgentUsage.GetValueOrDefault(config.BlockId)?.CurrentContextTokens ?? 0
+                    runtime.AgentUsage.GetValueOrDefault(config.StepId)?.CurrentContextTokens ?? 0
                 )
                 : config.ContextUserMessage?.Invoke(message) ?? config.UserMessage!(message.State);
 
@@ -150,9 +150,9 @@ internal sealed class AgentBlock<TState>(
             long? inputTokens = null;
             long? outputTokens = null;
             var cumulativeInputTokens =
-                runtime.AgentUsage.GetValueOrDefault(config.BlockId)?.CumulativeInputTokens ?? 0;
+                runtime.AgentUsage.GetValueOrDefault(config.StepId)?.CumulativeInputTokens ?? 0;
             var cumulativeOutputTokens =
-                runtime.AgentUsage.GetValueOrDefault(config.BlockId)?.CumulativeOutputTokens ?? 0;
+                runtime.AgentUsage.GetValueOrDefault(config.StepId)?.CumulativeOutputTokens ?? 0;
             var lastModelCallDuration = TimeSpan.Zero;
             var continuationAttempt = 0;
             var policyExhausted = false;
@@ -209,11 +209,11 @@ internal sealed class AgentBlock<TState>(
                     turnSw.Elapsed
                 );
                 var checkpointWasLatched = runtime.IsGateLatched(
-                    config.BlockId,
+                    config.StepId,
                     "checkpoint-required"
                 );
                 runtime = LatchTriggeredGates(
-                    runtime.WithUsage(config.BlockId, latestTurnUsage),
+                    runtime.WithUsage(config.StepId, latestTurnUsage),
                     latestTurnUsage
                 );
                 message = message with { Runtime = runtime };
@@ -229,7 +229,7 @@ internal sealed class AgentBlock<TState>(
 
                 if (
                     !checkpointWasLatched
-                    && runtime.IsGateLatched(config.BlockId, "checkpoint-required")
+                    && runtime.IsGateLatched(config.StepId, "checkpoint-required")
                     && config.Checkpoint is { } activatedCheckpoint
                 )
                 {
@@ -294,12 +294,12 @@ internal sealed class AgentBlock<TState>(
                                 await observedRunContext.ObserveAsync(
                                     new PipelineStructuredOutputAccepted(
                                         runtime.RunId,
-                                        config.BlockId,
+                                        config.StepId,
                                         acceptedOutputId,
                                         structuredResult.Outcome!.Kind,
                                         config.StructuredOutput!.OutputType?.FullName
                                             ?? config.StructuredOutput.OutputType?.Name,
-                                        observedRunContext.ShouldPersist(config.BlockId)
+                                        observedRunContext.ShouldPersist(config.StepId)
                                             ? structuredResult.Outcome!.Payload
                                             : null
                                     ),
@@ -412,7 +412,7 @@ internal sealed class AgentBlock<TState>(
                 await usageRunContext.ObserveAsync(
                     new PipelineAgentUsage(
                         runtime.RunId,
-                        config.BlockId,
+                        config.StepId,
                         agentUsage.CurrentInputTokens,
                         agentUsage.CurrentOutputTokens,
                         agentUsage.CurrentContextTokens
@@ -421,7 +421,7 @@ internal sealed class AgentBlock<TState>(
                 );
             }
             var runtimeAfterUsage = LatchTriggeredGates(
-                runtime.WithUsage(config.BlockId, agentUsage),
+                runtime.WithUsage(config.StepId, agentUsage),
                 agentUsage
             );
 
@@ -454,16 +454,16 @@ internal sealed class AgentBlock<TState>(
     private bool IsCheckpointReleaseRequired(PipelineRuntime runtime)
     {
         return config.Checkpoint is not null
-            && runtime.IsGateLatched(config.BlockId, "checkpoint-required");
+            && runtime.IsGateLatched(config.StepId, "checkpoint-required");
     }
 
     private PipelineRuntime LatchTriggeredGates(PipelineRuntime runtime, AgentUsage usage)
     {
         foreach (var gate in config.LatchedGates ?? [])
         {
-            if (!runtime.IsGateLatched(config.BlockId, gate.Id) && gate.Trigger(usage))
+            if (!runtime.IsGateLatched(config.StepId, gate.Id) && gate.Trigger(usage))
             {
-                runtime = runtime.WithGateLatch(config.BlockId, gate.Id);
+                runtime = runtime.WithGateLatch(config.StepId, gate.Id);
             }
         }
         return runtime;
@@ -520,8 +520,8 @@ internal sealed class AgentBlock<TState>(
                         await actionRunContext.ObserveAsync(
                             new PipelineActionAttempted(
                                 message.Runtime.RunId,
-                                config.BlockId,
-                                message.Runtime.NextInvocationId(config.BlockId),
+                                config.StepId,
+                                message.Runtime.NextInvocationId(config.StepId),
                                 ficContext.Function.Name,
                                 effect
                             ),
@@ -545,8 +545,8 @@ internal sealed class AgentBlock<TState>(
                             await gatedRunContext.ObserveAsync(
                                 new PipelineActionCompleted(
                                     message.Runtime.RunId,
-                                    config.BlockId,
-                                    message.Runtime.NextInvocationId(config.BlockId),
+                                    config.StepId,
+                                    message.Runtime.NextInvocationId(config.StepId),
                                     ficContext.Function.Name,
                                     effect,
                                     "Blocked"
@@ -579,8 +579,8 @@ internal sealed class AgentBlock<TState>(
                                 await blockedRunContext.ObserveAsync(
                                     new PipelineActionCompleted(
                                         message.Runtime.RunId,
-                                        config.BlockId,
-                                        message.Runtime.NextInvocationId(config.BlockId),
+                                        config.StepId,
+                                        message.Runtime.NextInvocationId(config.StepId),
                                         ficContext.Function.Name,
                                         effect,
                                         "Blocked"
@@ -604,8 +604,8 @@ internal sealed class AgentBlock<TState>(
                             await failedRunContext.ObserveAsync(
                                 new PipelineActionCompleted(
                                     message.Runtime.RunId,
-                                    config.BlockId,
-                                    message.Runtime.NextInvocationId(config.BlockId),
+                                    config.StepId,
+                                    message.Runtime.NextInvocationId(config.StepId),
                                     ficContext.Function.Name,
                                     effect,
                                     "Faulted"
@@ -620,8 +620,8 @@ internal sealed class AgentBlock<TState>(
                         await completedRunContext.ObserveAsync(
                             new PipelineActionCompleted(
                                 message.Runtime.RunId,
-                                config.BlockId,
-                                message.Runtime.NextInvocationId(config.BlockId),
+                                config.StepId,
+                                message.Runtime.NextInvocationId(config.StepId),
                                 ficContext.Function.Name,
                                 effect,
                                 IsToolError(result) ? "Failed" : "Completed"
@@ -693,11 +693,11 @@ internal sealed class AgentBlock<TState>(
                 capabilityInvocation.Accepted is { } checkpoint
                     ? ApplyAcceptedCapability(runtime, checkpoint, resetSession: true, runContext)
                     : new PipelineMessage<TState>(
-                        runtime.IncrementInvocations(config.BlockId),
+                        runtime.IncrementInvocations(config.StepId),
                         state,
                         new BlockOutcome(
                             "agent.failed",
-                            config.BlockId,
+                            config.StepId,
                             $"Checkpoint-only mode: model did not call {config.Checkpoint!.Capability.ToolName}.",
                             EmptyPayload()
                         )
@@ -721,11 +721,11 @@ internal sealed class AgentBlock<TState>(
                 {
                     return Task.FromResult(
                         new PipelineMessage<TState>(
-                            runtime.IncrementInvocations(config.BlockId),
+                            runtime.IncrementInvocations(config.StepId),
                             state,
                             new BlockOutcome(
                                 "agent.failed",
-                                config.BlockId,
+                                config.StepId,
                                 "Structured output remained invalid after one correction.",
                                 JsonSerializer.SerializeToElement(
                                     new
@@ -748,11 +748,11 @@ internal sealed class AgentBlock<TState>(
                     : structured.UpdatedState;
                 return Task.FromResult(
                     new PipelineMessage<TState>(
-                        runtime.IncrementInvocations(config.BlockId),
+                        runtime.IncrementInvocations(config.StepId),
                         outcomeState,
                         new BlockOutcome(
                             structured.Kind,
-                            config.BlockId,
+                            config.StepId,
                             structured.Summary,
                             structured.Payload
                         )
@@ -774,9 +774,9 @@ internal sealed class AgentBlock<TState>(
                 : EmptyPayload();
             return Task.FromResult(
                 new PipelineMessage<TState>(
-                    runtime.IncrementInvocations(config.BlockId),
+                    runtime.IncrementInvocations(config.StepId),
                     state,
-                    new BlockOutcome(kind, config.BlockId, summary, payload)
+                    new BlockOutcome(kind, config.StepId, summary, payload)
                 )
                 {
                     RunContext = runContext,
@@ -805,11 +805,11 @@ internal sealed class AgentBlock<TState>(
         foreach (
             var gate in (config.LatchedGates ?? []).Where(gate =>
                 gate.ReleaseCapabilityId == accepted.CapabilityId
-                && updatedRuntime.IsGateLatched(config.BlockId, gate.Id)
+                && updatedRuntime.IsGateLatched(config.StepId, gate.Id)
             )
         )
         {
-            updatedRuntime = updatedRuntime.WithoutGateLatch(config.BlockId, gate.Id);
+            updatedRuntime = updatedRuntime.WithoutGateLatch(config.StepId, gate.Id);
             if (gate.ResetSessionAfterRelease)
             {
                 resetSession = true;
@@ -818,15 +818,15 @@ internal sealed class AgentBlock<TState>(
         if (resetSession)
         {
             updatedRuntime = updatedRuntime
-                .WithoutSession(config.BlockId)
-                .WithoutUsage(config.BlockId);
+                .WithoutSession(config.StepId)
+                .WithoutUsage(config.StepId);
         }
         return new PipelineMessage<TState>(
-            updatedRuntime.IncrementInvocations(config.BlockId),
+            updatedRuntime.IncrementInvocations(config.StepId),
             accepted.State,
             new BlockOutcome(
                 accepted.CapabilityId,
-                config.BlockId,
+                config.StepId,
                 accepted.Summary,
                 accepted.Payload
             )
@@ -863,7 +863,7 @@ internal sealed class AgentBlock<TState>(
         var selectedChatClient = chatClientFactory is null
             ? chatClient
             : chatClientFactory(
-                message.Runtime.AgentProfiles.GetValueOrDefault(config.BlockId)?.ProfileName
+                message.Runtime.AgentProfiles.GetValueOrDefault(config.StepId)?.ProfileName
                     ?? config.ProfileName
             );
         var toolEffects = new ToolEffectRegistry();
@@ -875,7 +875,7 @@ internal sealed class AgentBlock<TState>(
         var hasGates =
             (config.StateGuards?.Count ?? 0) > 0 || (config.LatchedGates?.Count ?? 0) > 0;
         var implementationContext = new AgentImplementationContext(
-            config.BlockId,
+            config.StepId,
             selectedChatClient,
             chatOptions,
             config.WorkspacePath?.Invoke(message.State),
@@ -887,8 +887,8 @@ internal sealed class AgentBlock<TState>(
                 selectedChatClient,
                 new ChatClientAgentOptions
                 {
-                    Id = config.BlockId,
-                    Name = config.BlockId,
+                    Id = config.StepId,
+                    Name = config.StepId,
                     ChatOptions = chatOptions,
                 }
             )
@@ -901,7 +901,7 @@ internal sealed class AgentBlock<TState>(
             if (unclassified is not null)
             {
                 throw new InvalidOperationException(
-                    $"Gated agent '{config.BlockId}' exposes unclassified action '{unclassified.Name}'."
+                    $"Gated agent '{config.StepId}' exposes unclassified action '{unclassified.Name}'."
                 );
             }
         }
@@ -930,7 +930,7 @@ internal sealed class AgentBlock<TState>(
         );
         active.AddRange(
             (config.LatchedGates ?? [])
-                .Where(gate => message.Runtime.IsGateLatched(config.BlockId, gate.Id))
+                .Where(gate => message.Runtime.IsGateLatched(config.StepId, gate.Id))
                 .Select(gate => new ActiveAgentGate(
                     gate.Id,
                     gate.BlockedEffects,
@@ -983,11 +983,11 @@ internal sealed class AgentBlock<TState>(
 
             if (semantic is not null)
             {
-                onUpdate?.Invoke(config.BlockId, runId, semantic);
+                onUpdate?.Invoke(config.StepId, runId, semantic);
                 if (message.RunContext is not null)
                 {
                     await message.RunContext.ObserveAsync(
-                        new PipelineAgentUpdated(runId, config.BlockId, semantic),
+                        new PipelineAgentUpdated(runId, config.StepId, semantic),
                         cancellationToken
                     );
                 }
@@ -1009,9 +1009,9 @@ internal sealed class AgentBlock<TState>(
         return message with
         {
             Runtime = message
-                .Runtime.WithoutSession(config.BlockId)
-                .WithoutUsage(config.BlockId)
-                .WithoutProfile(config.BlockId),
+                .Runtime.WithoutSession(config.StepId)
+                .WithoutUsage(config.StepId)
+                .WithoutProfile(config.StepId),
         };
     }
 
@@ -1020,14 +1020,14 @@ internal sealed class AgentBlock<TState>(
         var runtime = message.Runtime;
         if (!config.ContinueSession)
         {
-            runtime = runtime.WithoutSession(config.BlockId).WithoutUsage(config.BlockId);
+            runtime = runtime.WithoutSession(config.StepId).WithoutUsage(config.StepId);
         }
 
         var profile =
             config.ProfilePolicy?.Invoke(message.State)
             ?? new AgentProfileSelection(config.ProfileName, "Configured agent profile.");
         if (
-            runtime.AgentProfiles.TryGetValue(config.BlockId, out var currentProfile)
+            runtime.AgentProfiles.TryGetValue(config.StepId, out var currentProfile)
             && !string.Equals(
                 currentProfile.ProfileName,
                 profile.ProfileName,
@@ -1035,9 +1035,9 @@ internal sealed class AgentBlock<TState>(
             )
         )
         {
-            runtime = runtime.WithoutSession(config.BlockId).WithoutUsage(config.BlockId);
+            runtime = runtime.WithoutSession(config.StepId).WithoutUsage(config.StepId);
         }
-        return runtime.WithProfile(config.BlockId, profile);
+        return runtime.WithProfile(config.StepId, profile);
     }
 
     private async Task<PipelineRuntime> CaptureSessionAsync(
@@ -1048,7 +1048,7 @@ internal sealed class AgentBlock<TState>(
     )
     {
         var serialized = await agent.SerializeSessionAsync(session, cancellationToken: ct);
-        return runtime.WithSession(config.BlockId, serialized);
+        return runtime.WithSession(config.StepId, serialized);
     }
 
     private async Task<AgentSession> RestoreOrCreateSessionAsync(
@@ -1057,7 +1057,7 @@ internal sealed class AgentBlock<TState>(
         CancellationToken ct
     )
     {
-        if (runtime.AgentSessions.TryGetValue(config.BlockId, out var serialized))
+        if (runtime.AgentSessions.TryGetValue(config.StepId, out var serialized))
         {
             return await agent.DeserializeSessionAsync(serialized, cancellationToken: ct);
         }

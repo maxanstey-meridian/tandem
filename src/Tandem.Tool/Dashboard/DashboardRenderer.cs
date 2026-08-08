@@ -4,7 +4,6 @@ using System.Text.Json;
 using Spectre.Console;
 using Spectre.Console.Rendering;
 using Tandem.Delivery;
-using Tandem.Domain;
 
 namespace Tandem.Infrastructure.Dashboard;
 
@@ -12,7 +11,7 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
 {
     private const int NarrowWidth = 100;
     private const int MaxScrollbackLines = 2_000;
-    private static readonly string[] _blockBackgrounds =
+    private static readonly string[] _stepBackgrounds =
     [
         "#244866",
         "#56375F",
@@ -103,7 +102,7 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         var elapsed = model.StartedAt.HasValue
             ? (model.CompletedAt ?? DateTimeOffset.UtcNow) - model.StartedAt.Value
             : TimeSpan.Zero;
-        var active = model.ActiveBlockId ?? (model.IsTerminal ? "complete" : "waiting");
+        var active = model.ActiveStepId ?? (model.IsTerminal ? "complete" : "waiting");
         var runId = string.IsNullOrEmpty(model.RunId) ? "starting" : model.RunId;
         var text = new Text(
             $"{runId}  {model.Status}  {active}  {model.Model ?? ""}  {elapsed:hh\\:mm\\:ss}",
@@ -115,13 +114,13 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
 
     private IRenderable RenderWork(DashboardModel model, int paneHeight, int paneWidth)
     {
-        var activeBlockId = model.ActiveBlockId;
+        var activeStepId = model.ActiveStepId;
         var visibleCount = Math.Max(1, paneHeight - 2);
         _viewportHeight = visibleCount;
         var lines = new List<IRenderable>();
-        var blockWidth = Math.Max(
+        var stepWidth = Math.Max(
             1,
-            model.Transcript.Select(entry => entry.BlockId.Length).DefaultIfEmpty(1).Max()
+            model.Transcript.Select(entry => entry.StepId.Length).DefaultIfEmpty(1).Max()
         );
 
         for (
@@ -131,12 +130,7 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         )
         {
             var entry = model.Transcript[index];
-            if (entry.Line is { Kind: EventKinds.ToolCompleted, ToolSuccess: true })
-            {
-                continue;
-            }
-
-            var rendered = RenderLines(entry.Line, entry.BlockId, blockWidth, paneWidth).ToList();
+            var rendered = RenderLines(entry.Line, entry.StepId, stepWidth, paneWidth).ToList();
             var remaining = MaxScrollbackLines - lines.Count;
             if (rendered.Count > remaining)
             {
@@ -163,43 +157,34 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         var visibleLines = lines.Skip(start).Take(visibleCount).ToList();
 
         var active =
-            model.Blocks.FirstOrDefault(b => b.BlockId == activeBlockId)
-            ?? model.Blocks.LastOrDefault();
-        var title = active?.BlockId ?? "Work";
+            model.Steps.FirstOrDefault(step => step.StepId == activeStepId)
+            ?? model.Steps.LastOrDefault();
+        var title = active?.StepId ?? "Work";
         var state =
             active?.IsActive == true ? "running"
-            : model.Blocks.Count > 0 ? "done"
+            : model.Steps.Count > 0 ? "done"
             : "waiting";
         return new Panel(new Rows(visibleLines))
-            .Header($" {Markup.Escape(Center(title, blockWidth))} · {state} ")
+            .Header($" {Markup.Escape(Center(title, stepWidth))} · {state} ")
             .Border(BoxBorder.Rounded)
             .Expand();
     }
 
     private static IEnumerable<IRenderable> RenderLines(
         TranscriptLine line,
-        string blockId,
-        int blockWidth,
+        string stepId,
+        int stepWidth,
         int width
     )
     {
-        var label = $"[{Center(blockId, blockWidth)}] ";
+        var label = $"[{Center(stepId, stepWidth)}] ";
         var prefix = line.Kind switch
         {
-            EventKinds.AgentReasoning => "· ",
-            EventKinds.ToolStarted => "↯ ",
-            EventKinds.ToolCompleted when line.ToolSuccess is true => "✓ ",
-            EventKinds.ToolCompleted => "✗ ",
+            TranscriptKinds.Reasoning => "· ",
             _ => "  ",
         };
-        var value = line.Kind switch
-        {
-            EventKinds.ToolStarted => line.Text,
-            EventKinds.ToolCompleted when line.ToolSuccess is true => line.ToolName ?? line.Text,
-            EventKinds.ToolCompleted => line.Text,
-            _ => line.Text,
-        };
-        var background = BlockBackground(blockId);
+        var value = line.Text;
+        var background = StepBackground(stepId);
         var jsonLines = TryRenderJson(value, label, prefix, background, width);
         if (jsonLines is not null)
         {
@@ -211,10 +196,7 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         }
         var contentColor = line.Kind switch
         {
-            EventKinds.AgentReasoning => "grey",
-            EventKinds.ToolStarted => "cornflowerblue",
-            EventKinds.ToolCompleted when line.ToolSuccess is true => "green",
-            EventKinds.ToolCompleted => "red",
+            TranscriptKinds.Reasoning => "grey",
             _ => null,
         };
 
@@ -524,16 +506,16 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
     private static void AppendStyled(StringBuilder output, string value, string color) =>
         output.Append('[').Append(color).Append(']').Append(Markup.Escape(value)).Append("[/]");
 
-    private static string BlockBackground(string blockId)
+    private static string StepBackground(string stepId)
     {
         uint hash = 2166136261;
-        foreach (var character in blockId)
+        foreach (var character in stepId)
         {
             hash ^= character;
             hash *= 16777619;
         }
 
-        return _blockBackgrounds[(int)(hash % _blockBackgrounds.Length)];
+        return _stepBackgrounds[(int)(hash % _stepBackgrounds.Length)];
     }
 
     private static string Center(string value, int width)
@@ -593,7 +575,7 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
                 _ => "·",
             };
             rows.Add(
-                new Text($"{icon} {entry.BlockId}  {entry.Kind}  {duration}").Overflow(
+                new Text($"{icon} {entry.StepId}  {entry.Kind}  {duration}").Overflow(
                     Overflow.Ellipsis
                 )
             );
@@ -652,7 +634,7 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
                 ? "↑↓/Pg scroll  p publish  q detach"
                 : "↑↓/Pg scroll  q detach";
             text =
-                $"{scroll}ctx {bar} {usage}  steps {model.PipelineHistory.Count}  {model.ActiveBlockId ?? model.Status.ToString()}  {keys}";
+                $"{scroll}ctx {bar} {usage}  steps {model.PipelineHistory.Count}  {model.ActiveStepId ?? model.Status.ToString()}  {keys}";
             style =
                 fraction > 0.85 ? new Style(Color.Red)
                 : fraction > 0.6 ? new Style(Color.Yellow)

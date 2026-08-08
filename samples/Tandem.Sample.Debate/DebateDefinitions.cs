@@ -33,8 +33,8 @@ public static class DebateDefinitions
                 .WithCapability(verdict)
                 .WithConversationPolicy(DebatePolicies.DiscardJudgeAfterVerdict)
                 .Build(),
-            PipelineNodes.Complete<DebateState>("complete"),
-            PipelineNodes.Failed<DebateState>("debate-failed")
+            PipelineNodes.Complete(new DebateComplete()),
+            PipelineNodes.Failed(new DebateFailed())
         );
 
     private static AgentDefinition<DebateState> CreateStructured<TOutput>(
@@ -49,4 +49,18 @@ public static class DebateDefinitions
             .WithOutput(output, apply)
             .ContinueSession()
             .Build();
+}
+
+public sealed class DebateComplete : IPipelineCompletion<DebateState>
+{
+    public string Id => "complete";
+
+    public string Summarize(DebateState state) => $"Verdict reached after {state.Round} round(s)";
+}
+
+public sealed class DebateFailed : IPipelineFailure<DebateState>
+{
+    public string Id => "debate-failed";
+
+    public string Summarize(DebateState state) => "Debate ended without a verdict";
 }

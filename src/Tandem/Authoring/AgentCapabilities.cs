@@ -120,12 +120,15 @@ public static class AgentCapabilities
 
 internal sealed record CapabilityAcceptanceContext<TState, TRequest>(
     Guid RunId,
-    string BlockId,
+    string StepId,
     string InvocationId,
     string CapabilityId,
     TState State,
     TRequest Request
-);
+)
+{
+    internal string AcceptedCallId => $"{RunId:N}:{StepId}:{InvocationId}:{CapabilityId}";
+}
 
 internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
     where TRequest : class
@@ -238,7 +241,7 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
         {
             var context = new CapabilityAcceptanceContext<TState, TRequest>(
                 _invocation.RunId,
-                _invocation.BlockId,
+                _invocation.StepId,
                 _invocation.InvocationId,
                 _capabilityId,
                 _invocation.State,
@@ -255,13 +258,13 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
                     await observedRunContext.ObserveAsync(
                         new PipelineCapabilityAccepted(
                             _invocation.RunId,
-                            _invocation.BlockId,
+                            _invocation.StepId,
                             _invocation.InvocationId,
                             _capabilityId,
                             _name,
-                            $"{_invocation.RunId:N}:{_invocation.BlockId}:{_invocation.InvocationId}:{_capabilityId}",
+                            context.AcceptedCallId,
                             typeof(TRequest).FullName ?? typeof(TRequest).Name,
-                            observedRunContext.ShouldPersist(_invocation.BlockId) ? payload : null
+                            observedRunContext.ShouldPersist(_invocation.StepId) ? payload : null
                         ),
                         ct
                     );

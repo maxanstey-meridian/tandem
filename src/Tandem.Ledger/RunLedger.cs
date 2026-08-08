@@ -24,6 +24,12 @@ public sealed class RunLedger
         CancellationToken cancellationToken = default
     ) => _store.ReadAsync(RunId, stream, cancellationToken);
 
+    public ValueTask<IReadOnlyList<AcceptedLedgerEntry<TEntry>>> ReadAfterAsync<TEntry>(
+        LedgerStream<TEntry> stream,
+        long sequence,
+        CancellationToken cancellationToken = default
+    ) => _store.ReadAfterAsync(RunId, stream, sequence, cancellationToken);
+
     public ValueTask<IReadOnlyList<AcceptedLedgerEntry<TEntry>>> ReadRecentAsync<TEntry>(
         LedgerStream<TEntry> stream,
         int limit,

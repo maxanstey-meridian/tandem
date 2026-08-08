@@ -2,15 +2,13 @@ namespace Tandem.Advanced;
 
 public sealed record AgentCapabilityAcceptanceContext<TState, TRequest>(
     Guid RunId,
-    string BlockId,
+    string StepId,
     string InvocationId,
     string CapabilityId,
+    string AcceptedCallId,
     TState State,
     TRequest Request
-)
-{
-    public string AcceptedCallId => $"{RunId:N}:{BlockId}:{InvocationId}:{CapabilityId}";
-}
+);
 
 public static class AgentCapabilityAcceptanceExtensions
 {
@@ -31,9 +29,10 @@ public static class AgentCapabilityAcceptanceExtensions
                 accept(
                     new AgentCapabilityAcceptanceContext<TState, TRequest>(
                         context.RunId,
-                        context.BlockId,
+                        context.StepId,
                         context.InvocationId,
                         context.CapabilityId,
+                        context.AcceptedCallId,
                         context.State,
                         context.Request
                     ),

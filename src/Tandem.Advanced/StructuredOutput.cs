@@ -342,7 +342,7 @@ internal static class StructuredOutputDescriptors
             message.LatestOutcome is { } outcome
                 ? new AgentMessageOutcome(
                     outcome.Kind,
-                    outcome.BlockId,
+                    outcome.StepId,
                     outcome.Summary,
                     outcome.Payload,
                     outcome.Duration

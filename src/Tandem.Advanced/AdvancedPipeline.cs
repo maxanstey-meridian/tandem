@@ -47,16 +47,16 @@ public sealed record OperationResult<TState>(TState State, OperationOutcome Outc
 
 public sealed record OperationOutcome(
     string Kind,
-    string BlockId,
+    string StepId,
     string Summary,
     JsonElement Payload = default,
     TimeSpan Duration = default
 )
 {
     internal static OperationOutcome From(BlockOutcome outcome) =>
-        new(outcome.Kind, outcome.BlockId, outcome.Summary, outcome.Payload, outcome.Duration);
+        new(outcome.Kind, outcome.StepId, outcome.Summary, outcome.Payload, outcome.Duration);
 
-    internal BlockOutcome ToCore() => new(Kind, BlockId, Summary, Payload, Duration);
+    internal BlockOutcome ToCore() => new(Kind, StepId, Summary, Payload, Duration);
 }
 
 public sealed class PipelineOperationContext<TState>
@@ -92,7 +92,7 @@ public sealed class PipelineOperationContext<TState>
 
 public sealed record AgentMessageOutcome(
     string Kind,
-    string BlockId,
+    string StepId,
     string Summary,
     JsonElement Payload,
     TimeSpan Duration
@@ -452,7 +452,7 @@ public static class AdvancedAgentBuilderExtensions
         );
 
     private static AgentMessageOutcome ToOutcome(BlockOutcome outcome) =>
-        new(outcome.Kind, outcome.BlockId, outcome.Summary, outcome.Payload, outcome.Duration);
+        new(outcome.Kind, outcome.StepId, outcome.Summary, outcome.Payload, outcome.Duration);
 }
 
 public static class PipelineOperation
@@ -487,39 +487,5 @@ public static class PipelineOperation
             }
         );
         return map(result);
-    }
-
-    internal static async ValueTask<Outcome<TState>> RunOutcomeAsync<TState>(
-        TState state,
-        Func<PipelineMessage<TState>, ValueTask<PipelineMessage<TState>>> execute,
-        Func<OperationResult<TState>, Outcome<TState>> map
-    )
-    {
-        using var operation = PipelineExecutionEnvelope.BeginOperation<TState>();
-        var result = await execute(PipelineExecutionEnvelope.Get(state));
-        PipelineExecutionEnvelope.Set(result);
-        return map(OperationResult<TState>.From(result));
-    }
-
-    internal static async ValueTask<TState> RunStateAsync<TState>(
-        TState state,
-        Func<PipelineMessage<TState>, ValueTask<PipelineMessage<TState>>> execute
-    )
-    {
-        using var operation = PipelineExecutionEnvelope.BeginOperation<TState>();
-        var result = await execute(PipelineExecutionEnvelope.Get(state));
-        PipelineExecutionEnvelope.Set(result);
-        return result.State;
-    }
-
-    internal static async ValueTask<TResult> RunAsync<TState, TResult>(
-        Func<ValueTask<PipelineMessage<TState>>> execute,
-        Func<OperationResult<TState>, TResult> map
-    )
-    {
-        using var operation = PipelineExecutionEnvelope.BeginOperation<TState>();
-        var result = await execute();
-        PipelineExecutionEnvelope.Set(result);
-        return map(OperationResult<TState>.From(result));
     }
 }

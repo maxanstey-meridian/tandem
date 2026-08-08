@@ -1,5 +1,4 @@
 using System.Runtime.ExceptionServices;
-using System.Text.Json;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Tandem.Domain;
@@ -10,20 +9,17 @@ internal sealed record PendingExternalRequest(
     Guid RunId,
     string RequestId,
     string PortId,
-    string RequestType,
-    string ResponseType,
-    JsonElement Payload
-)
-{
-    internal object? Value { get; init; }
-    internal Type? RequestClrType { get; init; }
-    internal Type? ResponseClrType { get; init; }
-}
+    Type RequestType,
+    Type ResponseType,
+    object Value
+);
 
-internal sealed record ExternalRequestAnswer(Guid RunId, string RequestId, JsonElement Payload)
-{
-    internal object? Value { get; init; }
-}
+internal sealed record ExternalRequestAnswer(
+    Guid RunId,
+    string RequestId,
+    Type ResponseType,
+    object Value
+);
 
 internal interface IExternalRequestHandler
 {
@@ -342,17 +338,10 @@ internal sealed class InProcessPipelineRunner
             runId,
             request.RequestId,
             interaction?.InteractionId ?? request.PortInfo.PortId,
-            authoredRequestType.FullName ?? authoredRequestType.Name,
-            authoredResponseType.FullName ?? authoredResponseType.Name,
-            interaction is null
-                ? JsonSerializer.SerializeToElement(authoredRequest, authoredRequestType)
-                : default
-        )
-        {
-            Value = authoredRequest,
-            RequestClrType = authoredRequestType,
-            ResponseClrType = authoredResponseType,
-        };
+            authoredRequestType,
+            authoredResponseType,
+            authoredRequest
+        );
         try
         {
             if (interactionRunContext is not null)
@@ -387,12 +376,21 @@ internal sealed class InProcessPipelineRunner
                 );
             }
 
-            var response =
-                answer.Value
-                ?? JsonSerializer.Deserialize(answer.Payload, authoredResponseType)
-                ?? throw new InvalidOperationException(
-                    $"Answer for request '{request.RequestId}' produced a null response."
+            if (answer.ResponseType != authoredResponseType)
+            {
+                throw new InvalidOperationException(
+                    $"Answer for request '{request.RequestId}' declared response type "
+                        + $"'{answer.ResponseType.FullName}', not '{authoredResponseType.FullName}'."
                 );
+            }
+            if (!authoredResponseType.IsInstanceOfType(answer.Value))
+            {
+                throw new InvalidOperationException(
+                    $"Answer for request '{request.RequestId}' produced "
+                        + $"'{answer.Value?.GetType().FullName}', not '{authoredResponseType.FullName}'."
+                );
+            }
+            var response = answer.Value;
             if (interactionRunContext is not null)
             {
                 await interactionRunContext.ObserveAsync(

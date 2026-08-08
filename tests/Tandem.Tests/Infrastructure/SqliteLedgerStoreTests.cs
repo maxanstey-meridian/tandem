@@ -37,6 +37,24 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Entries_CanBeReadIncrementallyAfterSequence()
+    {
+        var store = await CreateStoreAsync(DatabasePath());
+        var runId = Guid.CreateVersion7();
+        var stream = new LedgerStream<ProbeEntry>("incremental", "test.probe");
+        await store.CreateRunAsync(runId, "test");
+        var ledger = store.ForRun(runId);
+        await ledger.AppendAsync(stream, "entry-1", new ProbeEntry("first", 1));
+        await ledger.AppendAsync(stream, "entry-2", new ProbeEntry("second", 2));
+        await ledger.AppendAsync(stream, "entry-3", new ProbeEntry("third", 3));
+
+        var entries = await ledger.ReadAfterAsync(stream, 1);
+
+        entries.Select(entry => entry.Sequence).Should().Equal(2, 3);
+        entries.Select(entry => entry.Value.Name).Should().Equal("second", "third");
+    }
+
+    [Fact]
     public async Task EntryIdentity_IsUniqueAcrossAWholeRun()
     {
         var store = await CreateStoreAsync(DatabasePath());

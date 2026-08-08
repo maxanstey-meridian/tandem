@@ -341,7 +341,7 @@ public sealed class PackageConsumerTests
         );
         if (!result.Succeeded || result.State.FinalDisposition != "closed") throw new Exception("Support package proof failed.");
 
-        var complete = PipelineNodes.Complete<SupportState>("direct-complete");
+        var complete = PipelineNodes.Complete(new DirectCompletion());
         var direct = Pipeline
             .Start(participants.CustomerReply, "direct-interaction")
             .Persist(participants.CustomerReply)
@@ -364,6 +364,12 @@ public sealed class PackageConsumerTests
         {
             public ValueTask<string> LoadAsync(SupportState state, CancellationToken cancellationToken) =>
                 ValueTask.FromResult("Account active.");
+        }
+
+        sealed class DirectCompletion : IPipelineCompletion<SupportState>
+        {
+            public string Id => "direct-complete";
+            public string Summarize(SupportState state) => "Direct interaction complete";
         }
         """;
 

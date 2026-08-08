@@ -3,7 +3,7 @@ using Tandem.Infrastructure;
 namespace Tandem.Domain;
 
 internal sealed record AgentBlockConfig<TState>(
-    string BlockId,
+    string StepId,
     string ProfileName,
     string SystemInstructions,
     IReadOnlyList<AgentCapabilityDescriptor<TState>> Capabilities,

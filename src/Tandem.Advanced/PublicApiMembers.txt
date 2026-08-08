@@ -1,0 +1,347 @@
+[advanced]
+T Tandem.Advanced.AdvancedAgentBuilderExtensions
+M static Tandem.AgentBuilder<TState> RequireOutputAcceptance<TState,TOutput>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.OutputAcceptancePolicy<TState,TOutput> acceptance)
+M static Tandem.AgentBuilder<TState> UseHarness<TState>(Tandem.AgentBuilder<TState> builder, System.String harnessInstructions)
+M static Tandem.AgentBuilder<TState> WithCheckpoint<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.CheckpointPolicy<TState> policy)
+M static Tandem.AgentBuilder<TState> WithContinuationPolicy<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.AgentTurnPolicy<TState> policy)
+M static Tandem.AgentBuilder<TState> WithConversationPolicy<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.AgentConversationPolicy<TState> policy)
+M static Tandem.AgentBuilder<TState> WithMessageAugmentation<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.MessageAugmentation<TState> augmentation)
+M static Tandem.AgentBuilder<TState> WithMessageFromContext<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.AdvancedAgentMessage<TState> message)
+M static Tandem.AgentBuilder<TState> WithOutput<TState,TOutput>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.StructuredOutputParser<TState> parser, Tandem.Advanced.StructuredOutputAcceptancePolicy<TState>? acceptancePolicy = null, System.String? correctionRequiredToolName = null)
+M static Tandem.AgentBuilder<TState> WithOutputAcceptance<TState,TOutput>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.OutputAcceptance<TState,TOutput> acceptance)
+M static Tandem.AgentBuilder<TState> WithProfilePolicy<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.AgentProfilePolicy<TState> policy)
+M static Tandem.AgentBuilder<TState> WithStateGuard<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.AgentStateGuard<TState> guard)
+M static Tandem.AgentBuilder<TState> WithStructuredOutput<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.StructuredOutputParser<TState> parser, System.Action<Microsoft.Extensions.AI.ChatOptions>? configureChatOptions = null, Tandem.Advanced.StructuredOutputAcceptancePolicy<TState>? acceptancePolicy = null, System.String? correctionRequiredToolName = null)
+M static Tandem.AgentBuilder<TState> WithWorkspace<TState>(Tandem.AgentBuilder<TState> builder, System.Func<TState,System.String> path, System.Func<TState,System.Boolean> allowMutation, Tandem.Advanced.ToolInterceptor<TState>? toolInterceptor = null)
+T Tandem.Advanced.AdvancedAgentMessage<TState>
+C (System.Object object, System.IntPtr method)
+M System.IAsyncResult BeginInvoke(Tandem.Advanced.AgentMessageContext<TState> context, System.AsyncCallback callback, System.Object object)
+M System.String EndInvoke(System.IAsyncResult result)
+M System.String Invoke(Tandem.Advanced.AgentMessageContext<TState> context)
+T Tandem.Advanced.AdvancedPipelineRunOptionsExtensions
+M static Tandem.PipelineRunOptions WithAcceptanceUnitOfWork(Tandem.PipelineRunOptions options, Tandem.Advanced.IPipelineAcceptanceUnitOfWork unitOfWork)
+T Tandem.Advanced.AgentCapabilityAcceptanceContext<TState,TRequest>
+C (System.Guid RunId, System.String StepId, System.String InvocationId, System.String CapabilityId, System.String AcceptedCallId, TState State, TRequest Request)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.AgentCapabilityAcceptanceContext<TState,TRequest>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String InvocationId, out System.String CapabilityId, out System.String AcceptedCallId, out TState State, out TRequest Request)
+M Tandem.Advanced.AgentCapabilityAcceptanceContext<TState,TRequest> <Clone>$()
+P System.Guid RunId { get; set; }
+P System.String AcceptedCallId { get; set; }
+P System.String CapabilityId { get; set; }
+P System.String InvocationId { get; set; }
+P System.String StepId { get; set; }
+P TRequest Request { get; set; }
+P TState State { get; set; }
+T Tandem.Advanced.AgentCapabilityAcceptanceExtensions
+M static Tandem.AgentCapability<TState,TRequest> WithAcceptance<TState,TRequest>(Tandem.AgentCapability<TState,TRequest> capability, System.Func<Tandem.Advanced.AgentCapabilityAcceptanceContext<TState,TRequest>,System.Threading.CancellationToken,System.Threading.Tasks.ValueTask> accept) where TRequest : class
+T Tandem.Advanced.AgentCheckpointContext<TState>
+C (TState State, System.Int32 CurrentContextTokens)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.AgentCheckpointContext<TState>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out TState State, out System.Int32 CurrentContextTokens)
+M Tandem.Advanced.AgentCheckpointContext<TState> <Clone>$()
+P System.Int32 CurrentContextTokens { get; set; }
+P TState State { get; set; }
+T Tandem.Advanced.AgentConversationDecision
+C (Tandem.Advanced.AgentConversationRetention Retention)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.AgentConversationDecision? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out Tandem.Advanced.AgentConversationRetention Retention)
+M Tandem.Advanced.AgentConversationDecision <Clone>$()
+P Tandem.Advanced.AgentConversationRetention Retention { get; set; }
+T Tandem.Advanced.AgentConversationPolicy<TState>
+C (System.Object object, System.IntPtr method)
+M System.IAsyncResult BeginInvoke(Tandem.Advanced.AgentMessageContext<TState> context, Tandem.Advanced.AgentMessageOutcome outcome, System.AsyncCallback callback, System.Object object)
+M Tandem.Advanced.AgentConversationDecision EndInvoke(System.IAsyncResult result)
+M Tandem.Advanced.AgentConversationDecision Invoke(Tandem.Advanced.AgentMessageContext<TState> context, Tandem.Advanced.AgentMessageOutcome outcome)
+T Tandem.Advanced.AgentConversationRetention
+F System.Int32 value__
+F static Tandem.Advanced.AgentConversationRetention Discard
+F static Tandem.Advanced.AgentConversationRetention Retain
+T Tandem.Advanced.AgentMessageContext<TState>
+C (System.Guid RunId, TState State, Tandem.Advanced.AgentMessageOutcome? LatestOutcome)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.AgentMessageContext<TState>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out TState State, out Tandem.Advanced.AgentMessageOutcome? LatestOutcome)
+M Tandem.Advanced.AgentMessageContext<TState> <Clone>$()
+P System.Guid RunId { get; set; }
+P TState State { get; set; }
+P Tandem.Advanced.AgentMessageOutcome? LatestOutcome { get; set; }
+T Tandem.Advanced.AgentMessageOutcome
+C (System.String Kind, System.String StepId, System.String Summary, System.Text.Json.JsonElement Payload, System.TimeSpan Duration)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.AgentMessageOutcome? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Kind, out System.String StepId, out System.String Summary, out System.Text.Json.JsonElement Payload, out System.TimeSpan Duration)
+M Tandem.Advanced.AgentMessageOutcome <Clone>$()
+P System.String Kind { get; set; }
+P System.String StepId { get; set; }
+P System.String Summary { get; set; }
+P System.Text.Json.JsonElement Payload { get; set; }
+P System.TimeSpan Duration { get; set; }
+T Tandem.Advanced.AgentProfileDecision
+C (System.String ProfileName, System.String Reason)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.AgentProfileDecision? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String ProfileName, out System.String Reason)
+M Tandem.Advanced.AgentProfileDecision <Clone>$()
+P System.String ProfileName { get; set; }
+P System.String Reason { get; set; }
+T Tandem.Advanced.AgentProfilePolicy<TState>
+C (System.Object object, System.IntPtr method)
+M System.IAsyncResult BeginInvoke(TState state, System.AsyncCallback callback, System.Object object)
+M Tandem.Advanced.AgentProfileDecision EndInvoke(System.IAsyncResult result)
+M Tandem.Advanced.AgentProfileDecision Invoke(TState state)
+T Tandem.Advanced.AgentProfiles
+M static Tandem.AgentBuilder<TState> Create<TState>(System.String id, System.String profile, System.String instructions, Microsoft.Extensions.AI.IChatClient chatClient, System.Func<System.String,Microsoft.Extensions.AI.IChatClient> profileChatClients)
+T Tandem.Advanced.AgentStateGuard<TState>
+C (System.String Id, System.Func<TState,System.Boolean> IsActive, System.Collections.Generic.IReadOnlySet<Tandem.Advanced.ToolEffect> Blocks, System.String Message, Tandem.AgentCapability<TState>? Remediation = null)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.AgentStateGuard<TState>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Id, out System.Func<TState,System.Boolean> IsActive, out System.Collections.Generic.IReadOnlySet<Tandem.Advanced.ToolEffect> Blocks, out System.String Message, out Tandem.AgentCapability<TState>? Remediation)
+M Tandem.Advanced.AgentStateGuard<TState> <Clone>$()
+P System.Collections.Generic.IReadOnlySet<Tandem.Advanced.ToolEffect> Blocks { get; set; }
+P System.Func<TState,System.Boolean> IsActive { get; set; }
+P System.String Id { get; set; }
+P System.String Message { get; set; }
+P Tandem.AgentCapability<TState>? Remediation { get; set; }
+T Tandem.Advanced.AgentTurnContinuationPolicy<TState>
+C (System.Object object, System.IntPtr method)
+M System.IAsyncResult BeginInvoke(Tandem.Advanced.AgentTurnObservation<TState> observation, System.Threading.CancellationToken cancellationToken, System.AsyncCallback callback, System.Object object)
+M System.Threading.Tasks.ValueTask<Tandem.Advanced.AgentTurnDirective?> EndInvoke(System.IAsyncResult result)
+M System.Threading.Tasks.ValueTask<Tandem.Advanced.AgentTurnDirective?> Invoke(Tandem.Advanced.AgentTurnObservation<TState> observation, System.Threading.CancellationToken cancellationToken)
+T Tandem.Advanced.AgentTurnDirective
+C (System.String Prompt, System.String? RequiredToolName = null)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.AgentTurnDirective? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Prompt, out System.String? RequiredToolName)
+M Tandem.Advanced.AgentTurnDirective <Clone>$()
+P System.String Prompt { get; set; }
+P System.String? RequiredToolName { get; set; }
+T Tandem.Advanced.AgentTurnObservation<TState>
+C (Tandem.Advanced.AgentMessageContext<TState> Context, System.String AssistantText, System.Collections.Generic.IReadOnlyList<System.String> ToolNames, System.Boolean HasAcceptedLifecycleOutcome, System.Int32 ContinuationAttempt)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.AgentTurnObservation<TState>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out Tandem.Advanced.AgentMessageContext<TState> Context, out System.String AssistantText, out System.Collections.Generic.IReadOnlyList<System.String> ToolNames, out System.Boolean HasAcceptedLifecycleOutcome, out System.Int32 ContinuationAttempt)
+M Tandem.Advanced.AgentTurnObservation<TState> <Clone>$()
+P System.Boolean HasAcceptedLifecycleOutcome { get; set; }
+P System.Collections.Generic.IReadOnlyList<System.String> ToolNames { get; set; }
+P System.Int32 ContinuationAttempt { get; set; }
+P System.String AssistantText { get; set; }
+P Tandem.Advanced.AgentMessageContext<TState> Context { get; set; }
+T Tandem.Advanced.AgentTurnPolicy<TState>
+C (System.Int32 maxContinuationAttempts, Tandem.Advanced.AgentTurnContinuationPolicy<TState> continue)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.AgentTurnPolicy<TState>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M Tandem.Advanced.AgentTurnPolicy<TState> <Clone>$()
+P System.Int32 MaxContinuationAttempts { get; }
+P Tandem.Advanced.AgentTurnContinuationPolicy<TState> Continue { get; }
+T Tandem.Advanced.CheckpointPolicy<TState>
+C (System.Int32 ContextWindowTokens, System.Int32 MaxOutputTokens, System.Int32 CheckpointAtPercent, Tandem.AgentCapability<TState> Capability, System.String Instructions, System.Func<Tandem.Advanced.AgentCheckpointContext<TState>,System.String> UserMessage)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.CheckpointPolicy<TState>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Int32 ContextWindowTokens, out System.Int32 MaxOutputTokens, out System.Int32 CheckpointAtPercent, out Tandem.AgentCapability<TState> Capability, out System.String Instructions, out System.Func<Tandem.Advanced.AgentCheckpointContext<TState>,System.String> UserMessage)
+M Tandem.Advanced.CheckpointPolicy<TState> <Clone>$()
+P System.Func<Tandem.Advanced.AgentCheckpointContext<TState>,System.String> UserMessage { get; set; }
+P System.Int32 CheckpointAtPercent { get; set; }
+P System.Int32 ContextWindowTokens { get; set; }
+P System.Int32 MaxOutputTokens { get; set; }
+P System.String Instructions { get; set; }
+P Tandem.AgentCapability<TState> Capability { get; set; }
+T Tandem.Advanced.IPipelineAcceptanceUnitOfWork
+M System.Threading.Tasks.ValueTask<T> ExecuteAsync<T>(System.Func<System.Threading.CancellationToken,System.Threading.Tasks.ValueTask<T>> operation, System.Threading.CancellationToken cancellationToken)
+T Tandem.Advanced.MessageAugmentation<TState>
+C (System.Object object, System.IntPtr method)
+M System.IAsyncResult BeginInvoke(Tandem.Advanced.AgentMessageContext<TState> context, System.Threading.CancellationToken cancellationToken, System.AsyncCallback callback, System.Object object)
+M System.Threading.Tasks.ValueTask<System.String?> EndInvoke(System.IAsyncResult result)
+M System.Threading.Tasks.ValueTask<System.String?> Invoke(Tandem.Advanced.AgentMessageContext<TState> context, System.Threading.CancellationToken cancellationToken)
+T Tandem.Advanced.OperationOutcome
+C (System.String Kind, System.String StepId, System.String Summary, System.Text.Json.JsonElement Payload = default, System.TimeSpan Duration = default)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.OperationOutcome? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Kind, out System.String StepId, out System.String Summary, out System.Text.Json.JsonElement Payload, out System.TimeSpan Duration)
+M Tandem.Advanced.OperationOutcome <Clone>$()
+P System.String Kind { get; set; }
+P System.String StepId { get; set; }
+P System.String Summary { get; set; }
+P System.Text.Json.JsonElement Payload { get; set; }
+P System.TimeSpan Duration { get; set; }
+T Tandem.Advanced.OperationResult<TState>
+C (TState State, Tandem.Advanced.OperationOutcome Outcome)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.OperationResult<TState>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out TState State, out Tandem.Advanced.OperationOutcome Outcome)
+M Tandem.Advanced.OperationResult<TState> <Clone>$()
+P TState State { get; set; }
+P Tandem.Advanced.OperationOutcome Outcome { get; set; }
+T Tandem.Advanced.OutputAcceptanceObservation<TState,TOutput>
+C (Tandem.Advanced.AgentMessageContext<TState> Context, System.String AcceptedOutputId, TOutput Output, System.Collections.Generic.IReadOnlySet<Tandem.Advanced.ToolObservation> Tools, System.Int32 Attempt)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.OutputAcceptanceObservation<TState,TOutput>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out Tandem.Advanced.AgentMessageContext<TState> Context, out System.String AcceptedOutputId, out TOutput Output, out System.Collections.Generic.IReadOnlySet<Tandem.Advanced.ToolObservation> Tools, out System.Int32 Attempt)
+M Tandem.Advanced.OutputAcceptanceObservation<TState,TOutput> <Clone>$()
+P System.Collections.Generic.IReadOnlySet<Tandem.Advanced.ToolObservation> Tools { get; set; }
+P System.Int32 Attempt { get; set; }
+P System.String AcceptedOutputId { get; set; }
+P TOutput Output { get; set; }
+P Tandem.Advanced.AgentMessageContext<TState> Context { get; set; }
+T Tandem.Advanced.OutputAcceptancePolicy<TState,TOutput>
+C (System.Object object, System.IntPtr method)
+M System.Collections.Generic.IReadOnlyList<Tandem.Advanced.StructuredOutputProblem> EndInvoke(System.IAsyncResult result)
+M System.Collections.Generic.IReadOnlyList<Tandem.Advanced.StructuredOutputProblem> Invoke(Tandem.Advanced.OutputAcceptanceObservation<TState,TOutput> observation)
+M System.IAsyncResult BeginInvoke(Tandem.Advanced.OutputAcceptanceObservation<TState,TOutput> observation, System.AsyncCallback callback, System.Object object)
+T Tandem.Advanced.OutputAcceptance<TState,TOutput>
+C (System.Object object, System.IntPtr method)
+M System.IAsyncResult BeginInvoke(Tandem.Advanced.OutputAcceptanceObservation<TState,TOutput> observation, System.Threading.CancellationToken cancellationToken, System.AsyncCallback callback, System.Object object)
+M System.Threading.Tasks.ValueTask EndInvoke(System.IAsyncResult result)
+M System.Threading.Tasks.ValueTask Invoke(Tandem.Advanced.OutputAcceptanceObservation<TState,TOutput> observation, System.Threading.CancellationToken cancellationToken)
+T Tandem.Advanced.PipelineOperation
+M static System.Threading.Tasks.ValueTask<Tandem.Outcome<TState>> RunOutcomeAsync<TState>(TState state, System.Func<Tandem.Advanced.PipelineOperationContext<TState>,System.Threading.Tasks.ValueTask<Tandem.Advanced.OperationResult<TState>>> execute, System.Func<Tandem.Advanced.OperationResult<TState>,Tandem.Outcome<TState>> map)
+T Tandem.Advanced.PipelineOperationContext<TState>
+M System.Threading.Tasks.ValueTask ObserveCommandOutputAsync(System.String stepId, System.String command, System.String output, System.Int32 exitCode, System.Threading.CancellationToken cancellationToken)
+P System.Guid RunId { get; }
+P TState State { get; }
+P Tandem.Advanced.OperationOutcome? LatestOutcome { get; }
+T Tandem.Advanced.StructuredJsonExtractor
+M static System.String Extract(System.String text)
+T Tandem.Advanced.StructuredOutcome<TState>
+C (System.String Kind, System.String Summary, System.Text.Json.JsonElement Payload, TState UpdatedState = null)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.StructuredOutcome<TState>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Kind, out System.String Summary, out System.Text.Json.JsonElement Payload, out TState UpdatedState)
+M Tandem.Advanced.StructuredOutcome<TState> <Clone>$()
+P System.String Kind { get; set; }
+P System.String Summary { get; set; }
+P System.Text.Json.JsonElement Payload { get; set; }
+P TState UpdatedState { get; set; }
+T Tandem.Advanced.StructuredOutputAcceptanceObservation<TState>
+C (Tandem.Advanced.AgentMessageContext<TState> Context, Tandem.Advanced.StructuredOutputResult<TState> Result, System.Collections.Generic.IReadOnlySet<System.String> ToolNames, System.Int32 Attempt)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.StructuredOutputAcceptanceObservation<TState>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out Tandem.Advanced.AgentMessageContext<TState> Context, out Tandem.Advanced.StructuredOutputResult<TState> Result, out System.Collections.Generic.IReadOnlySet<System.String> ToolNames, out System.Int32 Attempt)
+M Tandem.Advanced.StructuredOutputAcceptanceObservation<TState> <Clone>$()
+P System.Collections.Generic.IReadOnlySet<System.String> ToolNames { get; set; }
+P System.Int32 Attempt { get; set; }
+P Tandem.Advanced.AgentMessageContext<TState> Context { get; set; }
+P Tandem.Advanced.StructuredOutputResult<TState> Result { get; set; }
+T Tandem.Advanced.StructuredOutputAcceptancePolicies
+M static Tandem.Advanced.StructuredOutputAcceptancePolicy<TState> RequireToolCallWhen<TState>(System.Func<Tandem.Advanced.StructuredOutputResult<TState>,System.Boolean> requiresToolCall, System.Func<System.String,System.Boolean>? acceptsTool = null, System.String? correction = null)
+T Tandem.Advanced.StructuredOutputAcceptancePolicy<TState>
+C (System.Object object, System.IntPtr method)
+M System.Collections.Generic.IReadOnlyList<Tandem.Advanced.StructuredOutputProblem> EndInvoke(System.IAsyncResult result)
+M System.Collections.Generic.IReadOnlyList<Tandem.Advanced.StructuredOutputProblem> Invoke(Tandem.Advanced.StructuredOutputAcceptanceObservation<TState> observation)
+M System.IAsyncResult BeginInvoke(Tandem.Advanced.StructuredOutputAcceptanceObservation<TState> observation, System.AsyncCallback callback, System.Object object)
+T Tandem.Advanced.StructuredOutputParser<TState>
+C (System.Object object, System.IntPtr method)
+M System.IAsyncResult BeginInvoke(System.String assistantText, TState state, System.AsyncCallback callback, System.Object object)
+M Tandem.Advanced.StructuredOutputResult<TState> EndInvoke(System.IAsyncResult result)
+M Tandem.Advanced.StructuredOutputResult<TState> Invoke(System.String assistantText, TState state)
+T Tandem.Advanced.StructuredOutputPolicy
+M static Tandem.Advanced.StructuredOutputResult<TState> Parse<T,TState>(System.String response, TState state, System.Text.Json.JsonSerializerOptions options, FluentValidation.IValidator<T> validator, System.Func<T,TState,Tandem.Advanced.StructuredOutcome<TState>> map)
+T Tandem.Advanced.StructuredOutputProblem
+C (System.String Field, System.String Message)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.StructuredOutputProblem? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Field, out System.String Message)
+M Tandem.Advanced.StructuredOutputProblem <Clone>$()
+P System.String Field { get; set; }
+P System.String Message { get; set; }
+T Tandem.Advanced.StructuredOutputResult<TState>
+C (Tandem.Advanced.StructuredOutcome<TState>? Outcome, System.Collections.Generic.IReadOnlyList<Tandem.Advanced.StructuredOutputProblem> Problems, System.String RawResponse, System.Object? Candidate = null)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.StructuredOutputResult<TState>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out Tandem.Advanced.StructuredOutcome<TState>? Outcome, out System.Collections.Generic.IReadOnlyList<Tandem.Advanced.StructuredOutputProblem> Problems, out System.String RawResponse, out System.Object? Candidate)
+M Tandem.Advanced.StructuredOutputResult<TState> <Clone>$()
+P System.Boolean Success { get; }
+P System.Collections.Generic.IReadOnlyList<Tandem.Advanced.StructuredOutputProblem> Problems { get; set; }
+P System.Object? Candidate { get; set; }
+P System.String RawResponse { get; set; }
+P Tandem.Advanced.StructuredOutcome<TState>? Outcome { get; set; }
+T Tandem.Advanced.ToolEffect
+F System.Int32 value__
+F static Tandem.Advanced.ToolEffect LifecycleTransition
+F static Tandem.Advanced.ToolEffect Read
+F static Tandem.Advanced.ToolEffect Unclassified
+F static Tandem.Advanced.ToolEffect WorkspaceMutation
+T Tandem.Advanced.ToolEvidence
+F System.Int32 value__
+F static Tandem.Advanced.ToolEvidence None
+F static Tandem.Advanced.ToolEvidence RepositoryInspection
+T Tandem.Advanced.ToolInterceptionResult
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.ToolInterceptionResult? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M Tandem.Advanced.ToolInterceptionResult <Clone>$()
+T Tandem.Advanced.ToolInterceptionResult+Blocked
+C (System.String Message)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.ToolInterceptionResult+Blocked? other)
+M System.Boolean Equals(Tandem.Advanced.ToolInterceptionResult? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Message)
+M Tandem.Advanced.ToolInterceptionResult+Blocked <Clone>$()
+P System.String Message { get; set; }
+T Tandem.Advanced.ToolInterceptor<TState>
+C (System.Object object, System.IntPtr method)
+M System.IAsyncResult BeginInvoke(Tandem.Advanced.AgentMessageContext<TState> context, Tandem.Advanced.ToolInvocation invocation, System.Threading.CancellationToken cancellationToken, System.AsyncCallback callback, System.Object object)
+M System.Threading.Tasks.ValueTask<Tandem.Advanced.ToolInterceptionResult?> EndInvoke(System.IAsyncResult result)
+M System.Threading.Tasks.ValueTask<Tandem.Advanced.ToolInterceptionResult?> Invoke(Tandem.Advanced.AgentMessageContext<TState> context, Tandem.Advanced.ToolInvocation invocation, System.Threading.CancellationToken cancellationToken)
+T Tandem.Advanced.ToolInvocation
+C (System.String Name, Tandem.Advanced.ToolEffect Effect)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.ToolInvocation? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Name, out Tandem.Advanced.ToolEffect Effect)
+M Tandem.Advanced.ToolInvocation <Clone>$()
+P System.String Name { get; set; }
+P Tandem.Advanced.ToolEffect Effect { get; set; }
+T Tandem.Advanced.ToolObservation
+C (System.String Name, Tandem.Advanced.ToolEffect Effect, Tandem.Advanced.ToolEvidence Evidence)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.ToolObservation? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Name, out Tandem.Advanced.ToolEffect Effect, out Tandem.Advanced.ToolEvidence Evidence)
+M Tandem.Advanced.ToolObservation <Clone>$()
+P System.String Name { get; set; }
+P Tandem.Advanced.ToolEffect Effect { get; set; }
+P Tandem.Advanced.ToolEvidence Evidence { get; set; }

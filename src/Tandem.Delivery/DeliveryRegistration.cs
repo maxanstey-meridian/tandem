@@ -30,15 +30,6 @@ public static class DeliveryRegistration
         services.AddSingleton(sp =>
             DeliveryCapabilities.Create(sp.GetRequiredService<CheckpointAcceptance>())
         );
-        services.AddSingleton<AgentCapability<DeliveryState>>(sp =>
-            sp.GetRequiredService<DeliveryCapabilitySet>().AskPlanner
-        );
-        services.AddSingleton<AgentCapability<DeliveryState>>(sp =>
-            sp.GetRequiredService<DeliveryCapabilitySet>().SubmitReport
-        );
-        services.AddSingleton<AgentCapability<DeliveryState>>(sp =>
-            sp.GetRequiredService<DeliveryCapabilitySet>().WriteCheckpoint
-        );
         services.AddSingleton<WorkspacePreparation>();
         services.AddSingleton<DeliveryDiffAcquisition>();
         services.AddSingleton<DeliveryParticipantsFactory>(sp =>

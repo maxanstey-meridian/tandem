@@ -1,17 +1,15 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Tandem.Ledger;
 
 namespace Tandem.Tool;
 
-internal sealed class RunInspector(SqliteLedgerStore store, string tandemHome)
+internal sealed class RunInspector(SqliteLedgerStore store)
 {
     public async ValueTask<RunInspection> InspectAsync(
         Guid runId,
         bool acceptedOnly,
         string? step,
         string? valueType,
-        bool includeTools,
         CancellationToken cancellationToken
     )
     {
@@ -34,8 +32,7 @@ internal sealed class RunInspector(SqliteLedgerStore store, string tandemHome)
                     entry.Value.Result,
                     entry.Value.OutcomeKind,
                     entry.Value.Payload,
-                    entry.Sequence,
-                    0
+                    entry.Sequence
                 );
             })
             .Where(item => !acceptedOnly || item.Category == "accepted")
@@ -46,96 +43,18 @@ internal sealed class RunInspector(SqliteLedgerStore store, string tandemHome)
             )
             .ToList();
 
-        if (includeTools && !acceptedOnly && string.IsNullOrWhiteSpace(valueType))
-        {
-            await AddToolEventsAsync(items, runId, step, cancellationToken);
-        }
-        items.Sort(CompareItems);
         return new RunInspection(run.RunId, run.Composition, run.Status.ToString(), items);
-    }
-
-    private async ValueTask AddToolEventsAsync(
-        List<RunInspectionItem> items,
-        Guid runId,
-        string? step,
-        CancellationToken cancellationToken
-    )
-    {
-        var eventPath = Path.Combine(tandemHome, "runs", runId.ToString("N"), "events.jsonl");
-        if (!File.Exists(eventPath))
-        {
-            return;
-        }
-        var telemetryOrder = 0L;
-        foreach (var line in await File.ReadAllLinesAsync(eventPath, cancellationToken))
-        {
-            telemetryOrder++;
-            try
-            {
-                using var document = JsonDocument.Parse(line);
-                var root = document.RootElement;
-                var kind = root.TryGetProperty("kind", out var kindValue)
-                    ? kindValue.GetString()
-                    : null;
-                if (
-                    kind is not ("tool.started" or "tool.completed")
-                    || !root.TryGetProperty("timestamp", out var timestampValue)
-                    || !timestampValue.TryGetDateTimeOffset(out var timestamp)
-                    || !root.TryGetProperty("data", out var data)
-                    || data.ValueKind != JsonValueKind.Object
-                )
-                {
-                    continue;
-                }
-                var blockId = root.TryGetProperty("blockId", out var block)
-                    ? block.GetString() ?? ""
-                    : "";
-                if (!string.IsNullOrWhiteSpace(step) && blockId != step)
-                {
-                    continue;
-                }
-                items.Add(
-                    new RunInspectionItem(
-                        timestamp,
-                        "telemetry",
-                        kind,
-                        blockId,
-                        null,
-                        data.TryGetProperty("name", out var name) ? name.GetString() : null,
-                        null,
-                        null,
-                        null,
-                        data.Clone(),
-                        telemetryOrder,
-                        1
-                    )
-                );
-            }
-            catch (JsonException)
-            {
-                // Operational telemetry must not make the durable journal unreadable.
-            }
-        }
     }
 
     private static bool IsAccepted(RuntimeJournalRecord record) =>
         record.Kind
             is RuntimeJournalKind.StructuredOutputAccepted
                 or RuntimeJournalKind.CapabilityAccepted
-                or RuntimeJournalKind.InteractionRequested
+        || record.Kind
+            is RuntimeJournalKind.InteractionRequested
                 or RuntimeJournalKind.InteractionAnswered
+            && record.Payload is not null
         || record.Kind == RuntimeJournalKind.StepCompleted && record.Payload is not null;
-
-    private static int CompareItems(RunInspectionItem left, RunInspectionItem right)
-    {
-        var timestamp = left.Timestamp.CompareTo(right.Timestamp);
-        if (timestamp != 0)
-        {
-            return timestamp;
-        }
-        var source = left.SourceOrder.CompareTo(right.SourceOrder);
-        return source != 0 ? source : left.Sequence.CompareTo(right.Sequence);
-    }
 }
 
 internal sealed record RunInspection(
@@ -159,6 +78,5 @@ internal sealed record RunInspectionItem(
     string? Result,
     string? OutcomeKind,
     JsonElement? Payload,
-    long Sequence,
-    [property: JsonIgnore] int SourceOrder
+    long Sequence
 );

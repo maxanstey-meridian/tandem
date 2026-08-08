@@ -108,7 +108,7 @@ public sealed class PipelineMessageSerializationTests
         roundTrip.State.Should().BeEquivalentTo(state);
         roundTrip.LatestOutcome!.Kind.Should().Be(message.LatestOutcome!.Kind);
         roundTrip.Status.Should().Be(PipelineRunStatus.Failed);
-        roundTrip.LatestOutcome.BlockId.Should().Be(message.LatestOutcome.BlockId);
+        roundTrip.LatestOutcome.StepId.Should().Be(message.LatestOutcome.StepId);
         roundTrip.LatestOutcome.Summary.Should().Be(message.LatestOutcome.Summary);
         JsonElement
             .DeepEquals(roundTrip.LatestOutcome.Payload, message.LatestOutcome.Payload)

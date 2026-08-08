@@ -1,4 +1,3 @@
-using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
 using Tandem.Infrastructure;
@@ -100,7 +99,9 @@ public sealed class DeliveryCompositionGraphTests
         var interaction = planner
             ? _composition.PlannerHumanInput
             : _composition.ReviewerHumanInput;
-        var complete = PipelineNodes.Complete<DeliveryState>("interaction-complete");
+        var complete = PipelineNodes.Complete(
+            new TestCompletion<DeliveryState>("interaction-complete")
+        );
         var pipeline = Pipeline
             .Start(interaction, planner ? "planner-interaction" : "reviewer-interaction")
             .Route(interaction, complete, "answered")
@@ -114,7 +115,8 @@ public sealed class DeliveryCompositionGraphTests
             return new ExternalRequestAnswer(
                 pending.RunId,
                 pending.RequestId,
-                JsonSerializer.SerializeToElement(new HumanAnswer("Use the product decision."))
+                typeof(HumanAnswer),
+                new HumanAnswer("Use the product decision.")
             );
         });
         var observer = new InlinePipelineObserver(observations.Add);

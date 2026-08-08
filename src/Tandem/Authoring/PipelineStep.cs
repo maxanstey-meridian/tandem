@@ -32,14 +32,8 @@ public abstract class PipelineNodeDescriptor
 
 public static class PipelineNodes
 {
-    public static IPipelineNode<TState> Failed<TState>(string id) =>
-        new TerminalFailedNode<TState>(id);
-
     public static IPipelineNode<TState> Failed<TState>(IPipelineFailure<TState> failure) =>
         new DefinitionFailedNode<TState>(failure);
-
-    public static IPipelineNode<TState> Complete<TState>(string id) =>
-        new TerminalCompleteNode<TState>(id);
 
     public static IPipelineNode<TState> Complete<TState>(IPipelineCompletion<TState> completion) =>
         new DefinitionCompleteNode<TState>(completion);
@@ -53,60 +47,6 @@ public static class PipelineNodes
         Func<TState, TRequest> createRequest,
         Func<TState, TResponse, TState> applyResponse
     ) => new(id, createRequest, applyResponse);
-}
-
-internal sealed class TerminalCompleteNode<TState>(string id)
-    : IPipelineNode<TState>,
-        IRawPipelineNode
-{
-    public string Id => id;
-
-    public PipelineNodeDescriptor Descriptor { get; } =
-        CorePipelineNodes.Stage<PipelineMessage<TState>, PipelineMessage<TState>>(
-            id,
-            (message, _, _) =>
-                ValueTask.FromResult(
-                    message with
-                    {
-                        LatestOutcome = new BlockOutcome(
-                            StandardOutcomeKinds.Success,
-                            id,
-                            "Succeeded",
-                            JsonSerializer.SerializeToElement(new { })
-                        ),
-                        LatestResult = PipelineResultPayload.Create(
-                            id,
-                            nameof(Outcome<object>.Success),
-                            new { }
-                        ),
-                    }
-                )
-        );
-}
-
-internal sealed class TerminalFailedNode<TState>(string id)
-    : IPipelineNode<TState>,
-        IRawPipelineNode
-{
-    public string Id => id;
-
-    public PipelineNodeDescriptor Descriptor { get; } =
-        CorePipelineNodes.Stage<PipelineMessage<TState>, PipelineMessage<TState>>(
-            id,
-            (message, _, _) =>
-                ValueTask.FromResult(
-                    message with
-                    {
-                        LatestOutcome = new BlockOutcome(
-                            StandardOutcomeKinds.Failed,
-                            id,
-                            "Failed",
-                            JsonSerializer.SerializeToElement(new { })
-                        ),
-                        Status = PipelineRunStatus.Failed,
-                    }
-                )
-        );
 }
 
 public interface IPipelineCompletion<TState>
@@ -957,12 +897,6 @@ public sealed class PipelineBuilder<TState>
         PipelineInteraction<TState, TRequest, TResponse> interaction
     ) => SetPersistence(interaction, persist: false);
 
-    public PipelineBuilder<TState> Route<TTargetResult>(
-        PipelineOutcomeSelector<TState> on,
-        IGeneratedPipelineStep<TState, TTargetResult> to,
-        string label
-    ) => RouteOutcome(on, when: null, to, label);
-
     public PipelineBuilder<TState> Route(
         PipelineOutcomeSelector<TState> on,
         IPipelineNode<TState> to,
@@ -978,13 +912,6 @@ public sealed class PipelineBuilder<TState>
         EnsureInteraction(to);
         return RouteOutcome(on, when: null, to.Request, label);
     }
-
-    public PipelineBuilder<TState> Route<TTargetResult>(
-        PipelineOutcomeSelector<TState> on,
-        Func<TState, bool> when,
-        IGeneratedPipelineStep<TState, TTargetResult> to,
-        string label
-    ) => RouteOutcome(on, when, to, label);
 
     public PipelineBuilder<TState> Route(
         PipelineOutcomeSelector<TState> on,
@@ -1004,28 +931,15 @@ public sealed class PipelineBuilder<TState>
         return RouteOutcome(on, when, to.Request, label);
     }
 
-    public PipelineBuilder<TState> Route<TSourceResult, TTargetResult>(
+    public PipelineBuilder<TState> Route<TSourceResult>(
         IGeneratedPipelineStep<TState, TSourceResult> on,
-        IGeneratedPipelineStep<TState, TTargetResult> to,
+        IPipelineNode<TState> to,
         string label
     )
     {
         EnsureRouteMode(on, RouteMode.Output);
         TrackFailureRoute(on, when: null);
         AddRoute(on, to, _ => true, label, unconditional: true);
-        return this;
-    }
-
-    public PipelineBuilder<TState> Route<TSourceResult, TTargetResult>(
-        Func<TState, bool> when,
-        IGeneratedPipelineStep<TState, TSourceResult> from,
-        IGeneratedPipelineStep<TState, TTargetResult> to,
-        string label
-    )
-    {
-        EnsureRouteMode(from, RouteMode.Output);
-        TrackFailureRoute(from, pipeline => when(pipeline.State));
-        AddRoute(from, to, pipeline => when(pipeline.State), label);
         return this;
     }
 
@@ -1053,33 +967,10 @@ public sealed class PipelineBuilder<TState>
         return this;
     }
 
-    public PipelineBuilder<TState> Route<TRequest, TResponse, TTargetResult>(
-        PipelineInteraction<TState, TRequest, TResponse> from,
-        IGeneratedPipelineStep<TState, TTargetResult> to,
-        string label
-    )
-    {
-        EnsureInteraction(from);
-        AddRoute(from.Resume, to, _ => true, label, unconditional: true);
-        return this;
-    }
-
     public PipelineBuilder<TState> Route<TRequest, TResponse>(
         Func<TState, bool> when,
         PipelineInteraction<TState, TRequest, TResponse> from,
         IPipelineNode<TState> to,
-        string label
-    )
-    {
-        EnsureInteraction(from);
-        AddRoute(from.Resume, to, pipeline => when(pipeline.State), label);
-        return this;
-    }
-
-    public PipelineBuilder<TState> Route<TRequest, TResponse, TTargetResult>(
-        Func<TState, bool> when,
-        PipelineInteraction<TState, TRequest, TResponse> from,
-        IGeneratedPipelineStep<TState, TTargetResult> to,
         string label
     )
     {

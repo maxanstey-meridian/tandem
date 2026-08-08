@@ -308,7 +308,7 @@ public sealed class LocalCapabilityTests
             )
             .WithCapability(CreateCapability())
             .Build();
-        var complete = PipelineNodes.Complete<TestState>("complete");
+        var complete = PipelineNodes.Complete(new TestCompletion<TestState>("complete"));
         var pipeline = Pipeline
             .Start(agent, "capability-or-output")
             .Route(agent.Success, complete, "completed")
@@ -334,9 +334,13 @@ public sealed class LocalCapabilityTests
             )
         );
         using var provider = services.BuildServiceProvider();
-        var capabilities = provider
-            .GetServices<AgentCapability<DeliveryState>>()
-            .ToDictionary(capability => capability.ToolName, StringComparer.Ordinal);
+        var capabilitySet = provider.GetRequiredService<DeliveryCapabilitySet>();
+        var capabilities = new[]
+        {
+            capabilitySet.AskPlanner,
+            capabilitySet.SubmitReport,
+            capabilitySet.WriteCheckpoint,
+        }.ToDictionary(capability => capability.ToolName, StringComparer.Ordinal);
         var initial = DeliveryState.Create(
             new Packet(
                 "Capability test",
@@ -469,11 +473,13 @@ public sealed class LocalCapabilityTests
         var runId = Guid.CreateVersion7();
         const string blockId = "agent";
         const string invocationId = "invocation-7";
+        var observations = new List<PipelineObservation>();
         var invocation = new CapabilityInvocationState<TestState>(
             runId,
             blockId,
             invocationId,
-            new TestState(0)
+            new TestState(0),
+            new PipelineRunContext(runId, new RecordingPersistenceObserver(observations))
         );
         var function = capability.Bind(invocation);
         using var cancellation = new CancellationTokenSource();
@@ -487,9 +493,15 @@ public sealed class LocalCapabilityTests
         await function.InvokeAsync(Arguments(3));
         acceptedContext.Should().NotBeNull();
         acceptedContext!.RunId.Should().Be(runId);
-        acceptedContext.BlockId.Should().Be(blockId);
+        acceptedContext.StepId.Should().Be(blockId);
         acceptedContext.InvocationId.Should().Be(invocationId);
         acceptedContext.CapabilityId.Should().Be(CapabilityKind("increment"));
+        observations
+            .OfType<PipelineCapabilityAccepted>()
+            .Should()
+            .ContainSingle()
+            .Which.AcceptedCallId.Should()
+            .Be(acceptedContext.AcceptedCallId);
         invocation.Accepted!.State.Count.Should().Be(3);
     }
 

@@ -11,7 +11,6 @@ using Tandem.Domain;
 using Tandem.Git;
 using Tandem.Infrastructure;
 using Tandem.Infrastructure.Dashboard;
-using Tandem.Infrastructure.Projection;
 using Tandem.Interfaces;
 using Tandem.Ledger;
 using Tandem.Tool;
@@ -44,7 +43,6 @@ var inspectRunIdArgument = new Argument<string>("run-id") { Description = "Run I
 var acceptedOption = new Option<bool>("--accepted") { Description = "Show accepted values only." };
 var stepOption = new Option<string?>("--step") { Description = "Filter by semantic step ID." };
 var typeOption = new Option<string?>("--type") { Description = "Filter by value type." };
-var toolsOption = new Option<bool>("--tools") { Description = "Include operational tool events." };
 var jsonOption = new Option<bool>("--json") { Description = "Write machine-readable JSON." };
 var inspectCommand = new Command("inspect", "Inspect a persisted run timeline")
 {
@@ -52,7 +50,6 @@ var inspectCommand = new Command("inspect", "Inspect a persisted run timeline")
     acceptedOption,
     stepOption,
     typeOption,
-    toolsOption,
     jsonOption,
 };
 
@@ -122,7 +119,6 @@ inspectCommand.SetAction(
                 parseResult.GetValue(acceptedOption),
                 parseResult.GetValue(stepOption),
                 parseResult.GetValue(typeOption),
-                parseResult.GetValue(toolsOption),
                 parseResult.GetValue(jsonOption),
                 cancellationToken
             );
@@ -173,45 +169,17 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
     var chatClients = provider.GetRequiredService<TandemChatClients>();
     var composition = provider.GetRequiredService<DeliveryComposition>();
 
-    var eventStore = new EventStore(runPaths.RunDirectory);
     var renderer = new StreamRenderer();
     var journalObserver = new LedgerPipelineObserver(ledgerStore.ForRun(runPaths.RunId));
+    var liveTranscript = new LiveTranscript();
     try
     {
-        var runProjectors = new Dictionary<string, RunEventProjector>();
-        RunEventProjector GetProjector(string blockId)
-        {
-            if (!runProjectors.TryGetValue(blockId, out var p))
-            {
-                var profileName = blockId switch
-                {
-                    DeliveryIds.Planner => "planning",
-                    DeliveryIds.Reviewer => "review",
-                    _ => "implementation",
-                };
-                p = new RunEventProjector(
-                    runPaths.RunId,
-                    blockId,
-                    eventStore,
-                    profile: chatClients.ResolveProfile(profileName)
-                );
-                runProjectors[blockId] = p;
-            }
-            return p;
-        }
-
         var interactive = !Console.IsInputRedirected && !Console.IsOutputRedirected;
-        var dashboardObserver = new RunEventPipelineObserver(
-            GetProjector,
-            update =>
-            {
-                if (!interactive)
-                {
-                    renderer.RenderUpdate(update);
-                }
-            }
+        var runObserver = new CompositePipelineObserver(
+            journalObserver,
+            liveTranscript,
+            new TerminalPipelineObserver(renderer, interactive)
         );
-        var runObserver = new CompositePipelineObserver(journalObserver, dashboardObserver);
         var pipeline = composition.Build();
 
         var implProfile = chatClients.ResolveProfile("implementation");
@@ -223,10 +191,6 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
             Console.WriteLine();
         }
 
-        await new RunEventProjector(runPaths.RunId, "", eventStore).EmitRunStartedAsync(
-            packetPath,
-            cancellationToken
-        );
         await journalObserver.RecordRunStartedAsync(cancellationToken);
 
         using var runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -249,11 +213,13 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
                 ).WithAcceptanceUnitOfWork(new LedgerUnitOfWork(ledgerStore)),
                 runCts.Token
             );
-            renderer.RenderTerminalMessage(final);
+            if (!interactive)
+            {
+                renderer.RenderTerminalMessage(final);
+            }
             await PersistTerminalAsync(
                 runPaths.RunId,
                 final,
-                eventStore,
                 ledgerStore,
                 journalObserver,
                 CancellationToken.None
@@ -262,19 +228,16 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
         }
 
         var dashboard = new DashboardLoop(
-            runPaths.RunDirectory,
+            ledgerStore,
+            runPaths.RunId,
+            liveTranscript,
+            canSubmitAnswer: () => humanInteraction.HasPending(runPaths.RunId),
             onAnswerSubmitted: answer => humanInteraction.SubmitAsync(runPaths.RunId, answer),
             onPublishRequested: async () =>
             {
-                await PublishFromLedgerAsync(
-                    tandemHome,
-                    runPaths.RunId,
-                    null,
-                    eventStore,
-                    cancellationToken
-                );
+                await PublishFromLedgerAsync(tandemHome, runPaths.RunId, null, cancellationToken);
             },
-            onDetach: () =>
+            onCancel: () =>
             {
                 if (!completionTask.IsCompleted)
                 {
@@ -329,7 +292,6 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
     {
         await TryPersistInterruptedRunAsync(
             runPaths.RunId,
-            eventStore,
             ledgerStore,
             journalObserver,
             Tandem.Delivery.RunStatus.Cancelled,
@@ -345,7 +307,6 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
             : ex;
         await TryPersistInterruptedRunAsync(
             runPaths.RunId,
-            eventStore,
             ledgerStore,
             journalObserver,
             Tandem.Delivery.RunStatus.Faulted,
@@ -370,16 +331,22 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
     }
 
     renderer.Flush();
-    renderer.PrintTerminalResult();
+    var recordedRun = await ledgerStore.GetRunAsync(runPaths.RunId, CancellationToken.None);
+    var recordedDelivery = new DeliveryLedger(ledgerStore.ForRun(runPaths.RunId));
+    renderer.PrintTerminalResult(
+        recordedRun,
+        await recordedDelivery.ReadPublicationCandidateAsync(CancellationToken.None),
+        await ledgerStore
+            .ForRun(runPaths.RunId)
+            .ReadAsync(DeliveryLedger.VerificationResults, CancellationToken.None)
+    );
     Console.WriteLine();
     Console.WriteLine($"Completed: {runPaths.RunId}");
 
-    var terminalStatus = renderer.TerminalStatus;
-    return terminalStatus switch
+    return recordedRun.Status switch
     {
-        Tandem.Delivery.RunStatus.Ready => 0,
-        Tandem.Delivery.RunStatus.Failed => 3,
-        Tandem.Delivery.RunStatus.WaitingForHuman => 0,
+        LedgerRunStatus.Ready => 0,
+        LedgerRunStatus.Failed => 3,
         _ => 4,
     };
 }
@@ -411,13 +378,11 @@ static ServiceProvider BuildDeliveryServices(TandemConfig config, IDeliveryRecor
 static async Task PersistTerminalAsync(
     Guid runId,
     PipelineRunResult<DeliveryState> final,
-    EventStore eventStore,
     SqliteLedgerStore ledgerStore,
     LedgerPipelineObserver journalObserver,
     CancellationToken cancellationToken
 )
 {
-    var projector = new RunEventProjector(runId, "", eventStore);
     var status =
         final.Status == PipelineRunStatus.Succeeded
             ? Tandem.Delivery.RunStatus.Ready
@@ -428,23 +393,10 @@ static async Task PersistTerminalAsync(
         status == Tandem.Delivery.RunStatus.Ready ? LedgerRunStatus.Ready : LedgerRunStatus.Failed,
         cancellationToken
     );
-    switch (status)
-    {
-        case Tandem.Delivery.RunStatus.Ready:
-            await projector.EmitRunReadyAsync(final.State.CandidateSha, cancellationToken);
-            break;
-        case Tandem.Delivery.RunStatus.Failed:
-            await projector.EmitRunFailedAsync(
-                final.Outcome?.Summary ?? "unknown",
-                cancellationToken
-            );
-            break;
-    }
 }
 
 static async Task TryPersistInterruptedRunAsync(
     Guid runId,
-    EventStore eventStore,
     SqliteLedgerStore ledgerStore,
     LedgerPipelineObserver journalObserver,
     Tandem.Delivery.RunStatus status,
@@ -461,15 +413,6 @@ static async Task TryPersistInterruptedRunAsync(
                 : LedgerRunStatus.Faulted,
             CancellationToken.None
         );
-        var projector = new RunEventProjector(runId, "", eventStore);
-        if (status == Tandem.Delivery.RunStatus.Cancelled)
-        {
-            await projector.EmitRunCancelledAsync(reason, CancellationToken.None);
-        }
-        else
-        {
-            await projector.EmitRunFaultedAsync(reason, CancellationToken.None);
-        }
     }
     catch (Exception persistenceError)
     {
@@ -484,7 +427,6 @@ static async Task<int> InspectAsync(
     bool acceptedOnly,
     string? step,
     string? valueType,
-    bool includeTools,
     bool json,
     CancellationToken cancellationToken
 )
@@ -496,12 +438,11 @@ static async Task<int> InspectAsync(
     var tandemHome = TandemHomeResolver.Resolve();
     var store = new SqliteLedgerStore(Path.Combine(tandemHome, "ledger.sqlite3"));
     await store.InitializeAsync(cancellationToken);
-    var inspection = await new RunInspector(store, tandemHome).InspectAsync(
+    var inspection = await new RunInspector(store).InspectAsync(
         runId,
         acceptedOnly,
         step,
         valueType,
-        includeTools,
         cancellationToken
     );
 
@@ -559,16 +500,17 @@ static async Task<int> PublishAsync(
         Console.Error.WriteLine($"Error: Invalid run ID '{runIdArg}'.");
         return 1;
     }
-    var runDir = Path.Combine(tandemHome, "runs", runId.ToString("N"));
-    var eventStore = new EventStore(runDir);
-    return await PublishFromLedgerAsync(tandemHome, runId, branch, eventStore, cancellationToken);
+    var publication = await PublishFromLedgerAsync(tandemHome, runId, branch, cancellationToken);
+    Console.WriteLine($"Published: {publication.Branch}");
+    Console.WriteLine($"Commit:    {publication.CandidateSha}");
+    Console.WriteLine($"Repository:{publication.Repository}");
+    return 0;
 }
 
-static async Task<int> PublishFromLedgerAsync(
+static async Task<PublicationResultRecord> PublishFromLedgerAsync(
     string tandemHome,
     Guid runId,
     string? branch,
-    EventStore eventStore,
     CancellationToken cancellationToken
 )
 {
@@ -580,19 +522,16 @@ static async Task<int> PublishFromLedgerAsync(
         throw new InvalidOperationException($"Run is not Ready (current: {run.Status}).");
     }
     var records = new DeliveryLedger(store.ForRun(runId));
-    var result = await new PublicationOperation(new GitProcess(), records).ExecuteAsync(
+    await new PublicationOperation(new GitProcess(), records).ExecuteAsync(
         branch,
         cancellationToken
     );
-    await new RunEventProjector(runId, "", eventStore).EmitRunPublishedAsync(
-        result.Branch,
-        result.CandidateSha,
-        cancellationToken
-    );
-    Console.WriteLine($"Published: {result.Branch}");
-    Console.WriteLine($"Commit:    {result.CandidateSha}");
-    Console.WriteLine($"Repository:{result.Repository}");
-    return 0;
+    var publication = (
+        await store.ForRun(runId).ReadAsync(DeliveryLedger.PublicationResults, cancellationToken)
+    )
+        .Last()
+        .Value;
+    return publication;
 }
 
 file sealed class ChatClientBuilderFactory(TandemConfig config)
@@ -653,10 +592,10 @@ file sealed class StreamRenderer
             return;
         }
 
-        RenderTerminalBlockTransition(msg);
+        RenderTerminalStepTransition(msg);
     }
 
-    private void RenderTerminalBlockTransition(PipelineRunResult<DeliveryState>? msg)
+    private void RenderTerminalStepTransition(PipelineRunResult<DeliveryState>? msg)
     {
         if (msg?.Outcome is { } outcome)
         {
@@ -664,7 +603,7 @@ file sealed class StreamRenderer
                 outcome.Duration.TotalSeconds >= 1
                     ? $"{outcome.Duration.TotalSeconds:F1}s"
                     : $"{outcome.Duration.TotalMilliseconds:F0}ms";
-            Console.WriteLine($"[block] {outcome.StepId} completed: {outcome.Kind} ({durStr})");
+            Console.WriteLine($"[step] {outcome.StepId} completed: {outcome.Kind} ({durStr})");
         }
         if (msg is not null)
         {
@@ -678,37 +617,26 @@ file sealed class StreamRenderer
         FlushReasoning();
     }
 
-    public void PrintTerminalResult()
+    public void PrintTerminalResult(
+        LedgerRun run,
+        PublicationCandidateDocument? candidate,
+        IReadOnlyList<AcceptedLedgerEntry<VerificationResultRecord>> verification
+    )
     {
-        if (_finalMessage is not { } msg)
-        {
-            return;
-        }
-
-        var ctx = msg.State;
         Console.WriteLine();
-        Console.WriteLine($"Status:       {TerminalStatus}");
-        Console.WriteLine($"Run:          {msg.RunId}");
-        Console.WriteLine($"Base:         {ctx.PinnedBaseSha}");
-        if (ctx.CandidateSha is { } candidate)
+        Console.WriteLine($"Status:       {run.Status}");
+        Console.WriteLine($"Run:          {run.RunId}");
+        if (candidate is not null)
         {
-            Console.WriteLine($"Candidate:    {candidate}");
+            Console.WriteLine($"Base:         {candidate.PinnedBaseSha}");
+            Console.WriteLine($"Candidate:    {candidate.CandidateSha}");
+            Console.WriteLine($"Workspace:    {candidate.WorkspacePath}");
         }
-        Console.WriteLine($"Workspace:    {ctx.WorkspacePath}");
-        var passed = ctx.VerificationResults.Count(r => r.ExitCode == 0);
-        var total = ctx.VerificationResults.Count;
+        var passed = verification.Count(entry => entry.Value.Result.ExitCode == 0);
+        var total = verification.Count;
         if (total > 0)
         {
             Console.WriteLine($"Verification: {passed}/{total}");
-        }
-        if (ctx.PlannerDecision is { } decision && !string.IsNullOrEmpty(decision.Rationale))
-        {
-            Console.WriteLine($"Planner:      {decision.Rationale}");
-        }
-        var question = ctx.PlannerDecision?.HumanQuestion ?? ctx.ReviewerDecision?.HumanQuestion;
-        if (question is not null)
-        {
-            Console.WriteLine($"Question:     {question}");
         }
     }
 
@@ -800,5 +728,21 @@ file sealed class StreamRenderer
             }
             _reasoning.Clear();
         }
+    }
+}
+
+file sealed class TerminalPipelineObserver(StreamRenderer renderer, bool interactive)
+    : IPipelineObserver
+{
+    public ValueTask ObserveAsync(
+        PipelineObservation observation,
+        CancellationToken cancellationToken
+    )
+    {
+        if (!interactive && observation is PipelineAgentUpdated update)
+        {
+            renderer.RenderUpdate(update.Update);
+        }
+        return ValueTask.CompletedTask;
     }
 }

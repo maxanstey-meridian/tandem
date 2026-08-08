@@ -231,7 +231,7 @@ public sealed class ProjectBoundaryTests
         songwriter.Should().NotContain("IRawPipelineNode");
         File.ReadAllText(Path("samples/Tandem.Sample.Songwriter/SongwriterDefinitions.cs"))
             .Should()
-            .Contain("PipelineNodes.Complete<SongwriterState>");
+            .Contain("PipelineNodes.Complete(new SongwriterComplete())");
         songwriter.Should().NotContain("[Union");
         File.ReadAllText(Path("samples/Tandem.Sample.Songwriter/SongwriterComposition.cs"))
             .Should()

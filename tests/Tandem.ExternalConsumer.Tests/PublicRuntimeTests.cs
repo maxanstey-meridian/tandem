@@ -15,7 +15,7 @@ public sealed class PublicRuntimeTests
             _ => new PublicQuestion("answer"),
             (state, answer) => state with { Answer = answer.Text }
         );
-        var complete = PipelineNodes.Complete<PublicState>("complete");
+        var complete = PipelineNodes.Complete(new PublicCompletion("complete"));
         var pipeline = Pipeline
             .Start(interaction, "interaction-start")
             .Route(interaction, complete, "answered")
@@ -52,7 +52,7 @@ public sealed class PublicRuntimeTests
             (state, answer) => state with { Answer = $"{state.Answer},{answer.Text}" }
         );
         var between = new PublicBetweenStage();
-        var complete = PipelineNodes.Complete<PublicState>("complete");
+        var complete = PipelineNodes.Complete(new PublicCompletion("complete"));
         var pipeline = Pipeline
             .Start(start, "identity-bound-interactions")
             .Route(start.Success, first, "first")
@@ -102,7 +102,7 @@ public sealed class PublicRuntimeTests
             state => new PublicQuestion($"Count: {state.Count}"),
             (state, answer) => state with { Answer = answer.Text }
         );
-        var complete = PipelineNodes.Complete<PublicState>("complete");
+        var complete = PipelineNodes.Complete(new PublicCompletion("complete"));
         var pipeline = Pipeline
             .Start(start, "external-interaction")
             .Route(start.Success, interaction, "ask")
@@ -184,7 +184,7 @@ public sealed class PublicRuntimeTests
             state => new PublicQuestion($"Count: {state.Count}"),
             (state, answer) => state with { Answer = answer.Text }
         );
-        var complete = PipelineNodes.Complete<PublicState>("complete");
+        var complete = PipelineNodes.Complete(new PublicCompletion("complete"));
         var pipeline = Pipeline
             .Start(agent, "agent-observation")
             .Route(agent.Success, interaction, "ask")
@@ -222,7 +222,7 @@ public sealed class PublicRuntimeTests
             state => new OpaqueQuestion(state.Reference),
             (state, answer) => state with { Answer = answer.Text }
         );
-        var complete = PipelineNodes.Complete<PublicState>("complete");
+        var complete = PipelineNodes.Complete(new PublicCompletion("complete"));
         var pipeline = Pipeline
             .Start(start, "opaque-interaction")
             .Route(start.Success, interaction, "ask")
@@ -347,6 +347,13 @@ public sealed record PublicQuestion(string Text);
 public sealed record OpaqueQuestion(NonSerializableReference Reference);
 
 public sealed record PublicAnswer(string Text);
+
+public sealed class PublicCompletion(string id) : IPipelineCompletion<PublicState>
+{
+    public string Id => id;
+
+    public string Summarize(PublicState state) => id;
+}
 
 [PipelineStage("public-increment")]
 public sealed partial class PublicIncrementStage

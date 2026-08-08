@@ -1,130 +1,60 @@
-using System.Text.Json;
 using FluentAssertions;
-using Microsoft.Agents.AI.Workflows;
-using Tandem.Domain;
 
 namespace Tandem.Tests.Composition;
 
 public sealed class ExecutionEnvelopeInvariantTests
 {
     [Fact]
-    public async Task StateReturn_ReplacesOnlyStateAfterOperationUpdatesRuntime()
+    public async Task SupportedOperationPath_PropagatesStateAndOutcomeEnvelope()
     {
-        var input = Message(1, "state");
-        var updatedRuntime = UpdatedRuntime(input.Runtime, "state-operation");
-        var step = new EnvelopeStateStage(
-            input with
-            {
-                Runtime = updatedRuntime,
-                LatestOutcome = Outcome("state-operation"),
-            }
-        );
+        var runId = Guid.CreateVersion7();
+        var step = new EnvelopeOperationStage();
 
-        var output = await RunAsync(Pipeline.Start(step, "state-envelope").Build(step), input);
+        var result = await RunAsync(step, new EnvelopeState(2, "initial"), runId);
 
-        output.State.Should().Be(new EnvelopeState(2, "state"));
-        output.Runtime.Should().BeSameAs(updatedRuntime);
-        output.Runtime.AgentSessions.Should().ContainKey("state-operation");
-    }
-
-    [Fact]
-    public async Task OutcomeAdaptation_PreservesOperationEnvelopeUpdates()
-    {
-        var input = Message(4, "custom");
-        var operationOutcome = Outcome("custom-operation");
-        var operationMessage = input with
-        {
-            Runtime = UpdatedRuntime(input.Runtime, "custom-operation"),
-            State = input.State with { Count = 5 },
-            LatestOutcome = operationOutcome,
-        };
-        var step = new EnvelopeCustomStage(operationMessage);
-
-        var output = await RunAsync(Pipeline.Start(step, "custom-envelope").Build(step), input);
-
-        output.State.Count.Should().Be(5);
-        output.Runtime.Should().BeSameAs(operationMessage.Runtime);
-        output.Runtime.InvocationCounts["custom-operation"].Should().Be(1);
-        output.LatestOutcome!.Kind.Should().Be(StandardOutcomeKinds.Success);
-        output.LatestResult!.CaseId.Should().Be("Success");
+        result.State.Should().Be(new EnvelopeState(4, "first-operation", runId));
+        result.Outcome!.StepId.Should().Be("envelope-operation");
+        result.Outcome.Kind.Should().Be(StandardOutcomeKinds.Success);
     }
 
     [Fact]
     public async Task NestedGeneratedExecution_RestoresOuterScope()
     {
-        var input = Message(1, "outer");
-        var outerResult = input with
-        {
-            Runtime = UpdatedRuntime(input.Runtime, "outer-after-inner"),
-            State = input.State with { Count = 3 },
-            LatestOutcome = Outcome("outer-after-inner"),
-        };
-        var step = new NestedEnvelopeStage(outerResult);
+        var outerRunId = Guid.CreateVersion7();
+        var step = new NestedEnvelopeStage();
 
-        var output = await RunAsync(Pipeline.Start(step, "nested-envelope").Build(step), input);
+        var result = await RunAsync(step, new EnvelopeState(1, "outer"), outerRunId);
 
-        output.State.Count.Should().Be(3);
-        output.Runtime.AgentSessions.Should().ContainKey("outer-after-inner");
-        output.Runtime.AgentSessions.Should().NotContainKey("inner");
+        result.State.Should().Be(new EnvelopeState(3, "outer", outerRunId));
     }
 
     [Fact]
-    public async Task ParallelGeneratedExecutions_DoNotCrossContaminateScopes()
+    public async Task ParallelPipelineExecutions_DoNotCrossContaminateScopes()
     {
         var gate = new EnvelopeGate(2);
-        var firstInput = Message(1, "first");
-        var secondInput = Message(10, "second");
-        var first = new ParallelEnvelopeStage(
-            firstInput with
-            {
-                Runtime = UpdatedRuntime(firstInput.Runtime, "first"),
-                State = firstInput.State with { Count = 2 },
-                LatestOutcome = Outcome("first"),
-            },
-            gate
-        );
-        var second = new ParallelEnvelopeStage(
-            secondInput with
-            {
-                Runtime = UpdatedRuntime(secondInput.Runtime, "second"),
-                State = secondInput.State with { Count = 11 },
-                LatestOutcome = Outcome("second"),
-            },
-            gate
+        var firstRunId = Guid.CreateVersion7();
+        var secondRunId = Guid.CreateVersion7();
+        var first = new ParallelEnvelopeStage(gate);
+        var second = new ParallelEnvelopeStage(gate);
+
+        var results = await Task.WhenAll(
+            RunAsync(first, new EnvelopeState(1, "first"), firstRunId),
+            RunAsync(second, new EnvelopeState(10, "second"), secondRunId)
         );
 
-        var outputs = await Task.WhenAll(
-            RunAsync(Pipeline.Start(first, "parallel-first").Build(first), firstInput),
-            RunAsync(Pipeline.Start(second, "parallel-second").Build(second), secondInput)
-        );
-
-        outputs[0].Runtime.RunId.Should().Be(firstInput.Runtime.RunId);
-        outputs[0].Runtime.AgentSessions.Keys.Should().BeEquivalentTo("first");
-        outputs[0].State.Should().Be(new EnvelopeState(2, "first"));
-        outputs[1].Runtime.RunId.Should().Be(secondInput.Runtime.RunId);
-        outputs[1].Runtime.AgentSessions.Keys.Should().BeEquivalentTo("second");
-        outputs[1].State.Should().Be(new EnvelopeState(11, "second"));
+        results[0].State.Should().Be(new EnvelopeState(2, "first", firstRunId));
+        results[1].State.Should().Be(new EnvelopeState(11, "second", secondRunId));
     }
 
     [Fact]
     public async Task ConcurrentOperationsWithinGeneratedExecution_AreRejectedDeterministically()
     {
-        var input = Message(1, "siblings");
-        var step = new ConcurrentOperationEnvelopeStage(
-            input with
-            {
-                State = input.State with { Count = 2 },
-                LatestOutcome = Outcome("siblings"),
-            }
-        );
+        var step = new ConcurrentOperationEnvelopeStage();
 
-        var output = await RunAsync(
-            Pipeline.Start(step, "concurrent-operation-envelope").Build(step),
-            input
-        );
+        var result = await RunAsync(step, new EnvelopeState(1, "siblings"));
 
-        output.State.Count.Should().Be(3);
-        output
+        result.State.Count.Should().Be(3);
+        result
             .State.Owner.Should()
             .Be(
                 "Concurrent sibling operations cannot run within the same generated pipeline step. Await the active operation before starting another."
@@ -132,36 +62,23 @@ public sealed class ExecutionEnvelopeInvariantTests
     }
 
     [Fact]
-    public async Task FailedAndCancelledOperations_ReleaseConcurrentOperationGuard()
+    public async Task FailedAndCancelledOperations_ReleaseOperationGuard()
     {
-        var input = Message(1, "release");
-        var step = new ReleasingOperationEnvelopeStage(
-            input with
-            {
-                State = input.State with { Count = 2 },
-                LatestOutcome = Outcome("release"),
-            }
-        );
+        var step = new ReleasingOperationEnvelopeStage();
 
-        var output = await RunAsync(
-            Pipeline.Start(step, "releasing-operation-envelope").Build(step),
-            input
-        );
+        var result = await RunAsync(step, new EnvelopeState(1, "release"));
 
-        output.State.Should().Be(new EnvelopeState(2, "release"));
+        result.State.Should().Be(new EnvelopeState(2, "release"));
     }
 
     [Fact]
     public async Task Cancellation_ClearsExecutionScope()
     {
         var step = new CancelledEnvelopeStage();
+        var run = async () => await RunAsync(step, new EnvelopeState(0, "cancelled"));
 
-        await RunForFailureAsync(
-            Pipeline.Start(step, "cancelled-envelope").Build(step),
-            Message(0, "cancelled"),
-            CancellationToken.None
-        );
-
+        var exception = await run.Should().ThrowAsync<PipelineRunException>();
+        exception.Which.InnerException.Should().BeAssignableTo<OperationCanceledException>();
         await AssertOperationOutsideExecutionFailsAsync();
     }
 
@@ -169,13 +86,14 @@ public sealed class ExecutionEnvelopeInvariantTests
     public async Task Exception_ClearsExecutionScope()
     {
         var step = new FaultedEnvelopeStage();
+        var run = async () => await RunAsync(step, new EnvelopeState(0, "faulted"));
 
-        await RunForFailureAsync(
-            Pipeline.Start(step, "faulted-envelope").Build(step),
-            Message(0, "faulted"),
-            CancellationToken.None
-        );
-
+        var exception = await run.Should().ThrowAsync<PipelineRunException>();
+        exception
+            .Which.InnerException.Should()
+            .BeOfType<InvalidOperationException>()
+            .Which.Message.Should()
+            .Be("Expected fault.");
         await AssertOperationOutsideExecutionFailsAsync();
     }
 
@@ -185,25 +103,25 @@ public sealed class ExecutionEnvelopeInvariantTests
         await AssertOperationOutsideExecutionFailsAsync();
     }
 
-    private static PipelineMessage<EnvelopeState> Message(int count, string owner) =>
-        new(PipelineRuntime.Create(Guid.CreateVersion7()), new EnvelopeState(count, owner));
-
-    private static PipelineRuntime UpdatedRuntime(PipelineRuntime runtime, string id) =>
-        runtime
-            .WithSession(id, JsonSerializer.SerializeToElement(new { id }))
-            .WithUsage(id, new AgentUsage(1, 2, 3, 100, 80, TimeSpan.FromMilliseconds(4)))
-            .WithProfile(id, new AgentProfileSelection("profile-" + id, "test"))
-            .IncrementInvocations(id);
-
-    private static BlockOutcome Outcome(string id) =>
-        new("test.updated", id, "Updated envelope", JsonSerializer.SerializeToElement(new { id }));
+    private static Task<PipelineRunResult<EnvelopeState>> RunAsync<TStep>(
+        TStep step,
+        EnvelopeState state,
+        Guid? runId = null
+    )
+        where TStep : IGeneratedPipelineStep<EnvelopeState, Outcome<EnvelopeState>> =>
+        new PipelineRunner().RunAsync(
+            Pipeline.Start(step, "execution-envelope").Build(step),
+            state,
+            new PipelineRunOptions(RunId: runId)
+        );
 
     private static async Task AssertOperationOutsideExecutionFailsAsync()
     {
         var act = async () =>
-            await PipelineOperation.RunAsync(
-                () => ValueTask.FromResult(Message(0, "misuse")),
-                result => result.State
+            await PipelineOperation.RunOutcomeAsync(
+                new EnvelopeState(0, "outside"),
+                context => ValueTask.FromResult(Result(context.State, "outside")),
+                Success
             );
 
         await act.Should()
@@ -211,85 +129,103 @@ public sealed class ExecutionEnvelopeInvariantTests
             .WithMessage("*active generated pipeline step*");
     }
 
-    private static async Task<PipelineMessage<EnvelopeState>> RunAsync(
-        Pipeline<EnvelopeState> pipeline,
-        PipelineMessage<EnvelopeState> input
-    )
-    {
-        var (output, failure) = await ExecuteAsync(pipeline, input, CancellationToken.None);
-        failure.Should().BeNull();
-        output.Should().NotBeNull();
-        return output!;
-    }
+    internal static OperationResult<EnvelopeState> Result(EnvelopeState state, string stepId) =>
+        new(state, new OperationOutcome("test.operation", stepId, stepId));
 
-    private static async Task RunForFailureAsync(
-        Pipeline<EnvelopeState> pipeline,
-        PipelineMessage<EnvelopeState> input,
-        CancellationToken cancellationToken
-    )
-    {
-        var (_, failure) = await ExecuteAsync(pipeline, input, cancellationToken);
-        failure.Should().NotBeNull();
-    }
-
-    private static async Task<(
-        PipelineMessage<EnvelopeState>? Output,
-        Exception? Failure
-    )> ExecuteAsync(
-        Pipeline<EnvelopeState> pipeline,
-        PipelineMessage<EnvelopeState> input,
-        CancellationToken cancellationToken
-    )
-    {
-        await using var run = await InProcessExecution.RunStreamingAsync(
-            pipeline.Workflow,
-            input,
-            "envelope-" + Guid.NewGuid().ToString("N"),
-            cancellationToken
-        );
-        PipelineMessage<EnvelopeState>? output = null;
-        Exception? failure = null;
-
-        await foreach (var evt in run.WatchStreamAsync(CancellationToken.None))
-        {
-            if (evt is WorkflowErrorEvent error)
-            {
-                failure = error.Exception;
-            }
-            else if (evt is ExecutorFailedEvent failed)
-            {
-                failure = failed.Data;
-            }
-            else if (
-                evt is WorkflowOutputEvent workflowOutput
-                && workflowOutput.Is<PipelineMessage<EnvelopeState>>()
-            )
-            {
-                output = workflowOutput.As<PipelineMessage<EnvelopeState>>();
-            }
-        }
-
-        return (output, failure);
-    }
+    internal static Outcome<EnvelopeState> Success(OperationResult<EnvelopeState> result) =>
+        new Outcome<EnvelopeState>.Success(result.State);
 }
 
-public sealed record EnvelopeState(int Count, string Owner);
+public sealed record EnvelopeState(int Count, string Owner, Guid? ObservedRunId = null);
 
-[PipelineStage("envelope-state")]
-internal sealed partial class EnvelopeStateStage(PipelineMessage<EnvelopeState> operationMessage)
+[PipelineStage("envelope-operation")]
+public sealed partial class EnvelopeOperationStage
 {
-    public async ValueTask<EnvelopeState> ExecuteAsync(EnvelopeState state, CancellationToken _)
+    public async ValueTask<Outcome<EnvelopeState>> ExecuteAsync(
+        EnvelopeState state,
+        CancellationToken _
+    )
     {
-        await PipelineOperation.RunAsync(
-            () => ValueTask.FromResult(operationMessage),
-            result => result.State
+        var first = await PipelineOperation.RunOutcomeAsync(
+            state,
+            context =>
+                ValueTask.FromResult(
+                    ExecutionEnvelopeInvariantTests.Result(
+                        context.State with
+                        {
+                            Count = context.State.Count + 1,
+                            ObservedRunId = context.RunId,
+                        },
+                        "first-operation"
+                    )
+                ),
+            ExecutionEnvelopeInvariantTests.Success
         );
-        return state with { Count = state.Count + 1 };
+
+        var firstState = first is Outcome<EnvelopeState>.Success success
+            ? success.State
+            : throw new InvalidOperationException("Expected the first operation to succeed.");
+        return await PipelineOperation.RunOutcomeAsync(
+            firstState,
+            context =>
+            {
+                if (context.LatestOutcome?.StepId != "first-operation")
+                {
+                    throw new InvalidOperationException(
+                        "The prior operation outcome was not propagated."
+                    );
+                }
+                return ValueTask.FromResult(
+                    ExecutionEnvelopeInvariantTests.Result(
+                        context.State with
+                        {
+                            Count = context.State.Count + 1,
+                            Owner = context.LatestOutcome.StepId,
+                        },
+                        "second-operation"
+                    )
+                );
+            },
+            ExecutionEnvelopeInvariantTests.Success
+        );
     }
 }
 
-[PipelineStage("envelope-custom")]
-internal sealed partial class EnvelopeCustomStage(PipelineMessage<EnvelopeState> operationMessage)
+[PipelineStage("nested-envelope")]
+public sealed partial class NestedEnvelopeStage
+{
+    public async ValueTask<Outcome<EnvelopeState>> ExecuteAsync(
+        EnvelopeState state,
+        CancellationToken cancellationToken
+    )
+    {
+        var inner = new InnerEnvelopeStage();
+        await new PipelineRunner().RunAsync(
+            Pipeline.Start(inner, "inner-envelope").Build(inner),
+            new EnvelopeState(20, "inner"),
+            cancellationToken: cancellationToken
+        );
+
+        return await PipelineOperation.RunOutcomeAsync(
+            state,
+            context =>
+                ValueTask.FromResult(
+                    ExecutionEnvelopeInvariantTests.Result(
+                        context.State with
+                        {
+                            Count = context.State.Count + 2,
+                            ObservedRunId = context.RunId,
+                        },
+                        "outer-after-inner"
+                    )
+                ),
+            ExecutionEnvelopeInvariantTests.Success
+        );
+    }
+}
+
+[PipelineStage("inner-envelope")]
+public sealed partial class InnerEnvelopeStage
 {
     public ValueTask<Outcome<EnvelopeState>> ExecuteAsync(
         EnvelopeState state,
@@ -297,75 +233,43 @@ internal sealed partial class EnvelopeCustomStage(PipelineMessage<EnvelopeState>
     ) =>
         PipelineOperation.RunOutcomeAsync(
             state,
-            pipeline => ValueTask.FromResult(operationMessage),
-            result => new Outcome<EnvelopeState>.Success(result.State)
-        );
-}
-
-[PipelineStage("nested-envelope")]
-internal sealed partial class NestedEnvelopeStage(PipelineMessage<EnvelopeState> outerResult)
-{
-    public async ValueTask<EnvelopeState> ExecuteAsync(EnvelopeState state, CancellationToken _)
-    {
-        var innerInput = new PipelineMessage<EnvelopeState>(
-            PipelineRuntime.Create(Guid.CreateVersion7()),
-            state with
-            {
-                Owner = "inner",
-            }
-        );
-        var inner = new EnvelopeStateStage(
-            innerInput with
-            {
-                Runtime = UpdatedInnerRuntime(innerInput.Runtime),
-                LatestOutcome = new BlockOutcome(
-                    "test.updated",
-                    "inner",
-                    "Updated envelope",
-                    JsonSerializer.SerializeToElement(new { id = "inner" })
+            context =>
+                ValueTask.FromResult(
+                    ExecutionEnvelopeInvariantTests.Result(
+                        context.State with
+                        {
+                            Count = context.State.Count + 1,
+                        },
+                        "inner"
+                    )
                 ),
-            }
+            ExecutionEnvelopeInvariantTests.Success
         );
-        await RunInnerAsync(Pipeline.Start(inner, "inner-envelope").Build(inner), innerInput);
-        return await PipelineOperation.RunAsync(
-            () => ValueTask.FromResult(outerResult),
-            result => result.State
-        );
-    }
-
-    private static PipelineRuntime UpdatedInnerRuntime(PipelineRuntime runtime) =>
-        runtime.WithSession("inner", JsonSerializer.SerializeToElement(new { id = "inner" }));
-
-    private static async Task RunInnerAsync(
-        Pipeline<EnvelopeState> pipeline,
-        PipelineMessage<EnvelopeState> input
-    )
-    {
-        await using var run = await InProcessExecution.RunStreamingAsync(
-            pipeline.Workflow,
-            input,
-            "inner-envelope-" + Guid.NewGuid().ToString("N"),
-            CancellationToken.None
-        );
-        await foreach (var _ in run.WatchStreamAsync(CancellationToken.None)) { }
-    }
 }
 
 [PipelineStage("parallel-envelope")]
-internal sealed partial class ParallelEnvelopeStage(
-    PipelineMessage<EnvelopeState> operationMessage,
-    EnvelopeGate gate
-)
+public sealed partial class ParallelEnvelopeStage(EnvelopeGate gate)
 {
-    public async ValueTask<EnvelopeState> ExecuteAsync(
-        EnvelopeState _,
-        CancellationToken cancellationToken
+    public async ValueTask<Outcome<EnvelopeState>> ExecuteAsync(
+        EnvelopeState state,
+        CancellationToken _
     )
     {
         await gate.SignalAndWaitAsync();
-        return await PipelineOperation.RunAsync(
-            () => ValueTask.FromResult(operationMessage),
-            result => result.State
+        return await PipelineOperation.RunOutcomeAsync(
+            state,
+            context =>
+                ValueTask.FromResult(
+                    ExecutionEnvelopeInvariantTests.Result(
+                        context.State with
+                        {
+                            Count = context.State.Count + 1,
+                            ObservedRunId = context.RunId,
+                        },
+                        context.State.Owner
+                    )
+                ),
+            ExecutionEnvelopeInvariantTests.Success
         );
     }
 }
@@ -388,23 +292,31 @@ public sealed class EnvelopeGate(int participants)
 }
 
 [PipelineStage("concurrent-operation-envelope")]
-internal sealed partial class ConcurrentOperationEnvelopeStage(
-    PipelineMessage<EnvelopeState> operationMessage
-)
+public sealed partial class ConcurrentOperationEnvelopeStage
 {
-    public async ValueTask<EnvelopeState> ExecuteAsync(EnvelopeState state, CancellationToken _)
+    public async ValueTask<Outcome<EnvelopeState>> ExecuteAsync(
+        EnvelopeState state,
+        CancellationToken _
+    )
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var first = PipelineOperation
-            .RunAsync(
-                async () =>
+            .RunOutcomeAsync(
+                state,
+                async context =>
                 {
                     entered.SetResult();
                     await release.Task;
-                    return operationMessage;
+                    return ExecutionEnvelopeInvariantTests.Result(
+                        context.State with
+                        {
+                            Count = 2,
+                        },
+                        "first-sibling"
+                    );
                 },
-                result => result.State
+                ExecutionEnvelopeInvariantTests.Success
             )
             .AsTask();
 
@@ -412,13 +324,15 @@ internal sealed partial class ConcurrentOperationEnvelopeStage(
         string rejection;
         try
         {
-            await PipelineOperation.RunAsync(
-                () => ValueTask.FromResult(operationMessage),
-                result => result.State
+            await PipelineOperation.RunOutcomeAsync(
+                state,
+                context =>
+                    ValueTask.FromResult(
+                        ExecutionEnvelopeInvariantTests.Result(context.State, "second-sibling")
+                    ),
+                ExecutionEnvelopeInvariantTests.Success
             );
-            throw new InvalidOperationException(
-                "Expected the concurrent operation to be rejected."
-            );
+            throw new InvalidOperationException("Expected the sibling operation to be rejected.");
         }
         catch (InvalidOperationException exception)
         {
@@ -429,49 +343,75 @@ internal sealed partial class ConcurrentOperationEnvelopeStage(
             release.SetResult();
         }
 
-        await first;
-        var final = await PipelineOperation.RunAsync(
-            () => ValueTask.FromResult(operationMessage with { State = state with { Count = 3 } }),
-            result => result.State
+        var firstResult = await first;
+        var firstState = firstResult is Outcome<EnvelopeState>.Success success
+            ? success.State
+            : throw new InvalidOperationException("Expected the first sibling to succeed.");
+        return await PipelineOperation.RunOutcomeAsync(
+            firstState,
+            context =>
+                ValueTask.FromResult(
+                    ExecutionEnvelopeInvariantTests.Result(
+                        context.State with
+                        {
+                            Count = 3,
+                            Owner = rejection,
+                        },
+                        "after-siblings"
+                    )
+                ),
+            ExecutionEnvelopeInvariantTests.Success
         );
-        return final with { Owner = rejection };
     }
 }
 
 [PipelineStage("releasing-operation-envelope")]
-internal sealed partial class ReleasingOperationEnvelopeStage(
-    PipelineMessage<EnvelopeState> operationMessage
-)
+public sealed partial class ReleasingOperationEnvelopeStage
 {
-    public async ValueTask<EnvelopeState> ExecuteAsync(EnvelopeState _, CancellationToken __)
+    public async ValueTask<Outcome<EnvelopeState>> ExecuteAsync(
+        EnvelopeState state,
+        CancellationToken _
+    )
     {
         try
         {
-            await PipelineOperation.RunAsync<EnvelopeState, EnvelopeState>(
-                () =>
-                    ValueTask.FromException<PipelineMessage<EnvelopeState>>(
+            await PipelineOperation.RunOutcomeAsync(
+                state,
+                _ =>
+                    ValueTask.FromException<OperationResult<EnvelopeState>>(
                         new InvalidOperationException("Expected operation failure.")
                     ),
-                result => result.State
+                ExecutionEnvelopeInvariantTests.Success
             );
         }
         catch (InvalidOperationException) { }
 
         try
         {
-            await PipelineOperation.RunAsync<EnvelopeState, EnvelopeState>(
-                () =>
-                    ValueTask.FromCanceled<PipelineMessage<EnvelopeState>>(
+            await PipelineOperation.RunOutcomeAsync(
+                state,
+                _ =>
+                    ValueTask.FromCanceled<OperationResult<EnvelopeState>>(
                         new CancellationToken(canceled: true)
                     ),
-                result => result.State
+                ExecutionEnvelopeInvariantTests.Success
             );
         }
         catch (OperationCanceledException) { }
 
-        return await PipelineOperation.RunAsync(
-            () => ValueTask.FromResult(operationMessage),
-            result => result.State
+        return await PipelineOperation.RunOutcomeAsync(
+            state,
+            context =>
+                ValueTask.FromResult(
+                    ExecutionEnvelopeInvariantTests.Result(
+                        context.State with
+                        {
+                            Count = context.State.Count + 1,
+                        },
+                        "after-failure-and-cancellation"
+                    )
+                ),
+            ExecutionEnvelopeInvariantTests.Success
         );
     }
 }
@@ -479,17 +419,33 @@ internal sealed partial class ReleasingOperationEnvelopeStage(
 [PipelineStage("cancelled-envelope")]
 public sealed partial class CancelledEnvelopeStage
 {
-    public ValueTask ExecuteAsync(EnvelopeState _, CancellationToken cancellationToken)
-    {
-        using var cancellation = new CancellationTokenSource();
-        cancellation.Cancel();
-        return ValueTask.FromCanceled(cancellation.Token);
-    }
+    public ValueTask<Outcome<EnvelopeState>> ExecuteAsync(
+        EnvelopeState state,
+        CancellationToken _
+    ) =>
+        PipelineOperation.RunOutcomeAsync(
+            state,
+            _ =>
+                ValueTask.FromCanceled<OperationResult<EnvelopeState>>(
+                    new CancellationToken(canceled: true)
+                ),
+            ExecutionEnvelopeInvariantTests.Success
+        );
 }
 
 [PipelineStage("faulted-envelope")]
 public sealed partial class FaultedEnvelopeStage
 {
-    public ValueTask ExecuteAsync(EnvelopeState _, CancellationToken cancellationToken) =>
-        ValueTask.FromException(new InvalidOperationException("Expected envelope test fault."));
+    public ValueTask<Outcome<EnvelopeState>> ExecuteAsync(
+        EnvelopeState state,
+        CancellationToken _
+    ) =>
+        PipelineOperation.RunOutcomeAsync(
+            state,
+            _ =>
+                ValueTask.FromException<OperationResult<EnvelopeState>>(
+                    new InvalidOperationException("Expected fault.")
+                ),
+            ExecutionEnvelopeInvariantTests.Success
+        );
 }

@@ -34,7 +34,7 @@ other runtime machinery belong below the ordinary public seam.
 
 `TState` contains application facts only. If another participant needs to know
 something, represent it strongly and explicitly in state. Do not use state to
-smuggle graph or runtime information such as node IDs, source-block IDs, run IDs,
+smuggle graph or runtime information such as node IDs, source-step IDs, run IDs,
 invocation IDs, latest-outcome blobs, serialized payloads, or resume positions.
 Application facts belong in state; control flow belongs in the graph; execution
 facts belong in Tandem's runtime.
@@ -109,7 +109,7 @@ Keep these ownership boundaries explicit:
 - Microsoft Agent Framework owns workflow execution, sessions,
   model loops, tool dispatch, and workflow events.
 - Delivery owns its composition, participants, conditions, policies, Git and
-  verification operations, event projection, and operator interfaces.
+  verification operations, dashboard projection, and operator interfaces.
 - Planner and reviewer agents have read-only workspace access.
 - Executor mutation is available only after the pipeline establishes mutation
   authority.

@@ -113,8 +113,8 @@ public sealed class SongComplete : IPipelineCompletion<SongwriterState>
 var complete = PipelineNodes.Complete(new SongComplete());
 ```
 
-Use `PipelineNodes.Complete<TState>("complete")` when an anonymous terminal needs no
-application-specific summary or transition.
+Every terminal uses an application-owned definition so its identity and summary remain
+semantic.
 
 ### State-Updating
 
@@ -372,7 +372,7 @@ public sealed record PipelineOperationContext<TState>(/* run ID, state, latest o
 
 public sealed record OperationOutcome(
     string Kind,
-    string BlockId,
+    string StepId,
     string Summary,
     JsonElement Payload = default,
     TimeSpan Duration = default
@@ -434,7 +434,7 @@ var verdict = AgentCapabilities.Create<DebateState, SubmitVerdict>(
 
 `.WithCapability(verdict)` is ordinary Core authoring. Tandem binds
 the attached descriptor as a local MAF `AIFunction` for each invocation and owns
-run, block, invocation, and capability identity plus atomic accepted-call
+run, step, invocation, and capability identity plus atomic accepted-call
 ownership. Invalid calls do not transition state or terminate the turn.
 
 Feature registration may store the immutable capability as application

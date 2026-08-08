@@ -35,7 +35,7 @@ public sealed class StructuredOutputTests
             )
             .RequireOutputAcceptance(PlannerPolicies.RepositoryGrounded())
             .Build();
-        var complete = PipelineNodes.Complete<DeliveryState>("complete");
+        var complete = PipelineNodes.Complete(new TestCompletion<DeliveryState>("complete"));
         var pipeline = Pipeline
             .Start(agent, "typed-acceptance")
             .Route(agent.Success, complete, "accepted")
@@ -78,7 +78,7 @@ public sealed class StructuredOutputTests
                 }
             )
             .Build();
-        var complete = PipelineNodes.Complete<DeliveryState>("complete");
+        var complete = PipelineNodes.Complete(new TestCompletion<DeliveryState>("complete"));
         var pipeline = Pipeline
             .Start(agent, "async-output-acceptance")
             .Route(agent.Success, complete, "accepted")
@@ -117,7 +117,7 @@ public sealed class StructuredOutputTests
                 (_, _) => ValueTask.FromException(new IOException("Ledger unavailable."))
             )
             .Build();
-        var complete = PipelineNodes.Complete<DeliveryState>("complete");
+        var complete = PipelineNodes.Complete(new TestCompletion<DeliveryState>("complete"));
         var pipeline = Pipeline
             .Start(agent, "failed-output-acceptance")
             .Route(agent.Success, complete, "must not route")
@@ -153,7 +153,7 @@ public sealed class StructuredOutputTests
                     : []
             )
             .Build();
-        var complete = PipelineNodes.Complete<MappingState>("complete");
+        var complete = PipelineNodes.Complete(new TestCompletion<MappingState>("complete"));
         var pipeline = Pipeline
             .Start(agent, "synchronous-output-rejection")
             .Route(agent.Success, complete, "accepted")
@@ -223,7 +223,7 @@ public sealed class StructuredOutputTests
                 }
             )
             .Build();
-        var complete = PipelineNodes.Complete<MappingState>("complete");
+        var complete = PipelineNodes.Complete(new TestCompletion<MappingState>("complete"));
         var pipeline = Pipeline
             .Start(agent, "journal-output-failure")
             .Route(agent.Success, complete, "accepted")
