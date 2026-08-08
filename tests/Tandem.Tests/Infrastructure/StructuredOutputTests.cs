@@ -37,10 +37,10 @@ public sealed class StructuredOutputTests
         output.LatestOutcome!.Kind.Should().Be(OutcomeKinds.PlannerProceed);
         output.State.MutationAuthorized.Should().BeTrue();
         client.CallCount.Should().Be(2);
-        client.Instructions.Should().Contain("# Tandem Harness");
+        client.Instructions.Should().Contain("# Tandem Delivery Harness");
         client.Instructions.Should().Contain("Return a planner decision.");
         client
-            .Instructions!.IndexOf("# Tandem Harness", StringComparison.Ordinal)
+            .Instructions!.IndexOf("# Tandem Delivery Harness", StringComparison.Ordinal)
             .Should()
             .BeLessThan(
                 client.Instructions.IndexOf("Return a planner decision.", StringComparison.Ordinal)
@@ -358,7 +358,9 @@ public sealed class StructuredOutputTests
                     PlannerDecisionPolicy.Parse,
                     acceptance
                 ),
-                ContinueSession: true
+                ContinueSession: true,
+                ImplementationFactory: context =>
+                    HarnessAgentImplementation.Create(context, DeliveryHarnessInstructions.Value)
             ),
             client
         );

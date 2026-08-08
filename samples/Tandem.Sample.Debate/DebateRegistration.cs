@@ -1,7 +1,6 @@
 using FluentValidation;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Tandem.Advanced;
 
 namespace Tandem.Sample.Debate;
 
@@ -29,7 +28,7 @@ public static class DebateRegistration
         services.AddSingleton(options);
         services.AddSingleton(sp =>
             DebateDefinitions.Create(
-                sp.GetRequiredService<AgentRuntime>(),
+                sp.GetRequiredService<AgentFactory>(),
                 sp.GetRequiredService<DebateOptions>(),
                 verdict
             )

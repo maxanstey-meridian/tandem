@@ -1,4 +1,4 @@
-namespace Tandem.Domain;
+namespace Tandem;
 
 public static class StandardOutcomeKinds
 {

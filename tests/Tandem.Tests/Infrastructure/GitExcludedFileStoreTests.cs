@@ -1,6 +1,4 @@
 using FluentAssertions;
-using Tandem.Infrastructure;
-
 #pragma warning disable MAAI001
 
 namespace Tandem.Tests.Infrastructure;

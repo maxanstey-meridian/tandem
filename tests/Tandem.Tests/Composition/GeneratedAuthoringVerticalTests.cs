@@ -8,11 +8,26 @@ namespace Tandem.Tests.Composition;
 public sealed class GeneratedAuthoringVerticalTests
 {
     [Fact]
+    public void Inspection_EscapesMultilineSemanticLabels()
+    {
+        var increment = new IncrementStage();
+        var complete = new CompleteStage();
+        var inspection = Pipeline
+            .Start(increment, "escaped-inspection")
+            .Route(increment, complete, "line\nbreak")
+            .Build(complete)
+            .Inspect();
+
+        inspection.Mermaid.Should().Contain("line\\nbreak").And.NotContain("line\nbreak");
+        inspection.Dot.Should().Contain("line\\nbreak").And.NotContain("line\nbreak");
+    }
+
+    [Fact]
     public async Task GeneratedResultRoute_ExecutesReflectsAndSerializes()
     {
         var increment = new IncrementStage();
         var complete = new CompleteStage();
-        var pipeline = TandemWorkflow
+        var pipeline = Pipeline
             .Start(at: increment, name: "generated-authoring")
             .Route(on: increment, to: complete, label: "incremented")
             .Build(complete);
@@ -49,7 +64,7 @@ public sealed class GeneratedAuthoringVerticalTests
     {
         var increment = new IncrementStage();
         var complete = new StateCompleteStage();
-        var pipeline = TandemWorkflow
+        var pipeline = Pipeline
             .Start(at: increment, name: "unconditional-authoring")
             .Route(on: increment, to: complete, label: "continue")
             .Build(complete);
@@ -77,7 +92,7 @@ public sealed class GeneratedAuthoringVerticalTests
         var outcome = new StandardOutcomeStage(fail);
         var success = new StateCompleteStage();
         var recovery = new RecoveryStage();
-        var pipeline = TandemWorkflow
+        var pipeline = Pipeline
             .Start(at: outcome, name: "standard-outcome")
             .Route(on: outcome.Success, to: success, label: "success")
             .Route(on: outcome.Failed, to: recovery, label: "recover")
@@ -99,7 +114,7 @@ public sealed class GeneratedAuthoringVerticalTests
     public async Task StandardFailed_PreservesTypedFailureEvidenceWhenItIsAnOutput()
     {
         var outcome = new StandardOutcomeStage(fail: true);
-        var pipeline = TandemWorkflow
+        var pipeline = Pipeline
             .Start(at: outcome, name: "standard-failure-evidence")
             .Build(outcome);
 
@@ -130,7 +145,7 @@ public sealed class GeneratedAuthoringVerticalTests
     {
         var outcome = new StandardOutcomeStage(fail: true);
         var recovery = new RecoveryStage();
-        var pipeline = TandemWorkflow
+        var pipeline = Pipeline
             .Start(at: outcome, name: "conditional-standard-failure")
             .Route(
                 on: outcome.Failed,
@@ -161,7 +176,7 @@ public sealed class GeneratedAuthoringVerticalTests
     {
         var outcome = new StandardOutcomeStage(fail: true);
         var recovery = new RecoveryStage();
-        var pipeline = TandemWorkflow
+        var pipeline = Pipeline
             .Start(at: outcome, name: "unconditional-standard-failure")
             .Route(on: outcome, to: recovery, label: "recover")
             .Build(recovery);
@@ -183,7 +198,7 @@ public sealed class GeneratedAuthoringVerticalTests
     {
         var outcome = new StandardOutcomeStage(false);
         var complete = new StateCompleteStage();
-        var builder = TandemWorkflow
+        var builder = Pipeline
             .Start(at: outcome, name: "invalid-routes")
             .Route(on: outcome, to: complete, label: "all");
 
@@ -203,10 +218,10 @@ public sealed class GeneratedAuthoringVerticalTests
     {
         var outcome = new ReusableOutcomeStep();
         var recovery = new RecoveryStage();
-        var recoveryBuilder = TandemWorkflow
+        var recoveryBuilder = Pipeline
             .Start(outcome, "reused-outcome-recovery")
             .Route(outcome.Failed, recovery, "recover");
-        var terminalBuilder = TandemWorkflow.Start(outcome, "reused-outcome-terminal");
+        var terminalBuilder = Pipeline.Start(outcome, "reused-outcome-terminal");
 
         var recoveryPipeline = buildRecoveryLast ? null : recoveryBuilder.Build(recovery);
         var terminalPipeline = terminalBuilder.Build(outcome);
@@ -258,10 +273,10 @@ public sealed class GeneratedAuthoringVerticalTests
             )
         );
         var recovery = new RecoveryStage();
-        var recoveryBuilder = TandemWorkflow
+        var recoveryBuilder = Pipeline
             .Start(definition, "reused-agent-recovery")
             .Route(definition.Failed, recovery, "recover");
-        var terminalBuilder = TandemWorkflow.Start(definition, "reused-agent-terminal");
+        var terminalBuilder = Pipeline.Start(definition, "reused-agent-terminal");
 
         var recoveryPipeline = buildRecoveryLast ? null : recoveryBuilder.Build(recovery);
         var terminalPipeline = terminalBuilder.Build(definition);
@@ -293,7 +308,7 @@ public sealed class GeneratedAuthoringVerticalTests
     public void Build_RejectsReusingOneMutableBuilder()
     {
         var increment = new IncrementStage();
-        var builder = TandemWorkflow.Start(increment, "single-use-builder");
+        var builder = Pipeline.Start(increment, "single-use-builder");
         builder.Build(increment);
 
         var act = () => builder.Build(increment);
@@ -306,7 +321,7 @@ public sealed class GeneratedAuthoringVerticalTests
     {
         var increment = new IncrementStage();
         var target = new IncrementStage();
-        var builder = TandemWorkflow.Start(increment, "immutable-built-pipeline");
+        var builder = Pipeline.Start(increment, "immutable-built-pipeline");
         builder.Build(increment);
 
         var act = () => builder.Route(on: increment, to: target, label: "too late");

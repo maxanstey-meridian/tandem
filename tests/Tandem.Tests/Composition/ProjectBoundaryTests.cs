@@ -227,13 +227,14 @@ public sealed class ProjectBoundaryTests
     [Fact]
     public void OrdinaryAgentAndNodeApi_HidesInfrastructureAuthoring()
     {
-        var assembly = typeof(AgentRuntime).Assembly;
+        var assembly = typeof(AgentFactory).Assembly;
         var exportedNames = assembly.GetExportedTypes().Select(type => type.Name).ToArray();
 
         exportedNames.Should().NotContain("AgentOperation`1");
         exportedNames.Should().NotContain("AgentOutput`1");
         exportedNames.Should().NotContain("CapabilityReceipt");
-        exportedNames.Should().NotContain("AgentCapability`1");
+        exportedNames.Should().Contain("AgentCapability`1");
+        exportedNames.Should().Contain("AgentCapability`2");
         exportedNames.Should().NotContain("CheckpointPolicy`1");
         exportedNames.Should().NotContain("AgentTurnPolicy`1");
         exportedNames.Should().NotContain("AgentConversationDecision");

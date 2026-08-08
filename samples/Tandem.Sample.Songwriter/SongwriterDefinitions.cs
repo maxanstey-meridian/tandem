@@ -6,7 +6,7 @@ public sealed record SongwriterClients(IChatClient Songwriter, IChatClient Proof
 
 public static class SongwriterDefinitions
 {
-    public static SongwriterSteps Create(AgentRuntime agents, SongwriterClients clients) =>
+    public static SongwriterSteps Create(AgentFactory agents, SongwriterClients clients) =>
         new(
             Create(
                 "songwriter",
@@ -35,7 +35,7 @@ public static class SongwriterDefinitions
         IChatClient client,
         FluentValidation.IValidator<TOutput> validator,
         Func<SongwriterState, TOutput, SongwriterState> apply,
-        AgentRuntime agents
+        AgentFactory agents
     ) =>
         agents
             .Create<SongwriterState>(id, instructions, client)

@@ -152,6 +152,14 @@ public sealed class PackageConsumerTests
             libraries
                 .Should()
                 .NotContain(name => name.StartsWith("Tandem.Advanced/", StringComparison.Ordinal));
+            libraries
+                .Should()
+                .NotContain(name =>
+                    name.StartsWith(
+                        "Microsoft.Agents.AI.Harness/",
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                );
         }
         libraries
             .Should()
@@ -290,7 +298,7 @@ public sealed class PackageConsumerTests
         using Tandem.Sample.Songwriter;
 
         var steps = SongwriterDefinitions.Create(
-            new AgentRuntime(),
+            new AgentFactory(),
             new SongwriterClients(
                 new ScriptedChatClient(
                     ScriptedChatClient.Text("{\"lyrics\":\"First draft\"}"),
@@ -316,14 +324,15 @@ public sealed class PackageConsumerTests
         using Tandem.Sample.Support;
 
         var steps = SupportDefinitions.Create(
-            new AgentRuntime(),
+            new AgentFactory(),
             new SupportOptions(
                 new ScriptedChatClient(ScriptedChatClient.Text("{\"category\":\"billing\"}")),
                 new ScriptedChatClient(ScriptedChatClient.Text("{\"proposedResolution\":\"Refund issued.\"}"))
             ),
             new AccountLookup()
         );
-        var handlers = new PipelineInteractionHandlers().Handle<CustomerQuestion, CustomerReply>(
+        var handlers = new PipelineInteractionHandlers().Handle(
+            steps.CustomerReply,
             (_, _) => ValueTask.FromResult(new CustomerReply("Resolved.", true))
         );
         var result = await new PipelineRunner().RunAsync(
@@ -362,7 +371,7 @@ public sealed class PackageConsumerTests
             )
         ) { FinishReason = ChatFinishReason.ToolCalls, ModelId = "package-proof" };
         var steps = DebateDefinitions.Create(
-            new AgentRuntime(),
+            new AgentFactory(),
             new DebateOptions(
                 new ScriptedChatClient(ScriptedChatClient.Text("{\"text\":\"Initial case\"}"), ScriptedChatClient.Text("{\"text\":\"Revised case\"}")),
                 new ScriptedChatClient(ScriptedChatClient.Text("{\"accepted\":false,\"critique\":\"Revise\"}"), ScriptedChatClient.Text("{\"accepted\":true,\"critique\":\"Accepted\"}")),

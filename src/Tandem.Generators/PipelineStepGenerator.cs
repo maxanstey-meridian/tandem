@@ -58,7 +58,7 @@ public sealed class PipelineStepGenerator : IIncrementalGenerator
         var genericValueTaskType = compilation.GetTypeByMetadataName(
             "System.Threading.Tasks.ValueTask`1"
         );
-        var outcomeType = compilation.GetTypeByMetadataName("Tandem.Domain.Outcome`1");
+        var outcomeType = compilation.GetTypeByMetadataName("Tandem.Outcome`1");
         var executeMethods = step.GetMembers("ExecuteAsync")
             .OfType<IMethodSymbol>()
             .Where(method => method.Parameters.Length == 2)
@@ -135,7 +135,7 @@ public sealed class PipelineStepGenerator : IIncrementalGenerator
     {
         var resultType =
             model.Mode == StepMode.Outcome
-                ? $"global::Tandem.Domain.Outcome<{model.StateType}>"
+                ? $"global::Tandem.Outcome<{model.StateType}>"
                 : "global::Tandem.GeneratedStepCompletion";
         var resultApi = model.Mode switch
         {

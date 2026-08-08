@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Tandem.Domain;
 using Tandem.Infrastructure;
 
 namespace Tandem;
@@ -32,15 +31,15 @@ public sealed record PipelineInteractionContext<TRequest, TResponse>(
     Guid RunId,
     string RequestId,
     string InteractionId,
-    TRequest Request,
-    Type ResponseType
+    TRequest Request
 );
 
 public sealed class PipelineInteractionHandlers
 {
     private readonly Dictionary<InteractionKey, IRegistration> _registrations = [];
 
-    public PipelineInteractionHandlers Handle<TRequest, TResponse>(
+    public PipelineInteractionHandlers Handle<TState, TRequest, TResponse>(
+        PipelineInteraction<TState, TRequest, TResponse> interaction,
         Func<
             PipelineInteractionContext<TRequest, TResponse>,
             CancellationToken,
@@ -48,12 +47,13 @@ public sealed class PipelineInteractionHandlers
         > handler
     )
     {
+        ArgumentNullException.ThrowIfNull(interaction);
         ArgumentNullException.ThrowIfNull(handler);
-        var key = new InteractionKey(typeof(TRequest), typeof(TResponse));
+        var key = new InteractionKey(interaction.Id, typeof(TRequest), typeof(TResponse));
         if (!_registrations.TryAdd(key, new Registration<TRequest, TResponse>(handler)))
         {
             throw new InvalidOperationException(
-                $"An interaction handler for '{typeof(TRequest).FullName}' and "
+                $"An interaction handler for '{interaction.Id}' with '{typeof(TRequest).FullName}' and "
                     + $"'{typeof(TResponse).FullName}' is already registered."
             );
         }
@@ -77,7 +77,7 @@ public sealed class PipelineInteractionHandlers
             );
         if (
             !_registrations.TryGetValue(
-                new InteractionKey(requestType, responseType),
+                new InteractionKey(request.PortId, requestType, responseType),
                 out var handler
             )
         )
@@ -90,7 +90,11 @@ public sealed class PipelineInteractionHandlers
         return handler.InvokeAsync(request, cancellationToken);
     }
 
-    private readonly record struct InteractionKey(Type RequestType, Type ResponseType);
+    private readonly record struct InteractionKey(
+        string InteractionId,
+        Type RequestType,
+        Type ResponseType
+    );
 
     private interface IRegistration
     {
@@ -125,8 +129,7 @@ public sealed class PipelineInteractionHandlers
                         request.RunId,
                         request.RequestId,
                         request.PortId,
-                        value,
-                        typeof(TResponse)
+                        value
                     ),
                     cancellationToken
                 )

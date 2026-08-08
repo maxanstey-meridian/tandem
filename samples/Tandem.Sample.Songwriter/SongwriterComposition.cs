@@ -4,7 +4,7 @@ public sealed class SongwriterComposition(SongwriterSteps song)
 {
     public Pipeline<SongwriterState> Build()
     {
-        return TandemWorkflow
+        return Pipeline
             .Start(
                 at: song.Songwriter,
                 name: "songwriter",

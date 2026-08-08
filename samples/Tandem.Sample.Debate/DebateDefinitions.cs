@@ -6,7 +6,7 @@ namespace Tandem.Sample.Debate;
 public static class DebateDefinitions
 {
     public static DebateSteps Create(
-        AgentRuntime agentRuntime,
+        AgentFactory agentRuntime,
         DebateOptions options,
         AgentCapability<DebateState> verdict
     ) =>
@@ -45,7 +45,7 @@ public static class DebateDefinitions
         IChatClient client,
         FluentValidation.IValidator<TOutput> validator,
         Func<DebateState, TOutput, DebateState> apply,
-        AgentRuntime agentRuntime
+        AgentFactory agentRuntime
     ) =>
         agentRuntime
             .Create<DebateState>(id, $"Act as the debate {id} and return structured JSON.", client)

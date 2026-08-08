@@ -36,8 +36,9 @@ An `AgentCapability<TState>` is immutable semantic configuration. Authors own:
 - the typed state transition.
 
 Tandem owns invocation and capability identity, local MAF function binding,
-structured tool errors, and atomic accepted-call handling. An asynchronous
-acceptance callback may persist a semantic fact before returning updated state.
+structured tool errors, and atomic accepted-call handling. Advanced may decorate
+the same capability with an asynchronous acceptance callback that persists a
+semantic fact before Core applies the typed state transition.
 
 `AgentCapabilities.Create` is pure. Feature composition roots may register the
 returned capability as immutable application configuration, then attach it to
@@ -48,8 +49,9 @@ not discover capabilities or construct a transport registry.
 
 Envelope-aware configuration and operations require an explicit
 `Tandem.Advanced` import. This includes context messages, workspaces, custom
-structured parsers, capabilities, checkpoints, message augmentation, continuation
-policy, profile policy, conversation policy, and `PipelineOperation`.
+structured parsers, runtime-aware capability acceptance, Harness selection,
+checkpoints, message augmentation, continuation policy, profile policy,
+conversation policy, and `PipelineOperation`.
 
 Advanced policies receive `AgentMessageContext<TState>` and related narrow values.
 Custom blocks receive `PipelineOperationContext<TState>` and return

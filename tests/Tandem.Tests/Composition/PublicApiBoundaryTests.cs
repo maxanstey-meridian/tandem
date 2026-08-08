@@ -12,7 +12,7 @@ public sealed class PublicApiBoundaryTests
 
     [Theory]
     [InlineData(typeof(Pipeline<>), "src/Tandem/ExportedApi.txt")]
-    [InlineData(typeof(AgentCapabilities), "src/Tandem.Advanced/ExportedApi.txt")]
+    [InlineData(typeof(PipelineOperation), "src/Tandem.Advanced/ExportedApi.txt")]
     public void ExportedTypes_MatchReviewedManifest(Type assemblyMarker, string manifestPath)
     {
         var manifest = ReadManifest(manifestPath);
@@ -45,11 +45,11 @@ public sealed class PublicApiBoundaryTests
     [Fact]
     public void PublicPackages_ExposeNoInfrastructureNamespacesOrForbiddenSignatureTypes()
     {
-        var assemblies = new[] { typeof(Pipeline<>).Assembly, typeof(AgentCapabilities).Assembly };
+        var assemblies = new[] { typeof(Pipeline<>).Assembly, typeof(PipelineOperation).Assembly };
         var exported = assemblies.SelectMany(assembly => assembly.GetExportedTypes()).ToArray();
 
         exported.Should().NotContain(type => IsInfrastructureNamespace(type.Namespace));
-        typeof(AgentCapabilities)
+        typeof(PipelineOperation)
             .Assembly.GetExportedTypes()
             .Should()
             .OnlyContain(type => type.Namespace == "Tandem.Advanced");

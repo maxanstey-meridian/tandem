@@ -20,10 +20,7 @@ public sealed class ExecutionEnvelopeInvariantTests
             }
         );
 
-        var output = await RunAsync(
-            TandemWorkflow.Start(step, "state-envelope").Build(step),
-            input
-        );
+        var output = await RunAsync(Pipeline.Start(step, "state-envelope").Build(step), input);
 
         output.State.Should().Be(new EnvelopeState(2, "state"));
         output.Runtime.Should().BeSameAs(updatedRuntime);
@@ -43,10 +40,7 @@ public sealed class ExecutionEnvelopeInvariantTests
         };
         var step = new EnvelopeCustomStage(operationMessage);
 
-        var output = await RunAsync(
-            TandemWorkflow.Start(step, "custom-envelope").Build(step),
-            input
-        );
+        var output = await RunAsync(Pipeline.Start(step, "custom-envelope").Build(step), input);
 
         output.State.Count.Should().Be(5);
         output.Runtime.Should().BeSameAs(operationMessage.Runtime);
@@ -67,10 +61,7 @@ public sealed class ExecutionEnvelopeInvariantTests
         };
         var step = new NestedEnvelopeStage(outerResult);
 
-        var output = await RunAsync(
-            TandemWorkflow.Start(step, "nested-envelope").Build(step),
-            input
-        );
+        var output = await RunAsync(Pipeline.Start(step, "nested-envelope").Build(step), input);
 
         output.State.Count.Should().Be(3);
         output.Runtime.AgentSessions.Should().ContainKey("outer-after-inner");
@@ -103,8 +94,8 @@ public sealed class ExecutionEnvelopeInvariantTests
         );
 
         var outputs = await Task.WhenAll(
-            RunAsync(TandemWorkflow.Start(first, "parallel-first").Build(first), firstInput),
-            RunAsync(TandemWorkflow.Start(second, "parallel-second").Build(second), secondInput)
+            RunAsync(Pipeline.Start(first, "parallel-first").Build(first), firstInput),
+            RunAsync(Pipeline.Start(second, "parallel-second").Build(second), secondInput)
         );
 
         outputs[0].Runtime.RunId.Should().Be(firstInput.Runtime.RunId);
@@ -128,7 +119,7 @@ public sealed class ExecutionEnvelopeInvariantTests
         );
 
         var output = await RunAsync(
-            TandemWorkflow.Start(step, "concurrent-operation-envelope").Build(step),
+            Pipeline.Start(step, "concurrent-operation-envelope").Build(step),
             input
         );
 
@@ -153,7 +144,7 @@ public sealed class ExecutionEnvelopeInvariantTests
         );
 
         var output = await RunAsync(
-            TandemWorkflow.Start(step, "releasing-operation-envelope").Build(step),
+            Pipeline.Start(step, "releasing-operation-envelope").Build(step),
             input
         );
 
@@ -166,7 +157,7 @@ public sealed class ExecutionEnvelopeInvariantTests
         var step = new CancelledEnvelopeStage();
 
         await RunForFailureAsync(
-            TandemWorkflow.Start(step, "cancelled-envelope").Build(step),
+            Pipeline.Start(step, "cancelled-envelope").Build(step),
             Message(0, "cancelled"),
             CancellationToken.None
         );
@@ -180,7 +171,7 @@ public sealed class ExecutionEnvelopeInvariantTests
         var step = new FaultedEnvelopeStage();
 
         await RunForFailureAsync(
-            TandemWorkflow.Start(step, "faulted-envelope").Build(step),
+            Pipeline.Start(step, "faulted-envelope").Build(step),
             Message(0, "faulted"),
             CancellationToken.None
         );
@@ -335,7 +326,7 @@ internal sealed partial class NestedEnvelopeStage(PipelineMessage<EnvelopeState>
                 ),
             }
         );
-        await RunInnerAsync(TandemWorkflow.Start(inner, "inner-envelope").Build(inner), innerInput);
+        await RunInnerAsync(Pipeline.Start(inner, "inner-envelope").Build(inner), innerInput);
         return await PipelineOperation.RunAsync(
             () => ValueTask.FromResult(outerResult),
             result => result.State

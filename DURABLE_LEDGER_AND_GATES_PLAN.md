@@ -238,7 +238,7 @@ as a new incompatible type is forbidden.
 Pipeline definitions are reusable and may execute concurrent runs. A singleton
 composition must never capture a mutable "current run" ledger. Infrastructure
 may select a run using `PipelineRuntime.RunId`, the local
-`AgentCapabilityContext` accepted-call identity, or the host's run identity,
+Advanced capability-acceptance context, or the host's run identity,
 then hand composition code a run-bound typed capability.
 Run identity is explicit at the infrastructure boundary and absent from record
 method calls and `TState`.
@@ -311,15 +311,17 @@ validate
 If persistence fails, the current operation fails. If the process dies after the
 record is written, the record remains and the workflow stays dead.
 
-Local capabilities receive a Tandem-owned accepted-call identity containing run,
-block, invocation, and capability IDs after request validation and before state
-transition. A ledger-backed asynchronous acceptance callback:
+The capability remains one Core application concept. Delivery decorates that
+capability through Advanced with a Tandem-owned accepted-call identity containing
+run, block, invocation, and capability IDs after request validation and before
+state transition. A ledger-backed asynchronous acceptance callback:
 
 1. Derives authoritative host-owned fields.
 2. Commits the semantic ledger operation idempotently using the accepted-call identity.
-3. Returns the updated `TState` only after the durable commit succeeds.
-4. Allows the invocation-local acceptance slot to commit.
-5. Allows routing, gate release, and session policy to continue.
+3. Completes only after the durable commit succeeds.
+4. Allows the Core capability's typed `TState` transition to apply.
+5. Allows the invocation-local acceptance slot to commit.
+6. Allows routing, gate release, and session policy to continue.
 
 If durable acceptance fails, the capability returns no accepted result, performs
 no state transition, and releases its provisional invocation slot so a corrected
@@ -607,7 +609,10 @@ Resolve the checkpoint product-invariant decision after this characterization.
 ### 3. Add Semantic Acceptance Seams
 
 - Add an asynchronous post-validation/pre-state seam for structured decisions.
-- Commit ledger-backed local capability acceptance before state transition.
+- Decorate Core capabilities through Advanced with accepted-call identity and an
+  asynchronous pre-transition acceptance callback.
+- Commit ledger-backed local capability acceptance before applying the Core
+  typed state transition.
 - Persist human answers before broker delivery.
 - Persist authoritative verification before it enters `TState`.
 - Keep operational event observers out of semantic acceptance.

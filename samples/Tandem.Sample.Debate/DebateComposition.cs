@@ -4,7 +4,7 @@ public sealed class DebateComposition(DebateSteps debate)
 {
     public Pipeline<DebateState> Build()
     {
-        return TandemWorkflow
+        return Pipeline
             .Start(
                 at: debate.Open,
                 name: "debate",

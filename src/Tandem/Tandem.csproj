@@ -17,7 +17,7 @@
 
     <ItemGroup>
         <PackageReference Include="FluentValidation" Version="12.1.1" />
-        <PackageReference Include="Microsoft.Agents.AI.Harness" Version="1.16.0" />
+        <PackageReference Include="Microsoft.Agents.AI" Version="1.16.0" />
         <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.16.0" />
         <PackageReference Include="Microsoft.Extensions.AI" Version="10.8.3" />
         <PackageReference
@@ -34,7 +34,6 @@
         />
         <InternalsVisibleTo Include="Tandem.Tests" />
         <InternalsVisibleTo Include="Tandem.Advanced" />
-        <EmbeddedResource Include="../../TANDEM.md" LogicalName="Tandem.TANDEM.md" />
         <None Include="../../README.md" Pack="true" PackagePath="/" />
     </ItemGroup>
 </Project>

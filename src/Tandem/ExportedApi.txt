@@ -1,13 +1,14 @@
 [ordinary-authoring]
 Tandem.AgentBuilder`1
+Tandem.AgentCapabilities
+Tandem.AgentCapability`1
+Tandem.AgentCapability`2
 Tandem.AgentDefinition`1
-Tandem.AgentRuntime
-Tandem.Domain.FailureEvidence
-Tandem.Domain.Outcome`1
-Tandem.Domain.Outcome`1+Failed
-Tandem.Domain.Outcome`1+Success
-Tandem.Domain.PipelineRunDisposition
-Tandem.Domain.StandardOutcomeKinds
+Tandem.AgentFactory
+Tandem.FailureEvidence
+Tandem.Outcome`1
+Tandem.Outcome`1+Failed
+Tandem.Outcome`1+Success
 Tandem.IPipelineNode
 Tandem.IPipelineNode`1
 Tandem.PipelineBuilder`1
@@ -19,9 +20,11 @@ Tandem.PipelineOutcomeSelector`1
 Tandem.PipelinePortInspection
 Tandem.PipelineRouteInspection
 Tandem.PipelineStageAttribute
+Tandem.Pipeline
 Tandem.Pipeline`1
+Tandem.PipelineRunDisposition
+Tandem.StandardOutcomeKinds
 Tandem.TandemRegistration
-Tandem.TandemWorkflow
 
 [runtime-hosting]
 Tandem.AgentUpdate

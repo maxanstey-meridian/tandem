@@ -69,7 +69,7 @@ public sealed class DebateCompositionTests
     }
 
     [Fact]
-    public void AddDebate_RegistersCompositionAndAgentRuntime()
+    public void AddDebate_RegistersCompositionAndAgentFactory()
     {
         var clients = ScriptedClients.Create();
         var services = new ServiceCollection();
@@ -82,7 +82,7 @@ public sealed class DebateCompositionTests
             .Inspect()
             .Name.Should()
             .Be("debate");
-        provider.GetRequiredService<AgentRuntime>().Should().NotBeNull();
+        provider.GetRequiredService<AgentFactory>().Should().NotBeNull();
     }
 
     [Theory]

@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -74,6 +75,15 @@ public sealed class SupportCompositionTests
             .OutputStepIds.Should()
             .Equal("support-close", "support-escalate", "support-failed");
         inspection.Routes.Should().HaveCount(6);
+        Regex
+            .Matches(inspection.Mermaid, Regex.Escape(SupportIds.CustomerReply))
+            .Should()
+            .HaveCount(1);
+        Regex.Matches(inspection.Dot, Regex.Escape(SupportIds.CustomerReply)).Should().HaveCount(1);
+        inspection.Mermaid.Should().NotContain("--request").And.NotContain("--resume");
+        inspection.Dot.Should().NotContain("--request").And.NotContain("--resume");
+        inspection.Mermaid.Should().Contain("-.->");
+        inspection.Dot.Should().Contain("style=dashed");
         roundTrip.Should().BeEquivalentTo(input);
         fixture.Provider.GetRequiredService<SupportComposition>().Should().NotBeNull();
         await Task.CompletedTask;

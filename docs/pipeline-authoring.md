@@ -144,7 +144,7 @@ declared execution failure and its unhandled-failure semantics.
 ## Agent Definitions
 
 `[PipelineStage]` makes a class executable and routable; it does not imply model
-execution. Build an agent definition from the DI-owned `AgentRuntime`. Support's
+execution. Build an agent definition from the DI-owned `AgentFactory`. Support's
 compiled classifier configuration is:
 
 ```csharp
@@ -339,7 +339,7 @@ var verdict = AgentCapabilities.Create<DebateState, SubmitVerdict>(
 );
 ```
 
-`.WithCapability(verdict)` is available through `Tandem.Advanced`. Tandem binds
+`.WithCapability(verdict)` is ordinary Core authoring. Tandem binds
 the attached descriptor as a local MAF `AIFunction` for each invocation and owns
 run, block, invocation, and capability identity plus atomic accepted-call
 ownership. Invalid calls do not transition state or terminate the turn.
@@ -347,8 +347,9 @@ ownership. Invalid calls do not transition state or terminate the turn.
 Feature registration may store the immutable capability as application
 configuration (`services.AddSingleton(verdict)`), but execution follows direct
 attachment to the agent definition rather than DI discovery or transport
-registration. `CreateAsync` provides a post-validation acceptance seam for
-durable facts that must commit before state transition and routing.
+registration. Advanced `.WithAcceptance(...)` decorates the same capability with
+a runtime-aware callback for facts that must commit before Core applies the state
+transition and routing continues.
 
 `PipelineNodeDescriptor` remains public only because generated partial classes
 compile in consumer assemblies. It is hidden from IntelliSense and is an opaque
@@ -356,7 +357,7 @@ generated-code ABI; `IRawPipelineNode` and raw node factories are internal.
 
 ## Inspection
 
-Inspect the exact executable graph after building it:
+Inspect Tandem's semantic projection of the executable graph after building it:
 
 ```csharp
 var inspection = composition.Build().Inspect();

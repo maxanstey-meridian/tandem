@@ -677,27 +677,111 @@ public sealed class Pipeline<TState>
             ))
             .OrderBy(port => port.Id, StringComparer.Ordinal)
             .ToArray();
+        var stepIds = physicalStepIds
+            .Select(SemanticId)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var semanticRoutes = routes
+            .OrderBy(route => route.SourceId, StringComparer.Ordinal)
+            .ThenBy(route => route.TargetId, StringComparer.Ordinal)
+            .ThenBy(route => route.Conditional)
+            .ToArray();
         return new PipelineInspection(
             Workflow.Name ?? throw new InvalidOperationException("Pipeline name is unavailable."),
             Workflow.Description,
             Workflow.StartExecutorId,
-            physicalStepIds
-                .Select(SemanticId)
-                .Distinct(StringComparer.Ordinal)
-                .Order(StringComparer.Ordinal)
-                .ToArray(),
+            stepIds,
             ports,
             _interactions,
-            routes
-                .OrderBy(route => route.SourceId, StringComparer.Ordinal)
-                .ThenBy(route => route.TargetId, StringComparer.Ordinal)
-                .ThenBy(route => route.Conditional)
-                .ToArray(),
+            semanticRoutes,
             _outputStepIds,
-            WorkflowVisualizer.ToMermaidString(Workflow),
-            WorkflowVisualizer.ToDotString(Workflow)
+            RenderMermaid(stepIds, semanticRoutes, Workflow.StartExecutorId, _outputStepIds),
+            RenderDot(stepIds, semanticRoutes, Workflow.StartExecutorId, _outputStepIds)
         );
     }
+
+    private static string RenderMermaid(
+        IReadOnlyList<string> stepIds,
+        IReadOnlyList<PipelineRouteInspection> routes,
+        string startStepId,
+        IReadOnlyList<string> outputStepIds
+    )
+    {
+        var aliases = stepIds
+            .Select((id, index) => (id, alias: $"n{index}"))
+            .ToDictionary(item => item.id, item => item.alias, StringComparer.Ordinal);
+        var lines = new List<string> { "flowchart TD" };
+        lines.AddRange(
+            stepIds.Select(id =>
+            {
+                var label = $"\"{Escape(id)}\"";
+                return id == startStepId ? $"    {aliases[id]}(({label}))"
+                    : outputStepIds.Contains(id, StringComparer.Ordinal)
+                        ? $"    {aliases[id]}{{{{{label}}}}}"
+                    : $"    {aliases[id]}[{label}]";
+            })
+        );
+        lines.AddRange(
+            routes.Select(route =>
+            {
+                var label = string.IsNullOrWhiteSpace(route.Label)
+                    ? ""
+                    : $"|\"{Escape(route.Label)}\"|";
+                var arrow = route.Conditional ? "-.->" : "-->";
+                return $"    {aliases[route.SourceId]} {arrow}{label} {aliases[route.TargetId]}";
+            })
+        );
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string RenderDot(
+        IReadOnlyList<string> stepIds,
+        IReadOnlyList<PipelineRouteInspection> routes,
+        string startStepId,
+        IReadOnlyList<string> outputStepIds
+    )
+    {
+        var aliases = stepIds
+            .Select((id, index) => (id, alias: $"n{index}"))
+            .ToDictionary(item => item.id, item => item.alias, StringComparer.Ordinal);
+        var lines = new List<string> { "digraph pipeline {" };
+        lines.AddRange(
+            stepIds.Select(id =>
+            {
+                var shape =
+                    id == startStepId ? ", shape=doublecircle"
+                    : outputStepIds.Contains(id, StringComparer.Ordinal) ? ", shape=box"
+                    : "";
+                return $"  {aliases[id]} [label=\"{Escape(id)}\"{shape}];";
+            })
+        );
+        lines.AddRange(
+            routes.Select(route =>
+            {
+                var attributes = new List<string>();
+                if (!string.IsNullOrWhiteSpace(route.Label))
+                {
+                    attributes.Add($"label=\"{Escape(route.Label)}\"");
+                }
+                if (route.Conditional)
+                {
+                    attributes.Add("style=dashed");
+                }
+                var suffix = attributes.Count == 0 ? "" : $" [{string.Join(", ", attributes)}]";
+                return $"  {aliases[route.SourceId]} -> {aliases[route.TargetId]}{suffix};";
+            })
+        );
+        lines.Add("}");
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string Escape(string value) =>
+        value
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal)
+            .Replace("\r", "\\r", StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal);
 }
 
 public sealed record PipelineInspection(
@@ -733,7 +817,7 @@ internal static class PipelineMafBridge
     public static Workflow GetWorkflow<TState>(Pipeline<TState> pipeline) => pipeline.Workflow;
 }
 
-public static class TandemWorkflow
+public static class Pipeline
 {
     public static PipelineBuilder<TState> Start<TState, TResult>(
         IGeneratedPipelineStep<TState, TResult> at,

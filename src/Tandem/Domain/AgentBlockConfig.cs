@@ -1,3 +1,5 @@
+using Tandem.Infrastructure;
+
 namespace Tandem.Domain;
 
 internal sealed record AgentBlockConfig<TState>(
@@ -16,7 +18,9 @@ internal sealed record AgentBlockConfig<TState>(
     bool ContinueSession = false,
     Func<TState, AgentProfileSelection>? ProfilePolicy = null,
     Func<PipelineMessage<TState>, BlockOutcome, bool>? RetainConversation = null,
-    Func<PipelineMessage<TState>, string>? ContextUserMessage = null
+    Func<PipelineMessage<TState>, string>? ContextUserMessage = null,
+    AgentImplementationFactory? ImplementationFactory = null,
+    TimeSpan? Timeout = null
 );
 
 internal sealed record AgentStructuredOutputDescriptor<TState>(

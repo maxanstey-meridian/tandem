@@ -160,13 +160,24 @@ public sealed record CheckpointPolicy<TState>(
 public static class AdvancedAgentBuilderExtensions
 {
     public static AgentBuilder<TState> CreateProfiled<TState>(
-        this AgentRuntime runtime,
+        this AgentFactory runtime,
         string id,
         string profile,
         string instructions,
         IChatClient chatClient,
         Func<string, IChatClient> profileChatClients
     ) => runtime.CreateProfiled<TState>(id, profile, instructions, chatClient, profileChatClients);
+
+    public static AgentBuilder<TState> UseHarness<TState>(
+        this AgentBuilder<TState> builder,
+        string harnessInstructions
+    )
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(harnessInstructions);
+        return builder.ConfigureImplementation(context =>
+            HarnessAgentImplementation.Create(context, harnessInstructions)
+        );
+    }
 
     public static AgentBuilder<TState> WithMessageFromContext<TState>(
         this AgentBuilder<TState> builder,
@@ -222,11 +233,6 @@ public static class AdvancedAgentBuilderExtensions
         builder.ConfigureOutput<TOutput>(
             StructuredOutputDescriptors.Create(parser, acceptancePolicy, correctionRequiredToolName)
         );
-
-    public static AgentBuilder<TState> WithCapability<TState>(
-        this AgentBuilder<TState> builder,
-        AgentCapability<TState> capability
-    ) => builder.ConfigureCapability(capability.Descriptor);
 
     public static AgentBuilder<TState> WithCheckpoint<TState>(
         this AgentBuilder<TState> builder,

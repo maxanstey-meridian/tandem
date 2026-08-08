@@ -20,6 +20,14 @@
     </ItemGroup>
 
     <ItemGroup>
+        <InternalsVisibleTo Include="Tandem.Tests" />
+        <EmbeddedResource
+            Include="DELIVERY_HARNESS.md"
+            LogicalName="Tandem.Delivery.DELIVERY_HARNESS.md"
+        />
+    </ItemGroup>
+
+    <ItemGroup>
         <ProjectReference Include="..\Tandem.Advanced\Tandem.Advanced.csproj" />
         <ProjectReference Include="..\Tandem\Tandem.csproj" />
         <ProjectReference

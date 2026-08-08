@@ -7,7 +7,7 @@ public static class TandemRegistration
 {
     public static IServiceCollection AddTandem(this IServiceCollection services)
     {
-        services.TryAddSingleton<AgentRuntime>();
+        services.TryAddSingleton<AgentFactory>();
         return services;
     }
 }

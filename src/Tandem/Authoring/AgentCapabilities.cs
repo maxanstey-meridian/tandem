@@ -5,18 +5,9 @@ using System.Text.Json.Serialization;
 using FluentValidation;
 using Microsoft.Extensions.AI;
 
-namespace Tandem.Advanced;
+namespace Tandem;
 
-public sealed record AgentCapabilityContext<TState, TRequest>(
-    Guid RunId,
-    string BlockId,
-    string InvocationId,
-    string CapabilityId,
-    TState State,
-    TRequest Request
-);
-
-public sealed class AgentCapability<TState>
+public class AgentCapability<TState>
 {
     internal AgentCapability(AgentCapabilityDescriptor<TState> descriptor)
     {
@@ -30,30 +21,72 @@ public sealed class AgentCapability<TState>
         Descriptor.Bind(invocation);
 }
 
+public sealed class AgentCapability<TState, TRequest> : AgentCapability<TState>
+    where TRequest : class
+{
+    private readonly string _name;
+    private readonly string _description;
+    private readonly IValidator<TRequest> _validator;
+    private readonly Func<TRequest, string> _summarize;
+    private readonly Func<TState, TRequest, TState> _apply;
+
+    internal AgentCapability(
+        string name,
+        string description,
+        IValidator<TRequest> validator,
+        Func<TRequest, string> summarize,
+        Func<TState, TRequest, TState> apply,
+        Func<CapabilityAcceptanceContext<TState, TRequest>, CancellationToken, ValueTask>? accept =
+            null
+    )
+        : base(CreateDescriptor(name, description, validator, summarize, apply, accept))
+    {
+        _name = name;
+        _description = description;
+        _validator = validator;
+        _summarize = summarize;
+        _apply = apply;
+    }
+
+    internal AgentCapability<TState, TRequest> WithAcceptance(
+        Func<CapabilityAcceptanceContext<TState, TRequest>, CancellationToken, ValueTask> accept
+    ) => new(_name, _description, _validator, _summarize, _apply, accept);
+
+    private static AgentCapabilityDescriptor<TState> CreateDescriptor(
+        string name,
+        string description,
+        IValidator<TRequest> validator,
+        Func<TRequest, string> summarize,
+        Func<TState, TRequest, TState> apply,
+        Func<CapabilityAcceptanceContext<TState, TRequest>, CancellationToken, ValueTask>? accept
+    )
+    {
+        var capabilityId = $"capability:{typeof(TState).FullName}:{name}";
+        return new AgentCapabilityDescriptor<TState>(
+            capabilityId,
+            name,
+            invocation => new CapabilityFunction<TState, TRequest>(
+                capabilityId,
+                name,
+                description,
+                validator,
+                summarize,
+                apply,
+                accept,
+                invocation
+            )
+        );
+    }
+}
+
 public static class AgentCapabilities
 {
-    public static AgentCapability<TState> Create<TState, TRequest>(
+    public static AgentCapability<TState, TRequest> Create<TState, TRequest>(
         string name,
         string description,
         IValidator<TRequest> validator,
         Func<TRequest, string> summarize,
         Func<TState, TRequest, TState> apply
-    )
-        where TRequest : class =>
-        CreateAsync<TState, TRequest>(
-            name,
-            description,
-            validator,
-            summarize,
-            (context, _) => ValueTask.FromResult(apply(context.State, context.Request))
-        );
-
-    public static AgentCapability<TState> CreateAsync<TState, TRequest>(
-        string name,
-        string description,
-        IValidator<TRequest> validator,
-        Func<TRequest, string> summarize,
-        Func<AgentCapabilityContext<TState, TRequest>, CancellationToken, ValueTask<TState>> accept
     )
         where TRequest : class
     {
@@ -61,26 +94,25 @@ public static class AgentCapabilities
         ArgumentException.ThrowIfNullOrWhiteSpace(description);
         ArgumentNullException.ThrowIfNull(validator);
         ArgumentNullException.ThrowIfNull(summarize);
-        ArgumentNullException.ThrowIfNull(accept);
-
-        var capabilityId = $"capability:{typeof(TState).FullName}:{name}";
-        return new AgentCapability<TState>(
-            new AgentCapabilityDescriptor<TState>(
-                capabilityId,
-                name,
-                invocation => new CapabilityFunction<TState, TRequest>(
-                    capabilityId,
-                    name,
-                    description,
-                    validator,
-                    summarize,
-                    accept,
-                    invocation
-                )
-            )
+        ArgumentNullException.ThrowIfNull(apply);
+        return new AgentCapability<TState, TRequest>(
+            name,
+            description,
+            validator,
+            summarize,
+            apply
         );
     }
 }
+
+internal sealed record CapabilityAcceptanceContext<TState, TRequest>(
+    Guid RunId,
+    string BlockId,
+    string InvocationId,
+    string CapabilityId,
+    TState State,
+    TRequest Request
+);
 
 internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
     where TRequest : class
@@ -89,27 +121,28 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
     {
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     };
-
     private readonly string _capabilityId;
     private readonly string _name;
     private readonly string _description;
     private readonly IValidator<TRequest> _validator;
     private readonly Func<TRequest, string> _summarize;
+    private readonly Func<TState, TRequest, TState> _apply;
     private readonly Func<
-        AgentCapabilityContext<TState, TRequest>,
+        CapabilityAcceptanceContext<TState, TRequest>,
         CancellationToken,
-        ValueTask<TState>
-    > _accept;
+        ValueTask
+    >? _accept;
     private readonly CapabilityInvocationState<TState> _invocation;
     private readonly JsonElement _schema;
 
-    public CapabilityFunction(
+    internal CapabilityFunction(
         string capabilityId,
         string name,
         string description,
         IValidator<TRequest> validator,
         Func<TRequest, string> summarize,
-        Func<AgentCapabilityContext<TState, TRequest>, CancellationToken, ValueTask<TState>> accept,
+        Func<TState, TRequest, TState> apply,
+        Func<CapabilityAcceptanceContext<TState, TRequest>, CancellationToken, ValueTask>? accept,
         CapabilityInvocationState<TState> invocation
     )
     {
@@ -118,6 +151,7 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
         _description = description;
         _validator = validator;
         _summarize = summarize;
+        _apply = apply;
         _accept = accept;
         _invocation = invocation;
         _schema = CreateInputSchema();
@@ -152,7 +186,7 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
         {
             return Error(
                 $"invalid {_name} call",
-                validation.Errors.Select(failure => failure.ErrorMessage)
+                validation.Errors.Select(error => error.ErrorMessage)
             );
         }
 
@@ -175,17 +209,20 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
 
         try
         {
-            var state = await _accept(
-                new AgentCapabilityContext<TState, TRequest>(
-                    _invocation.RunId,
-                    _invocation.BlockId,
-                    _invocation.InvocationId,
-                    _capabilityId,
-                    _invocation.State,
-                    request
-                ),
-                cancellationToken
+            var context = new CapabilityAcceptanceContext<TState, TRequest>(
+                _invocation.RunId,
+                _invocation.BlockId,
+                _invocation.InvocationId,
+                _capabilityId,
+                _invocation.State,
+                request
             );
+            if (_accept is not null)
+            {
+                await _accept(context, cancellationToken);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            var state = _apply(context.State, context.Request);
             _invocation.Commit(
                 new AcceptedCapability<TState>(_capabilityId, _name, state, summary, payload)
             );

@@ -12,7 +12,7 @@ public sealed class InProcessPipelineRunnerTests
     public async Task RunAsync_ReturnsTypedPipelineOutput()
     {
         var increment = new IncrementStage();
-        var pipeline = TandemWorkflow.Start(increment, "in-process-completion").Build(increment);
+        var pipeline = Pipeline.Start(increment, "in-process-completion").Build(increment);
         var runId = Guid.CreateVersion7();
 
         var output = await new InProcessPipelineRunner().RunAsync(
@@ -30,7 +30,7 @@ public sealed class InProcessPipelineRunnerTests
     public async Task RunAsync_ReturnsDeclaredFailureAsOutput()
     {
         var failure = new DeclaredFailureStage();
-        var pipeline = TandemWorkflow.Start(failure, "in-process-declared-failure").Build(failure);
+        var pipeline = Pipeline.Start(failure, "in-process-declared-failure").Build(failure);
 
         var output = await new InProcessPipelineRunner().RunAsync(
             pipeline,
@@ -47,7 +47,7 @@ public sealed class InProcessPipelineRunnerTests
     public async Task RunAsync_PropagatesExecutionFault()
     {
         var fault = new FaultStage();
-        var pipeline = TandemWorkflow.Start(fault, "in-process-fault").Build(fault);
+        var pipeline = Pipeline.Start(fault, "in-process-fault").Build(fault);
 
         var act = () =>
             new InProcessPipelineRunner().RunAsync(
@@ -65,7 +65,7 @@ public sealed class InProcessPipelineRunnerTests
     public async Task RunAsync_CancelsTheLiveWorkflow()
     {
         var waiting = new WaitForeverStage();
-        var pipeline = TandemWorkflow.Start(waiting, "in-process-cancellation").Build(waiting);
+        var pipeline = Pipeline.Start(waiting, "in-process-cancellation").Build(waiting);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
         var observations = new List<PipelineObservation>();
         var observer = new InlinePipelineObserver(observation => observations.Add(observation));
@@ -123,7 +123,7 @@ public sealed class InProcessPipelineRunnerTests
             (state, answer) => state with { Answer = answer.Text }
         );
         var complete = PipelineNodes.Complete<RunnerState>("complete");
-        var pipeline = TandemWorkflow
+        var pipeline = Pipeline
             .Start(start, "in-process-interaction")
             .Route(on: start.Success, to: interaction, label: "ask")
             .Route(when: _ => true, from: interaction, to: complete, label: "answered")
@@ -165,7 +165,7 @@ public sealed class InProcessPipelineRunnerTests
             (state, answer) => state with { Answer = answer.Text }
         );
         var complete = PipelineNodes.Complete<RunnerState>("complete");
-        var pipeline = TandemWorkflow
+        var pipeline = Pipeline
             .Start(start, "in-process-wrong-answer")
             .Route(on: start.Success, to: interaction, label: "ask")
             .Route(when: _ => true, from: interaction, to: complete, label: "answered")
@@ -212,7 +212,7 @@ public sealed class InProcessPipelineRunnerTests
         );
         var pending = await WaitForPendingAsync(broker);
         var increment = new IncrementStage();
-        var independentPipeline = TandemWorkflow
+        var independentPipeline = Pipeline
             .Start(increment, "in-process-independent-run")
             .Build(increment);
 
@@ -407,7 +407,7 @@ public sealed class InProcessPipelineRunnerTests
             (state, answer) => state with { Answer = answer.Text }
         );
         var complete = PipelineNodes.Complete<RunnerState>("complete");
-        return TandemWorkflow
+        return Pipeline
             .Start(start, name)
             .Route(on: start.Success, to: interaction, label: "ask")
             .Route(when: _ => true, from: interaction, to: complete, label: "answered")

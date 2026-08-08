@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace Tandem.Domain;
 
@@ -27,12 +26,6 @@ internal sealed record PipelineMessage<TState>(
 }
 
 internal sealed record PipelineResult(string StepId, string CaseId, JsonElement Payload);
-
-[JsonConverter(typeof(JsonStringEnumConverter))]
-public enum PipelineRunDisposition
-{
-    Failed,
-}
 
 internal sealed record PipelineRuntime(
     Guid RunId,

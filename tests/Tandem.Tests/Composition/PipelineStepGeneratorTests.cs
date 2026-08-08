@@ -161,15 +161,11 @@ public sealed class PipelineStepGeneratorTests
             {
                 [AttributeUsage(AttributeTargets.Class)]
                 public sealed class PipelineStageAttribute(string id) : Attribute;
-            }
-            namespace Tandem.Domain
-            {
                 public abstract record Outcome<T>;
             }
             namespace Consumer
             {
                 using Tandem;
-                using Tandem.Domain;
                 public sealed record State;
                 [PipelineStage("stage")]
                 public sealed partial class Stage

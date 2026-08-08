@@ -25,8 +25,6 @@ internal sealed class AgentBlock<TState>(
         declareCrossRunShareable: true
     )
 {
-    private static readonly TimeSpan _turnTimeout = TimeSpan.FromMinutes(10);
-
     public override async ValueTask<PipelineMessage<TState>> HandleAsync(
         PipelineMessage<TState> message,
         IWorkflowContext context,
@@ -40,7 +38,10 @@ internal sealed class AgentBlock<TState>(
     {
         var blockSw = Stopwatch.StartNew();
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(_turnTimeout);
+        if (config.Timeout is { } timeout)
+        {
+            cts.CancelAfter(timeout);
+        }
 
         var runtime = ApplyPreInvocationPolicies(message);
         message = message with { Runtime = runtime };
@@ -73,12 +74,6 @@ internal sealed class AgentBlock<TState>(
         {
             var collector = new ToolOutcomeCollector();
 
-            AgentFileStore? fileStore = config.WorkspacePath is null
-                ? null
-                : new GitExcludedFileStore(
-                    new BomlessFileSystemAgentFileStore(config.WorkspacePath(message.State))
-                );
-
             var instructions = isCheckpointOnly
                 ? config.Checkpoint!.Instructions
                 : config.SystemInstructions;
@@ -87,7 +82,6 @@ internal sealed class AgentBlock<TState>(
                 .Select(function => function.Name)
                 .ToHashSet(StringComparer.Ordinal);
             var agent = CreateAgent(
-                fileStore,
                 instructions,
                 tools,
                 message,
@@ -198,7 +192,6 @@ internal sealed class AgentBlock<TState>(
                     )
                     {
                         agent = CreateAgent(
-                            fileStore,
                             instructions,
                             tools,
                             message,
@@ -240,7 +233,6 @@ internal sealed class AgentBlock<TState>(
                 continuationAttempt++;
                 userMessage = directive.Prompt;
                 agent = CreateAgent(
-                    fileStore,
                     instructions,
                     tools,
                     message,
@@ -528,7 +520,6 @@ internal sealed class AgentBlock<TState>(
     }
 
     private AIAgent CreateAgent(
-        AgentFileStore? fileStore,
         string instructions,
         IReadOnlyList<AITool> tools,
         PipelineMessage<TState> message,
@@ -539,7 +530,11 @@ internal sealed class AgentBlock<TState>(
         bool configureStructuredOutput = true
     )
     {
-        var chatOptions = new ChatOptions { Instructions = instructions, Tools = tools.ToList() };
+        var chatOptions = new ChatOptions
+        {
+            Instructions = $"{GenericAgentInstructions.Value}\n\n{instructions}",
+            Tools = tools.ToList(),
+        };
         if (!string.IsNullOrWhiteSpace(requiredToolName))
         {
             chatOptions.ToolMode = ChatToolMode.RequireSpecific(requiredToolName);
@@ -549,73 +544,34 @@ internal sealed class AgentBlock<TState>(
             configureChatOptions?.Invoke(chatOptions);
         }
 
-        var agent = new HarnessAgent(
-            chatClientFactory is null
-                ? chatClient
-                : chatClientFactory(
-                    message.Runtime.AgentProfiles.GetValueOrDefault(config.BlockId)?.ProfileName
-                        ?? config.ProfileName
-                ),
-            new HarnessAgentOptions
-            {
-                Id = config.BlockId,
-                Name = config.BlockId,
-                HarnessInstructions = TandemHarnessInstructions.Value,
-                ChatOptions = chatOptions,
-                DisableFileMemory = true,
-                DisableTodoProvider = true,
-                DisableAgentModeProvider = true,
-                DisableAgentSkillsProvider = true,
-                DisableWebSearch = true,
-                DisableToolAutoApproval = true,
-                DisableOpenTelemetry = true,
-                DisableCompaction = true,
-                MaximumIterationsPerRequest = 999,
-                FileAccessStore = fileStore,
-                FileAccessProviderOptions = fileStore is null
-                    ? null
-                    : ResolveAccessOptions(message, isCheckpointOnly),
-            }
+        var selectedChatClient = chatClientFactory is null
+            ? chatClient
+            : chatClientFactory(
+                message.Runtime.AgentProfiles.GetValueOrDefault(config.BlockId)?.ProfileName
+                    ?? config.ProfileName
+            );
+        var implementationContext = new AgentImplementationContext(
+            config.BlockId,
+            selectedChatClient,
+            chatOptions,
+            config.WorkspacePath?.Invoke(message.State),
+            config.AllowMutation?.Invoke(message.State) ?? false,
+            toolInterceptor is not null,
+            isCheckpointOnly
         );
+        var agent = config.ImplementationFactory is null
+            ? new ChatClientAgent(
+                selectedChatClient,
+                new ChatClientAgentOptions
+                {
+                    Id = config.BlockId,
+                    Name = config.BlockId,
+                    ChatOptions = chatOptions,
+                }
+            )
+            : config.ImplementationFactory(implementationContext);
 
         return ConfigureFunctionInvocation(agent, collector, message, boundCapabilityNames);
-    }
-
-    private FileAccessProviderOptions ResolveAccessOptions(
-        PipelineMessage<TState> message,
-        bool isCheckpointOnly
-    )
-    {
-        if (isCheckpointOnly)
-        {
-            return new FileAccessProviderOptions
-            {
-                DisableWriteTools = false,
-                DisableReadOnlyToolApproval = true,
-                DisableWriteToolApproval = true,
-            };
-        }
-
-        // When a tool interceptor is configured, write tools stay visible —
-        // the interceptor enforces the gate by blocking and returning a message.
-        if (toolInterceptor is not null)
-        {
-            return new FileAccessProviderOptions
-            {
-                DisableWriteTools = false,
-                DisableReadOnlyToolApproval = true,
-                DisableWriteToolApproval = true,
-            };
-        }
-
-        var allowMutation = config.AllowMutation?.Invoke(message.State) == true;
-
-        return new FileAccessProviderOptions
-        {
-            DisableWriteTools = !allowMutation,
-            DisableReadOnlyToolApproval = true,
-            DisableWriteToolApproval = true,
-        };
     }
 
     private static JsonElement EmptyPayload() => JsonSerializer.SerializeToElement(new { });

@@ -4,7 +4,7 @@ public sealed class SupportComposition(SupportSteps support)
 {
     public Pipeline<SupportState> Build()
     {
-        return TandemWorkflow
+        return Pipeline
             .Start(
                 at: support.Classify,
                 name: "customer-support",

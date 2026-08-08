@@ -30,13 +30,13 @@ Keep these ownership boundaries explicit:
 - Ordinary authored steps and policies use concrete `TState`; core must not add a
   universal lifecycle state interface or state bag. Advanced APIs expose narrow
   context and operation values; the complete execution envelope remains internal.
-- Envelope-aware agent policy, raw parsing, checkpoint mechanics, capabilities,
+- Envelope-aware agent policy, raw parsing, checkpoint mechanics, Harness selection,
   and runtime observation are extension methods in `Tandem.Advanced`, not
   ordinary `AgentBuilder<TState>` instance methods.
-- Capability authors own typed requests, validation, summaries, and state
-  transitions, including asynchronous durable acceptance when required. Tandem
-  owns invocation identity, local MAF tool binding, and atomic accepted-call
-  ownership.
+- Core capability authors own typed requests, validation, summaries, and state
+  transitions. Advanced may decorate that same capability with asynchronous
+  runtime-aware acceptance. Tandem owns invocation identity, local MAF tool binding,
+  and atomic accepted-call ownership.
 - Steps own operations, not orchestration.
 - Pipeline state records facts; it does not hide routing logic.
 - Microsoft Agent Framework owns workflow execution, sessions,
@@ -91,9 +91,9 @@ unions, or vague `Manager`, `Service`, `Processor`, `Handler`, `Provider`, or
 `Helper` names where a precise pipeline role exists.
 
 Composition is the complete route map. Route calls immediately add real MAF edges
-and never retain route descriptors, a graph AST, staged route state, or a parallel
-renderer. Inspection reflects the built MAF workflow and delegates Mermaid/DOT
-export to MAF.
+and never retain a second execution graph. Inspection projects that executable graph
+into Tandem's semantic nodes and routes; Mermaid and DOT render the same projection
+without private MAF expansion.
 
 Use `.Route(on: step, to: next)` for unconditional serial flow and
 `.Route(on: step.Success, when: state => ..., to: next)` for semantic branching.

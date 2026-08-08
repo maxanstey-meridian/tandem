@@ -1,9 +1,8 @@
 [advanced]
 Tandem.Advanced.AdvancedAgentBuilderExtensions
 Tandem.Advanced.AdvancedAgentMessage`1
-Tandem.Advanced.AgentCapabilities
-Tandem.Advanced.AgentCapabilityContext`2
-Tandem.Advanced.AgentCapability`1
+Tandem.Advanced.AgentCapabilityAcceptanceContext`2
+Tandem.Advanced.AgentCapabilityAcceptanceExtensions
 Tandem.Advanced.AgentCheckpointContext`1
 Tandem.Advanced.AgentConversationDecision
 Tandem.Advanced.AgentConversationPolicy`1

@@ -3,7 +3,7 @@ namespace Tandem.Sample.Support;
 public static class SupportDefinitions
 {
     public static SupportSteps Create(
-        AgentRuntime agentRuntime,
+        AgentFactory agentRuntime,
         SupportOptions options,
         IAccountLookup accountLookup
     )

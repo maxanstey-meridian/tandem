@@ -1,11 +1,23 @@
+using Tandem.Domain;
+
 namespace Tandem.Delivery;
 
-public sealed class DeliveryComposition(DeliveryStepsFactory stepsFactory)
+public sealed class DeliveryComposition
 {
+    private readonly DeliverySteps _delivery;
+
+    public DeliveryComposition(DeliveryStepsFactory stepsFactory)
+    {
+        _delivery = stepsFactory.Create();
+    }
+
+    public PipelineInteraction<DeliveryState, HumanQuestion, HumanAnswer> HumanInput =>
+        _delivery.HumanInput;
+
     public Pipeline<DeliveryState> Build()
     {
-        var delivery = stepsFactory.Create();
-        return TandemWorkflow
+        var delivery = _delivery;
+        return Pipeline
             .Start(
                 at: delivery.PrepareWorkspace,
                 name: "delivery",

@@ -35,7 +35,7 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
 
         var composition = new DeliveryComposition(
             CreateFactory(
-                new AgentRuntime(),
+                new AgentFactory(),
                 _ => new FakeChatClient(),
                 _ => MakeProfile(),
                 new DeliveryDiffAcquisition(new GitProcess()),
@@ -91,7 +91,7 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
     {
         var inspection = new DeliveryComposition(
             CreateFactory(
-                new AgentRuntime(),
+                new AgentFactory(),
                 _ => new FakeChatClient(),
                 _ => MakeProfile(),
                 new DeliveryDiffAcquisition(new GitProcess()),
@@ -497,7 +497,7 @@ public sealed class DeliveryCompositionGraphTests : IDisposable
     private static DeliveryAgentProfile MakeProfile() => new(200000, 32000, 80);
 
     private static DeliveryStepsFactory CreateFactory(
-        AgentRuntime runtime,
+        AgentFactory runtime,
         Func<string, IChatClient> clients,
         Func<string, DeliveryAgentProfile> profiles,
         DeliveryDiffAcquisition diff,

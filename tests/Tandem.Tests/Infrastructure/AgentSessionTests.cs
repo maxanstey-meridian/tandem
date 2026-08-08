@@ -9,6 +9,42 @@ namespace Tandem.Tests.Infrastructure;
 public sealed class AgentSessionTests
 {
     [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Cancellation_ComesFromExplicitTimeoutOrHostLifetime(bool explicitTimeout)
+    {
+        var block = new AgentBlock<TestState>(
+            new AgentBlockConfig<TestState>(
+                "agent",
+                "agent",
+                "Respond.",
+                [],
+                _ => "request",
+                null,
+                null,
+                Timeout: explicitTimeout ? TimeSpan.FromMilliseconds(20) : null
+            ),
+            new BlockingChatClient()
+        );
+        using var hostCancellation = new CancellationTokenSource();
+        if (!explicitTimeout)
+        {
+            hostCancellation.CancelAfter(TimeSpan.FromMilliseconds(20));
+        }
+
+        var execute = async () =>
+            await block.ExecuteAsync(
+                new PipelineMessage<TestState>(
+                    PipelineRuntime.Create(Guid.CreateVersion7()),
+                    new TestState(0)
+                ),
+                hostCancellation.Token
+            );
+
+        await execute.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task SessionHistory_IsFreshByDefault_AndRetainedOnlyWhenExplicit(
@@ -47,6 +83,24 @@ public sealed class AgentSessionTests
         );
 
         client.Requests.Should().HaveCount(2);
+        client
+            .Instructions.Should()
+            .OnlyContain(instructions =>
+                instructions.Contains(
+                    "one bounded node in a Tandem pipeline",
+                    StringComparison.Ordinal
+                )
+                && !instructions.Contains("repository", StringComparison.OrdinalIgnoreCase)
+                && !instructions.Contains("workspace", StringComparison.OrdinalIgnoreCase)
+                && !instructions.Contains("packet", StringComparison.OrdinalIgnoreCase)
+                && !instructions.Contains("mutation", StringComparison.OrdinalIgnoreCase)
+                && !instructions.Contains("planner", StringComparison.OrdinalIgnoreCase)
+                && !instructions.Contains("reviewer", StringComparison.OrdinalIgnoreCase)
+                && !instructions.Contains("executor", StringComparison.OrdinalIgnoreCase)
+                && !instructions.Contains("verification", StringComparison.OrdinalIgnoreCase)
+                && !instructions.Contains("coding evidence", StringComparison.OrdinalIgnoreCase)
+                && !instructions.Contains("publication", StringComparison.OrdinalIgnoreCase)
+            );
         var retained = client
             .Requests[1]
             .Any(message =>
@@ -62,6 +116,7 @@ public sealed class AgentSessionTests
     {
         private readonly Queue<string> _responses = new(responses);
         public List<IReadOnlyList<ChatMessage>> Requests { get; } = [];
+        public List<string> Instructions { get; } = [];
 
         public Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages,
@@ -76,6 +131,7 @@ public sealed class AgentSessionTests
         )
         {
             Requests.Add(messages.ToArray());
+            Instructions.Add(options?.Instructions ?? "");
             var response = new ChatResponse(
                 new ChatMessage(ChatRole.Assistant, [new TextContent(_responses.Dequeue())])
             )
@@ -88,6 +144,29 @@ public sealed class AgentSessionTests
                 yield return update;
             }
             await Task.CompletedTask;
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose() { }
+    }
+
+    private sealed class BlockingChatClient : IChatClient
+    {
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default
+        ) => throw new NotSupportedException();
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default
+        )
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null) => null;

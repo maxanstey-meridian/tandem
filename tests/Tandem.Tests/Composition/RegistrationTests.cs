@@ -4,7 +4,6 @@ using FluentAssertions;
 using FluentValidation;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Tandem.Domain;
 
 namespace Tandem.Tests.Composition;
 
@@ -16,7 +15,19 @@ public sealed class RegistrationTests : IDisposable
     );
 
     [Fact]
-    public void PublicRegistrations_ResolveDeliveryAndAgentRuntime()
+    public void AgentTimeout_RejectsUnsupportedDurations()
+    {
+        var builder = new AgentFactory()
+            .Create<TestState>("agent", "Respond.", new FakeChatClient())
+            .WithMessage(state => state.Message);
+
+        var tooLong = () => builder.WithTimeout(TimeSpan.MaxValue);
+
+        tooLong.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public void PublicRegistrations_ResolveDeliveryAndAgentFactory()
     {
         Directory.CreateDirectory(_home);
         var services = new ServiceCollection();
@@ -30,13 +41,13 @@ public sealed class RegistrationTests : IDisposable
         );
 
         provider.GetRequiredService<DeliveryComposition>().Should().NotBeNull();
-        provider.GetRequiredService<AgentRuntime>().Should().NotBeNull();
+        provider.GetRequiredService<AgentFactory>().Should().NotBeNull();
     }
 
     [Fact]
-    public void AgentRuntime_DirectClientBuildsWithDefaultFreshSession()
+    public void AgentFactory_DirectClientBuildsWithDefaultFreshSession()
     {
-        var definition = new AgentRuntime()
+        var definition = new AgentFactory()
             .Create<TestState>("classify", "Classify the ticket.", new FakeChatClient())
             .WithMessage(state => state.Message)
             .Build();
@@ -45,9 +56,9 @@ public sealed class RegistrationTests : IDisposable
     }
 
     [Fact]
-    public void AgentRuntime_BuildsWithoutWorkspaceCapability()
+    public void AgentFactory_BuildsWithoutWorkspaceCapability()
     {
-        var operation = new AgentRuntime()
+        var operation = new AgentFactory()
             .Create<TestState>("classify", "Classify the ticket.", new FakeChatClient())
             .WithMessage(state => state.Message)
             .Build();
@@ -61,7 +72,7 @@ public sealed class RegistrationTests : IDisposable
         var primary = new RecordingModelClient();
         var promoted = new RecordingModelClient();
         IChatClient Resolve(string profile) => profile == "promoted" ? promoted : primary;
-        var agent = new AgentRuntime()
+        var agent = new AgentFactory()
             .CreateProfiled<TestState>("profiled", "primary", "Respond once.", primary, Resolve)
             .WithMessage(state => state.Message)
             .WithProfilePolicy(state => new AgentProfileDecision(
@@ -70,7 +81,7 @@ public sealed class RegistrationTests : IDisposable
             ))
             .Build();
         var complete = PipelineNodes.Complete<TestState>("complete");
-        var pipeline = TandemWorkflow
+        var pipeline = Pipeline
             .Start(agent, "profile-selection")
             .Route(agent.Success, complete, "complete")
             .Build(complete);
@@ -93,7 +104,7 @@ public sealed class RegistrationTests : IDisposable
             _ => "incremented",
             (state, request) => state with { Count = state.Count + request.Amount }
         );
-        var builder = new AgentRuntime()
+        var builder = new AgentFactory()
             .Create<FirstScope.SharedState>("agent", "Test capabilities.", new FakeChatClient())
             .WithMessage(_ => "message")
             .WithCapability(first)
@@ -111,14 +122,14 @@ public sealed class RegistrationTests : IDisposable
     [Fact]
     public void DefaultAgentDefinition_IsDirectlyComposableWithTypedOutcomeSelectors()
     {
-        var definition = new AgentRuntime()
+        var definition = new AgentFactory()
             .Create<TestState>("classify", "Classify the ticket.", new FakeChatClient())
             .WithMessage(state => state.Message)
             .Build();
         var complete = PipelineNodes.Complete<TestState>("complete");
         var failed = PipelineNodes.Failed<TestState>("failed");
 
-        var inspection = TandemWorkflow
+        var inspection = Pipeline
             .Start(definition, "direct-agent-definition")
             .Route(definition.Success, complete, "classified")
             .Route(definition.Failed, failed, "classification failed")

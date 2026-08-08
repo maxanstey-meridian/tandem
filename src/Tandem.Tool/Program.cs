@@ -189,7 +189,8 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
 
         using var runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var humanInteraction = new TerminalHumanInteraction();
-        var interactions = new PipelineInteractionHandlers().Handle<HumanQuestion, HumanAnswer>(
+        var interactions = new PipelineInteractionHandlers().Handle(
+            composition.HumanInput,
             humanInteraction.WaitAsync
         );
         var runner = new PipelineRunner();

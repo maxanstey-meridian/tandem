@@ -3,6 +3,7 @@ using System.Text.Json;
 using FluentValidation;
 using Microsoft.Extensions.AI;
 using Tandem.Domain;
+using Tandem.Infrastructure;
 using Tandem.Infrastructure.Blocks;
 
 namespace Tandem;
@@ -68,7 +69,7 @@ public sealed class AgentDefinition<TState> : IStandardOutcomePipelineStep<TStat
     public PipelineOutcomeSelector<TState> Failed => new(this, failed: true);
 }
 
-public sealed class AgentRuntime
+public sealed class AgentFactory
 {
     public AgentBuilder<TState> Create<TState>(
         string id,
@@ -87,6 +88,7 @@ public sealed class AgentRuntime
 
 public sealed class AgentBuilder<TState>
 {
+    private static readonly TimeSpan _maximumTimeout = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
     private readonly string _id;
     private readonly string _profile;
     private readonly string _instructions;
@@ -115,6 +117,8 @@ public sealed class AgentBuilder<TState>
         ValueTask<string?>
     >? _toolInterceptor;
     private Action<ChatOptions>? _configureChatOptions;
+    private AgentImplementationFactory? _implementationFactory;
+    private TimeSpan? _timeout;
 
     internal AgentBuilder(
         string id,
@@ -151,6 +155,22 @@ public sealed class AgentBuilder<TState>
     public AgentBuilder<TState> ContinueSession()
     {
         _continueSession = true;
+        return this;
+    }
+
+    public AgentBuilder<TState> WithTimeout(TimeSpan timeout)
+    {
+        if (timeout <= TimeSpan.Zero || timeout > _maximumTimeout)
+        {
+            throw new ArgumentOutOfRangeException(nameof(timeout));
+        }
+        _timeout = timeout;
+        return this;
+    }
+
+    internal AgentBuilder<TState> ConfigureImplementation(AgentImplementationFactory factory)
+    {
+        _implementationFactory = factory;
         return this;
     }
 
@@ -204,6 +224,13 @@ public sealed class AgentBuilder<TState>
         );
         _configureChatOptions = options =>
             options.ResponseFormat = ChatResponseFormat.ForJsonSchema<TOutput>();
+        return this;
+    }
+
+    public AgentBuilder<TState> WithCapability(AgentCapability<TState> capability)
+    {
+        ArgumentNullException.ThrowIfNull(capability);
+        AddCapability(capability.Descriptor);
         return this;
     }
 
@@ -289,6 +316,13 @@ public sealed class AgentBuilder<TState>
         {
             throw new InvalidOperationException($"Agent '{_id}' must configure a user message.");
         }
+        if (_workspacePath is not null && _implementationFactory is null)
+        {
+            throw new InvalidOperationException(
+                $"Agent '{_id}' configures a workspace, which requires explicit Harness execution. "
+                    + "Call UseHarness() from Tandem.Advanced."
+            );
+        }
         var config = new AgentBlockConfig<TState>(
             _id,
             _profile,
@@ -304,7 +338,9 @@ public sealed class AgentBuilder<TState>
             _continueSession,
             _profilePolicy,
             _retainConversation,
-            _contextMessage
+            _contextMessage,
+            _implementationFactory,
+            _timeout
         );
 
         return new AgentDefinition<TState>(

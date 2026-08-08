@@ -92,26 +92,25 @@ public sealed class LocalCapabilityTests
         var attempts = 0;
         var validator = new InlineValidator<IncrementRequest>();
         validator.RuleFor(request => request.Amount).GreaterThan(0);
-        var capability = AgentCapabilities.CreateAsync<TestState, IncrementRequest>(
-            "increment",
-            "Increment the state.",
-            validator,
-            request => $"Incremented by {request.Amount}",
-            (context, _) =>
-            {
-                if (Interlocked.Increment(ref attempts) == 1)
+        var capability = AgentCapabilities
+            .Create<TestState, IncrementRequest>(
+                "increment",
+                "Increment the state.",
+                validator,
+                request => $"Incremented by {request.Amount}",
+                (state, request) => state with { Count = state.Count + request.Amount }
+            )
+            .WithAcceptance(
+                (_, _) =>
                 {
-                    throw new IOException("Persistence failed.");
-                }
-
-                return ValueTask.FromResult(
-                    context.State with
+                    if (Interlocked.Increment(ref attempts) == 1)
                     {
-                        Count = context.State.Count + context.Request.Amount,
+                        throw new IOException("Persistence failed.");
                     }
-                );
-            }
-        );
+
+                    return ValueTask.CompletedTask;
+                }
+            );
         var client = new ScriptedChatClient(
             ToolCall("first", "increment", new Dictionary<string, object?> { ["amount"] = 1 }),
             ToolCall("retry", "increment", new Dictionary<string, object?> { ["amount"] = 4 })
@@ -261,19 +260,22 @@ public sealed class LocalCapabilityTests
         var acceptances = 0;
         var validator = new InlineValidator<IncrementRequest>();
         validator.RuleFor(request => request.Amount).GreaterThan(0);
-        var capability = AgentCapabilities.CreateAsync<TestState, IncrementRequest>(
-            "increment",
-            "Increment the state.",
-            validator,
-            request => $"Incremented by {request.Amount}",
-            async (context, cancellationToken) =>
-            {
-                Interlocked.Increment(ref acceptances);
-                entered.SetResult();
-                await release.Task.WaitAsync(cancellationToken);
-                return context.State with { Count = context.State.Count + context.Request.Amount };
-            }
-        );
+        var capability = AgentCapabilities
+            .Create<TestState, IncrementRequest>(
+                "increment",
+                "Increment the state.",
+                validator,
+                request => $"Incremented by {request.Amount}",
+                (state, request) => state with { Count = state.Count + request.Amount }
+            )
+            .WithAcceptance(
+                async (_, cancellationToken) =>
+                {
+                    Interlocked.Increment(ref acceptances);
+                    entered.SetResult();
+                    await release.Task.WaitAsync(cancellationToken);
+                }
+            );
         var invocation = new CapabilityInvocationState<TestState>(
             Guid.CreateVersion7(),
             "agent",
@@ -296,28 +298,31 @@ public sealed class LocalCapabilityTests
     [Fact]
     public async Task Cancellation_ReleasesReservationAndPreservesAcceptedCallIdentity()
     {
-        AgentCapabilityContext<TestState, IncrementRequest>? acceptedContext = null;
+        AgentCapabilityAcceptanceContext<TestState, IncrementRequest>? acceptedContext = null;
         var attempt = 0;
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var validator = new InlineValidator<IncrementRequest>();
         validator.RuleFor(request => request.Amount).GreaterThan(0);
-        var capability = AgentCapabilities.CreateAsync<TestState, IncrementRequest>(
-            "increment",
-            "Increment the state.",
-            validator,
-            request => $"Incremented by {request.Amount}",
-            async (context, cancellationToken) =>
-            {
-                if (Interlocked.Increment(ref attempt) == 1)
+        var capability = AgentCapabilities
+            .Create<TestState, IncrementRequest>(
+                "increment",
+                "Increment the state.",
+                validator,
+                request => $"Incremented by {request.Amount}",
+                (state, request) => state with { Count = state.Count + request.Amount }
+            )
+            .WithAcceptance(
+                async (context, cancellationToken) =>
                 {
-                    entered.SetResult();
-                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-                }
+                    if (Interlocked.Increment(ref attempt) == 1)
+                    {
+                        entered.SetResult();
+                        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    }
 
-                acceptedContext = context;
-                return context.State with { Count = context.State.Count + context.Request.Amount };
-            }
-        );
+                    acceptedContext = context;
+                }
+            );
         var runId = Guid.CreateVersion7();
         const string blockId = "agent";
         const string invocationId = "invocation-7";
@@ -346,11 +351,51 @@ public sealed class LocalCapabilityTests
     }
 
     [Fact]
+    public async Task CancellationRequestedAfterAcceptanceCallback_PreventsStateTransition()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var applied = false;
+        var capability = AgentCapabilities
+            .Create<TestState, IncrementRequest>(
+                "increment",
+                "Increment the state.",
+                new InlineValidator<IncrementRequest>(),
+                request => $"Incremented by {request.Amount}",
+                (state, request) =>
+                {
+                    applied = true;
+                    return state with { Count = state.Count + request.Amount };
+                }
+            )
+            .WithAcceptance(
+                (_, _) =>
+                {
+                    cancellation.Cancel();
+                    return ValueTask.CompletedTask;
+                }
+            );
+        var invocation = new CapabilityInvocationState<TestState>(
+            Guid.CreateVersion7(),
+            "agent",
+            "invocation-1",
+            new TestState(0)
+        );
+
+        var invoke = async () =>
+            await capability.Bind(invocation).InvokeAsync(Arguments(1), cancellation.Token);
+
+        await invoke.Should().ThrowAsync<OperationCanceledException>();
+        applied.Should().BeFalse();
+        invocation.Accepted.Should().BeNull();
+        invocation.TryReserve().Should().BeTrue();
+    }
+
+    [Fact]
     public void DistinctCapabilitiesWithSameName_AreRejected()
     {
         var first = CreateCapability();
         var second = CreateCapability();
-        var builder = new AgentRuntime()
+        var builder = new AgentFactory()
             .Create<TestState>("agent", "Test capabilities.", new ScriptedChatClient())
             .WithMessage(_ => "message")
             .ContinueSession()

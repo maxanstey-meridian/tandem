@@ -2,17 +2,55 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
-using Tandem.Domain;
 
 namespace Tandem.ExternalConsumer.Tests;
 
 public sealed class PublicRuntimeTests
 {
     [Fact]
+    public async Task SameTypedInteractions_DispatchBySemanticIdentity()
+    {
+        var start = new PublicStartStage();
+        var first = PipelineNodes.WaitFor<PublicState, PublicQuestion, PublicAnswer>(
+            "first-input",
+            _ => new PublicQuestion("first"),
+            (state, answer) => state with { Answer = answer.Text }
+        );
+        var second = PipelineNodes.WaitFor<PublicState, PublicQuestion, PublicAnswer>(
+            "second-input",
+            _ => new PublicQuestion("second"),
+            (state, answer) => state with { Answer = $"{state.Answer},{answer.Text}" }
+        );
+        var between = new PublicBetweenStage();
+        var complete = PipelineNodes.Complete<PublicState>("complete");
+        var pipeline = Pipeline
+            .Start(start, "identity-bound-interactions")
+            .Route(start.Success, first, "first")
+            .Route(_ => true, first, between, "between")
+            .Route(between.Success, second, "second")
+            .Route(_ => true, second, complete, "complete")
+            .Build(complete);
+        var handlers = new PipelineInteractionHandlers()
+            .Handle(first, (_, _) => ValueTask.FromResult(new PublicAnswer("one")))
+            .Handle(second, (_, _) => ValueTask.FromResult(new PublicAnswer("two")));
+
+        var result = await new PipelineRunner().RunAsync(
+            pipeline,
+            new PublicState(0, new NonSerializableReference()),
+            new PipelineRunOptions(Interactions: handlers)
+        );
+
+        result.State.Answer.Should().Be("one,two");
+        var duplicate = () =>
+            handlers.Handle(first, (_, _) => ValueTask.FromResult(new PublicAnswer("duplicate")));
+        duplicate.Should().Throw<InvalidOperationException>().WithMessage("*first-input*");
+    }
+
+    [Fact]
     public async Task ExternalConsumer_CanBuildAndRunTypedPipeline()
     {
         var increment = new PublicIncrementStage();
-        var pipeline = TandemWorkflow.Start(increment, "external-straight-line").Build(increment);
+        var pipeline = Pipeline.Start(increment, "external-straight-line").Build(increment);
 
         var result = await new PipelineRunner().RunAsync(
             pipeline,
@@ -35,14 +73,15 @@ public sealed class PublicRuntimeTests
             (state, answer) => state with { Answer = answer.Text }
         );
         var complete = PipelineNodes.Complete<PublicState>("complete");
-        var pipeline = TandemWorkflow
+        var pipeline = Pipeline
             .Start(start, "external-interaction")
             .Route(start.Success, interaction, "ask")
             .Route(_ => true, interaction, complete, "answered")
             .Build(complete);
         var reference = new NonSerializableReference();
         PipelineInteractionContext<PublicQuestion, PublicAnswer>? observed = null;
-        var interactions = new PipelineInteractionHandlers().Handle<PublicQuestion, PublicAnswer>(
+        var interactions = new PipelineInteractionHandlers().Handle(
+            interaction,
             (context, _) =>
             {
                 observed = context;
@@ -66,7 +105,6 @@ public sealed class PublicRuntimeTests
         observed.RequestId.Should().NotBeNullOrWhiteSpace();
         observed.InteractionId.Should().Be("public-input");
         observed.Request.Should().Be(new PublicQuestion("Count: 3"));
-        observed.ResponseType.Should().Be(typeof(PublicAnswer));
         pipeline
             .Inspect()
             .Interactions.Should()
@@ -108,7 +146,7 @@ public sealed class PublicRuntimeTests
     [Fact]
     public async Task AgentExecution_PreservesObservationForDownstreamInteraction()
     {
-        var agent = new AgentRuntime()
+        var agent = new AgentFactory()
             .Create<PublicState>("agent", "Respond.", new TextChatClient("ready"))
             .WithMessage(state => $"Count: {state.Count}")
             .Build();
@@ -118,13 +156,14 @@ public sealed class PublicRuntimeTests
             (state, answer) => state with { Answer = answer.Text }
         );
         var complete = PipelineNodes.Complete<PublicState>("complete");
-        var pipeline = TandemWorkflow
+        var pipeline = Pipeline
             .Start(agent, "agent-observation")
             .Route(agent.Success, interaction, "ask")
             .Route(_ => true, interaction, complete, "answered")
             .Build(complete);
         var observer = new RecordingObserver();
-        var interactions = new PipelineInteractionHandlers().Handle<PublicQuestion, PublicAnswer>(
+        var interactions = new PipelineInteractionHandlers().Handle(
+            interaction,
             (_, _) => ValueTask.FromResult(new PublicAnswer("continue"))
         );
 
@@ -155,13 +194,14 @@ public sealed class PublicRuntimeTests
             (state, answer) => state with { Answer = answer.Text }
         );
         var complete = PipelineNodes.Complete<PublicState>("complete");
-        var pipeline = TandemWorkflow
+        var pipeline = Pipeline
             .Start(start, "opaque-interaction")
             .Route(start.Success, interaction, "ask")
             .Route(_ => true, interaction, complete, "answered")
             .Build(complete);
         var reference = new NonSerializableReference();
-        var interactions = new PipelineInteractionHandlers().Handle<OpaqueQuestion, PublicAnswer>(
+        var interactions = new PipelineInteractionHandlers().Handle(
+            interaction,
             (context, _) =>
             {
                 context.Request.Reference.Should().BeSameAs(reference);
@@ -288,6 +328,13 @@ public sealed partial class PublicIncrementStage
 
 [PipelineStage("public-start")]
 public sealed partial class PublicStartStage
+{
+    public ValueTask<Outcome<PublicState>> ExecuteAsync(PublicState state, CancellationToken _) =>
+        ValueTask.FromResult<Outcome<PublicState>>(new Outcome<PublicState>.Success(state));
+}
+
+[PipelineStage("public-between")]
+public sealed partial class PublicBetweenStage
 {
     public ValueTask<Outcome<PublicState>> ExecuteAsync(PublicState state, CancellationToken _) =>
         ValueTask.FromResult<Outcome<PublicState>>(new Outcome<PublicState>.Success(state));

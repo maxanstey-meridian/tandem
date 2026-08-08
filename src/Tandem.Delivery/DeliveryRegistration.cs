@@ -1,6 +1,5 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Tandem.Advanced;
 using Tandem.Git;
 
 namespace Tandem.Delivery;
@@ -36,7 +35,7 @@ public static class DeliveryRegistration
         services.AddSingleton<DeliveryStepsFactory>(sp =>
         {
             return new DeliveryStepsFactory(
-                sp.GetRequiredService<AgentRuntime>(),
+                sp.GetRequiredService<AgentFactory>(),
                 options.ChatClients,
                 options.Profiles,
                 sp.GetRequiredService<DeliveryDiffAcquisition>(),

@@ -146,6 +146,10 @@ agents
 Agents start with a fresh session on every pipeline visit. Call
 `.ContinueSession()` only when retaining model conversation across visits is an
 intentional part of the composition.
+Generic agents use MAF's `ChatClientAgent` and receive only Tandem's small bounded-node
+contract plus authored instructions. Delivery opts into Harness and its repository
+contract explicitly. Call `.WithTimeout(...)` only when an agent-specific deadline is
+part of the composition; otherwise host cancellation is the only lifetime boundary.
 Successful validated application produces canonical `Success`. Tandem transports
 run identity, sessions, usage, invocation counts, and outcomes
 internally. Ordinary user code cannot unwrap an agent operation or copy an
@@ -296,9 +300,14 @@ Minimal pipelines reference `Tandem` plus the generator analyzer:
 <PackageReference Include="Tandem.Generators" Version="..." PrivateAssets="all" />
 ```
 
-Debate-style capabilities and custom policies additionally reference
-`Tandem.Advanced`. Songwriter and Support do not receive Advanced, Delivery,
+Typed capabilities are available from `Tandem`. Runtime-aware acceptance,
+Harness execution, and custom policies additionally reference `Tandem.Advanced`.
+Songwriter and Support do not receive Advanced, Delivery,
 Tool, provider, dashboard, YAML, or MCP dependencies transitively.
+
+For v1, Tandem deliberately uses FluentValidation's `IValidator<T>` as its public
+typed-output and capability-validation vocabulary. This is an intentional
+compatibility commitment rather than an incidental implementation dependency.
 
 Run the included Delivery packet:
 

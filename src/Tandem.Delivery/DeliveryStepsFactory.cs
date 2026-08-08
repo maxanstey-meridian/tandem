@@ -6,7 +6,7 @@ using Tandem.Git;
 namespace Tandem.Delivery;
 
 public sealed class DeliveryStepsFactory(
-    AgentRuntime agentRuntime,
+    AgentFactory agentRuntime,
     Func<string, IChatClient> chatClients,
     Func<string, DeliveryAgentProfile> profileResolver,
     DeliveryDiffAcquisition diffAcquisition,
@@ -113,6 +113,7 @@ public sealed class DeliveryStepsFactory(
                 chatClients(profileName),
                 chatClients
             )
+            .UseHarness(DeliveryHarnessInstructions.Value)
             .WithWorkspace(
                 state => state.WorkspacePath,
                 state => DeliveryPolicies.AllowsWorkspaceMutation(blockId, state),
