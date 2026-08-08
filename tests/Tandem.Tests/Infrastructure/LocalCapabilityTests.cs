@@ -273,13 +273,11 @@ public sealed class LocalCapabilityTests
             initial
         );
 
-        planner
-            .State.ExecutorAcceptedFact.Should()
-            .BeOfType<ExecutorAcceptedFact.PlannerRequested>();
-        report.State.ExecutorAcceptedFact.Should().BeOfType<ExecutorAcceptedFact.ReportSubmitted>();
+        planner.State.ExecutorTransition.Should().BeOfType<ExecutorTransition.PlannerRequested>();
+        report.State.ExecutorTransition.Should().BeOfType<ExecutorTransition.ReportSubmitted>();
         checkpoint
-            .State.ExecutorAcceptedFact.Should()
-            .BeOfType<ExecutorAcceptedFact.CheckpointWritten>();
+            .State.ExecutorTransition.Should()
+            .BeOfType<ExecutorTransition.CheckpointWritten>();
     }
 
     [Fact]

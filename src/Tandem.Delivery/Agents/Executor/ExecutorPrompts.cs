@@ -33,7 +33,7 @@ public static class ExecutorPrompts
                 ? $"\nLatest verification failure (if any):\n{VerificationResultFormatting.Format(state.VerificationResults)}"
                 : "";
         var candidate = state.CandidateSha is { } sha ? $"\nCurrent candidate SHA: {sha}" : "";
-        var checkpoint = state.ExecutorAcceptedFact is ExecutorAcceptedFact.CheckpointWritten fact
+        var checkpoint = state.ExecutorTransition is ExecutorTransition.CheckpointWritten fact
             ? $"\nPrevious checkpoint (context was compacted, continue from here):\n"
                 + $"Summary: {fact.Checkpoint.Summary}\n"
                 + $"Completed: {string.Join("; ", fact.Checkpoint.Completed)}\n"
@@ -61,7 +61,7 @@ public static class ExecutorPrompts
             """;
 
     internal const string CheckpointInstructions = """
-        You are Tandem's implementation block in checkpoint-only mode.
+        You are Tandem's executor agent in checkpoint-only mode.
 
         Your context window is approaching its limit. You must write a checkpoint
         of your current work state using the write_checkpoint tool. Summarize
@@ -71,7 +71,7 @@ public static class ExecutorPrompts
         """;
 
     internal const string Instructions = """
-        You are Tandem's implementation block.
+        You are Tandem's executor agent.
 
         You implement; you do not make planner, reviewer, verification, or human
         decisions. Inspect the workspace and work toward the packet outcomes. Read files

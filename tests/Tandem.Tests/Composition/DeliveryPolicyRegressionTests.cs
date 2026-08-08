@@ -4,6 +4,7 @@ using Microsoft.Extensions.AI;
 using Tandem.Infrastructure;
 using AdvancedToolEffect = Tandem.Advanced.ToolEffect;
 using RuntimeToolEffect = Tandem.Infrastructure.ToolEffect;
+using RuntimeToolEvidence = Tandem.Infrastructure.ToolEvidence;
 
 #pragma warning disable MAAI001
 
@@ -56,9 +57,24 @@ public sealed class DeliveryPolicyRegressionTests
 
         HarnessToolEffects.Register(registry, includeMutations: true);
 
-        AssertEffect(registry, FileAccessProvider.ReadFileToolName, RuntimeToolEffect.Read);
-        AssertEffect(registry, FileAccessProvider.LsToolName, RuntimeToolEffect.Read);
-        AssertEffect(registry, FileAccessProvider.GrepToolName, RuntimeToolEffect.Read);
+        AssertEffect(
+            registry,
+            FileAccessProvider.ReadFileToolName,
+            RuntimeToolEffect.Read,
+            RuntimeToolEvidence.RepositoryInspection
+        );
+        AssertEffect(
+            registry,
+            FileAccessProvider.LsToolName,
+            RuntimeToolEffect.Read,
+            RuntimeToolEvidence.RepositoryInspection
+        );
+        AssertEffect(
+            registry,
+            FileAccessProvider.GrepToolName,
+            RuntimeToolEffect.Read,
+            RuntimeToolEvidence.RepositoryInspection
+        );
         AssertEffect(
             registry,
             FileAccessProvider.WriteToolName,
@@ -136,9 +152,7 @@ public sealed class DeliveryPolicyRegressionTests
             var result = await new PipelineRunner().RunAsync(pipeline, state);
 
             result.Status.Should().Be(PipelineRunStatus.Succeeded);
-            result
-                .State.ExecutorAcceptedFact.Should()
-                .BeOfType<ExecutorAcceptedFact.ReportSubmitted>();
+            result.State.ExecutorTransition.Should().BeOfType<ExecutorTransition.ReportSubmitted>();
             client.CallCount.Should().Be(2);
             client
                 .AdvertisedTools.SelectMany(tools => tools)
@@ -155,11 +169,13 @@ public sealed class DeliveryPolicyRegressionTests
     private static void AssertEffect(
         ToolEffectRegistry registry,
         string name,
-        RuntimeToolEffect expected
+        RuntimeToolEffect expected,
+        RuntimeToolEvidence evidence = RuntimeToolEvidence.None
     )
     {
         registry.TryGet(name, out var actual).Should().BeTrue();
-        actual.Should().Be(expected);
+        actual.Effect.Should().Be(expected);
+        actual.Evidence.Should().Be(evidence);
     }
 
     private static DeliveryState CreateState() =>

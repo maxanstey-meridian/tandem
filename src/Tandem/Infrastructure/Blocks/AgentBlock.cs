@@ -117,7 +117,7 @@ internal sealed class AgentBlock<TState>(
             var policyExhausted = false;
             var structuredAttempt = 0;
             AgentStructuredOutputResult<TState>? structuredResult = null;
-            var structuredToolNames = new HashSet<string>(StringComparer.Ordinal);
+            var structuredToolObservations = new HashSet<ToolObservationDescriptor>();
 
             while (true)
             {
@@ -155,9 +155,9 @@ internal sealed class AgentBlock<TState>(
                 inputTokens = (inputTokens ?? 0) + (turnInputTokens ?? 0);
                 outputTokens = (outputTokens ?? 0) + (turnOutputTokens ?? 0);
                 lastModelCallDuration += turnSw.Elapsed;
-                foreach (var toolName in collector.SuccessfulToolNames)
+                foreach (var observation in collector.SuccessfulTools)
                 {
-                    structuredToolNames.Add(toolName);
+                    structuredToolObservations.Add(observation);
                 }
 
                 if (capabilityInvocation.Accepted is not null)
@@ -176,7 +176,7 @@ internal sealed class AgentBlock<TState>(
                         var problems = config.StructuredOutput.Accept(
                             message,
                             structuredResult,
-                            structuredToolNames,
+                            structuredToolObservations,
                             structuredAttempt
                         );
                         if (problems.Count > 0)
@@ -330,14 +330,17 @@ internal sealed class AgentBlock<TState>(
                 async (_, ficContext, next, ct) =>
                 {
                     var isLifecycle = boundCapabilityNames.Contains(ficContext.Function.Name);
-                    var classified = toolEffects.TryGet(ficContext.Function.Name, out var effect);
+                    var classified = toolEffects.TryGet(
+                        ficContext.Function.Name,
+                        out var semantics
+                    );
 
                     if (toolInterceptor is not null)
                     {
                         var blockedMessage = await toolInterceptor(
                             message,
                             ficContext.Function.Name,
-                            classified ? effect : null,
+                            classified ? semantics.Effect : null,
                             ct
                         );
                         if (blockedMessage is not null)
@@ -359,7 +362,12 @@ internal sealed class AgentBlock<TState>(
                     }
                     else
                     {
-                        collector.RecordSuccessfulToolCall(ficContext.Function.Name);
+                        collector.RecordSuccessfulToolCall(
+                            new ToolObservationDescriptor(
+                                ficContext.Function.Name,
+                                classified ? semantics : null
+                            )
+                        );
                     }
 
                     return result;
@@ -719,15 +727,16 @@ internal sealed class AgentBlock<TState>(
 internal sealed class ToolOutcomeCollector
 {
     private string? _lifecycleToolName;
-    private readonly HashSet<string> _successfulToolNames = new(StringComparer.Ordinal);
+    private readonly HashSet<ToolObservationDescriptor> _successfulTools = [];
 
     public bool HasLifecycleCall => _lifecycleToolName is not null;
 
     public void RecordLifecycleCall(string toolName) => _lifecycleToolName ??= toolName;
 
-    public void RecordSuccessfulToolCall(string toolName) => _successfulToolNames.Add(toolName);
+    public void RecordSuccessfulToolCall(ToolObservationDescriptor observation) =>
+        _successfulTools.Add(observation);
 
-    public IReadOnlySet<string> SuccessfulToolNames => _successfulToolNames;
+    public IReadOnlySet<ToolObservationDescriptor> SuccessfulTools => _successfulTools;
 
     public string? LifecycleToolName => _lifecycleToolName;
 }

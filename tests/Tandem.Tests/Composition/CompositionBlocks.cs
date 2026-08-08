@@ -97,7 +97,7 @@ internal sealed class RecordingBlock
 /// A verification block substitute that returns a canned pass/fail result
 /// based on the current verification index, recording the order of commands.
 /// </summary>
-internal sealed class ScriptedVerificationBlock
+internal sealed class ScriptedVerificationOperation
     : Executor<PipelineMessage<DeliveryState>, PipelineMessage<DeliveryState>>
 {
     public ConcurrentQueue<int> InvokedIndices { get; } = new();
@@ -105,8 +105,8 @@ internal sealed class ScriptedVerificationBlock
     private readonly bool[] _results;
     private readonly Func<DeliveryState, BlockOutcome> _outcomeFactory;
 
-    public ScriptedVerificationBlock(params bool[] results)
-        : base(BlockIds.Verify)
+    public ScriptedVerificationOperation(params bool[] results)
+        : base(DeliveryIds.Verify)
     {
         _results = results;
         _outcomeFactory = ctx =>
@@ -118,7 +118,7 @@ internal sealed class ScriptedVerificationBlock
             var kind = passed ? OutcomeKinds.CommandPassed : OutcomeKinds.CommandFailed;
             return new BlockOutcome(
                 kind,
-                BlockIds.Verify,
+                DeliveryIds.Verify,
                 kind,
                 JsonSerializer.SerializeToElement(new { index = idx })
             );

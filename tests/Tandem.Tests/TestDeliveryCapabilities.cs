@@ -17,7 +17,7 @@ internal static class TestDeliveryCapabilities
                 (state, request) =>
                     state with
                     {
-                        ExecutorAcceptedFact = new ExecutorAcceptedFact.PlannerRequested(request),
+                        ExecutorTransition = new ExecutorTransition.PlannerRequested(request),
                     }
             ),
             AgentCapabilities.Create<DeliveryState, SubmitReportRequest>(
@@ -28,7 +28,7 @@ internal static class TestDeliveryCapabilities
                 (state, request) =>
                     state with
                     {
-                        ExecutorAcceptedFact = new ExecutorAcceptedFact.ReportSubmitted(request),
+                        ExecutorTransition = new ExecutorTransition.ReportSubmitted(request),
                     }
             ),
             AgentCapabilities.Create<DeliveryState, WriteCheckpointRequest>(
@@ -39,7 +39,7 @@ internal static class TestDeliveryCapabilities
                 (state, request) =>
                     state with
                     {
-                        ExecutorAcceptedFact = new ExecutorAcceptedFact.CheckpointWritten(request),
+                        ExecutorTransition = new ExecutorTransition.CheckpointWritten(request),
                     }
             )
         );

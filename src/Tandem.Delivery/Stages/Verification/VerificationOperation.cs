@@ -5,7 +5,7 @@ using Tandem.Git;
 
 namespace Tandem.Delivery;
 
-public sealed class VerificationBlock(GitProcess git, TimeSpan? commandTimeout = null)
+public sealed class VerificationOperation(GitProcess git, TimeSpan? commandTimeout = null)
 {
     private readonly TimeSpan _commandTimeout = commandTimeout ?? TimeSpan.FromMinutes(10);
 
@@ -27,7 +27,7 @@ public sealed class VerificationBlock(GitProcess git, TimeSpan? commandTimeout =
                 ctx,
                 new OperationOutcome(
                     finalKind,
-                    BlockIds.Verify,
+                    DeliveryIds.Verify,
                     "All verification commands complete",
                     JsonSerializer.SerializeToElement(new { }),
                     blockSw.Elapsed
@@ -51,7 +51,7 @@ public sealed class VerificationBlock(GitProcess git, TimeSpan? commandTimeout =
             new[] { result.Stdout, result.Stderr }.Where(value => !string.IsNullOrEmpty(value))
         );
         await context.ObserveCommandOutputAsync(
-            BlockIds.Verify,
+            DeliveryIds.Verify,
             command,
             output,
             result.ExitCode,
@@ -83,7 +83,7 @@ public sealed class VerificationBlock(GitProcess git, TimeSpan? commandTimeout =
             updatedContext,
             new OperationOutcome(
                 kind,
-                BlockIds.Verify,
+                DeliveryIds.Verify,
                 passed ? "Command passed" : "Command failed",
                 payload,
                 blockSw.Elapsed

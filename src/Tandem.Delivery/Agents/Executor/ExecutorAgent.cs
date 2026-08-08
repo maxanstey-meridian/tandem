@@ -11,7 +11,7 @@ internal static class ExecutorAgent
         AgentCapability<DeliveryState> writeCheckpoint
     ) =>
         agents.Create(
-            BlockIds.Executor,
+            DeliveryIds.Executor,
             "implementation",
             ExecutorPrompts.Instructions,
             builder =>

@@ -29,7 +29,7 @@ public sealed class DeliveryBlockFailureTests
     public async Task Verification_RecordsActualIndexAndInternalTimeoutEvidence()
     {
         using var temp = TempDir.Create();
-        var block = new VerificationBlock(
+        var block = new VerificationOperation(
             new GitProcess(),
             commandTimeout: TimeSpan.FromMilliseconds(100)
         );
@@ -51,7 +51,7 @@ public sealed class DeliveryBlockFailureTests
     public async Task Verification_PropagatesCallerCancellation()
     {
         using var temp = TempDir.Create();
-        var block = new VerificationBlock(
+        var block = new VerificationOperation(
             new GitProcess(),
             commandTimeout: TimeSpan.FromMinutes(1)
         );
@@ -80,7 +80,7 @@ public sealed class DeliveryBlockFailureTests
         var message = CreateMessage(temp.Path, ["printf changed > tracked.txt"]);
         message = message with { State = message.State with { CandidateSha = head.Stdout.Trim() } };
 
-        var result = await new VerificationBlock(new GitProcess()).ExecuteAsync(
+        var result = await new VerificationOperation(new GitProcess()).ExecuteAsync(
             Context(message),
             CancellationToken.None
         );

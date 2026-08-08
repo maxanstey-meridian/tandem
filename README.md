@@ -5,6 +5,9 @@ pipelines. Agents, ordinary C#, and human interactions operate on shared typed
 state; explicit routes determine what happens next. Runs live for the lifetime
 of the process that starts them.
 
+The authoring rule is: facts in state, decisions in routes, permissions in
+capabilities, humans in interactions, and runtime mechanics below the seam.
+
 Tandem currently executes that graph through Microsoft Agent Framework. MAF owns
 orchestration, agent loops, sessions, and tool dispatch; authored pipeline code
 owns state, prompts, policies, capabilities, meaningful results, and routes.
@@ -154,6 +157,16 @@ run identity, sessions, usage, invocation counts, and outcomes
 internally. Ordinary user code cannot unwrap an agent operation or copy an
 execution envelope.
 
+Advanced acceptance constraints decorate the same typed output pipeline. They
+receive the validated output and semantic tool observations before state application;
+they do not replace Core deserialization, validation, or mapping:
+
+```csharp
+builder
+    .WithOutput(new DecisionValidator(), DecisionPolicies.Apply)
+    .RequireOutputAcceptance(DecisionPolicies.RepositoryGrounded());
+```
+
 ## Explicit Routing
 
 Use an unconditional output route for serial flow when every produced result is
@@ -167,8 +180,18 @@ Use canonical outcome selectors and state predicates when execution outcome or a
 domain fact controls the successor:
 
 ```csharp
-.Route(on: song.Lint, when: state => state.LintFeedback is null, to: song.Proofreader)
-.Route(on: song.Lint, when: state => state.LintFeedback is not null, to: song.Songwriter)
+.Route(
+    on: song.Lint,
+    when: state => state.LintFeedback is null,
+    to: song.Proofreader,
+    label: "lint passed"
+)
+.Route(
+    on: song.Lint,
+    when: state => state.LintFeedback is not null,
+    to: song.Songwriter,
+    label: "lint changes requested"
+)
 .Route(on: song.Songwriter.Success, to: song.Lint, label: "song written")
 ```
 
@@ -200,8 +223,8 @@ programming models:
 - **Support** adds consumer-owned account lookup, typed state transitions, and a
   typed customer request/response handoff.
 - **Debate** adds revision loops, explicit retained/reset sessions, an in-process
-  typed capability, and teardown based on block evidence.
-- **Delivery** adds custom blocks, workspaces and mutation policy, checkpoints,
+  typed capability, and teardown based on agent outcomes.
+- **Delivery** adds Advanced operations, workspaces and mutation policy, checkpoints,
   tools, verification commands, observations, and live human handoff.
 
 ### Live Support Handoff
@@ -245,7 +268,7 @@ public static AgentConversationDecision DiscardJudgeAfterVerdict(
 ) => new(AgentConversationRetention.Discard);
 ```
 
-## Advanced Blocks
+## Advanced Operations
 
 Advanced agent policies receive read-only `AgentMessageContext<TState>` and
 `AgentMessageOutcome` values rather than Tandem's complete execution envelope.

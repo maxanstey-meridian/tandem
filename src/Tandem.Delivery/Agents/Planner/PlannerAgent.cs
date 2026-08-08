@@ -6,17 +6,14 @@ internal static class PlannerAgent
 {
     internal static AgentDefinition<DeliveryState> Create(DeliveryAgentFactory agents) =>
         agents.Create(
-            BlockIds.Planner,
+            DeliveryIds.Planner,
             "planning",
             PlannerPrompts.Instructions,
             builder =>
                 builder
                     .WithMessage(PlannerPrompts.BuildMessage)
-                    .WithOutput<DeliveryState, PlannerDecision>(
-                        PlannerDecisionPolicy.Parse,
-                        PlannerPolicies.RequireRepositoryGrounding(),
-                        "file_access_read"
-                    )
+                    .WithOutput(new PlannerDecisionValidator(), PlannerPolicies.ApplyDecision)
+                    .RequireOutputAcceptance(PlannerPolicies.RepositoryGrounded())
                     .ContinueSession()
         );
 }

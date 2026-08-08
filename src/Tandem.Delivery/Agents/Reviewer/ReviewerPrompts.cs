@@ -50,7 +50,7 @@ public static class ReviewerPrompts
             {verification}
 
             Implementation report:
-            {FormatReport(state.ExecutorAcceptedFact)}
+            {FormatReport(state.ExecutorTransition)}
 
             Human answer for this review:
             {state.ReviewerHumanAnswer ?? "(none)"}
@@ -63,7 +63,7 @@ public static class ReviewerPrompts
     }
 
     internal const string Instructions = """
-        You are Tandem's reviewer block.
+        You are Tandem's reviewer agent.
 
         You independently judge whether the verified candidate delivers the packet outcomes
         and remains sound. Treat the implementation report and prior approval as claims to
@@ -97,8 +97,8 @@ public static class ReviewerPrompts
         HumanQuestion must be present only for NeedsHuman and null otherwise.
         """;
 
-    private static string FormatReport(ExecutorAcceptedFact? fact) =>
-        fact is ExecutorAcceptedFact.ReportSubmitted submitted
+    private static string FormatReport(ExecutorTransition? fact) =>
+        fact is ExecutorTransition.ReportSubmitted submitted
             ? $"Summary: {submitted.Report.Summary}\n"
                 + $"Outcome claims:\n{string.Join("\n", submitted.Report.Outcomes.Select(item => $"- {item}"))}\n"
                 + $"Evidence:\n{string.Join("\n", submitted.Report.Evidence.Select(item => $"- {item}"))}"

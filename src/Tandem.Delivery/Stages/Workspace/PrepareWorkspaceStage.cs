@@ -1,6 +1,6 @@
 namespace Tandem.Delivery;
 
-[PipelineStage(BlockIds.Prepare)]
+[PipelineStage(DeliveryIds.Prepare)]
 public sealed partial class PrepareWorkspaceStage(WorkspacePreparation preparation)
 {
     public async ValueTask<Outcome<DeliveryState>> ExecuteAsync(
@@ -17,7 +17,6 @@ public sealed partial class PrepareWorkspaceStage(WorkspacePreparation preparati
             state with
             {
                 PinnedBaseSha = prepared.PinnedBaseSha,
-                Status = RunStatus.Running,
             }
         );
     }

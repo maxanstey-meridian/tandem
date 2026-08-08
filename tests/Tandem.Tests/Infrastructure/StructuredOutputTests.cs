@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
 using Tandem.Domain;
@@ -9,6 +10,55 @@ namespace Tandem.Tests.Infrastructure;
 
 public sealed class StructuredOutputTests
 {
+    private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() },
+    };
+
+    [Fact]
+    public async Task TypedOutputAcceptance_DecoratesCoreValidationAndStateApplication()
+    {
+        var client = new ScriptedChatClient(
+            Response(
+                "{\"decision\":\"NeedsHuman\",\"rationale\":\"A product decision is required.\","
+                    + "\"constraints\":[],\"evidenceUsed\":[\"README.md\"],"
+                    + "\"humanQuestion\":\"Which behavior?\"}"
+            )
+        );
+        var agent = Agent
+            .Create<DeliveryState>("planner", "Plan.", client)
+            .WithMessage(_ => "Decide.")
+            .WithOutput(new PlannerDecisionValidator(), PlannerPolicies.ApplyDecision)
+            .RequireOutputAcceptance(PlannerPolicies.RepositoryGrounded())
+            .Build();
+        var complete = PipelineNodes.Complete<DeliveryState>("complete");
+        var pipeline = Pipeline
+            .Start(agent, "typed-acceptance")
+            .Route(agent.Success, complete, "accepted")
+            .Build(complete);
+
+        var result = await new PipelineRunner().RunAsync(pipeline, CreateContext("/tmp").State);
+
+        result.Status.Should().Be(PipelineRunStatus.Succeeded);
+        result.State.PlannerDecision!.Decision.Should().Be(PlannerDecisionValue.NeedsHuman);
+        result.Outcome!.Kind.Should().Be(StandardOutcomeKinds.Success);
+    }
+
+    [Fact]
+    public void TypedOutputAcceptance_RejectsMismatchedConfiguredOutputType()
+    {
+        var builder = Agent
+            .Create<DeliveryState>("planner", "Plan.", new ScriptedChatClient())
+            .WithMessage(_ => "Decide.")
+            .WithOutput(new PlannerDecisionValidator(), PlannerPolicies.ApplyDecision);
+
+        var act = () => builder.RequireOutputAcceptance(ReviewerPolicies.RepositoryGrounded());
+
+        act.Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage("*ReviewDecision*PlannerDecision*");
+    }
+
     [Fact]
     public async Task InvalidPlannerDecision_IsCorrectedInSameSession_BeforeAuthorizingMutation()
     {
@@ -34,7 +84,7 @@ public sealed class StructuredOutputTests
             CancellationToken.None
         );
 
-        output.LatestOutcome!.Kind.Should().Be(OutcomeKinds.PlannerProceed);
+        output.LatestOutcome!.Kind.Should().Be(StandardOutcomeKinds.Success);
         output.State.MutationAuthorized.Should().BeTrue();
         client.CallCount.Should().Be(2);
         client.Instructions.Should().Contain("# Tandem Delivery Harness");
@@ -87,10 +137,7 @@ public sealed class StructuredOutputTests
                 + "\"humanQuestion\":null}"
         );
         var client = new ScriptedChatClient(validProceed, validProceed);
-        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(
-            result => result.Outcome?.Kind == OutcomeKinds.PlannerProceed,
-            correction: "Inspect the repository before approving."
-        );
+        var policy = PlannerPolicies.RepositoryGrounded();
         var block = CreatePlannerBlock(client, policy);
 
         var output = await block.HandleAsync(
@@ -108,7 +155,7 @@ public sealed class StructuredOutputTests
             .OfType<TextContent>()
             .Select(content => content.Text)
             .Should()
-            .Contain(text => text.Contains("Inspect the repository before approving."));
+            .Contain(text => text.Contains("require repository inspection"));
     }
 
     [Fact]
@@ -129,10 +176,7 @@ public sealed class StructuredOutputTests
             ),
             validProceed
         );
-        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(
-            result => result.Outcome?.Kind == OutcomeKinds.PlannerProceed,
-            name => name.StartsWith("file_access_read", StringComparison.Ordinal)
-        );
+        var policy = PlannerPolicies.RepositoryGrounded();
         var block = CreatePlannerBlock(client, policy);
 
         var output = await block.HandleAsync(
@@ -141,7 +185,7 @@ public sealed class StructuredOutputTests
             CancellationToken.None
         );
 
-        output.LatestOutcome!.Kind.Should().Be(OutcomeKinds.PlannerProceed);
+        output.LatestOutcome!.Kind.Should().Be(StandardOutcomeKinds.Success);
         output.State.MutationAuthorized.Should().BeTrue();
     }
 
@@ -163,10 +207,7 @@ public sealed class StructuredOutputTests
             validProceed,
             validProceed
         );
-        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(
-            result => result.Outcome?.Kind == OutcomeKinds.PlannerProceed,
-            name => name.StartsWith("file_access_read", StringComparison.Ordinal)
-        );
+        var policy = PlannerPolicies.RepositoryGrounded();
         var block = CreatePlannerBlock(client, policy);
 
         var output = await block.HandleAsync(
@@ -180,92 +221,16 @@ public sealed class StructuredOutputTests
     }
 
     [Fact]
-    public void GroundingPolicy_AcceptsConfiguredToolWithoutKnowingTheBlock()
-    {
-        var parsed = PlannerDecisionPolicy.Parse(
-            "{\"decision\":\"Proceed\",\"rationale\":\"Verified.\","
-                + "\"constraints\":[],\"evidenceUsed\":[\"src/service.ts\"],"
-                + "\"humanQuestion\":null}",
-            CreateContext("/tmp").State
-        );
-        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(result =>
-            result.Outcome?.Kind == OutcomeKinds.PlannerProceed
-        );
-
-        var problems = policy(
-            new StructuredOutputAcceptanceObservation<DeliveryState>(
-                ToAgentContext(CreateContext("/tmp")),
-                parsed,
-                new HashSet<string> { "file_access_read" },
-                0
-            )
-        );
-
-        problems.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void GroundingPolicy_RejectsCallsOutsideConfiguredInspectionSurface()
-    {
-        var parsed = PlannerDecisionPolicy.Parse(
-            "{\"decision\":\"Proceed\",\"rationale\":\"Verified.\","
-                + "\"constraints\":[],\"evidenceUsed\":[\"src/service.ts\"],"
-                + "\"humanQuestion\":null}",
-            CreateContext("/tmp").State
-        );
-        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(
-            result => result.Outcome?.Kind == OutcomeKinds.PlannerProceed,
-            name => name.StartsWith("file_access_read", StringComparison.Ordinal)
-        );
-
-        var problems = policy(
-            new StructuredOutputAcceptanceObservation<DeliveryState>(
-                ToAgentContext(CreateContext("/tmp")),
-                parsed,
-                new HashSet<string> { "submit_report" },
-                0
-            )
-        );
-
-        problems.Should().ContainSingle();
-    }
-
-    [Fact]
-    public void GroundingPolicy_CanRejectAcceptedCandidateWithSemanticErrors()
-    {
-        var parsed = PlannerDecisionPolicy.Parse(
-            "{\"decision\":\"Proceed\",\"rationale\":\"Inspect first.\","
-                + "\"constraints\":[],\"evidenceUsed\":[],\"humanQuestion\":null}",
-            CreateContext("/tmp").State
-        );
-        var policy = StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(result =>
-            result.Candidate is PlannerDecision { Decision: PlannerDecisionValue.Proceed }
-        );
-
-        var problems = policy(
-            new StructuredOutputAcceptanceObservation<DeliveryState>(
-                ToAgentContext(CreateContext("/tmp")),
-                parsed,
-                new HashSet<string>(),
-                0
-            )
-        );
-
-        parsed.Success.Should().BeFalse();
-        problems.Should().ContainSingle();
-    }
-
-    [Fact]
     public void ReviewerPolicy_RequiresEveryPacketOutcomeWithEvidence()
     {
         var context = CreateContext("/tmp");
 
-        var missing = ReviewDecisionPolicy.Parse(
+        var missing = ParseReviewDecision(
             "{\"decision\":\"Accept\",\"summary\":\"The candidate delivers the work.\","
                 + "\"outcomes\":[],\"findings\":[],\"humanQuestion\":null}",
             context.State
         );
-        var valid = ReviewDecisionPolicy.Parse(
+        var valid = ParseReviewDecision(
             "{\"decision\":\"Accept\",\"summary\":\"The inspected implementation delivers the packet outcome.\","
                 + "\"outcomes\":[{\"outcomeId\":\"outcome\",\"delivered\":true,"
                 + "\"evidence\":[\"src/service.ts: implementation\"]}],"
@@ -276,7 +241,7 @@ public sealed class StructuredOutputTests
         missing.Success.Should().BeFalse();
         missing.Problems.Should().Contain(problem => problem.Message.Contains("outcome"));
         valid.Success.Should().BeTrue();
-        valid.Outcome!.Kind.Should().Be(OutcomeKinds.ReviewAccepted);
+        valid.Outcome!.Kind.Should().Be(StandardOutcomeKinds.Success);
     }
 
     [Fact]
@@ -295,8 +260,8 @@ public sealed class StructuredOutputTests
                 ),
             },
             LatestOutcome = new BlockOutcome(
-                OutcomeKinds.ReviewNeedsHuman,
-                BlockIds.Reviewer,
+                StandardOutcomeKinds.Success,
+                DeliveryIds.Reviewer,
                 "Human decision required",
                 JsonSerializer.SerializeToElement(new { })
             ),
@@ -320,7 +285,7 @@ public sealed class StructuredOutputTests
             .Contain("Human answer for this review:")
             .And.Contain("Keep public behavior.");
 
-        var decision = ReviewDecisionPolicy.Parse(
+        var decision = ParseReviewDecision(
             "{\"decision\":\"Accept\",\"summary\":\"The inspected implementation delivers the packet outcome.\","
                 + "\"outcomes\":[{\"outcomeId\":\"outcome\",\"delivered\":true,"
                 + "\"evidence\":[\"src/service.ts: implementation\"]}],"
@@ -341,26 +306,71 @@ public sealed class StructuredOutputTests
 
     private static AgentBlock<DeliveryState> CreatePlannerBlock(
         IChatClient client,
-        StructuredOutputAcceptancePolicy<DeliveryState>? acceptance = null
-    ) =>
-        new(
+        OutputAcceptancePolicy<DeliveryState, PlannerDecision>? acceptance = null
+    )
+    {
+        var structuredOutput = StructuredOutputDescriptors.Create<DeliveryState>(
+            ParsePlannerDecision
+        );
+        if (acceptance is not null)
+        {
+            structuredOutput = structuredOutput with
+            {
+                Accept = StructuredOutputDescriptors.Accept(acceptance),
+            };
+        }
+        return new AgentBlock<DeliveryState>(
             new AgentBlockConfig<DeliveryState>(
-                BlockIds.Planner,
+                DeliveryIds.Planner,
                 "planning",
                 "Return a planner decision.",
                 [],
                 _ => "Review the supplied planner request.",
                 state => state.WorkspacePath,
                 _ => false,
-                StructuredOutput: StructuredOutputDescriptors.Create(
-                    PlannerDecisionPolicy.Parse,
-                    acceptance
-                ),
+                StructuredOutput: structuredOutput,
                 ContinueSession: true,
                 ImplementationFactory: context =>
                     HarnessAgentImplementation.Create(context, DeliveryHarnessInstructions.Value)
             ),
             client
+        );
+    }
+
+    private static StructuredOutputResult<DeliveryState> ParsePlannerDecision(
+        string response,
+        DeliveryState state
+    ) =>
+        StructuredOutputPolicy.Parse(
+            response,
+            state,
+            _jsonOptions,
+            new PlannerDecisionValidator(),
+            (decision, current) =>
+                new StructuredOutcome<DeliveryState>(
+                    StandardOutcomeKinds.Success,
+                    "Succeeded",
+                    JsonSerializer.SerializeToElement(decision, _jsonOptions),
+                    PlannerPolicies.ApplyDecision(current, decision)
+                )
+        );
+
+    private static StructuredOutputResult<DeliveryState> ParseReviewDecision(
+        string response,
+        DeliveryState state
+    ) =>
+        StructuredOutputPolicy.Parse(
+            response,
+            state,
+            _jsonOptions,
+            new ReviewDecisionValidator(state.Packet.Outcomes.Select(outcome => outcome.Id)),
+            (decision, current) =>
+                new StructuredOutcome<DeliveryState>(
+                    StandardOutcomeKinds.Success,
+                    "Succeeded",
+                    JsonSerializer.SerializeToElement(decision, _jsonOptions),
+                    ReviewerPolicies.ApplyDecision(current, decision)
+                )
         );
 
     private static PipelineMessage<DeliveryState> CreateContext(string workspacePath)
@@ -379,23 +389,6 @@ public sealed class StructuredOutputTests
             DeliveryState.Create(packet, "abc123", workspacePath)
         );
     }
-
-    private static AgentMessageContext<DeliveryState> ToAgentContext(
-        PipelineMessage<DeliveryState> message
-    ) =>
-        new(
-            message.Runtime.RunId,
-            message.State,
-            message.LatestOutcome is { } outcome
-                ? new AgentMessageOutcome(
-                    outcome.Kind,
-                    outcome.BlockId,
-                    outcome.Summary,
-                    outcome.Payload,
-                    outcome.Duration
-                )
-                : null
-        );
 
     private static ChatResponse Response(string text) =>
         new(new ChatMessage(ChatRole.Assistant, [new TextContent(text)]))

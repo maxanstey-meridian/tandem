@@ -12,7 +12,6 @@ public static class HumanInteraction
         {
             PlannerDecision = null,
             PlannerHumanAnswer = answer.Text,
-            Status = RunStatus.Running,
         };
 
     public static HumanQuestion BuildReviewerQuestion(DeliveryState state) =>
@@ -25,6 +24,5 @@ public static class HumanInteraction
         {
             ReviewerDecision = null,
             ReviewerHumanAnswer = answer.Text,
-            Status = RunStatus.Running,
         };
 }

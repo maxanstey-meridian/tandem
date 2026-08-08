@@ -20,6 +20,8 @@ Tandem.Advanced.CheckpointPolicy`1
 Tandem.Advanced.MessageAugmentation`1
 Tandem.Advanced.OperationOutcome
 Tandem.Advanced.OperationResult`1
+Tandem.Advanced.OutputAcceptanceObservation`2
+Tandem.Advanced.OutputAcceptancePolicy`2
 Tandem.Advanced.PipelineOperation
 Tandem.Advanced.PipelineOperationContext`1
 Tandem.Advanced.StructuredJsonExtractor
@@ -32,7 +34,9 @@ Tandem.Advanced.StructuredOutputPolicy
 Tandem.Advanced.StructuredOutputProblem
 Tandem.Advanced.StructuredOutputResult`1
 Tandem.Advanced.ToolEffect
+Tandem.Advanced.ToolEvidence
 Tandem.Advanced.ToolInterceptionResult
 Tandem.Advanced.ToolInterceptionResult+Blocked
 Tandem.Advanced.ToolInterceptor`1
 Tandem.Advanced.ToolInvocation
+Tandem.Advanced.ToolObservation

@@ -6,13 +6,13 @@ internal static class DeliveryCapabilities
     {
         var askPlanner = AgentCapabilities.Create<DeliveryState, AskPlannerRequest>(
             "ask_planner",
-            "Ask the planner block for guidance and end the current turn.",
+            "Ask the planner agent for guidance and end the current turn.",
             new AskPlannerRequestValidator(),
             request => $"Planner asked: {request.Question}",
             (state, request) =>
                 state with
                 {
-                    ExecutorAcceptedFact = new ExecutorAcceptedFact.PlannerRequested(request),
+                    ExecutorTransition = new ExecutorTransition.PlannerRequested(request),
                 }
         );
         var submitReport = AgentCapabilities.Create<DeliveryState, SubmitReportRequest>(
@@ -23,7 +23,7 @@ internal static class DeliveryCapabilities
             (state, request) =>
                 state with
                 {
-                    ExecutorAcceptedFact = new ExecutorAcceptedFact.ReportSubmitted(request),
+                    ExecutorTransition = new ExecutorTransition.ReportSubmitted(request),
                 }
         );
         var writeCheckpoint = AgentCapabilities.Create<DeliveryState, WriteCheckpointRequest>(
@@ -34,7 +34,7 @@ internal static class DeliveryCapabilities
             (state, request) =>
                 state with
                 {
-                    ExecutorAcceptedFact = new ExecutorAcceptedFact.CheckpointWritten(request),
+                    ExecutorTransition = new ExecutorTransition.CheckpointWritten(request),
                 }
         );
         return new DeliveryCapabilitySet(askPlanner, submitReport, writeCheckpoint);

@@ -14,7 +14,7 @@ Use the compiled examples in this order:
    ports and typed request/response handoff.
 3. [`Tandem.Sample.Debate`](../samples/Tandem.Sample.Debate) for sessions,
    local capabilities and teardown.
-4. [`Tandem.Delivery`](../src/Tandem.Delivery) for custom blocks, workspace,
+4. [`Tandem.Delivery`](../src/Tandem.Delivery) for Advanced operations, workspace,
    checkpoints, tools, observations, verification, and human handoff.
 
 ## Author Journey
@@ -203,7 +203,7 @@ execution. Build an immutable agent definition directly with `Agent.Create`. Sup
 compiled classifier configuration is:
 
 ```csharp
-var classifier = agentRuntime
+var classifier = Agent
     .Create<SupportState>(
         "support-classify",
         SupportPrompts.Classifier,
@@ -249,8 +249,18 @@ It matches any produced output from that step, including a routed standard
 A result-specific route starts with a generated selector:
 
 ```csharp
-.Route(on: song.Lint, when: state => state.LintFeedback is null, to: song.Proofreader)
-.Route(on: song.Lint, when: state => state.LintFeedback is not null, to: song.Songwriter)
+.Route(
+    on: song.Lint,
+    when: state => state.LintFeedback is null,
+    to: song.Proofreader,
+    label: "lint passed"
+)
+.Route(
+    on: song.Lint,
+    when: state => state.LintFeedback is not null,
+    to: song.Songwriter,
+    label: "lint changes requested"
+)
 ```
 
 A result-specific condition remains state-first:
@@ -315,10 +325,10 @@ Support routes after resume with state-first predicates:
 )
 ```
 
-## Advanced Block Authoring
+## Advanced Operation Authoring
 
 Ordinary steps, prompts, parsers, state transitions, and predicates use `TState`.
-Advanced block implementations and runtime policies use narrow Advanced-owned
+Advanced operation implementations and runtime policies use narrow Advanced-owned
 contexts. The complete execution envelope is internal. Custom operations use:
 
 ```csharp
@@ -361,7 +371,7 @@ context merely to access their typed state.
 return await PipelineOperation.RunOutcomeAsync(...);
 ```
 
-This is advanced block integration, not the default shape for ordinary stages.
+This is Advanced operation integration, not the default shape for ordinary stages.
 
 ## Progressive Capability Journey
 
@@ -369,8 +379,8 @@ This is advanced block integration, not the default shape for ordinary stages.
   unconditional routes, and a review loop.
 - Support: consumer-owned deterministic I/O and typed live suspension/continuation.
 - Debate: revision sessions, local typed capabilities, and evidence-aware teardown.
-- Delivery: typed accepted facts, workspace mutation policy, checkpoints, tools,
-  observations, verification, planner/reviewer lifecycle outcomes, and human
+- Delivery: typed executor transitions, workspace mutation policy, checkpoints, tools,
+  observations, verification, typed planner/reviewer decisions, and human
   handoff.
 
 All four use the same generated steps, agent builder, typed state, and fluent

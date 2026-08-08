@@ -8,7 +8,7 @@ public static class ExecutorPolicies
         AgentMessageContext<DeliveryState> context,
         AgentMessageOutcome _
     ) =>
-        context.State.ExecutorAcceptedFact is ExecutorAcceptedFact.ReportSubmitted
+        context.State.ExecutorTransition is ExecutorTransition.ReportSubmitted
             ? new(AgentConversationRetention.Discard)
             : new(AgentConversationRetention.Retain);
 

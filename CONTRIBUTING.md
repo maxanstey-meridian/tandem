@@ -2,16 +2,18 @@
 
 ## Architecture
 
-Tandem is the engine, Delivery is the flagship first-party pipeline, and custom
-pipelines are unprivileged consumers. The runtime vocabulary is:
+Tandem is a typed agentic pipeline SDK over MAF's live execution engine. Delivery
+is the flagship first-party pipeline, and custom pipelines are equally
+unprivileged consumers. The runtime vocabulary is:
 
 - **Step**: one executable pipeline operation.
 - **Stage**: one deterministic step.
 - **Agent**: one model-backed step.
 - **State**: composition-owned lifecycle facts for the live run.
 - **Runtime**: composition-neutral session, usage, invocation, and run bookkeeping.
-- **Outcome**: the result emitted by a block.
-- **Condition**: a predicate over the typed pipeline message and latest outcome.
+- **Outcome**: the result emitted by a step.
+- **Condition**: an ordinary predicate over typed state, or an explicitly
+  Advanced predicate over narrow execution evidence.
 - **Route**: an ordered condition and destination pair.
 - **Prompt**: instructions contributed to an agent step.
 
@@ -19,11 +21,76 @@ The execution cycle is: run a step, publish its observations and result to the
 current run observer when configured, evaluate its routes in order, then run the
 first matching destination, suspend, or complete.
 
+## Core Tandem Invariants
+
+Preserve these invariants when designing any new abstraction.
+
+Tandem is a typed agentic pipeline SDK, not a workflow engine, Harness, or
+orchestration framework exposed to users. Agents, ordinary C# stages, and human
+interactions are first-class pipeline participants. Agents are modeled nodes in
+the graph, not arbitrary services that application code calls. MAF, provider APIs,
+function-calling and MCP transport, executor bindings, persistence mechanics, and
+other runtime machinery belong below the ordinary public seam.
+
+`TState` contains application facts only. If another participant needs to know
+something, represent it strongly and explicitly in state. Do not use state to
+smuggle graph or runtime information such as node IDs, source-block IDs, run IDs,
+invocation IDs, latest-outcome blobs, serialized payloads, or resume positions.
+Application facts belong in state; control flow belongs in the graph; execution
+facts belong in Tandem's runtime.
+
+Capabilities are typed semantic actions. A capability describes something the
+agent is permitted to do in the application's language: typed request,
+validation, then typed state transition. Function calling, MCP, receipts, and
+tool transport are implementation details. An accepted capability transition
+concludes that agent visit. Do not turn capabilities into an unbounded generic
+tool bag unless a demonstrated application use case requires a separate tool
+concept.
+
+Routing is explicit and semantic. `Success` and `Failed` describe whether a node
+executed successfully. Domain meaning is represented in typed state, and routes
+inspect that state to select the next participant. Human interaction is one
+first-class typed `WaitFor<TRequest, TResponse>` node with its own semantic
+identity; the host decides whether the human channel is a CLI, web UI, another
+application, or an external service. Ordinary runs are process-owned. Do not
+accidentally rebuild generalized durability.
+
+Core versus Advanced is a semantic boundary, not a complexity tier. Core APIs
+describe what the application and its agents mean: state, agents, outputs,
+capabilities, routes, and interactions. `Tandem.Advanced` is only for deliberately
+participating in how Tandem executes those concepts: narrow runtime context,
+invocation identity, provider options, observation plumbing, workspace authority,
+and low-level policy hooks. A sophisticated agent can remain entirely in Core.
+
+When adding an abstraction, apply this placement test: could an application
+author reasonably invent the concept while describing their system without
+knowing how Tandem is implemented? If yes, it may belong in Core. If it exists
+because of Tandem, MAF, provider, persistence, or transport machinery, keep it
+private or Advanced. If a feature forces ordinary authoring back into JSON
+parsing, string outcome kinds, runtime envelopes, node identities, or
+transport-specific concepts, assume the abstraction is at the wrong level and
+redesign the seam rather than teaching users the machinery.
+
+Delivery obeys the same rules. It is a real application built with Tandem, not a
+privileged second framework. Its complexity reduces to typed Delivery state,
+agent nodes, capabilities, ordinary stages, explicit routes, and typed human
+waits. Only genuinely operational concerns cross into Advanced.
+
+The shorthand is:
+
+```text
+Facts in state.
+Decisions in routes.
+Permissions in capabilities.
+Humans in interactions.
+Runtime mechanics below the seam.
+```
+
 ## Boundaries
 
 Keep these ownership boundaries explicit:
 
-- Pipeline composition owns block order, prompts, profiles, conditions, and
+- Pipeline composition owns step order, prompts, profiles, conditions, and
   successors.
 - Pipeline composition owns its concrete `TState`, user messages, workspace
   policy, structured mappings, and directly attached capability set.
@@ -115,9 +182,9 @@ outcome-specific routes from one source.
 
 The design is healthy when composition changes alone can:
 
-- remove or insert planner and reviewer blocks;
+- remove or insert planner and reviewer agents;
 - reorder verification commands;
-- route a failed command to a configured remediation block;
+- route a failed command to a configured remediation agent;
 - contribute prompts to selected agents;
 - rotate sessions or promote models under configured conditions; and
 - preserve accepted side effects across live agent turns.

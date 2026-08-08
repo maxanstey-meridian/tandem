@@ -7,25 +7,25 @@ namespace Tandem.Tests.Domain;
 public sealed class PipelineMessageSerializationTests
 {
     [Fact]
-    public void ExecutorAcceptedFacts_RoundTripWithTheirTypedPayloads()
+    public void ExecutorTransitions_RoundTripWithTheirTypedPayloads()
     {
-        ExecutorAcceptedFact[] facts =
+        ExecutorTransition[] facts =
         [
-            new ExecutorAcceptedFact.PlannerRequested(
+            new ExecutorTransition.PlannerRequested(
                 new AskPlannerRequest("question", "approach", ["evidence"])
             ),
-            new ExecutorAcceptedFact.ReportSubmitted(
+            new ExecutorTransition.ReportSubmitted(
                 new SubmitReportRequest("summary", ["outcome"], ["evidence"])
             ),
-            new ExecutorAcceptedFact.CheckpointWritten(
+            new ExecutorTransition.CheckpointWritten(
                 new WriteCheckpointRequest("summary", ["completed"], ["next"])
             ),
         ];
 
         foreach (var fact in facts)
         {
-            var json = JsonSerializer.Serialize<ExecutorAcceptedFact>(fact);
-            var roundTrip = JsonSerializer.Deserialize<ExecutorAcceptedFact>(json);
+            var json = JsonSerializer.Serialize<ExecutorTransition>(fact);
+            var roundTrip = JsonSerializer.Deserialize<ExecutorTransition>(json);
 
             roundTrip.Should().NotBeNull().And.BeOfType(fact.GetType());
             JsonElement
@@ -74,17 +74,16 @@ public sealed class PipelineMessageSerializationTests
             [
                 new VerificationResult(0, "task test", 0, "ok", "", TimeSpan.FromSeconds(2), false),
             ],
-            ExecutorAcceptedFact = new ExecutorAcceptedFact.ReportSubmitted(
+            ExecutorTransition = new ExecutorTransition.ReportSubmitted(
                 new SubmitReportRequest("done", ["outcome-1"], ["evidence-1"])
             ),
-            Status = RunStatus.Ready,
         };
         var message = new PipelineMessage<DeliveryState>(
             runtime,
             state,
             new BlockOutcome(
                 OutcomeKinds.RunReady,
-                BlockIds.Complete,
+                DeliveryIds.Complete,
                 "ready",
                 JsonSerializer.SerializeToElement(new { candidate = "candidate-sha" }),
                 TimeSpan.FromSeconds(3)

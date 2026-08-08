@@ -39,6 +39,17 @@ public delegate IReadOnlyList<StructuredOutputProblem> StructuredOutputAcceptanc
     StructuredOutputAcceptanceObservation<TState> observation
 );
 
+public sealed record OutputAcceptanceObservation<TState, TOutput>(
+    AgentMessageContext<TState> Context,
+    TOutput Output,
+    IReadOnlySet<ToolObservation> Tools,
+    int Attempt
+);
+
+public delegate IReadOnlyList<StructuredOutputProblem> OutputAcceptancePolicy<TState, TOutput>(
+    OutputAcceptanceObservation<TState, TOutput> observation
+);
+
 public static class StructuredOutputPolicy
 {
     public static StructuredOutputResult<TState> Parse<T, TState>(
@@ -198,12 +209,12 @@ internal static class StructuredOutputDescriptors
             (response, state) => ToCore(parser(response, state)),
             acceptancePolicy is null
                 ? null
-                : (message, result, toolNames, attempt) =>
+                : (message, result, tools, attempt) =>
                     acceptancePolicy(
                             new StructuredOutputAcceptanceObservation<TState>(
                                 ToContext(message),
                                 ToPublic(result),
-                                toolNames,
+                                tools.Select(tool => tool.Name).ToHashSet(StringComparer.Ordinal),
                                 attempt
                             )
                         )
@@ -214,6 +225,35 @@ internal static class StructuredOutputDescriptors
                         .ToArray(),
             correctionRequiredToolName
         );
+
+    public static Func<
+        PipelineMessage<TState>,
+        AgentStructuredOutputResult<TState>,
+        IReadOnlySet<Infrastructure.ToolObservationDescriptor>,
+        int,
+        IReadOnlyList<AgentStructuredOutputProblem>
+    > Accept<TState, TOutput>(OutputAcceptancePolicy<TState, TOutput> acceptance) =>
+        (message, result, tools, attempt) =>
+            result.Candidate is null ? []
+            : result.Candidate is not TOutput output
+                ?
+                [
+                    new AgentStructuredOutputProblem(
+                        "$acceptance",
+                        $"Configured acceptance expected '{typeof(TOutput).Name}' but received "
+                            + $"'{result.Candidate.GetType().Name}'."
+                    ),
+                ]
+            : acceptance(
+                    new OutputAcceptanceObservation<TState, TOutput>(
+                        ToContext(message),
+                        output,
+                        tools.Select(ToPublic).ToHashSet(),
+                        attempt
+                    )
+                )
+                .Select(problem => new AgentStructuredOutputProblem(problem.Field, problem.Message))
+                .ToArray();
 
     private static AgentStructuredOutputResult<TState> ToCore<TState>(
         StructuredOutputResult<TState> result
@@ -272,5 +312,20 @@ internal static class StructuredOutputDescriptors
                     outcome.Duration
                 )
                 : null
+        );
+
+    private static ToolObservation ToPublic(Infrastructure.ToolObservationDescriptor observation) =>
+        new(
+            observation.Name,
+            observation.Semantics?.Effect switch
+            {
+                Infrastructure.ToolEffect.Read => ToolEffect.Read,
+                Infrastructure.ToolEffect.WorkspaceMutation => ToolEffect.WorkspaceMutation,
+                Infrastructure.ToolEffect.LifecycleTransition => ToolEffect.LifecycleTransition,
+                _ => ToolEffect.Unclassified,
+            },
+            observation.Semantics?.Evidence == Infrastructure.ToolEvidence.RepositoryInspection
+                ? ToolEvidence.RepositoryInspection
+                : ToolEvidence.None
         );
 }

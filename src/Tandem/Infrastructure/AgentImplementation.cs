@@ -19,13 +19,23 @@ internal enum ToolEffect
     LifecycleTransition,
 }
 
+internal enum ToolEvidence
+{
+    None,
+    RepositoryInspection,
+}
+
+internal sealed record ToolSemantics(ToolEffect Effect, ToolEvidence Evidence = ToolEvidence.None);
+
+internal sealed record ToolObservationDescriptor(string Name, ToolSemantics? Semantics);
+
 internal sealed class ToolEffectRegistry
 {
-    private readonly Dictionary<string, ToolEffect> _effects = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ToolSemantics> _semantics = new(StringComparer.Ordinal);
 
-    internal void Add(string name, ToolEffect effect)
+    internal void Add(string name, ToolEffect effect, ToolEvidence evidence = ToolEvidence.None)
     {
-        if (!_effects.TryAdd(name, effect))
+        if (!_semantics.TryAdd(name, new ToolSemantics(effect, evidence)))
         {
             throw new InvalidOperationException(
                 $"Tool '{name}' has more than one authority classification."
@@ -33,8 +43,8 @@ internal sealed class ToolEffectRegistry
         }
     }
 
-    internal bool TryGet(string name, out ToolEffect effect) =>
-        _effects.TryGetValue(name, out effect);
+    internal bool TryGet(string name, out ToolSemantics semantics) =>
+        _semantics.TryGetValue(name, out semantics!);
 }
 
 internal delegate AIAgent AgentImplementationFactory(AgentImplementationContext context);

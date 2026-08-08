@@ -12,11 +12,10 @@ public sealed record DeliveryState(
     string? CandidateSha,
     int VerificationIndex,
     IReadOnlyList<VerificationResult> VerificationResults,
-    ExecutorAcceptedFact? ExecutorAcceptedFact,
+    ExecutorTransition? ExecutorTransition,
     ReviewDecision? ReviewerDecision,
     string? PlannerHumanAnswer,
-    string? ReviewerHumanAnswer,
-    RunStatus Status
+    string? ReviewerHumanAnswer
 )
 {
     public static DeliveryState Create(Packet packet, string pinnedBaseSha, string workspacePath) =>
@@ -30,35 +29,22 @@ public sealed record DeliveryState(
             CandidateSha: null,
             VerificationIndex: 0,
             VerificationResults: [],
-            ExecutorAcceptedFact: null,
+            ExecutorTransition: null,
             ReviewerDecision: null,
             PlannerHumanAnswer: null,
-            ReviewerHumanAnswer: null,
-            Status: RunStatus.Running
+            ReviewerHumanAnswer: null
         );
 }
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
-[JsonDerivedType(typeof(ExecutorAcceptedFact.PlannerRequested), "planner-requested")]
-[JsonDerivedType(typeof(ExecutorAcceptedFact.ReportSubmitted), "report-submitted")]
-[JsonDerivedType(typeof(ExecutorAcceptedFact.CheckpointWritten), "checkpoint-written")]
-public abstract record ExecutorAcceptedFact
+[JsonDerivedType(typeof(ExecutorTransition.PlannerRequested), "planner-requested")]
+[JsonDerivedType(typeof(ExecutorTransition.ReportSubmitted), "report-submitted")]
+[JsonDerivedType(typeof(ExecutorTransition.CheckpointWritten), "checkpoint-written")]
+public abstract record ExecutorTransition
 {
-    public sealed record PlannerRequested(AskPlannerRequest Request) : ExecutorAcceptedFact;
+    public sealed record PlannerRequested(AskPlannerRequest Request) : ExecutorTransition;
 
-    public sealed record ReportSubmitted(SubmitReportRequest Report) : ExecutorAcceptedFact;
+    public sealed record ReportSubmitted(SubmitReportRequest Report) : ExecutorTransition;
 
-    public sealed record CheckpointWritten(WriteCheckpointRequest Checkpoint)
-        : ExecutorAcceptedFact;
-}
-
-[JsonConverter(typeof(JsonStringEnumConverter))]
-public enum RunStatus
-{
-    Running,
-    Ready,
-    WaitingForHuman,
-    Failed,
-    Faulted,
-    Cancelled,
+    public sealed record CheckpointWritten(WriteCheckpointRequest Checkpoint) : ExecutorTransition;
 }

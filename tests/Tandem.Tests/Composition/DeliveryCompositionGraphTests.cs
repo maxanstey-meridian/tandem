@@ -30,18 +30,18 @@ public sealed class DeliveryCompositionGraphTests
         var inspection = _pipeline.Inspect();
 
         inspection.Name.Should().Be("delivery");
-        inspection.StartStepId.Should().Be(BlockIds.Prepare);
+        inspection.StartStepId.Should().Be(DeliveryIds.Prepare);
         inspection
             .StepIds.Should()
             .BeEquivalentTo([
-                BlockIds.Prepare,
-                BlockIds.Executor,
-                BlockIds.Planner,
-                BlockIds.CaptureCandidate,
-                BlockIds.Verify,
-                BlockIds.Reviewer,
-                BlockIds.Complete,
-                BlockIds.Failed,
+                DeliveryIds.Prepare,
+                DeliveryIds.Executor,
+                DeliveryIds.Planner,
+                DeliveryIds.CaptureCandidate,
+                DeliveryIds.Verify,
+                DeliveryIds.Reviewer,
+                DeliveryIds.Complete,
+                DeliveryIds.Failed,
                 "PlannerHumanInput",
                 "ReviewerHumanInput",
             ]);
@@ -63,7 +63,7 @@ public sealed class DeliveryCompositionGraphTests
         inspection
             .Routes.Should()
             .BeEquivalentTo(ExpectedRoutes, "composition is the complete Delivery lifecycle");
-        inspection.OutputStepIds.Should().Equal(BlockIds.Complete, BlockIds.Failed);
+        inspection.OutputStepIds.Should().Equal(DeliveryIds.Complete, DeliveryIds.Failed);
         inspection.Mermaid.Should().NotContain("--request").And.NotContain("--resume");
         inspection.Dot.Should().NotContain("--request").And.NotContain("--resume");
     }
@@ -77,14 +77,14 @@ public sealed class DeliveryCompositionGraphTests
             .Should()
             .ContainSingle(route =>
                 route.SourceId == "PlannerHumanInput"
-                && route.TargetId == BlockIds.Planner
+                && route.TargetId == DeliveryIds.Planner
                 && !route.Conditional
             );
         routes
             .Should()
             .ContainSingle(route =>
                 route.SourceId == "ReviewerHumanInput"
-                && route.TargetId == BlockIds.Reviewer
+                && route.TargetId == DeliveryIds.Reviewer
                 && !route.Conditional
             );
         routes.Should().NotContain(route => route.Label == "unknown answer source");
@@ -161,29 +161,39 @@ public sealed class DeliveryCompositionGraphTests
 
     private static IReadOnlyList<PipelineRouteInspection> ExpectedRoutes =>
         [
-            new(BlockIds.Prepare, BlockIds.Executor, true, "workspace prepared"),
-            new(BlockIds.Prepare, BlockIds.Failed, true, "workspace failed"),
-            new(BlockIds.Executor, BlockIds.Planner, true, "planner requested"),
-            new(BlockIds.Executor, BlockIds.CaptureCandidate, true, "report submitted"),
-            new(BlockIds.Executor, BlockIds.Executor, true, "checkpoint written"),
-            new(BlockIds.Executor, BlockIds.Failed, true, "agent failed"),
-            new(BlockIds.Planner, BlockIds.Executor, true, "proceed / proceed with constraints"),
-            new(BlockIds.Planner, "PlannerHumanInput", true, "needs human"),
-            new(BlockIds.Planner, BlockIds.Failed, true, "stop"),
-            new(BlockIds.Planner, BlockIds.Failed, true, "agent failed"),
-            new(BlockIds.CaptureCandidate, BlockIds.Verify, true, "verification configured"),
-            new(BlockIds.CaptureCandidate, BlockIds.Reviewer, true, "no verification configured"),
-            new(BlockIds.CaptureCandidate, BlockIds.Failed, true, "capture failed"),
-            new(BlockIds.Verify, BlockIds.Verify, true, "commands remain"),
-            new(BlockIds.Verify, BlockIds.Reviewer, true, "verification complete"),
-            new(BlockIds.Verify, BlockIds.Executor, true, "command failed"),
-            new(BlockIds.Verify, BlockIds.Failed, true, "verification failed"),
-            new(BlockIds.Reviewer, BlockIds.Complete, true, "accepted"),
-            new(BlockIds.Reviewer, BlockIds.Executor, true, "changes requested"),
-            new(BlockIds.Reviewer, "ReviewerHumanInput", true, "needs human"),
-            new(BlockIds.Reviewer, BlockIds.Failed, true, "agent failed"),
-            new("PlannerHumanInput", BlockIds.Planner, false, "answer for planner"),
-            new("ReviewerHumanInput", BlockIds.Reviewer, false, "answer for reviewer"),
+            new(DeliveryIds.Prepare, DeliveryIds.Executor, true, "workspace prepared"),
+            new(DeliveryIds.Prepare, DeliveryIds.Failed, true, "workspace failed"),
+            new(DeliveryIds.Executor, DeliveryIds.Planner, true, "planner requested"),
+            new(DeliveryIds.Executor, DeliveryIds.CaptureCandidate, true, "report submitted"),
+            new(DeliveryIds.Executor, DeliveryIds.Executor, true, "checkpoint written"),
+            new(DeliveryIds.Executor, DeliveryIds.Failed, true, "agent failed"),
+            new(
+                DeliveryIds.Planner,
+                DeliveryIds.Executor,
+                true,
+                "proceed / proceed with constraints"
+            ),
+            new(DeliveryIds.Planner, "PlannerHumanInput", true, "needs human"),
+            new(DeliveryIds.Planner, DeliveryIds.Failed, true, "stop"),
+            new(DeliveryIds.Planner, DeliveryIds.Failed, true, "agent failed"),
+            new(DeliveryIds.CaptureCandidate, DeliveryIds.Verify, true, "verification configured"),
+            new(
+                DeliveryIds.CaptureCandidate,
+                DeliveryIds.Reviewer,
+                true,
+                "no verification configured"
+            ),
+            new(DeliveryIds.CaptureCandidate, DeliveryIds.Failed, true, "capture failed"),
+            new(DeliveryIds.Verify, DeliveryIds.Verify, true, "commands remain"),
+            new(DeliveryIds.Verify, DeliveryIds.Reviewer, true, "verification complete"),
+            new(DeliveryIds.Verify, DeliveryIds.Executor, true, "command failed"),
+            new(DeliveryIds.Verify, DeliveryIds.Failed, true, "verification failed"),
+            new(DeliveryIds.Reviewer, DeliveryIds.Complete, true, "accepted"),
+            new(DeliveryIds.Reviewer, DeliveryIds.Executor, true, "changes requested"),
+            new(DeliveryIds.Reviewer, "ReviewerHumanInput", true, "needs human"),
+            new(DeliveryIds.Reviewer, DeliveryIds.Failed, true, "agent failed"),
+            new("PlannerHumanInput", DeliveryIds.Planner, false, "answer for planner"),
+            new("ReviewerHumanInput", DeliveryIds.Reviewer, false, "answer for reviewer"),
         ];
 
     private static DeliveryState CreateHumanQuestionState(bool planner)
@@ -203,7 +213,6 @@ public sealed class DeliveryCompositionGraphTests
                     [],
                     "Which behavior should be used?"
                 ),
-                Status = RunStatus.WaitingForHuman,
             }
             : state with
             {
@@ -214,7 +223,6 @@ public sealed class DeliveryCompositionGraphTests
                     [],
                     "Which behavior should be used?"
                 ),
-                Status = RunStatus.WaitingForHuman,
             };
     }
 

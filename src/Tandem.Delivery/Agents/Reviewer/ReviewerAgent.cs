@@ -9,17 +9,19 @@ internal static class ReviewerAgent
         DeliveryDiffAcquisition diffAcquisition
     ) =>
         agents.Create(
-            BlockIds.Reviewer,
+            DeliveryIds.Reviewer,
             "review",
             ReviewerPrompts.Instructions,
             builder =>
                 builder
                     .WithMessage(ReviewerPrompts.BuildMessage)
-                    .WithOutput<DeliveryState, ReviewDecision>(
-                        ReviewDecisionPolicy.Parse,
-                        ReviewerPolicies.RequireRepositoryGrounding(),
-                        "file_access_read"
+                    .WithOutput(
+                        state => new ReviewDecisionValidator(
+                            state.Packet.Outcomes.Select(outcome => outcome.Id)
+                        ),
+                        ReviewerPolicies.ApplyDecision
                     )
+                    .RequireOutputAcceptance(ReviewerPolicies.RepositoryGrounded())
                     .WithMessageAugmentation(ReviewerPolicies.IncludeCandidateDiff(diffAcquisition))
                     .WithConversationPolicy(ReviewerPolicies.DiscardAfterDecision)
         );

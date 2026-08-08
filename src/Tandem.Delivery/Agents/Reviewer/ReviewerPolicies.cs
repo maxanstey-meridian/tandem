@@ -4,27 +4,32 @@ namespace Tandem.Delivery;
 
 public static class ReviewerPolicies
 {
+    public static DeliveryState ApplyDecision(DeliveryState state, ReviewDecision decision) =>
+        state with
+        {
+            ReviewerDecision = decision,
+            ReviewerHumanAnswer = null,
+        };
+
     public static AgentConversationDecision DiscardAfterDecision(
         AgentMessageContext<DeliveryState> _,
         AgentMessageOutcome __
     ) => new(AgentConversationRetention.Discard);
 
-    public static StructuredOutputAcceptancePolicy<DeliveryState> RequireRepositoryGrounding() =>
-        StructuredOutputAcceptancePolicies.RequireToolCallWhen<DeliveryState>(
-            result =>
-                result.Outcome?.Kind
-                    is OutcomeKinds.ReviewAccepted
-                        or OutcomeKinds.ReviewChangesRequested
-                || result.Candidate
-                    is ReviewDecision
-                    {
-                        Decision: ReviewDecisionValue.Accept or ReviewDecisionValue.RequestChanges,
-                    },
-            RepositoryGrounding.IsInspectionTool,
-            correction: "Accept and RequestChanges require repository inspection in this review. "
-                + "Use an available read-only repository tool to verify the candidate and packet outcomes, "
-                + "then return only the corrected JSON decision with concrete outcome evidence."
-        );
+    public static OutputAcceptancePolicy<DeliveryState, ReviewDecision> RepositoryGrounded() =>
+        observation =>
+            observation.Output.Decision == ReviewDecisionValue.NeedsHuman
+            || observation.Tools.Any(tool => tool.Evidence == ToolEvidence.RepositoryInspection)
+                ? []
+                :
+                [
+                    new StructuredOutputProblem(
+                        "$grounding",
+                        "Accept and RequestChanges require repository inspection in this review. "
+                            + "Use an available read-only repository tool to verify the candidate and packet outcomes, "
+                            + "then return only the corrected JSON decision with concrete outcome evidence."
+                    ),
+                ];
 
     public static MessageAugmentation<DeliveryState> IncludeCandidateDiff(
         DeliveryDiffAcquisition diffAcquisition

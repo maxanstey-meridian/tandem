@@ -28,11 +28,12 @@ internal sealed record AgentStructuredOutputDescriptor<TState>(
     Func<
         PipelineMessage<TState>,
         AgentStructuredOutputResult<TState>,
-        IReadOnlySet<string>,
+        IReadOnlySet<ToolObservationDescriptor>,
         int,
         IReadOnlyList<AgentStructuredOutputProblem>
     >? Accept = null,
-    string? CorrectionRequiredToolName = null
+    string? CorrectionRequiredToolName = null,
+    Type? OutputType = null
 );
 
 internal sealed record AgentTurnDescriptor<TState>(

@@ -36,19 +36,19 @@ public sealed class DeliveryComposition
             )
             .Route(
                 on: delivery.Executor.Success,
-                when: state => state.ExecutorAcceptedFact is ExecutorAcceptedFact.PlannerRequested,
+                when: state => state.ExecutorTransition is ExecutorTransition.PlannerRequested,
                 to: delivery.Planner,
                 label: "planner requested"
             )
             .Route(
                 on: delivery.Executor.Success,
-                when: state => state.ExecutorAcceptedFact is ExecutorAcceptedFact.ReportSubmitted,
+                when: state => state.ExecutorTransition is ExecutorTransition.ReportSubmitted,
                 to: delivery.CaptureCandidate,
                 label: "report submitted"
             )
             .Route(
                 on: delivery.Executor.Success,
-                when: state => state.ExecutorAcceptedFact is ExecutorAcceptedFact.CheckpointWritten,
+                when: state => state.ExecutorTransition is ExecutorTransition.CheckpointWritten,
                 to: delivery.Executor,
                 label: "checkpoint written"
             )

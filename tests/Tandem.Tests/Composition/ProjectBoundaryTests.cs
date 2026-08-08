@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using System.Xml.Linq;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,56 +9,23 @@ namespace Tandem.Tests.Composition;
 public sealed class ProjectBoundaryTests
 {
     [Fact]
-    public void Delivery_ModelsTheCanonicalPipelineAuthoringShape()
+    public void DeliveryState_ContainsApplicationFactsRatherThanExecutionStatus()
     {
-        var root = Path("src/Tandem.Delivery");
-        new[]
-        {
-            "DeliveryState.cs",
-            "DeliveryParticipants.cs",
-            "DeliveryParticipantsFactory.cs",
-            "DeliveryComposition.cs",
-            "DeliveryRegistration.cs",
-        }
-            .Should()
-            .OnlyContain(file => File.Exists(System.IO.Path.Combine(root, file)));
-        new[]
-        {
-            "Agents",
-            "Capabilities",
-            "Stages",
-            "Interactions",
-            "Observation",
-            "Infrastructure",
-            "Harness",
-        }
-            .Should()
-            .OnlyContain(directory => Directory.Exists(System.IO.Path.Combine(root, directory)));
-        new[]
-        {
-            "DeliverySteps.cs",
-            "DeliveryStepsFactory.cs",
-            "DeliveryPrompts.cs",
-            "DeliveryPolicies.cs",
-            "StructuredDecisionPolicies.cs",
-            "StructuredDecisionValidators.cs",
-        }
-            .Should()
-            .NotContain(file => File.Exists(System.IO.Path.Combine(root, file)));
+        var properties = typeof(DeliveryState).GetProperties();
+
+        properties.Should().NotContain(property => property.Name == "Status");
+        properties
+            .Single(property => property.Name == nameof(DeliveryState.ExecutorTransition))
+            .PropertyType.Should()
+            .Be(typeof(ExecutorTransition));
     }
 
     [Fact]
-    public void Delivery_UsesTypedFactsAndSemanticTopology()
+    public void DeliveryState_DoesNotUseJsonAsAnApplicationFact()
     {
-        var source = string.Join('\n', SourceLines("src/Tandem.Delivery"));
+        var properties = typeof(DeliveryState).GetProperties();
 
-        source.Should().NotContain("LatestOutcome");
-        source.Should().NotContain("JsonElement");
-        source.Should().NotContain("SourceBlockId");
-        source.Should().NotContain("HumanAnswerSourceBlockId");
-        source.Should().NotContain("IsWorkspaceMutationTool");
-        source.Should().NotContain("PrepareWorkspaceBlock");
-        source.Should().NotContain("CaptureCandidateBlock");
+        properties.Should().NotContain(property => property.PropertyType == typeof(JsonElement));
     }
 
     private static readonly string _root = System.IO.Path.GetFullPath(

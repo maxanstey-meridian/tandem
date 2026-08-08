@@ -52,9 +52,21 @@ internal static class HarnessToolEffects
 {
     internal static void Register(ToolEffectRegistry registry, bool includeMutations)
     {
-        registry.Add(FileAccessProvider.ReadFileToolName, Infrastructure.ToolEffect.Read);
-        registry.Add(FileAccessProvider.LsToolName, Infrastructure.ToolEffect.Read);
-        registry.Add(FileAccessProvider.GrepToolName, Infrastructure.ToolEffect.Read);
+        registry.Add(
+            FileAccessProvider.ReadFileToolName,
+            Infrastructure.ToolEffect.Read,
+            Infrastructure.ToolEvidence.RepositoryInspection
+        );
+        registry.Add(
+            FileAccessProvider.LsToolName,
+            Infrastructure.ToolEffect.Read,
+            Infrastructure.ToolEvidence.RepositoryInspection
+        );
+        registry.Add(
+            FileAccessProvider.GrepToolName,
+            Infrastructure.ToolEffect.Read,
+            Infrastructure.ToolEvidence.RepositoryInspection
+        );
         if (!includeMutations)
         {
             return;

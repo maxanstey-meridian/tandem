@@ -15,7 +15,7 @@ public static class PlannerPrompts
             packet.Constraints.Count > 0
                 ? string.Join("\n", packet.Constraints.Select(c => $"- {c}"))
                 : "(none)";
-        var request = state.ExecutorAcceptedFact is ExecutorAcceptedFact.PlannerRequested fact
+        var request = state.ExecutorTransition is ExecutorTransition.PlannerRequested fact
             ? $"Question: {fact.Request.Question}\n"
                 + $"Proposed approach: {fact.Request.ProposedApproach}\n"
                 + $"Evidence:\n{string.Join("\n", fact.Request.Evidence.Select(item => $"- {item}"))}"
@@ -61,7 +61,7 @@ public static class PlannerPrompts
     }
 
     internal const string Instructions = """
-        You are Tandem's planner block.
+        You are Tandem's planner agent.
 
         You decide engineering direction; you do not implement. Review the packet outcomes
         and constraints, the executor's question, proposed approach, and evidence. Treat

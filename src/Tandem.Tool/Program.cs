@@ -145,8 +145,8 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
             {
                 var profileName = blockId switch
                 {
-                    BlockIds.Planner => "planning",
-                    BlockIds.Reviewer => "review",
+                    DeliveryIds.Planner => "planning",
+                    DeliveryIds.Reviewer => "review",
                     _ => "implementation",
                 };
                 p = new RunEventProjector(
@@ -371,7 +371,11 @@ static async Task PersistTerminalProjectionAsync(
 )
 {
     var projector = new RunEventProjector(projection.RunId, "", eventStore);
-    switch (final.State.Status)
+    var status =
+        final.Outcome?.Kind == OutcomeKinds.RunReady
+            ? Tandem.Delivery.RunStatus.Ready
+            : Tandem.Delivery.RunStatus.Failed;
+    switch (status)
     {
         case Tandem.Delivery.RunStatus.Ready:
             await projector.EmitRunReadyAsync(final.State.CandidateSha, cancellationToken);
@@ -387,7 +391,7 @@ static async Task PersistTerminalProjectionAsync(
     await new RunProjectionStore(runDirectory).WriteAsync(
         projection with
         {
-            Status = final.State.Status,
+            Status = status,
             ActiveBlockId = null,
             PinnedBaseSha = final.State.PinnedBaseSha,
             CandidateSha = final.State.CandidateSha,
@@ -791,7 +795,10 @@ file sealed class StreamRenderer
     private readonly Dictionary<string, string> _toolNames = new();
     private PipelineRunResult<DeliveryState>? _finalMessage;
 
-    public Tandem.Delivery.RunStatus? TerminalStatus => _finalMessage?.State.Status;
+    public Tandem.Delivery.RunStatus? TerminalStatus =>
+        _finalMessage is null ? null
+        : _finalMessage.Outcome?.Kind == OutcomeKinds.RunReady ? Tandem.Delivery.RunStatus.Ready
+        : Tandem.Delivery.RunStatus.Failed;
 
     public void RenderTerminalMessage(PipelineRunResult<DeliveryState>? msg)
     {
@@ -813,12 +820,7 @@ file sealed class StreamRenderer
                     : $"{outcome.Duration.TotalMilliseconds:F0}ms";
             Console.WriteLine($"[block] {outcome.StepId} completed: {outcome.Kind} ({durStr})");
         }
-        if (
-            msg?.State.Status
-            is Tandem.Delivery.RunStatus.Ready
-                or Tandem.Delivery.RunStatus.Failed
-                or Tandem.Delivery.RunStatus.WaitingForHuman
-        )
+        if (msg is not null)
         {
             _finalMessage = msg;
         }
@@ -839,7 +841,7 @@ file sealed class StreamRenderer
 
         var ctx = msg.State;
         Console.WriteLine();
-        Console.WriteLine($"Status:       {ctx.Status}");
+        Console.WriteLine($"Status:       {TerminalStatus}");
         Console.WriteLine($"Run:          {msg.RunId}");
         Console.WriteLine($"Base:         {ctx.PinnedBaseSha}");
         if (ctx.CandidateSha is { } candidate)
@@ -858,7 +860,7 @@ file sealed class StreamRenderer
             Console.WriteLine($"Planner:      {decision.Rationale}");
         }
         var question = ctx.PlannerDecision?.HumanQuestion ?? ctx.ReviewerDecision?.HumanQuestion;
-        if (ctx.Status == Tandem.Delivery.RunStatus.WaitingForHuman && question is not null)
+        if (question is not null)
         {
             Console.WriteLine($"Question:     {question}");
         }

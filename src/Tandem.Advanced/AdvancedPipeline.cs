@@ -104,6 +104,14 @@ public enum ToolEffect
 
 public sealed record ToolInvocation(string Name, ToolEffect Effect);
 
+public enum ToolEvidence
+{
+    None,
+    RepositoryInspection,
+}
+
+public sealed record ToolObservation(string Name, ToolEffect Effect, ToolEvidence Evidence);
+
 public delegate ValueTask<ToolInterceptionResult?> ToolInterceptor<TState>(
     AgentMessageContext<TState> context,
     ToolInvocation invocation,
@@ -260,6 +268,15 @@ public static class AdvancedAgentBuilderExtensions
     ) =>
         builder.ConfigureOutput<TOutput>(
             StructuredOutputDescriptors.Create(parser, acceptancePolicy, correctionRequiredToolName)
+        );
+
+    public static AgentBuilder<TState> RequireOutputAcceptance<TState, TOutput>(
+        this AgentBuilder<TState> builder,
+        OutputAcceptancePolicy<TState, TOutput> acceptance
+    ) =>
+        builder.ConfigureOutputAcceptance(
+            typeof(TOutput),
+            StructuredOutputDescriptors.Accept(acceptance)
         );
 
     public static AgentBuilder<TState> WithCheckpoint<TState>(

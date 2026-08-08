@@ -47,6 +47,12 @@ discover capabilities or construct a transport registry.
 
 ## Advanced Surface
 
+Core versus Advanced is a semantic boundary, not a progression from simple to
+complex agents. Core describes application meaning: typed state, agents, outputs,
+capabilities, routes, and interactions. A sophisticated agent may remain entirely
+in Core. Advanced exists only when authored code deliberately participates in how
+Tandem executes those concepts.
+
 Envelope-aware configuration and operations require an explicit
 `Tandem.Advanced` import. This includes context messages, workspaces, custom
 structured parsers, runtime-aware capability acceptance, Harness selection,
@@ -54,8 +60,15 @@ checkpoints, message augmentation, continuation policy, profile policy,
 conversation policy, and `PipelineOperation`.
 
 Advanced policies receive `AgentMessageContext<TState>` and related narrow values.
-Custom blocks receive `PipelineOperationContext<TState>` and return
+Custom operations receive `PipelineOperationContext<TState>` and return
 `OperationResult<TState>`. The broad execution envelope remains internal.
+
+An abstraction belongs in Core only when an application author could reasonably
+invent it without knowing Tandem's implementation. Concepts caused by MAF,
+providers, persistence, transport, node identity, invocation identity, or the
+execution envelope remain private or Advanced. Ordinary authoring leaking JSON,
+string outcome kinds, runtime envelopes, node identities, or transport concepts
+is evidence that the seam must be redesigned.
 
 ## Node ABI
 

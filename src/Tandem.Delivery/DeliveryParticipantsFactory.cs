@@ -25,16 +25,16 @@ public sealed class DeliveryParticipantsFactory(
             ExecutorAgent.Create(agents, askPlanner, submitReport, writeCheckpoint),
             PlannerAgent.Create(agents),
             new CaptureCandidateStage(git),
-            new VerificationStage(new VerificationBlock(git)),
+            new VerificationStage(new VerificationOperation(git)),
             ReviewerAgent.Create(agents, diffAcquisition),
             PipelineNodes.Complete<DeliveryState>(
-                BlockIds.Complete,
+                DeliveryIds.Complete,
                 complete.Execute,
                 OutcomeKinds.RunReady,
                 "Run ready"
             ),
             PipelineNodes.Failed<DeliveryState>(
-                BlockIds.Failed,
+                DeliveryIds.Failed,
                 failed.Execute,
                 OutcomeKinds.RunFailed,
                 failed.Summarize

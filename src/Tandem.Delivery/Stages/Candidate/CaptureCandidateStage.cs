@@ -2,7 +2,7 @@ using Tandem.Git;
 
 namespace Tandem.Delivery;
 
-[PipelineStage(BlockIds.CaptureCandidate)]
+[PipelineStage(DeliveryIds.CaptureCandidate)]
 public sealed partial class CaptureCandidateStage(GitProcess git)
 {
     public async ValueTask<Outcome<DeliveryState>> ExecuteAsync(

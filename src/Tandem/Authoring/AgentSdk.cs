@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using FluentValidation;
 using Microsoft.Extensions.AI;
 using Tandem.Domain;
@@ -80,6 +81,12 @@ public static class Agent
 
 public sealed class AgentBuilder<TState>
 {
+    private static readonly JsonSerializerOptions _structuredOutputJsonOptions = new(
+        JsonSerializerDefaults.Web
+    )
+    {
+        Converters = { new JsonStringEnumConverter() },
+    };
     private static readonly TimeSpan _maximumTimeout = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
     private readonly string _id;
     private readonly string _profile;
@@ -206,6 +213,11 @@ public sealed class AgentBuilder<TState>
     public AgentBuilder<TState> WithOutput<TOutput>(
         IValidator<TOutput> validator,
         Func<TState, TOutput, TState> apply
+    ) => WithOutput(_ => validator, apply);
+
+    public AgentBuilder<TState> WithOutput<TOutput>(
+        Func<TState, IValidator<TOutput>> validator,
+        Func<TState, TOutput, TState> apply
     )
     {
         _structuredOutput = new AgentStructuredOutputDescriptor<TState>(
@@ -213,16 +225,17 @@ public sealed class AgentBuilder<TState>
                 AgentStructuredOutputPolicy.Parse(
                     response,
                     state,
-                    JsonSerializerOptions.Web,
-                    validator,
+                    _structuredOutputJsonOptions,
+                    validator(state),
                     (output, current) =>
                         new AgentStructuredOutcome<TState>(
                             StandardOutcomeKinds.Success,
                             "Succeeded",
-                            JsonSerializer.SerializeToElement(output, JsonSerializerOptions.Web),
+                            JsonSerializer.SerializeToElement(output, _structuredOutputJsonOptions),
                             apply(current, output)
                         )
-                )
+                ),
+            OutputType: typeof(TOutput)
         );
         _configureChatOptions = options =>
             options.ResponseFormat = ChatResponseFormat.ForJsonSchema<TOutput>();
@@ -240,9 +253,41 @@ public sealed class AgentBuilder<TState>
         AgentStructuredOutputDescriptor<TState> descriptor
     )
     {
-        _structuredOutput = descriptor;
+        _structuredOutput = descriptor with { OutputType = typeof(TOutput) };
         _configureChatOptions = options =>
             options.ResponseFormat = ChatResponseFormat.ForJsonSchema<TOutput>();
+        return this;
+    }
+
+    internal AgentBuilder<TState> ConfigureOutputAcceptance(
+        Type outputType,
+        Func<
+            PipelineMessage<TState>,
+            AgentStructuredOutputResult<TState>,
+            IReadOnlySet<ToolObservationDescriptor>,
+            int,
+            IReadOnlyList<AgentStructuredOutputProblem>
+        > acceptance
+    )
+    {
+        if (_structuredOutput is null)
+        {
+            throw new InvalidOperationException(
+                "Output acceptance requires typed output. Call WithOutput(...) first."
+            );
+        }
+        if (_structuredOutput.Accept is not null)
+        {
+            throw new InvalidOperationException("Output acceptance is already configured.");
+        }
+        if (_structuredOutput.OutputType != outputType)
+        {
+            throw new InvalidOperationException(
+                $"Output acceptance for '{outputType.Name}' cannot decorate configured output "
+                    + $"'{_structuredOutput.OutputType?.Name ?? "unknown"}'."
+            );
+        }
+        _structuredOutput = _structuredOutput with { Accept = acceptance };
         return this;
     }
 
