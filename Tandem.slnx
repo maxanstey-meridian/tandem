@@ -7,10 +7,10 @@
         <Project Path="src/Tandem.Tool/Tandem.Tool.csproj" />
         <Project Path="src/Tandem/Tandem.csproj" />
     </Folder>
-    <Folder Name="/samples/">
-        <Project Path="samples/Tandem.Sample.Debate/Tandem.Sample.Debate.csproj" />
-        <Project Path="samples/Tandem.Sample.Songwriter/Tandem.Sample.Songwriter.csproj" />
-        <Project Path="samples/Tandem.Sample.Support/Tandem.Sample.Support.csproj" />
+    <Folder Name="/examples/">
+        <Project Path="examples/code-writer/csharp/Tandem.Sample.CodeWriter.csproj" />
+        <Project Path="examples/debate/csharp/Tandem.Sample.Debate.csproj" />
+        <Project Path="examples/songwriter/csharp/Tandem.Sample.Songwriter.csproj" />
     </Folder>
     <Folder Name="/tests/">
         <Project Path="tests/Tandem.Ledger.TestWorker/Tandem.Ledger.TestWorker.csproj" />

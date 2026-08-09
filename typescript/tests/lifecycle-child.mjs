@@ -242,15 +242,21 @@ try {
       },
     });
     const handlers = interactions().handle(ask, (request, { signal }) => {
-      signal.addEventListener("abort", () => (abortObserved = true), { once: true });
       setTimeout(() => cancellation.abort(new Error("cancelled during interaction")), 20);
-      return new Promise((resolve) =>
-        setTimeout(() => {
-          handlerCompleted = true;
-          mutatedAfterAbort = true;
-          resolve({ next: request.current + 1 });
-        }, 100),
-      );
+      return new Promise((resolve) => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            abortObserved = true;
+            setTimeout(() => {
+              handlerCompleted = true;
+              mutatedAfterAbort = true;
+              resolve({ next: request.current + 1 });
+            }, 100);
+          },
+          { once: true },
+        );
+      });
     });
     const graph = pipeline({
       name: mode,

@@ -1,269 +1,417 @@
 # Tandem
 
-Tandem is a typed .NET SDK for building agentic applications as explicit pipelines.
-Agents, ordinary C# stages, and human interactions share immutable application state;
-routes define what happens next.
+Tandem is a typed SDK for building agentic applications as explicit pipelines.
+Agents, ordinary code, and human interactions share application state; named routes
+decide what happens next.
 
-The configured pipeline is the lifecycle. There is no hidden application-level
-coordinator deciding which participant runs next.
+The pipeline is the lifecycle. There is no hidden coordinator deciding which agent
+runs next, and no application-level agent loop. Microsoft Agent Framework owns live
+execution, sessions, model loops, and tool dispatch underneath.
 
-## What It Is
+Tandem runs in-process on .NET and builds on Microsoft Agent Framework. Use it
+directly from C#, or author the same pipeline from a Node application with the
+TypeScript SDK. The TypeScript API crosses into the same engine, so routing, model
+execution, capabilities, validation, and persistence behave the same in either
+language.
 
-- A small authoring model for typed, in-process agent workflows.
-- Explicit composition: every transition is a named route.
-- State-first: agents and stages read and update your `TState`.
-- Typed at machine boundaries: model output is deserialized, validated, then applied.
-- Built on Microsoft Agent Framework for model loops, sessions, tools, and execution.
+## TypeScript
 
-## What It Is Not
+This abbreviated code-writer asks one agent to implement a function, verifies it
+with ordinary TypeScript, and asks another agent to review the exact result. Failed
+verification or requested changes route back to the implementer.
 
-- A durable workflow service, scheduler, daemon, or distributed queue.
-- A hidden multi-agent coordinator or prompt-driven routing framework.
-- A replacement for ordinary application code: deterministic work remains C#.
-- A security sandbox for tools or commands.
+```ts
+import { agent, capability, output, pipeline, route, stage } from "@tandem/sdk";
+import { z } from "zod";
 
-Runs belong to the process that starts them. Cancellation remains cancellation;
-undeclared faults remain exceptions.
+const State = z.object({
+  // This is the job we want completed.
+  requirements: z.array(z.string()),
+  // The implementer fills this in when it submits working code.
+  implementation: z.string().nullable(),
+  // Ordinary TypeScript verification records whether that code works.
+  verified: z.boolean(),
+  // The reviewer makes the final decision, or sends the work around again.
+  review: z.enum(["Accept", "RequestChanges"]).nullable(),
+  // We will use this later to show how a stage can save a useful result.
+  result: z
+    .object({ source: z.string().nullable(), accepted: z.boolean() })
+    .nullable(),
+});
+// TypeScript now knows the exact state shape without a second declaration.
+type State = z.infer<typeof State>;
 
-## The Basic Shape
+const submitImplementation = capability({
+  // This becomes the function the model can call.
+  name: "submit_implementation",
+  // The model sees what the function is for.
+  instructions: "Submit the complete implementation.",
+  // Tandem rejects a call that does not contain actual source code.
+  schema: z.object({ source: z.string().min(1) }),
+  // Only an accepted call is allowed to change our state.
+  apply: (state: State, submission) => ({
+    ...state,
+    implementation: submission.source,
+    // New code makes the previous verification and review stale.
+    verified: false,
+    review: null,
+  }),
+  // This is the human-readable account of what happened.
+  summarize: () => "Implementation submitted",
+});
 
-This abbreviated review loop contains the core Tandem concepts:
+const implementer = agent<State>({
+  // This name is how the agent appears in the pipeline and ledger.
+  id: "implementer",
+  // These are the standing instructions for every visit.
+  instructions: "Implement the requested function.",
+  // Bring any Microsoft.Extensions.AI-compatible chat client.
+  client: clients.implementer,
+  // Each visit receives the latest implementation, checks, and review.
+  message: (state) => JSON.stringify(state),
+  // Submitting code is the only action this agent may take.
+  capabilities: [submitImplementation],
+  // Keep the conversation when a failed check sends the work back.
+  continueSession: true,
+});
+
+const verification = stage<State>({
+  // This runs normal TypeScript rather than asking another agent.
+  id: "verification",
+  execute: async (state, { signal }) => ({
+    ...state,
+    // Run the code and put the result back into shared state.
+    verified: await verify(state.implementation!, signal),
+  }),
+});
+
+const reviewer = agent<State, { decision: "Accept" | "RequestChanges" }>({
+  // Give the second agent its own place in the graph and ledger.
+  id: "reviewer",
+  // Its only job is to judge code that has already passed verification.
+  instructions: "Review the verified implementation.",
+  // The reviewer can use a different model from the implementer.
+  client: clients.reviewer,
+  // The reviewer sees the exact source that passed verification.
+  message: (state) => state.implementation!,
+  output: {
+    // Ask for one small, explicit decision rather than free-form prose.
+    instructions: "Return Accept or RequestChanges.",
+    // Anything else is corrected before it can reach the application.
+    schema: z.object({ decision: z.enum(["Accept", "RequestChanges"]) }),
+    // Once accepted, the decision becomes an ordinary fact in state.
+    apply: (state, result) => ({ ...state, review: result.decision }),
+  },
+});
+
+// Successful runs end here.
+const done = output<State>({
+  // Routes refer to the terminal by this stable name.
+  id: "done",
+  // The caller can show this summary directly.
+  summary: () => "Implementation accepted",
+});
+
+// Agent errors end somewhere different.
+const failed = output<State>({
+  id: "failed",
+  // Mark this terminal as an unsuccessful result.
+  failed: true,
+  // Give the caller a useful failure message.
+  summary: () => "Code writer failed",
+});
+
+export const codeWriter = pipeline({
+  // Give this lifecycle a stable name.
+  name: "code-writer",
+  // Every node reads and returns this same state shape.
+  state: State,
+  // List everything that can run.
+  nodes: [implementer, verification, reviewer, done, failed],
+  // The implementer gets the first turn.
+  start: implementer,
+  // Routes are checked in this order after each node finishes.
+  routes: [
+    // Submitted code always goes through the same checks.
+    route({
+      from: implementer,
+      outcome: "success",
+      to: verification,
+      label: "submitted",
+    }),
+
+    // If the implementer itself fails, there is no candidate to verify.
+    route({
+      from: implementer,
+      outcome: "failed",
+      to: failed,
+      label: "implementer failed",
+    }),
+
+    // Code that passes its tests is ready for model review.
+    route({
+      from: verification,
+      when: (state) => state.verified,
+      to: reviewer,
+      label: "verified",
+    }),
+
+    // Failed tests send the latest state back around as concrete feedback.
+    route({
+      from: verification,
+      when: (state) => !state.verified,
+      to: implementer,
+      label: "failed",
+    }),
+
+    // An accepted review finishes the run.
+    route({
+      from: reviewer,
+      outcome: "success",
+      when: (state) => state.review === "Accept",
+      to: done,
+      label: "accepted",
+    }),
+
+    // Requested changes return to the same implementer conversation.
+    route({
+      from: reviewer,
+      outcome: "success",
+      when: (state) => state.review === "RequestChanges",
+      to: implementer,
+      label: "changes requested",
+    }),
+
+    // A reviewer fault is different from a valid RequestChanges decision.
+    route({
+      from: reviewer,
+      outcome: "failed",
+      to: failed,
+      label: "reviewer failed",
+    }),
+  ],
+  // These are the only places from which the run may finish.
+  outputs: [done, failed],
+});
+```
+
+TypeScript is authoring sugar over Tandem. It validates the same contracts and
+registers the same nodes and routes; the pipeline still runs in C# through Tandem
+and Microsoft Agent Framework.
+
+## C#
+
+The same abbreviated pipeline in C# uses the same concepts directly:
 
 ```csharp
-// CodingState carries the task, the proposed change, and the latest review decision.
-public sealed record CodingState(
-    string Instructions,
-    string? ProposedChange = null,
-    bool Approved = false,
-    string? ReviewNotes = null)
-{
-    // State owns the pure transition and clears review facts made stale by a new proposal.
-    public CodingState RecordProposedChange(CodingDecision decision) =>
-        this with
-        {
-            ProposedChange = decision.ProposedChange,
-            Approved = false,
-            ReviewNotes = null,
-        };
-}
+public sealed record CodeWriterState(
+    // The request both agents are working towards.
+    IReadOnlyList<string> Requirements,
+    // Source accepted from the implementer's capability call.
+    string? Implementation = null,
+    // The result produced by ordinary C# verification.
+    bool Verified = false,
+    // The reviewer's accepted decision, used by the outgoing routes.
+    ReviewDisposition? Review = null);
 
-// A named terminal owns application-facing identity and summary; Tandem owns success mechanics.
-public sealed class CodingComplete : IPipelineCompletion<CodingState>
-{
-    public string Id => "complete";
-    public string Summarize(CodingState state) => "Coding task approved";
-}
-
-// The coder turns the instructions and any review notes into a proposed change.
-var coder = Agent
-    .Create<CodingState>(
-        "coder",
-        "You are a coding agent. Make the requested change and respond to review notes.",
-        coderClient)
-    // Each pass includes the original task, current work, and latest review notes.
-    .WithMessage(state =>
-        $"Instructions: {state.Instructions}\n"
-        + $"Current change: {state.ProposedChange}\n"
-        + $"Review notes: {state.ReviewNotes}")
-    // The output definition owns instructions, validation, and representative examples.
-    // Tandem applies the state transition once, only after the decision is accepted.
-    .WithOutput(
-        new CodingDecisionOutput(),
-        (state, decision) => state.RecordProposedChange(decision))
-    .Build();
-
-// Human review pauses the pipeline and returns an approval decision with optional notes.
-var humanReview = PipelineNodes.WaitFor<CodingState, ChangeReview, ReviewAnswer>(
-    "human-review",
-    // The reviewer receives the proposed change.
-    state => new ChangeReview(state.ProposedChange!),
-    // Their answer updates the facts used by the outgoing routes.
-    (state, answer) => state with
+var submitImplementation = AgentCapabilities.Create<CodeWriterState, SubmitImplementation>(
+    // This supplies the function name, instructions, schema, and validation.
+    new SubmitImplementationCapability(),
+    // Tandem applies this only after the model call has been accepted.
+    (state, submission) => state with
     {
-        Approved = answer.Approved,
-        ReviewNotes = answer.Notes,
+        Implementation = submission.Implementation,
+        // New code invalidates any verdict about the previous version.
+        Verified = false,
+        Review = null,
     });
 
-// Deterministic checks remain ordinary C#; the definition gives completion application meaning.
-var checks = new CodeCheckStage();
-var complete = PipelineNodes.Complete(new CodingComplete());
+var implementer = Agent
+    .Create<CodeWriterState>(
+        // The agent keeps the same identity wherever the graph sends it.
+        "implementer",
+        // These instructions stay with it across the whole run.
+        "Implement the requested function.",
+        // The model client is supplied by the host, not hidden by Tandem.
+        clients.Implementer)
+    // Every visit includes the latest state.
+    .WithMessage(state => JsonSerializer.Serialize(state))
+    // This is the one action the implementer may take.
+    .WithCapability(submitImplementation)
+    // Preserve the conversation when verification sends it back around.
+    .ContinueSession()
+    .Build();
 
-// The pipeline starts with the coder and declares every possible transition.
-var pipeline = Pipeline
-    .Start(coder, "coding-task")
-    // Proposed changes pass deterministic checks before reaching a reviewer.
-    .Route(coder.Success, checks, "change proposed")
-    .Route(checks, humanReview, "checks passed")
-    // Approval completes the pipeline.
+// The implementation then passes through normal C# tests, not another prompt.
+var verification = new VerificationStage();
+
+var reviewer = Agent
+    .Create<CodeWriterState>(
+        "reviewer",
+        "Review the verified implementation.",
+        clients.Reviewer)
+    // Review the exact source that already passed verification.
+    .WithMessage(state => state.Implementation!)
+    .WithOutput(
+        // This definition owns the response shape and its validation.
+        new ReviewDecisionOutput(),
+        // Only an accepted decision is allowed to update state.
+        (state, result) => state with { Review = result.Decision })
+    .Build();
+
+// These two nodes make success and failure clear to the caller.
+var done = PipelineNodes.Complete(new CodeWriterComplete());
+var failed = PipelineNodes.Failed(new CodeWriterFailed());
+
+var codeWriter = Pipeline
+    // Begin with the implementer and give the lifecycle a name.
+    .Start(implementer, "code-writer")
+    // Submitted work must pass through verification.
     .Route(
-        from: humanReview,
-        when: state => state.Approved,
-        to: complete,
-        label: "approved")
-    // Rejection returns to the coder with ReviewNotes populated.
+        on: implementer.Success,
+        to: verification,
+        label: "submitted")
+    // An implementer fault has no candidate to send onwards.
     .Route(
-        from: humanReview,
-        when: state => !state.Approved,
-        to: coder,
+        on: implementer.Failed,
+        to: failed,
+        label: "implementer failed")
+    // Passing verification moves the exact candidate to review.
+    .Route(
+        from: verification,
+        when: state => state.Verified,
+        to: reviewer,
+        label: "verified")
+    // Failed verification sends its updated state back to the implementer.
+    .Route(
+        from: verification,
+        when: state => !state.Verified,
+        to: implementer,
+        label: "failed")
+    // Accept finishes the run.
+    .Route(
+        on: reviewer.Success,
+        when: state => state.Review == ReviewDisposition.Accept,
+        to: done,
+        label: "accepted")
+    // RequestChanges is another valid result, so it loops rather than fails.
+    .Route(
+        on: reviewer.Success,
+        when: state => state.Review == ReviewDisposition.RequestChanges,
+        to: implementer,
         label: "changes requested")
-    .Build(complete);
+    // A reviewer fault is kept separate from its typed review decision.
+    .Route(
+        on: reviewer.Failed,
+        to: failed,
+        label: "reviewer failed")
+    // A run can leave the graph only through these named outcomes.
+    .Build(done, failed);
 ```
 
-The model produces a typed `CodingDecision`. Tandem validates it before
-`CodingState.RecordProposedChange` can update state. The human interaction suspends the
-run without inventing a service call, and the final two routes make the loop visible.
-`CodingDecisionOutput`, `CodingDecisionValidator`, `CodingComplete`, and the review
-request/answer records are ordinary application code; the runnable samples show their
-complete definitions.
+## Persistence
 
-Deterministic work uses an ordinary generated stage:
+Add `persist: true` in TypeScript or `.Persist()` in C# and Tandem records what was
+accepted during the run:
+
+- structured agent outputs;
+- accepted capability calls;
+- human interaction requests and answers;
+- declared failures; and
+- state returned by ordinary stages.
+
+A stage is just a typed pipe over state. If you want a transformed shape in the
+ledger, return that shape from a persistent stage:
+
+```ts
+const recordResult = stage<State>({
+  // This name is also the key used to find the value later.
+  id: "record-result",
+  // Retain the value accepted when this stage succeeds.
+  persist: true,
+  execute: (state) => ({
+    // Keep the existing state.
+    ...state,
+    // Shape the useful result here; Tandem records exactly what we return.
+    result: {
+      source: state.implementation,
+      accepted: state.review === "Accept",
+    },
+  }),
+});
+```
+
+Once `record-result` succeeds, its returned state is in the ledger. There is no save
+callback to maintain and Tandem does not take automatic state snapshots. It records
+the value when a persistent stage, agent, capability, or interaction succeeds. It
+does not store prompts, reasoning, or streaming text, and it does not make live MAF
+runs resumable.
+
+## Running Pipelines
+
+Your application owns the process and starts a pipeline with its initial state.
+
+In TypeScript:
+
+```ts
+import { run } from "@tandem/sdk";
+
+const result = await run(codeWriter, initialState, {
+  signal: AbortSignal.timeout(180_000),
+  // Supply a path only when the pipeline persists values.
+  ledgerPath: "code-writer.sqlite3",
+});
+
+console.log(result.succeeded, result.state);
+```
+
+In C#:
 
 ```csharp
-// PipelineStage generates the typed adapter used by composition.
-[PipelineStage("code-checks")]
-public sealed partial class CodeCheckStage
-{
-    // The stage receives and returns application state directly.
-    public ValueTask<CodingState> ExecuteAsync(
-        CodingState state,
-        CancellationToken cancellationToken)
-    {
-        // Formatting, compilation, or tests would update the relevant facts here.
-        return ValueTask.FromResult(state);
-    }
-}
-```
-
-## Quick Start
-
-Tandem currently targets .NET 10. Reference the core package and its source generator:
-
-```xml
-<!-- Core authoring API and in-process runner. -->
-<PackageReference Include="Tandem" Version="..." />
-<!-- Generates typed adapters for [PipelineStage] classes. -->
-<PackageReference Include="Tandem.Generators" Version="..." PrivateAssets="all" />
-<!-- Optional SQLite adapter for pipelines using .Persist(). -->
-<PackageReference Include="Tandem.Ledger" Version="..." />
-```
-
-1. Define an immutable state record containing application facts.
-2. Create agents with `Agent.Create<TState>()`, `.WithMessage(...)`, and typed
-   `.WithOutput(...)`.
-3. Keep deterministic operations in ordinary `[PipelineStage]` classes.
-4. Model external decisions with `PipelineNodes.WaitFor<TState, TRequest, TResponse>()`.
-5. Compose the lifecycle with explicit `.Route(...)` calls.
-6. Add `.Persist()` when the host must retain accepted typed values.
-7. Run it with a typed interaction handler:
-
-```csharp
-// This handler connects human-review to the host's UI, CLI, chat, or API.
-var handlers = new PipelineInteractionHandlers()
-    .Handle(humanReview, AskReviewerAsync);
-
-// The runner executes the pipeline from an initial CodingState.
 var result = await new PipelineRunner().RunAsync(
-    pipeline,
-    // Instructions are the only application fact required at startup.
-    new CodingState("Add a friendly greeting to the home page."),
-    // Interaction handlers are supplied by the host for this run.
-    new PipelineRunOptions(Interactions: handlers),
-    cancellationToken);
-
-// The result contains both the terminal status and final typed state.
-Console.WriteLine(result.Status); // Succeeded or Failed
-Console.WriteLine(result.State.ProposedChange);
-```
-
-## Inspect What Happened
-
-Persistent pipelines retain the accepted semantic values that shaped a run:
-structured decisions, accepted capability requests, human interaction values, and
-declared failure evidence. This provides an auditable account of what the pipeline
-accepted without application save callbacks.
-
-Inspect a completed run with:
-
-```sh
-dotnet run --project src/Tandem.Tool -- inspect <run-id> --accepted --json
-```
-
-A representative accepted item from the coding pipeline above looks like:
-
-```json
-{
-  "category": "accepted",
-  "kind": "StructuredOutputAccepted",
-  "stepId": "coder",
-  "valueType": "CodingDecision",
-  "payload": {
-    "proposedChange": "Add a friendly greeting to the home page."
-  }
-}
-```
-
-Use `--accepted` for accepted semantic values only, `--step <id>` and
-`--type <name>` to filter them, and `--json` for the versioned machine-readable
-projection. Inspection reads only the authoritative SQLite history; streaming text,
-reasoning, and generic tool payloads are process-local and are not inspectable.
-
-`Tandem.Tool` provides the observer automatically. Other hosts can use the same
-public SQLite adapter and typed reader:
-
-```csharp
-var store = new SqliteLedgerStore("tandem.sqlite3");
-var observer = await store.CreateObserverAsync(runId, pipeline, cancellationToken);
-await new PipelineRunner().RunAsync(
-    pipeline,
+    codeWriter,
     initialState,
-    new PipelineRunOptions(runId, Observer: observer),
-    cancellationToken);
-var accepted = await store.ReadLatestAcceptedAsync<CodingState>(
-    runId,
-    "code-checks",
-    cancellationToken);
+    cancellationToken: cancellationToken);
+
+Console.WriteLine(result.Status);
+Console.WriteLine(result.State);
 ```
 
-The reader exposes accepted application values; it does not resume a MAF workflow.
-The host remains responsible for marking its ledger run terminal with
-`CompleteRunAsync`. Use
-`.DoNotPersist(step)` for a sensitive participant, or `.Persist(step)` to retain one
-participant in an otherwise ephemeral pipeline. For ordinary state-returning stages,
-the returned state is the accepted typed value. Tandem records that value at the
-stage boundary; it does not periodically snapshot ambient `TState`, make runs
-resumable, or retain prompts, reasoning, streaming prose, or arbitrary tool response
-bodies.
+Persistent C# pipelines also receive a `SqlitePipelineObserver` through
+`PipelineRunOptions`; the [Code Writer host](examples/code-writer/csharp/Program.cs)
+shows the complete setup and run terminalization.
 
-`Tandem.Advanced` is an explicit opt-in for execution-aware concerns such as
-Harness workspaces, tool authority, output acceptance, checkpoints, and custom
-operation observations. Most application pipelines should begin with Core only.
+### Run The Examples
 
-## Samples
+The examples use DS4 through OpenRouter to create work and a local `gpt-5.6-sol`
+endpoint to review it. They require an `OPENROUTER_API_KEY` and a running
+[`openai-oauth`](https://github.com/EvanZhouDev/openai-oauth) proxy. Code Writer also
+requires Node.js for its JavaScript verifier.
 
-- [Songwriter](samples/Tandem.Sample.Songwriter): the smallest complete loop;
-  typed agents, an ordinary lint stage, and state-owned routing.
-- [Support](samples/Tandem.Sample.Support): deterministic I/O plus a typed live
-  customer handoff.
-- [Debate](samples/Tandem.Sample.Debate): revision loops, retained sessions, and
-  typed capabilities.
-- [Delivery](src/Tandem.Delivery): an experimental first-party pipeline exercising
-  Advanced workspace and verification features.
-
-For the complete API journey, see
-[Pipeline Authoring](docs/pipeline-authoring.md). Architecture and contribution
-rules live in [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Repository
-
-- `src/Tandem`: core authoring API and in-process execution.
-- `src/Tandem.Advanced`: explicit execution-aware extensions.
-- `src/Tandem.Generators`: source-generated stage adapters.
-- `samples`: progressively richer runnable examples.
-- `tests`: boundary, package, and real in-process execution proofs.
-
-Run the repository checks with:
+Start and authenticate the local Sol endpoint:
 
 ```sh
-dotnet tool restore
-task check
+npx --yes openai-oauth@latest
 ```
+
+Run any TypeScript example from the repository root:
+
+```sh
+# Install once.
+pnpm --dir typescript install --frozen-lockfile
+
+OPENROUTER_API_KEY=... pnpm --dir typescript run:code-writer
+OPENROUTER_API_KEY=... pnpm --dir typescript run:debate -- "Should cities remove downtown parking?"
+OPENROUTER_API_KEY=... pnpm --dir typescript run:songwriter -- "A hopeful song about coming home"
+```
+
+Or run the same examples in C# with .NET 10:
+
+```sh
+OPENROUTER_API_KEY=... dotnet run --project examples/code-writer/csharp
+OPENROUTER_API_KEY=... dotnet run --project examples/debate/csharp -- "Should cities remove downtown parking?"
+OPENROUTER_API_KEY=... dotnet run --project examples/songwriter/csharp -- "A hopeful song about coming home"
+```
+
+Complete C# and TypeScript source for Code Writer, Debate, and Songwriter lives in
+[`examples`](examples).

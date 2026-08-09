@@ -913,16 +913,18 @@ export async function run<TState>(
         unknown,
         unknown
       >;
-      const handleCallback = callbacks.registerAsync(async (_, input, signal) =>
-        serializeBoundary(
+      const handleCallback = callbacks.registerAsync(async (_, input, signal) => {
+        const response = await entry.handle(
+          parseJson(implementation.requestSchema, input, `${implementation.id} request input`),
+          { signal },
+        );
+        signal.throwIfAborted();
+        return serializeBoundary(
           implementation.responseSchema,
-          await entry.handle(
-            parseJson(implementation.requestSchema, input, `${implementation.id} request input`),
-            { signal },
-          ),
+          response,
           `${implementation.id} response`,
-        ),
-      );
+        );
+      });
       return { id: `h${index}`, target: entry.interaction.id, handleCallback };
     });
     const resultJson = await runRegisteredGraphAsync(

@@ -3,7 +3,7 @@
   "private": true,
   "workspaces": [
     "packages/*",
-    "sample"
+    "../examples/*/typescript"
   ],
   "type": "module",
   "scripts": {
@@ -11,14 +11,16 @@
     "build:bridge": "dotnet publish bridge/Tandem.NodeApiSpike.Bridge.csproj -r osx-arm64 --self-contained false --output .runtime-publish && node scripts/stage-runtime.mjs",
     "build": "pnpm clean && pnpm build:bridge && tsc -p packages/sdk/tsconfig.json && node scripts/verify-package.mjs",
     "typecheck": "tsc -p tsconfig.json && tsc -p tests/types/negative/tsconfig.json",
-    "lint": "oxlint .",
-    "format": "oxfmt --write .",
-    "format:check": "oxfmt --check .",
-    "check": "pnpm typecheck && pnpm lint && pnpm format:check",
+    "lint": "oxlint . && pnpm --filter '../examples/**' exec oxlint -c \"$PWD/.oxlintrc.json\" src",
+    "format": "oxfmt --write . && pnpm --filter '../examples/**' exec oxfmt -c \"$PWD/.oxfmtrc.json\" --write src package.json",
+    "format:check": "oxfmt --check . && pnpm --filter '../examples/**' exec oxfmt -c \"$PWD/.oxfmtrc.json\" --check src package.json",
+    "check": "pnpm build && pnpm typecheck && pnpm lint && pnpm format:check",
     "test:bridge": "dotnet test bridge-tests/Tandem.NodeApiSpike.Bridge.Tests.csproj",
-    "test": "pnpm build && pnpm typecheck && pnpm test:bridge && node --import tsx --test tests/*.test.mjs && pnpm pack-consumer",
+    "test": "pnpm check && pnpm test:bridge && node --import tsx --test tests/*.test.mjs && pnpm pack-consumer",
     "pack-consumer": "node scripts/pack-consumer.mjs",
-    "dogfood:function": "pnpm build && pnpm --filter tandem-function-implementation-sample run run"
+    "run:code-writer": "pnpm build && pnpm --filter tandem-code-writer-example run run",
+    "run:debate": "pnpm build && pnpm --filter tandem-debate-example run run",
+    "run:songwriter": "pnpm build && pnpm --filter tandem-songwriter-example run run"
   },
   "dependencies": {
     "zod": "^4.3.6"

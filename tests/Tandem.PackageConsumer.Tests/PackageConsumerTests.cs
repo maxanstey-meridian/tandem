@@ -36,7 +36,7 @@ public sealed class PackageConsumerTests
                 config,
                 version,
                 "Songwriter",
-                "samples/Tandem.Sample.Songwriter",
+                "examples/songwriter/csharp",
                 advanced: false,
                 SongwriterProgram
             );
@@ -45,10 +45,10 @@ public sealed class PackageConsumerTests
                 packages,
                 config,
                 version,
-                "Support",
-                "samples/Tandem.Sample.Support",
+                "CodeWriter",
+                "examples/code-writer/csharp",
                 advanced: false,
-                SupportProgram
+                CodeWriterProgram
             );
             await ProveConsumerAsync(
                 temp,
@@ -56,7 +56,7 @@ public sealed class PackageConsumerTests
                 config,
                 version,
                 "Debate",
-                "samples/Tandem.Sample.Debate",
+                "examples/debate/csharp",
                 advanced: true,
                 DebateProgram
             );
@@ -386,58 +386,96 @@ public sealed class PackageConsumerTests
         if (!result.Succeeded || result.State.Lyrics != "Final\ndraft") throw new Exception("Songwriter package proof failed.");
         """;
 
-    private const string SupportProgram = """
+    private const string CodeWriterProgram = """
+        using Microsoft.Extensions.AI;
         using Tandem;
-        using Tandem.Sample.Support;
+        using Tandem.Sample.CodeWriter;
 
-        var participants = SupportDefinitions.Create(
-            new SupportOptions(
-                new ScriptedChatClient(ScriptedChatClient.Text("{\"category\":\"billing\"}")),
-                new ScriptedChatClient(ScriptedChatClient.Text("{\"proposedResolution\":\"Refund issued.\"}"))
-            ),
-            new AccountLookup()
+        var submitImplementation = AgentCapabilities.Create<CodeWriterState, SubmitImplementation>(
+            new SubmitImplementationCapability(),
+            (state, submission) => state.RecordImplementation(submission)
         );
-        var handlers = new PipelineInteractionHandlers().Handle(
-            participants.CustomerReply,
-            (_, _) => ValueTask.FromResult(new CustomerReply("Resolved.", true))
+        var implementationResponse = new ChatResponse(
+            new ChatMessage(
+                ChatRole.Assistant,
+                [new FunctionCallContent(
+                    "implementation-1",
+                    "submit_implementation",
+                    new Dictionary<string, object?>
+                    {
+                        ["implementation"] = "function (input) { return input.normalize(\"NFD\").replace(/[\\u0300-\\u036f]/g, \"\").toLowerCase().replace(/[^a-z0-9]+/g, \"-\").replace(/^-+|-+$/g, \"\"); }",
+                        ["rationale"] = "Normalize diacritics, collapse separators, and trim the slug."
+                    }
+                )]
+            )
+        ) { FinishReason = ChatFinishReason.ToolCalls, ModelId = "package-proof" };
+        var participants = CodeWriterDefinitions.Create(
+            new CodeWriterClients(
+                new ScriptedChatClient(implementationResponse),
+                new ScriptedChatClient(
+                    ScriptedChatClient.Text("{\"decision\":\"Accept\",\"summary\":\"Implementation verified and accepted.\",\"findings\":[]}")
+                )
+            ),
+            submitImplementation
         );
         var result = await new PipelineRunner().RunAsync(
-            new SupportComposition(participants).Build(),
-            new SupportState("Duplicate charge", "customer-1"),
-            new PipelineRunOptions(Interactions: handlers),
-            CancellationToken.None
-        );
-        if (!result.Succeeded || result.State.FinalDisposition != "closed") throw new Exception("Support package proof failed.");
-
-        var complete = PipelineNodes.Complete(new DirectCompletion());
-        var direct = Pipeline
-            .Start(participants.CustomerReply, "direct-interaction")
-            .Persist(participants.CustomerReply)
-            .DoNotPersist(participants.CustomerReply)
-            .Route(participants.CustomerReply, complete, "answered")
-            .Build(complete);
-        var directResult = await new PipelineRunner().RunAsync(
-            direct,
-            new SupportState(
-                "Direct question",
-                "customer-2",
-                ProposedResolution: "Resolve directly."
+            new CodeWriterComposition(participants).Build(),
+            new CodeWriterState(
+                [
+                    "Return a URL slug for the input string.",
+                    "Remove diacritics and non-alphanumeric separators.",
+                    "Return lowercase words joined by single hyphens."
+                ]
             ),
-            new PipelineRunOptions(Interactions: handlers),
+            new PipelineRunOptions(Observer: new PackagePersistenceObserver()),
             CancellationToken.None
         );
-        if (directResult.Status != PipelineRunStatus.Succeeded) throw new Exception("Interaction-start package proof failed.");
-
-        sealed class AccountLookup : IAccountLookup
+        if (
+            !result.Succeeded
+            || result.State.Implementation is null
+            || result.State.Verification?.Passed is not true
+            || result.State.Review?.Decision != ReviewDisposition.Accept
+        )
         {
-            public ValueTask<string> LoadAsync(SupportState state, CancellationToken cancellationToken) =>
-                ValueTask.FromResult("Account active.");
+            throw new Exception("CodeWriter package proof failed.");
         }
 
-        sealed class DirectCompletion : IPipelineCompletion<SupportState>
+        var approval = PipelineNodes.WaitFor<CodeWriterState, string, string>(
+            "approval",
+            _ => "Approve the implementation.",
+            (state, _) => state
+        );
+        var directComplete = PipelineNodes.Complete(new DirectCompletion());
+        var direct = Pipeline
+            .Start(approval, "direct-interaction")
+            .Persist(approval)
+            .DoNotPersist(approval)
+            .Route(approval, directComplete, "answered")
+            .Build(directComplete);
+        var handlers = new PipelineInteractionHandlers().Handle(
+            approval,
+            (_, _) => ValueTask.FromResult("Approved")
+        );
+        var directResult = await new PipelineRunner().RunAsync(
+            direct,
+            new CodeWriterState(["Approve this code."]),
+            new PipelineRunOptions(Interactions: handlers),
+            CancellationToken.None
+        );
+        if (!directResult.Succeeded) throw new Exception("Interaction package proof failed.");
+
+        sealed class PackagePersistenceObserver : IPipelinePersistenceObserver
+        {
+            public ValueTask ObserveAsync(
+                PipelineObservation observation,
+                CancellationToken cancellationToken
+            ) => ValueTask.CompletedTask;
+        }
+
+        sealed class DirectCompletion : IPipelineCompletion<CodeWriterState>
         {
             public string Id => "direct-complete";
-            public string Summarize(SupportState state) => "Direct interaction complete";
+            public string Summarize(CodeWriterState state) => "Direct interaction complete";
         }
         """;
 

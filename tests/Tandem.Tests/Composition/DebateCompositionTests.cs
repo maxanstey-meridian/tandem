@@ -22,6 +22,9 @@ public sealed class DebateCompositionTests
 
         clients.Order.Should().Equal("proposer", "critic", "proposer", "critic", "judge");
         clients.Judge.CallCount.Should().Be(1);
+        clients.Critic.ReceivedPrompts[0].Should().Contain("Initial case");
+        clients.Judge.ReceivedPrompts[0].Should().Contain("Revised case");
+        clients.Judge.ReceivedPrompts[0].Should().Contain("Accepted");
         output.State.Round.Should().Be(2);
         output.State.Arguments.Select(argument => argument.Text).Should().Contain("Revised case");
         output.State.Verdict.Should().Be(new DebateVerdict("Affirmed", "Accepted in process."));
@@ -52,14 +55,14 @@ public sealed class DebateCompositionTests
             .StepIds.Should()
             .BeEquivalentTo("open", "proposer", "critic", "judge", "complete", "debate-failed");
         inspection.OutputStepIds.Should().Equal("complete", "debate-failed");
-        inspection.Routes.Should().HaveCount(6);
+        inspection.Routes.Should().HaveCount(8);
         inspection
             .Routes.Should()
             .OnlyContain(route =>
                 inspection.StepIds.Contains(route.SourceId)
                 && inspection.StepIds.Contains(route.TargetId)
             );
-        inspection.Routes.Count(route => route.Conditional).Should().Be(5);
+        inspection.Routes.Count(route => route.Conditional).Should().Be(7);
         inspection.Routes.Count(route => !route.Conditional).Should().Be(1);
         inspection.Mermaid.Should().StartWith("flowchart");
         inspection.Routes.Should().Contain(route => route.Label == "revision requested");
@@ -248,6 +251,7 @@ public sealed class DebateCompositionTests
     {
         private readonly Queue<ChatResponse> _responses = new(responses);
         public int CallCount { get; private set; }
+        public List<string> ReceivedPrompts { get; } = [];
 
         public Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages,
@@ -263,6 +267,14 @@ public sealed class DebateCompositionTests
         {
             CallCount++;
             order.Add(name);
+            ReceivedPrompts.Add(
+                string.Join(
+                    '\n',
+                    messages
+                        .SelectMany(message => message.Contents.OfType<TextContent>())
+                        .Select(content => content.Text)
+                )
+            );
             var response = _responses.Dequeue();
             foreach (var update in response.ToChatResponseUpdates())
             {

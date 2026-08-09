@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createPipeline } from "../sample/src/pipeline.js";
+import { createPipeline } from "../../examples/code-writer/typescript/src/pipeline.js";
 
 const directory = mkdtempSync(join(tmpdir(), "tandem-function-protocol-"));
 const logPath = join(directory, "requests.jsonl");

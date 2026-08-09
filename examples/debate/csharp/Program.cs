@@ -1,0 +1,36 @@
+using System.Text.Json;
+using Tandem.Examples.Hosting;
+
+namespace Tandem.Sample.Debate;
+
+public static class Program
+{
+    public static Task<int> Main(string[] args) =>
+        ExampleHost.RunAsync(
+            async (clients, cancellationToken) =>
+            {
+                var verdict = AgentCapabilities.Create<DebateState, SubmitVerdict>(
+                    new SubmitVerdictCapability(),
+                    (state, request) => state.RecordVerdict(request)
+                );
+                var participants = DebateDefinitions.Create(
+                    new DebateOptions(clients.DeepSeek, clients.Sol, clients.Sol),
+                    verdict
+                );
+                var pipeline = new DebateComposition(participants).Build();
+                var question =
+                    args.Length == 0
+                        ? "Should typed composition own lifecycle state?"
+                        : string.Join(' ', args);
+                var result = await new PipelineRunner().RunAsync(
+                    pipeline,
+                    new DebateState(question, [], 0, null),
+                    cancellationToken: cancellationToken
+                );
+                return ExampleHost.PrintResult(
+                    result,
+                    $"Verdict: {JsonSerializer.Serialize(result.State.Verdict)}"
+                );
+            }
+        );
+}

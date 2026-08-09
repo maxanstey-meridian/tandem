@@ -40,12 +40,12 @@ public sealed class ProjectBoundaryTests
         var delivery = ProjectReferences("src/Tandem.Delivery/Tandem.Delivery.csproj");
         var ledger = ProjectReferences("src/Tandem.Ledger/Tandem.Ledger.csproj");
         var tool = ProjectReferences("src/Tandem.Tool/Tandem.Tool.csproj");
-        var debate = ProjectReferences("samples/Tandem.Sample.Debate/Tandem.Sample.Debate.csproj");
-        var support = ProjectReferences(
-            "samples/Tandem.Sample.Support/Tandem.Sample.Support.csproj"
+        var debate = ProjectReferences("examples/debate/csharp/Tandem.Sample.Debate.csproj");
+        var codeWriter = ProjectReferences(
+            "examples/code-writer/csharp/Tandem.Sample.CodeWriter.csproj"
         );
         var songwriter = ProjectReferences(
-            "samples/Tandem.Sample.Songwriter/Tandem.Sample.Songwriter.csproj"
+            "examples/songwriter/csharp/Tandem.Sample.Songwriter.csproj"
         );
 
         tandem.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
@@ -60,30 +60,30 @@ public sealed class ProjectBoundaryTests
         debate.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         debate.Should().Contain(reference => reference.EndsWith("Tandem.Advanced.csproj"));
         debate.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
-        support.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
-        support.Should().NotContain(reference => reference.Contains("Tandem.Advanced"));
-        support.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
+        codeWriter.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
+        codeWriter.Should().NotContain(reference => reference.Contains("Tandem.Advanced"));
+        codeWriter.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
         songwriter.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         songwriter.Should().NotContain(reference => reference.Contains("Tandem.Advanced"));
         songwriter.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
         tandem.Should().NotContain(reference => reference.Contains("Tandem.Ledger"));
         advanced.Should().NotContain(reference => reference.Contains("Tandem.Ledger"));
-        support.Should().NotContain(reference => reference.Contains("Tandem.Ledger"));
+        codeWriter.Should().NotContain(reference => reference.Contains("Tandem.Ledger"));
         songwriter.Should().NotContain(reference => reference.Contains("Tandem.Ledger"));
     }
 
     [Fact]
-    public void Support_IsAnUnprivilegedConsumerWithoutCodingOrRuntimePlumbing()
+    public void CodeWriter_IsAnUnprivilegedConsumerWithoutRuntimePlumbing()
     {
         var project = File.ReadAllText(
-            Path("samples/Tandem.Sample.Support/Tandem.Sample.Support.csproj")
+            Path("examples/code-writer/csharp/Tandem.Sample.CodeWriter.csproj")
         );
         project.Should().NotContain("Microsoft.Agents");
         project.Should().NotContain("Tandem.Delivery");
         project.Should().NotContain("Compile Include");
         project.Should().NotContain("InternalsVisibleTo");
 
-        var source = string.Join('\n', SourceLines("samples/Tandem.Sample.Support"));
+        var source = string.Join('\n', SourceLines("examples/code-writer/csharp"));
         source.Should().NotContain("using Microsoft.Agents");
         source.Should().NotContain("Tandem.Delivery");
         source.Should().NotContain("using Tandem.Infrastructure");
@@ -92,35 +92,25 @@ public sealed class ProjectBoundaryTests
         source.Should().NotContain("WorkspacePath");
         source.Should().NotContain("WithWorkspace");
         source.Should().NotContain("IPipelineExecutionContext");
-        source.Should().NotContain("QueueStateUpdateAsync");
-        source.Should().NotContain("ReadStateAsync");
         source.Should().NotContain("PipelineBuildContext");
         source.Should().NotContain("ChatOptions");
         source.Should().NotContain("ChatResponseFormat");
-        source.Should().NotContain(".Request");
-        source.Should().NotContain(".Port");
-        source.Should().NotContain(".Resume");
         source.Should().NotContain("IRawPipelineNode");
-        source.Should().NotContain("class ClassifyTicketAgent");
+        source.Should().NotContain("class ImplementerAgent");
+        source.Should().NotContain("class ReviewerAgent");
     }
 
     [Fact]
     public void Debate_IsAnUnprivilegedConsumerWithoutMafOrDeliveryVocabulary()
     {
-        var project = File.ReadAllText(
-            Path("samples/Tandem.Sample.Debate/Tandem.Sample.Debate.csproj")
-        );
+        var project = File.ReadAllText(Path("examples/debate/csharp/Tandem.Sample.Debate.csproj"));
         project.Should().NotContain("Microsoft.Agents");
         project.Should().NotContain("Tandem.Delivery");
         project.Should().NotContain("Compile Include");
         project.Should().NotContain("InternalsVisibleTo");
 
         var source = Directory
-            .EnumerateFiles(
-                Path("samples/Tandem.Sample.Debate"),
-                "*.cs",
-                SearchOption.AllDirectories
-            )
+            .EnumerateFiles(Path("examples/debate/csharp"), "*.cs", SearchOption.AllDirectories)
             .Where(file =>
                 !file.Contains(
                     $"{System.IO.Path.DirectorySeparatorChar}obj{System.IO.Path.DirectorySeparatorChar}"
@@ -184,9 +174,9 @@ public sealed class ProjectBoundaryTests
     public void ConsumerProjects_ImportNoMafNamespaces()
     {
         SourceLines("src/Tandem.Delivery")
-            .Concat(SourceLines("samples/Tandem.Sample.Debate"))
-            .Concat(SourceLines("samples/Tandem.Sample.Support"))
-            .Concat(SourceLines("samples/Tandem.Sample.Songwriter"))
+            .Concat(SourceLines("examples/debate/csharp"))
+            .Concat(SourceLines("examples/code-writer/csharp"))
+            .Concat(SourceLines("examples/songwriter/csharp"))
             .Should()
             .NotContain(line => line.Contains("Microsoft.Agents", StringComparison.Ordinal));
     }
@@ -211,9 +201,9 @@ public sealed class ProjectBoundaryTests
             var root in new[]
             {
                 "src/Tandem.Delivery",
-                "samples/Tandem.Sample.Debate",
-                "samples/Tandem.Sample.Support",
-                "samples/Tandem.Sample.Songwriter",
+                "examples/debate/csharp",
+                "examples/code-writer/csharp",
+                "examples/songwriter/csharp",
             }
         )
         {
@@ -224,16 +214,16 @@ public sealed class ProjectBoundaryTests
         }
 
         var songwriter = File.ReadAllText(
-            Path("samples/Tandem.Sample.Songwriter/SongwriterParticipants.cs")
+            Path("examples/songwriter/csharp/SongwriterParticipants.cs")
         );
         songwriter.Should().Contain("AgentDefinition<SongwriterState> Songwriter");
         songwriter.Should().NotContain("class SongwriterAgent");
         songwriter.Should().NotContain("IRawPipelineNode");
-        File.ReadAllText(Path("samples/Tandem.Sample.Songwriter/SongwriterDefinitions.cs"))
+        File.ReadAllText(Path("examples/songwriter/csharp/SongwriterDefinitions.cs"))
             .Should()
             .Contain("PipelineNodes.Complete(new SongwriterComplete())");
         songwriter.Should().NotContain("[Union");
-        File.ReadAllText(Path("samples/Tandem.Sample.Songwriter/SongwriterComposition.cs"))
+        File.ReadAllText(Path("examples/songwriter/csharp/SongwriterComposition.cs"))
             .Should()
             .NotContain(".Result.");
 
@@ -323,13 +313,13 @@ public sealed class ProjectBoundaryTests
         source.Should().Contain(".ContinueSession()");
         source.Should().NotContain("WithSessionPolicy");
 
-        var debate = string.Join('\n', SourceLines("samples/Tandem.Sample.Debate"));
+        var debate = string.Join('\n', SourceLines("examples/debate/csharp"));
         debate.Should().Contain(".ContinueSession()");
         debate.Should().NotContain("WithSessionPolicy");
-        var support = string.Join('\n', SourceLines("samples/Tandem.Sample.Support"));
-        support.Should().NotContain("ContinueSession");
-        support.Should().NotContain("WithSessionPolicy");
-        var songwriter = string.Join('\n', SourceLines("samples/Tandem.Sample.Songwriter"));
+        var codeWriter = string.Join('\n', SourceLines("examples/code-writer/csharp"));
+        codeWriter.Should().Contain(".ContinueSession()");
+        codeWriter.Should().NotContain("WithSessionPolicy");
+        var songwriter = string.Join('\n', SourceLines("examples/songwriter/csharp"));
         songwriter.Should().NotContain("ContinueSession");
         songwriter.Should().NotContain("WithSessionPolicy");
     }
@@ -342,9 +332,9 @@ public sealed class ProjectBoundaryTests
             "src/Tandem.Delivery/Stages/Workspace/PrepareWorkspaceStage.cs",
             "src/Tandem.Delivery/Stages/Candidate/CaptureCandidateStage.cs",
             "src/Tandem.Delivery/Stages/Verification/VerificationStage.cs",
-            "samples/Tandem.Sample.Debate/DebateParticipants.cs",
-            "samples/Tandem.Sample.Support/SupportParticipants.cs",
-            "samples/Tandem.Sample.Songwriter/SongwriterParticipants.cs",
+            "examples/debate/csharp/DebateParticipants.cs",
+            "examples/code-writer/csharp/CodeWriterParticipants.cs",
+            "examples/songwriter/csharp/SongwriterParticipants.cs",
         }
             .Select(Path)
             .Select(File.ReadAllText)

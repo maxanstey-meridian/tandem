@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { test } from "node:test";
 import { promisify } from "node:util";
-import { assessImplementation } from "../sample/src/infrastructure/assess-implementation.ts";
+import { assessImplementation } from "../../examples/code-writer/typescript/src/infrastructure/assess-implementation.ts";
 
 const exec = promisify(execFile);
 

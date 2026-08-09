@@ -57,10 +57,10 @@ contains the resolved secret and TypeScript performs no model HTTP. The packaged
 C# host validates the declaration and constructs `IChatClient` mechanically in its
 OpenAI-compatible provider adapter. Model preflight uses active run cancellation.
 
-| Sample role   | Endpoint                       | Wire API    | Model                             | Authentication       |
-| ------------- | ------------------------------ | ----------- | --------------------------------- | -------------------- |
-| `implementer` | `https://openrouter.ai/api/v1` | completions | `deepseek/deepseek-v4-flash-0731` | `OPENROUTER_API_KEY` |
-| `reviewer`    | `http://127.0.0.1:10531/v1`    | responses   | `gpt-5.6-sol`, low reasoning      | none                 |
+| Sample roles                         | Endpoint                       | Wire API    | Model                             | Authentication       |
+| ------------------------------------ | ------------------------------ | ----------- | --------------------------------- | -------------------- |
+| implementer, proposer, songwriter    | `https://openrouter.ai/api/v1` | completions | `deepseek/deepseek-v4-flash-0731` | `OPENROUTER_API_KEY` |
+| reviewer, critic, judge, proofreader | `http://127.0.0.1:10531/v1`    | responses   | `gpt-5.6-sol`, low reasoning      | none                 |
 
 The supported experimental adapter has `kind: "openai-compatible"` and `version: 1`.
 Endpoints must be absolute HTTP(S) URIs. Non-loopback endpoints require a valid
@@ -133,11 +133,11 @@ PDB/XML files, localized Roslyn resources, and the Node API source generator are
 excluded; managed runtime dependencies are retained unless execution proves a
 smaller allowlist.
 
-The first-class sample under `sample/src` implements and reviews executable JavaScript
+The Code Writer example under `examples/code-writer/typescript/src` implements and reviews executable JavaScript
 `slugify(input)` source. Its authoring structure follows Tandem's semantic ownership:
 
 ```text
-sample/src/
+examples/code-writer/typescript/src/
 |-- agents/
 |   |-- implementer.ts
 |   `-- reviewer.ts
@@ -169,16 +169,20 @@ string; executable values never enter pipeline state, capability callbacks, or t
 bridge. Run this demo only where bounded local execution of model-generated code is
 acceptable.
 
-Run it only with OpenRouter credentials and a running verified `openai-oauth`
-endpoint:
+Run the examples from the repository root with OpenRouter credentials and a running
+verified `openai-oauth` endpoint:
 
 ```sh
-OPENROUTER_API_KEY=... pnpm dogfood:function
+OPENROUTER_API_KEY=... pnpm --dir typescript run:code-writer
+OPENROUTER_API_KEY=... pnpm --dir typescript run:debate "Should cities prioritize housing over parking?"
+OPENROUTER_API_KEY=... pnpm --dir typescript run:songwriter "Write a hopeful song about finding your way home."
 ```
 
-The command fails rather than fabricating success if credentials or the reviewer
-proxy are absent. It has completed successfully with the configured OpenRouter DS4
-implementer and verified local Sol reviewer. SQLite inspection prints accepted
+Each command builds and stages the runtime before running its selected example. Debate
+and Songwriter forward optional trailing arguments as their question and brief. Every
+example fails clearly when `OPENROUTER_API_KEY` is absent; runtime preflight verifies
+the local Sol model. Code Writer has completed successfully with the configured
+OpenRouter DS4 implementer and verified local Sol reviewer. SQLite inspection prints accepted
 capability and structured-output wire values plus accepted state records. Provider
 wire payloads remain the durable evidence; Tandem does not persist adapter-local
 transformed values. `TANDEM_LEDGER_PATH` optionally
@@ -211,7 +215,7 @@ Cancelled terminalization, propagated callback failure, JSON-lossless boundary
 rejection, cancellation observed inside JavaScript operations before post-cancel
 mutation, interaction chains, run-owned handler isolation, concurrent runs, repeated
 runs in one loaded host, explicit process exit, a bounded 25-run soak, and the live
-OpenRouter plus `openai-oauth` dogfood. Long soak, abandonment,
+OpenRouter plus `openai-oauth` integration run. Long soak, abandonment,
 persistence-failure injection, and the full provider-failure/correction matrix
 remain deferred phase-8 work. Process-exit fixtures prove the documented CLI helper,
 not natural CoreCLR shutdown or reference reclamation.

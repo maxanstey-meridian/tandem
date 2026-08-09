@@ -7,5 +7,9 @@
     "noEmit": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["packages/sdk/src/**/*.ts", "sample/src/**/*.ts", "tests/types/positive/**/*.ts"]
+  "include": [
+    "packages/sdk/src/**/*.ts",
+    "../examples/*/typescript/src/**/*.ts",
+    "tests/types/positive/**/*.ts"
+  ]
 }

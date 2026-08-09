@@ -31,6 +31,43 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  ../examples/code-writer/typescript:
+    dependencies:
+      '@tandem/sdk':
+        specifier: 0.0.0-experiment
+        version: link:../../../typescript/packages/sdk
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+
+  ../examples/debate/typescript:
+    dependencies:
+      '@tandem/sdk':
+        specifier: 0.0.0-experiment
+        version: link:../../../typescript/packages/sdk
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.13.3
+      tsx:
+        specifier: ^4.20.6
+        version: 4.23.11
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  ../examples/songwriter/typescript:
+    dependencies:
+      '@tandem/sdk':
+        specifier: 0.0.0-experiment
+        version: link:../../../typescript/packages/sdk
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+
   packages/runtime:
     optionalDependencies:
       '@tandem/runtime-darwin-arm64':
@@ -49,15 +86,6 @@ importers:
         specifier: 0.0.0-experiment
         version: link:../runtime
     devDependencies:
-      zod:
-        specifier: ^4.3.6
-        version: 4.4.3
-
-  sample:
-    dependencies:
-      '@tandem/sdk':
-        specifier: 0.0.0-experiment
-        version: link:../packages/sdk
       zod:
         specifier: ^4.3.6
         version: 4.4.3

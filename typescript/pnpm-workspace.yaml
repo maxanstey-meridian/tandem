@@ -1,6 +1,6 @@
 packages:
   - "packages/*"
-  - "sample"
+  - "../examples/*/typescript"
 
 linkWorkspacePackages: true
 

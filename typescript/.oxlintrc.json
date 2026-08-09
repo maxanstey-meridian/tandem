@@ -16,6 +16,6 @@
     "node_modules/**",
     "packages/runtime-darwin-arm64/runtime/**",
     "packages/sdk/dist/**",
-    "sample/dist/**"
+    "dist/**"
   ]
 }
