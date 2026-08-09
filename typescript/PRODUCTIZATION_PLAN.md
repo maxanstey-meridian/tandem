@@ -6,8 +6,8 @@ remains open, and this is not a stable-product commitment.
 
 ## Implementation Evidence (2026-08-09)
 
-- Phase 4: `packages/sdk` is the sole public facade; all Zod boundaries parse and
-  structured validation problems retain paths.
+- Phase 4: `packages/sdk` is the sole public facade; all Zod boundaries are
+  validation-only and structured validation problems retain paths.
 - Phase 5: the C# host owns versioned OpenAI-compatible client adapters and .NET
   `IChatClient` construction; optional model discovery is deterministic. There are
   no model callbacks or vendor model npm dependencies.
@@ -16,23 +16,26 @@ remains open, and this is not a stable-product commitment.
   JS/declarations, runtimeconfig, an allowlisted managed runtime closure, and one
   arm64 SQLite asset. Packed consumers load package-relatively without a source
   checkout or consumer build.
-- Phase 7: `sample/src/function-implementation.ts` dogfoods an honest executable-code
-  loop with requirement, implementation, verification, and review facts; an
-  implementer's typed `submit_implementation` capability; an ordinary deterministic
-  verification stage; a reviewer's typed structured decision; explicit failure,
-  revision, and acceptance routes; continued implementer sessions; persistence; and
-  accepted-value inspection. It contains no interaction, planner, runtime bookkeeping,
-  or workspace mechanics.
+- Phase 7: `sample/src` dogfoods an honest executable-code loop using the same
+  semantic ownership language as Delivery, scaled to this domain. One state module
+  owns cohesive application fact contracts and pure transitions; complete agent,
+  capability, and verification declarations own their local semantics. Executable
+  source remains a string through acceptance and is evaluated by a bounded child
+  adapter whose worker owns the callable Zod transform. The lexical
+  composition root constructs every participant and visibly declares every route,
+  while the runner alone owns concrete clients and process mechanics. The loop retains explicit failure,
+  revision, and acceptance routes, continued implementer sessions, persistence, and accepted-value
+  inspection, with no interaction, planner, runtime bookkeeping, or workspace mechanics.
 - Live dogfood: OpenRouter `deepseek/deepseek-v4-flash-0731` accepted and applied the
   implementer capability; the verified local `gpt-5.6-sol` reviewer returned accepted
-  structured output; SQLite inspection returned the interaction, capability,
+  structured output; SQLite inspection returned the capability,
   output, and state transitions in acceptance order.
 - Phase 8: automated tests cover validation, local-tarball package install/content
   and real packaged execution, participant runtime identity, lifecycle status and
   persistence, protocol-faithful reviewer request progress, capability message
   transport, and a deterministic implementation-verification-review loop through real C#
   `IChatClient` adapters. They also cover concurrency, cancellation, callback
-  failure, repeated startup, and a bounded 25-run soak. Long soak, abandonment,
+  failure, repeated runs in one loaded host, and a bounded 25-run soak. Long soak, abandonment,
   persistence-failure injection, and the complete provider failure/correction
   matrix remain deferred.
 - Decision: continue bounded dogfooding. The covered automated gates expose no stop
@@ -46,7 +49,8 @@ plumbing.
 
 The first slice must support:
 
-- Zod-backed state, output, capability, and interaction contracts;
+- Zod-backed validation-only state, agent output, capability input, and interaction
+  contracts;
 - ordinary async stages;
 - agents with structured output;
 - capabilities;
@@ -124,8 +128,10 @@ Exit: Core tests prove the dynamic seams independently of Node API.
 ### 2. Version The Registration Contract
 
 - Replace ad hoc private records with a versioned bridge contract.
-- Validate unknown node kinds, missing callbacks, duplicate IDs, invalid routes,
+- Validate unknown node kinds, required callback IDs, duplicate IDs, invalid routes,
   outputs, policies, and unsupported versions before constructing a graph.
+- Keep the v3 callback registry bridge-local; registration references callback IDs but
+  carries no redundant top-level callback manifest. Missing registry entries fault at invocation.
 - Keep callback IDs and serialized state below the TS authoring seam.
 
 Exit: malformed registrations fail deterministically before MAF execution.
@@ -201,11 +207,13 @@ or native-library configuration.
   Compose implementer to deterministic verification, failed verification back to the
   implementer, passing verification to the reviewer, requested changes back to the
   implementer, acceptance to Done, and agent failures to Failed. Use a typed source
-  capability, typed reviewer output, persistence, and inspection; omit unrelated
+  capability that retains plain source data, typed reviewer output, persistence, and
+  inspection; omit unrelated
   feature-demonstration participants and runtime mechanics.
-- Keep executable-source verification in sample support. Evaluate only in a separate
-  bounded child/VM setup for trusted local experiments. It is not a security sandbox
-  and must not be represented as suitable for hostile code.
+- Keep executable-source verification in the ordinary verification operation. Its
+  bounded child worker owns the Zod source-to-callable transform and returns only
+  plain verification facts. Document that this containment is not a security sandbox;
+  do not turn sample verification into product infrastructure.
 - Verify install, author, typecheck, run, correct, persist, inspect, and terminate.
 - Record bridge logs and diagnostics only when troubleshooting is enabled.
 

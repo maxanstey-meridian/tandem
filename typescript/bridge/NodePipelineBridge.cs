@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Loader;
 using Microsoft.JavaScript.NodeApi;
@@ -10,54 +9,52 @@ namespace Tandem.NodeApiSpike;
 public static partial class NodePipelineBridge
 {
     private static readonly List<nint> _nativeLibraries = [];
+    private static readonly object _dependencyLock = new();
+    private static bool _dependenciesConfigured;
 
     private static void PreloadDependencies()
     {
-        var directory = Path.GetDirectoryName(typeof(NodePipelineBridge).Assembly.Location);
-        if (string.IsNullOrWhiteSpace(directory))
+        lock (_dependencyLock)
         {
-            return;
+            if (_dependenciesConfigured)
+                return;
+            LoadManagedDependencies();
+            AssemblyLoadContext.Default.ResolvingUnmanagedDll += ResolveNativeDependency;
+            _dependenciesConfigured = true;
         }
+    }
 
+    private static void LoadManagedDependencies()
+    {
         var loaded = AppDomain
             .CurrentDomain.GetAssemblies()
             .Select(assembly => assembly.GetName().Name)
+            .Where(name => name is not null)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var path in Directory.EnumerateFiles(directory, "*.dll"))
+        foreach (var path in Directory.EnumerateFiles(RuntimeDirectory(), "*.dll").Order())
         {
-            try
-            {
-                var name = AssemblyName.GetAssemblyName(path).Name;
-                if (name is not null && loaded.Add(name))
-                {
-                    AssemblyLoadContext.Default.LoadFromAssemblyPath(path);
-                }
-            }
-            catch (BadImageFormatException) { }
-            catch (FileLoadException) { }
-        }
-        var nativePath = Path.Combine(directory, "libe_sqlite3.dylib");
-        if (!File.Exists(nativePath) || _nativeLibraries.Count != 0)
-        {
-            return;
-        }
-
-        _nativeLibraries.Add(NativeLibrary.Load(nativePath));
-        var sqliteHandle = _nativeLibraries[0];
-        var provider = AppDomain
-            .CurrentDomain.GetAssemblies()
-            .FirstOrDefault(assembly =>
-                assembly.GetName().Name == "SQLitePCLRaw.provider.e_sqlite3"
-            );
-        if (provider is not null)
-        {
-            NativeLibrary.SetDllImportResolver(
-                provider,
-                (name, _, _) =>
-                    name.Contains("e_sqlite3", StringComparison.Ordinal) ? sqliteHandle : 0
-            );
+            var name = System.Reflection.AssemblyName.GetAssemblyName(path);
+            if (name.Name is null || !loaded.Add(name.Name))
+                continue;
+            AssemblyLoadContext.Default.LoadFromAssemblyPath(path);
         }
     }
+
+    private static nint ResolveNativeDependency(System.Reflection.Assembly assembly, string name)
+    {
+        if (!name.Contains("e_sqlite3", StringComparison.Ordinal))
+            return 0;
+        var path = Path.Combine(RuntimeDirectory(), "libe_sqlite3.dylib");
+        if (!File.Exists(path))
+            return 0;
+        var handle = NativeLibrary.Load(path, assembly, null);
+        _nativeLibraries.Add(handle);
+        return handle;
+    }
+
+    private static string RuntimeDirectory() =>
+        Path.GetDirectoryName(typeof(NodePipelineBridge).Assembly.Location)
+        ?? throw new InvalidOperationException("The Tandem runtime directory is unavailable.");
 
     internal static Task<T> InvokeOnJavaScriptThreadAsync<T>(
         SynchronizationContext context,
@@ -91,19 +88,6 @@ public static partial class NodePipelineBridge
 }
 
 internal sealed record JavaScriptState(string Json);
-
-internal sealed class JavaScriptStage(string id, Func<string, Task<string>> run)
-    : IGeneratedPipelineStep<JavaScriptState, GeneratedStepCompletion>
-{
-    public string Id => id;
-    public PipelineNodeDescriptor Descriptor =>
-        new GeneratedStateStepDescriptor<JavaScriptState>(Id, ExecuteAsync);
-
-    private async ValueTask<JavaScriptState> ExecuteAsync(
-        JavaScriptState state,
-        CancellationToken cancellationToken
-    ) => new(await run(state.Json));
-}
 
 internal sealed class JavaScriptCompletion(string id, Func<string, string> summarize)
     : IPipelineCompletion<JavaScriptState>

@@ -23,6 +23,7 @@ internal static class CapabilityAcceptanceRuntime
             return Error("conflicting capability outcome", []);
         }
 
+        var applying = false;
         try
         {
             async ValueTask<AcceptedCapability<TState>> AcceptCoreAsync(CancellationToken ct)
@@ -48,10 +49,13 @@ internal static class CapabilityAcceptanceRuntime
                     );
                 }
                 ct.ThrowIfCancellationRequested();
+                applying = true;
+                var acceptedState = apply(invocation.State);
+                applying = false;
                 return new AcceptedCapability<TState>(
                     capabilityId,
                     toolName,
-                    apply(invocation.State),
+                    acceptedState,
                     summary,
                     payload
                 );
@@ -74,6 +78,11 @@ internal static class CapabilityAcceptanceRuntime
         catch (Exception exception)
         {
             invocation.Release();
+            if (applying)
+            {
+                invocation.RecordApplicationFault(exception);
+                throw;
+            }
             return Error("capability acceptance failed", [exception.Message]);
         }
     }

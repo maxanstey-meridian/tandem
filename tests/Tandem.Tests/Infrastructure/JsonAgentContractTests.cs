@@ -14,7 +14,8 @@ public sealed class JsonAgentContractTests
         var output = new AgentJsonOutputDefinition<JsonState>(
             undeclaredRoot.RootElement,
             "Return JSON.",
-            _ => []
+            _ => [],
+            "test.value"
         );
         var outputCall = () =>
             Agent
@@ -30,7 +31,8 @@ public sealed class JsonAgentContractTests
                     undeclaredRoot.RootElement,
                     null!,
                     null,
-                    _ => "set"
+                    _ => "set",
+                    "test.value"
                 ),
                 (state, _) => state
             );
@@ -53,14 +55,14 @@ public sealed class JsonAgentContractTests
                     ? []
                     : [new AgentJsonValidationProblem("$.value", "Must be positive.")];
             },
+            "example.dynamic-value",
             (state, candidate) =>
             {
                 order.Add("contextual");
                 return candidate.GetProperty("value").GetInt32() > state.Maximum
                     ? [new AgentJsonValidationProblem("$.value", "Exceeds maximum.")]
                     : [];
-            },
-            "example.dynamic-value"
+            }
         );
         var client = new ScriptedChatClient(Response("{\"value\":0}"), Response("{\"value\":3}"));
         var mappings = 0;
@@ -89,7 +91,7 @@ public sealed class JsonAgentContractTests
         result.Succeeded.Should().BeTrue();
         result.State.Value.Should().Be(3);
         mappings.Should().Be(1);
-        order.Should().Equal("intrinsic", "contextual", "intrinsic", "contextual", "map");
+        order.Should().Equal("intrinsic", "intrinsic", "contextual", "map");
         client.CallCount.Should().Be(2);
         client
             .Requests[1]
@@ -134,30 +136,27 @@ public sealed class JsonAgentContractTests
     }
 
     [Fact]
-    public async Task JsonOutput_ValidationCallbackFailureIsCorrectable_ButCancellationPropagates()
+    public async Task JsonOutput_CallbackFailuresAndCancellationFaultTheRun()
     {
-        var attempts = 0;
-        var client = new ScriptedChatClient(Response("{\"value\":1}"), Response("{\"value\":2}"));
+        var client = new ScriptedChatClient(Response("{\"value\":1}"));
         var agent = Agent
             .Create<JsonState>("agent", "Decide.", client)
             .WithMessage(_ => "Return a value.")
             .WithJsonOutput(
-                JsonOutput(_ =>
-                    ++attempts == 1
-                        ? throw new InvalidOperationException("Validator unavailable.")
-                        : []
-                ),
+                JsonOutput(_ => throw new InvalidOperationException("Validator unavailable.")),
                 (state, output) => state with { Value = output.GetProperty("value").GetInt32() }
             )
             .Build();
 
-        var corrected = await new PipelineRunner().RunAsync(
-            Pipeline.Start(agent, "callback-correction").Build(agent),
-            new JsonState(0, 5)
-        );
+        var failed = async () =>
+            await new PipelineRunner().RunAsync(
+                Pipeline.Start(agent, "callback-failure").Build(agent),
+                new JsonState(0, 5)
+            );
 
-        corrected.State.Value.Should().Be(2);
-        client.CallCount.Should().Be(2);
+        var failure = await failed.Should().ThrowAsync<PipelineRunException>();
+        failure.Which.InnerException.Should().BeOfType<InvalidOperationException>();
+        client.CallCount.Should().Be(1);
 
         var cancelledAgent = Agent
             .Create<JsonState>(
@@ -179,6 +178,57 @@ public sealed class JsonAgentContractTests
 
         var exception = await run.Should().ThrowAsync<PipelineRunException>();
         exception.Which.InnerException.Should().BeOfType<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task JsonOutput_ContextualValidationAndApplyFailuresFaultTheRun()
+    {
+        using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
+        var contextual = new AgentJsonOutputDefinition<JsonState>(
+            schema.RootElement,
+            "Return JSON.",
+            _ => [],
+            "test.dynamic-value",
+            (_, _) => throw new InvalidOperationException("Context unavailable.")
+        );
+        var contextualAgent = Agent
+            .Create<JsonState>(
+                "contextual",
+                "Decide.",
+                new ScriptedChatClient(Response("{\"value\":1}"))
+            )
+            .WithMessage(_ => "Return a value.")
+            .WithJsonOutput(contextual, (state, _) => state)
+            .Build();
+        var contextualRun = async () =>
+            await new PipelineRunner().RunAsync(
+                Pipeline.Start(contextualAgent, "contextual-failure").Build(contextualAgent),
+                new JsonState(0, 5)
+            );
+
+        var contextualFailure = await contextualRun.Should().ThrowAsync<PipelineRunException>();
+        contextualFailure.Which.InnerException.Should().BeOfType<InvalidOperationException>();
+
+        var applyAgent = Agent
+            .Create<JsonState>(
+                "apply",
+                "Decide.",
+                new ScriptedChatClient(Response("{\"value\":1}"))
+            )
+            .WithMessage(_ => "Return a value.")
+            .WithJsonOutput(
+                JsonOutput(_ => []),
+                (_, _) => throw new InvalidOperationException("Apply failed.")
+            )
+            .Build();
+        var applyRun = async () =>
+            await new PipelineRunner().RunAsync(
+                Pipeline.Start(applyAgent, "apply-failure").Build(applyAgent),
+                new JsonState(0, 5)
+            );
+
+        var applyFailure = await applyRun.Should().ThrowAsync<PipelineRunException>();
+        applyFailure.Which.InnerException.Should().BeOfType<InvalidOperationException>();
     }
 
     [Fact]
@@ -233,7 +283,7 @@ public sealed class JsonAgentContractTests
         invocation.Accepted.Should().BeNull();
         await function.InvokeAsync(Arguments(3));
 
-        order.Should().Equal("intrinsic", "contextual", "intrinsic", "contextual");
+        order.Should().Equal("intrinsic", "intrinsic", "contextual");
         invocation.Accepted!.State.Value.Should().Be(3);
         var accepted = observations
             .OfType<PipelineCapabilityAccepted>()
@@ -245,16 +295,14 @@ public sealed class JsonAgentContractTests
     }
 
     [Fact]
-    public async Task JsonCapability_CallbackFailuresAreErrors_CancellationPropagates_AndCallsConflict()
+    public async Task JsonCapability_CallbackFailuresAndCancellationPropagate_AndCallsConflict()
     {
         var callbackFailure = JsonCapability(
             _ => throw new InvalidOperationException("Validator unavailable."),
             _ => "unused"
         );
-        var failed = (JsonElement)
-            (await callbackFailure.Bind(Invocation()).InvokeAsync(Arguments(1)))!;
-        failed.GetProperty("isError").GetBoolean().Should().BeTrue();
-        failed.GetProperty("problems")[0].GetString().Should().Contain("Validator unavailable");
+        var fail = async () => await callbackFailure.Bind(Invocation()).InvokeAsync(Arguments(1));
+        await fail.Should().ThrowAsync<InvalidOperationException>();
 
         var cancellation = JsonCapability(
             _ => throw new OperationCanceledException("Validation cancelled."),
@@ -289,13 +337,106 @@ public sealed class JsonAgentContractTests
         invocation.Accepted!.State.Value.Should().Be(1);
     }
 
+    [Fact]
+    public async Task JsonCapability_ContextualValidationSummaryAndApplyFailuresPropagate()
+    {
+        var contextual = AgentCapabilities.CreateJson(
+            JsonCapabilityDefinition(
+                _ => [],
+                _ => "unused",
+                (_, _) => throw new InvalidOperationException("Context unavailable.")
+            ),
+            (state, _) => state
+        );
+        var contextualCall = async () =>
+            await contextual.Bind(Invocation()).InvokeAsync(Arguments(1));
+        await contextualCall.Should().ThrowAsync<InvalidOperationException>();
+
+        var summary = JsonCapability(
+            _ => [],
+            _ => throw new InvalidOperationException("Summary unavailable.")
+        );
+        var summaryCall = async () => await summary.Bind(Invocation()).InvokeAsync(Arguments(1));
+        await summaryCall.Should().ThrowAsync<InvalidOperationException>();
+
+        var attempts = 0;
+        var invocation = Invocation();
+        var apply = AgentCapabilities.CreateJson(
+            JsonCapabilityDefinition(_ => [], _ => "accepted"),
+            (state, request) =>
+            {
+                if (Interlocked.Increment(ref attempts) == 1)
+                {
+                    throw new InvalidOperationException("Apply failed.");
+                }
+                return state with { Value = request.GetProperty("value").GetInt32() };
+            }
+        );
+        var function = apply.Bind(invocation);
+        var applyCall = async () => await function.InvokeAsync(Arguments(1));
+
+        await applyCall.Should().ThrowAsync<InvalidOperationException>();
+        invocation.Accepted.Should().BeNull();
+        await function.InvokeAsync(Arguments(4));
+        invocation.Accepted!.State.Value.Should().Be(4);
+    }
+
+    [Fact]
+    public async Task JsonCapability_AdvancedAcceptanceUsesJsonRequestAndObserverFailureAllowsRetry()
+    {
+        JsonElement acceptedRequest = default;
+        var observerAttempts = 0;
+        var runId = Guid.CreateVersion7();
+        var invocation = new CapabilityInvocationState<JsonState>(
+            runId,
+            "agent",
+            "invocation",
+            new JsonState(0, 5),
+            new PipelineRunContext(
+                runId,
+                new DelegatingObserver(
+                    (_, _) =>
+                    {
+                        if (Interlocked.Increment(ref observerAttempts) == 1)
+                        {
+                            throw new IOException("Observer failed.");
+                        }
+                        return ValueTask.CompletedTask;
+                    }
+                )
+            )
+        );
+        var capability = AgentCapabilities
+            .CreateJson(
+                JsonCapabilityDefinition(_ => [], _ => "accepted"),
+                (state, request) => state with { Value = request.GetProperty("value").GetInt32() }
+            )
+            .WithAcceptance(
+                (context, _) =>
+                {
+                    acceptedRequest = context.Request;
+                    return ValueTask.CompletedTask;
+                }
+            );
+        var function = capability.Bind(invocation);
+
+        var failed = (JsonElement)(await function.InvokeAsync(Arguments(1)))!;
+        failed.GetProperty("isError").GetBoolean().Should().BeTrue();
+        invocation.Accepted.Should().BeNull();
+        await function.InvokeAsync(Arguments(3));
+
+        acceptedRequest.GetProperty("value").GetInt32().Should().Be(3);
+        invocation.Accepted!.State.Value.Should().Be(3);
+    }
+
     private static AgentJsonOutputDefinition<JsonState> JsonOutput(
         Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>> validate
     ) =>
         new(
             JsonDocument.Parse("{\"type\":\"object\"}").RootElement.Clone(),
             "Return JSON.",
-            validate
+            validate,
+            "test.dynamic-value"
         );
 
     private static AgentCapability<JsonState> JsonCapability(
@@ -309,15 +450,17 @@ public sealed class JsonAgentContractTests
 
     private static AgentJsonCapabilityDefinition<JsonState> JsonCapabilityDefinition(
         Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>> validate,
-        Func<JsonElement, string> summarize
+        Func<JsonElement, string> summarize,
+        Func<JsonState, JsonElement, IReadOnlyList<AgentJsonValidationProblem>>? validateFor = null
     ) =>
         new(
             "set_value",
             "Set the value.",
             JsonDocument.Parse("{\"type\":\"object\"}").RootElement.Clone(),
             validate,
-            null,
-            summarize
+            validateFor,
+            summarize,
+            "test.dynamic-value"
         );
 
     private static CapabilityInvocationState<JsonState> Invocation() =>
@@ -345,6 +488,16 @@ public sealed class JsonAgentContractTests
             observations.Add(observation);
             return ValueTask.CompletedTask;
         }
+    }
+
+    private sealed class DelegatingObserver(
+        Func<PipelineObservation, CancellationToken, ValueTask> observe
+    ) : IPipelineObserver
+    {
+        public ValueTask ObserveAsync(
+            PipelineObservation observation,
+            CancellationToken cancellationToken
+        ) => observe(observation, cancellationToken);
     }
 
     private sealed class ScriptedChatClient(params ChatResponse[] responses) : IChatClient

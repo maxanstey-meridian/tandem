@@ -61,11 +61,22 @@ const graph = pipeline({
 });
 
 try {
+  let accepted = null;
+  let error = null;
   try {
-    await run(graph, { prompt: "from-typescript-capability-state", accepted: false });
-  } catch {}
+    accepted = (await run(graph, { prompt: "from-typescript-capability-state", accepted: false }))
+      .state.accepted;
+  } catch (caught) {
+    error = String(caught);
+  }
   const requests = readFileSync(logPath, "utf8").trim().split("\n").map(JSON.parse);
-  console.log(JSON.stringify(requests.find((item) => item.url === "/v1/chat/completions")?.body));
+  console.log(
+    JSON.stringify({
+      accepted,
+      error,
+      body: requests.find((item) => item.url === "/v1/chat/completions")?.body,
+    }),
+  );
   server.kill();
   rmSync(directory, { recursive: true, force: true });
   process.exit(0);

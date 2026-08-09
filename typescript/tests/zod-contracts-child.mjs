@@ -27,6 +27,20 @@ try {
   errors.push(String(error));
 }
 
+const transformedState = pipeline({
+  name: "transformed-state",
+  state: z.object({ value: z.string().transform((value) => value.toUpperCase()) }),
+  nodes: [pass, done],
+  start: pass,
+  routes: [route({ from: pass, to: done, label: "done" })],
+  outputs: [done],
+});
+try {
+  await run(transformedState, { value: "lowercase" });
+} catch (error) {
+  errors.push(String(error));
+}
+
 const asyncState = z.object({ value: z.number() }).refine(async () => true);
 const asynchronous = pipeline({
   name: "async",
@@ -54,7 +68,13 @@ const stripped = pipeline({
 try {
   await run(stripped, { value: 0 });
 } catch (error) {
-  errors.push(String(error));
+  errors.push(
+    JSON.stringify({
+      name: error.name,
+      contract: error instanceof ContractValidationError,
+      problems: error.problems,
+    }),
+  );
 }
 
 const same = capability({
@@ -96,6 +116,17 @@ try {
       problems: error.problems,
     }),
   );
+}
+
+try {
+  capability({
+    name: "transformed",
+    schema: z.object({ value: z.string().transform((value) => value.toUpperCase()) }),
+    apply: (state) => state,
+    summarize: () => "transformed",
+  });
+} catch (error) {
+  errors.push(String(error));
 }
 
 const unsupportedOutputAgent = agent({

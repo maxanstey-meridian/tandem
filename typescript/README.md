@@ -28,12 +28,18 @@ the installed runtime package.
 
 Zod parses initial/final state, complete bridge results, accepted-value projections,
 and every TypeScript callback input and output. Schemas are synchronous,
-JSON-Schema-representable validation contracts. Async refinements are rejected, as
-are coercion, defaults, transforms, and stripping whenever parsing changes the
-boundary value. TypeScript and typed C# Tandem therefore observe the same state.
+JSON-serializable, and validation-only: coercion, defaults, transforms, and stripping
+are rejected whenever parsing changes a boundary value. Provider-facing schemas that
+contain transforms are rejected before registration. Async refinements and transforms
+remain unsupported.
 `ContractValidationError.problems` retains JSON-style paths and messages. The
 registration protocol, callback IDs, serialized state, CLR types, graph JSON,
 DLLs, and native loading remain private.
+
+Async stages receive `execute(state, { signal })` and interaction handlers receive
+`handle(request, { signal })`. The signal is node-api-dotnet's maintained projection
+of the active .NET `CancellationToken`; messages, predicates, interaction request/apply,
+validation, capability summaries, and terminal summaries remain synchronous.
 
 ## Chat Clients
 
@@ -43,7 +49,8 @@ given an OpenAI-compatible chat-client declaration. The runtime knows only the
 versioned descriptor kind. Registration JSON contains an
 endpoint, model, wire API, and optional API-key environment-variable name; it never
 contains the resolved secret and TypeScript performs no model HTTP. The packaged
-C# host validates the declaration and constructs `IChatClient` mechanically.
+C# host validates the declaration and constructs `IChatClient` mechanically in its
+OpenAI-compatible provider adapter. Model preflight uses active run cancellation.
 
 | Sample role   | Endpoint                       | Wire API    | Model                             | Authentication       |
 | ------------- | ------------------------------ | ----------- | --------------------------------- | -------------------- |
@@ -91,29 +98,49 @@ only a registry install can prove that `@tandem/sdk` transitively resolves
 `@tandem/runtime` and its platform-selected optional RID package.
 
 The runtime build publishes to a private staging directory and copies an explicit
-runtime allowlist into the RID package. Package checks enforce that exact list.
+runtime allowlist into the RID package. Package checks enforce that exact list. The
+bridge eagerly loads that managed closure before MAF starts background work because
+node-api-dotnet's lazy assembly resolver requires an active JavaScript scope; native
+SQLite resolution remains exact and lazy.
 PDB/XML files, localized Roslyn resources, and the Node API source generator are
 excluded; managed runtime dependencies are retained unless execution proves a
 smaller allowlist.
 
-The first-class sample in `sample/src/function-implementation.ts` implements and
-reviews executable JavaScript `slugify(input)` source. State contains only application
-facts: requirements, the latest implementation, deterministic verification evidence,
-and the latest review. The implementer's typed `submit_implementation` capability
-stores the exact source and rationale while clearing stale verification and review.
-An ordinary async verification stage executes deterministic cases, failed verification
-routes back to the implementer, passing evidence routes to the Sol reviewer, requested
-changes route back, and acceptance reaches Done. Both agent failed selectors reach the
-Failed terminal. The accepted review supplies the Done summary.
+The first-class sample under `sample/src` implements and reviews executable JavaScript
+`slugify(input)` source. Its authoring structure follows Tandem's semantic ownership:
 
-Generated source is evaluated only by sample support in a separate child process with
-a cleared environment, fresh temporary working directory, bounded output, an overall
-timeout, per-compilation and per-case VM timeouts, and string/Wasm code generation
-disabled. The contract admits exactly one synchronous one-input function expression and
-rejects Promise and non-string results. This is bounded containment for a trusted local
-experiment, **not a security sandbox**, and is unsuitable for hostile code. The focused
-tests prove these declared controls and ordinary access rejection, not adversarial
-security.
+```text
+sample/src/
+|-- agents/
+|   |-- implementer.ts
+|   `-- reviewer.ts
+|-- capabilities/submitImplementation.ts
+|-- infrastructure/
+|   |-- assess-implementation.ts
+|   `-- assess-implementation-worker.mjs
+|-- stages/verification.ts
+|-- state.ts
+|-- pipeline.ts
+`-- run.ts
+```
+
+`state.ts` owns the cohesive application fact contracts and pure implementation,
+verification, and review transitions; recording a new implementation clears stale
+verification and review. Each agent file owns its instructions, message, validation,
+and declaration. The typed `submit_implementation` capability owns its schema,
+summary, and transition. The verification stage delegates executable-source mechanics
+to a bounded child-process adapter. Inside that worker, one Zod transform evaluates
+the source to a callable `Slugify`; the worker invokes it and returns only plain
+verification facts. The child has an empty environment, isolated working directory,
+output limit, VM compilation timeout, and hard process timeout. This is bounded
+containment, not a security sandbox. `pipeline.ts` is the lexical composition root:
+it constructs every participant and visibly declares every route while accepting the
+implementer and reviewer clients. `run.ts` supplies the concrete DS4/Sol declarations
+and process-owned run mechanics. Both agent failures reach Failed, and an accepted
+review supplies the Done summary. The capability schema accepts source as a plain
+string; executable values never enter pipeline state, capability callbacks, or the
+bridge. Run this demo only where bounded local execution of model-generated code is
+acceptable.
 
 Run it only with OpenRouter credentials and a running verified `openai-oauth`
 endpoint:
@@ -125,7 +152,9 @@ OPENROUTER_API_KEY=... pnpm dogfood:function
 The command fails rather than fabricating success if credentials or the reviewer
 proxy are absent. It has completed successfully with the configured OpenRouter DS4
 implementer and verified local Sol reviewer. SQLite inspection prints accepted
-capability, structured-output, and state records. `TANDEM_LEDGER_PATH` optionally
+capability and structured-output wire values plus accepted state records. Provider
+wire payloads remain the durable evidence; Tandem does not persist adapter-local
+transformed values. `TANDEM_LEDGER_PATH` optionally
 selects the run ledger; otherwise each invocation uses a unique ledger. Ledger
 location is a host/run option, not authored graph identity. The sample applies an
 `AbortSignal` timeout, always calls `closeCli`, exits nonzero on error, and prints the
@@ -150,8 +179,10 @@ message transport, the deterministic function implementation/verification/review
 sample-local verifier controls, package contents,
 local-tarball package-relative execution,
 the exact SQLite native asset, accepted-value inspection, Ready/Failed/Faulted/
-Cancelled terminalization, callback failure, cancellation, concurrent runs,
-repeated startup, explicit process exit, a bounded 25-run soak, and the live
+Cancelled terminalization, propagated callback failure, cancellation observed inside
+JavaScript operations before post-cancel mutation, interaction chains, concurrent runs,
+repeated runs in one loaded host, explicit process exit, a bounded 25-run soak, and the live
 OpenRouter plus `openai-oauth` dogfood. Long soak, abandonment,
 persistence-failure injection, and the full provider-failure/correction matrix
-remain deferred phase-8 work.
+remain deferred phase-8 work. Process-exit fixtures prove the documented CLI helper,
+not natural CoreCLR shutdown or reference reclamation.

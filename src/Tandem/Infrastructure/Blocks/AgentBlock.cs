@@ -217,6 +217,7 @@ internal sealed class AgentBlock<TState>(
                     latestTurnUsage
                 );
                 message = message with { Runtime = runtime };
+                capabilityInvocation.ThrowIfApplicationFaulted();
                 foreach (var observation in collector.SuccessfulTools)
                 {
                     structuredToolObservations.Add(observation);
@@ -297,7 +298,7 @@ internal sealed class AgentBlock<TState>(
                                         config.StepId,
                                         acceptedOutputId,
                                         structuredResult.Outcome!.Kind,
-                                        config.StructuredOutput!.OutputValueType
+                                        config.StructuredOutput!.ValueType
                                             ?? config.StructuredOutput.OutputType?.FullName
                                             ?? config.StructuredOutput.OutputType?.Name,
                                         observedRunContext.ShouldPersist(config.StepId)

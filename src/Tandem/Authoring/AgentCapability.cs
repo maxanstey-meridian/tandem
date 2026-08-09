@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 
@@ -6,7 +7,11 @@ namespace Tandem;
 internal sealed record AgentCapabilityDescriptor<TState>(
     string CapabilityId,
     string ToolName,
-    Func<CapabilityInvocationState<TState>, AIFunction> Bind
+    Func<CapabilityInvocationState<TState>, AIFunction> Bind,
+    Func<
+        Func<CapabilityAcceptanceContext<TState, JsonElement>, CancellationToken, ValueTask>,
+        AgentCapabilityDescriptor<TState>
+    >? WithJsonAcceptance = null
 );
 
 internal sealed record AcceptedCapability<TState>(
@@ -27,6 +32,7 @@ internal sealed class CapabilityInvocationState<TState>(
 {
     private readonly object _sync = new();
     private bool _reserved;
+    private Exception? _applicationFault;
 
     public Guid RunId { get; } = runId;
     public string StepId { get; } = stepId;
@@ -66,6 +72,27 @@ internal sealed class CapabilityInvocationState<TState>(
             }
             Accepted = accepted;
             _reserved = false;
+        }
+    }
+
+    public void RecordApplicationFault(Exception exception)
+    {
+        lock (_sync)
+        {
+            _applicationFault ??= exception;
+        }
+    }
+
+    public void ThrowIfApplicationFaulted()
+    {
+        Exception? fault;
+        lock (_sync)
+        {
+            fault = _applicationFault;
+        }
+        if (fault is not null)
+        {
+            ExceptionDispatchInfo.Capture(fault).Throw();
         }
     }
 }

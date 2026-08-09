@@ -8,7 +8,10 @@ namespace Tandem.NodeApiSpike;
 
 internal static class OpenAiCompatibleChatClients
 {
-    public static async Task<IChatClient> CreateAsync(RegisteredChatClientContract descriptor)
+    public static async Task<IChatClient> CreateAsync(
+        RegisteredChatClientContract descriptor,
+        CancellationToken cancellationToken
+    )
     {
         var endpoint = new Uri(descriptor.Endpoint!, UriKind.Absolute);
         var apiKey = descriptor.ApiKeyEnvironmentVariable is null
@@ -20,7 +23,7 @@ internal static class OpenAiCompatibleChatClients
 
         if (descriptor.VerifyModel)
         {
-            await VerifyModelAsync(endpoint, descriptor.Model!, apiKey);
+            await VerifyModelAsync(endpoint, descriptor.Model!, apiKey, cancellationToken);
         }
 
         var client = new OpenAIClient(
@@ -60,7 +63,12 @@ internal static class OpenAiCompatibleChatClients
         return chatClient;
     }
 
-    private static async Task VerifyModelAsync(Uri endpoint, string model, string apiKey)
+    private static async Task VerifyModelAsync(
+        Uri endpoint,
+        string model,
+        string apiKey,
+        CancellationToken cancellationToken
+    )
     {
         using var http = new HttpClient
         {
@@ -71,9 +79,12 @@ internal static class OpenAiCompatibleChatClients
         {
             http.DefaultRequestHeaders.Authorization = new("Bearer", apiKey);
         }
-        using var response = await http.GetAsync($"{endpoint.AbsolutePath.TrimEnd('/')}/models");
+        using var response = await http.GetAsync(
+            $"{endpoint.AbsolutePath.TrimEnd('/')}/models",
+            cancellationToken
+        );
         response.EnsureSuccessStatusCode();
-        var models = await response.Content.ReadFromJsonAsync<ModelList>();
+        var models = await response.Content.ReadFromJsonAsync<ModelList>(cancellationToken);
         if (models?.Data.Any(item => item.Id == model) != true)
         {
             throw new InvalidOperationException(

@@ -20,6 +20,27 @@ for (const definition of [
     routes: [],
     outputs: [output({ id: "done", summary: () => "done" })],
   },
+  {
+    nodes: [work, done],
+    start: work,
+    routes: [
+      route({ from: work, to: done, label: "first" }),
+      route({ from: work, to: done, label: "second" }),
+    ],
+    outputs: [done],
+  },
+  {
+    nodes: [work, done],
+    start: work,
+    routes: [route({ from: work, to: done, label: "done" })],
+    outputs: [],
+  },
+  {
+    nodes: [work, done],
+    start: work,
+    routes: [],
+    outputs: [done],
+  },
 ]) {
   try {
     pipeline({ name: "identity", state: State, ...definition });

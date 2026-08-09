@@ -19,6 +19,18 @@ public class AgentCapability<TState>
 
     internal AIFunction Bind(CapabilityInvocationState<TState> invocation) =>
         Descriptor.Bind(invocation);
+
+    internal AgentCapability<TState> WithJsonAcceptance(
+        Func<CapabilityAcceptanceContext<TState, JsonElement>, CancellationToken, ValueTask> accept
+    ) =>
+        new(
+            (
+                Descriptor.WithJsonAcceptance
+                ?? throw new InvalidOperationException(
+                    "Only dynamic JSON capabilities support representation-neutral acceptance."
+                )
+            )(accept)
+        );
 }
 
 public sealed class AgentCapability<TState, TRequest> : AgentCapability<TState>

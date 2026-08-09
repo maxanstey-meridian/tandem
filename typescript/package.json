@@ -16,9 +16,9 @@
     "format:check": "oxfmt --check .",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check",
     "test:bridge": "dotnet test bridge-tests/Tandem.NodeApiSpike.Bridge.Tests.csproj",
-    "test": "pnpm build && pnpm typecheck && pnpm test:bridge && node --test tests/*.test.mjs && pnpm pack-consumer",
+    "test": "pnpm build && pnpm typecheck && pnpm test:bridge && node --import tsx --test tests/*.test.mjs && pnpm pack-consumer",
     "pack-consumer": "node scripts/pack-consumer.mjs",
-    "dogfood:function": "pnpm build && tsx sample/src/run-function-implementation.ts"
+    "dogfood:function": "pnpm build && pnpm --filter tandem-function-implementation-sample run run"
   },
   "dependencies": {
     "zod": "^4.3.6"

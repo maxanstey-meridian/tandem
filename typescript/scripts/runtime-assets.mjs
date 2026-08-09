@@ -37,6 +37,7 @@ export const runtimeAssets = [
   "System.Numerics.Tensors.dll",
   "System.Reflection.MetadataLoadContext.dll",
   "Tandem.dll",
+  "Tandem.Advanced.dll",
   "Tandem.Ledger.dll",
   "Tandem.NodeApiSpike.Bridge.cjs",
   "Tandem.NodeApiSpike.Bridge.deps.json",

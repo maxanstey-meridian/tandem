@@ -5,9 +5,6 @@ Tandem.AgentCapability`1
 Tandem.AgentCapability`2
 Tandem.AgentDefinition`1
 Tandem.Agent
-Tandem.AgentJsonCapabilityDefinition`1
-Tandem.AgentJsonOutputDefinition`1
-Tandem.AgentJsonValidationProblem
 Tandem.AgentOutputExample`1
 Tandem.FailureEvidence
 Tandem.IAgentCapabilityDefinition`2
@@ -31,6 +28,11 @@ Tandem.Pipeline
 Tandem.Pipeline`1
 Tandem.PipelineRunStatus
 Tandem.StandardOutcomeKinds
+
+[adapter-authoring]
+Tandem.AgentJsonCapabilityDefinition`1
+Tandem.AgentJsonOutputDefinition`1
+Tandem.AgentJsonValidationProblem
 
 [runtime-hosting]
 Tandem.AgentUpdate

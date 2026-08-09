@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
@@ -15,6 +16,10 @@ const mode = process.argv[2];
 const errorLedgerPath = `/tmp/tandem-sdk-error-${process.pid}.sqlite3`;
 const State = z.object({ count: z.number().int(), done: z.boolean() });
 const done = output({ id: "done", summary: (state) => String(state.count) });
+let abortObserved = false;
+let mutatedAfterAbort = false;
+let handlerCompleted = false;
+let interactionApplied = false;
 const make = (execute, name = mode) => {
   const work = stage({ id: "work", execute, persist: true });
   return pipeline({
@@ -43,14 +48,94 @@ try {
       { ledgerPath: errorLedgerPath },
     );
   } else if (mode === "cancel") {
+    const cancellation = new AbortController();
     await run(
-      make(async (state) => {
-        await new Promise((resolve) => setTimeout(resolve, 100));
+      make(async (state, { signal }) => {
+        if (signal.aborted) {
+          abortObserved = true;
+          throw signal.reason;
+        }
+        await new Promise((resolve, reject) => {
+          const abort = setTimeout(() => cancellation.abort(new Error("cancelled in stage")), 20);
+          const timer = setTimeout(() => {
+            mutatedAfterAbort = true;
+            resolve();
+          }, 500);
+          signal.addEventListener(
+            "abort",
+            () => {
+              abortObserved = true;
+              clearTimeout(abort);
+              clearTimeout(timer);
+              reject(signal.reason);
+            },
+            { once: true },
+          );
+        });
         return { ...state, done: true };
       }),
       { count: 0, done: false },
-      { ledgerPath: errorLedgerPath, signal: AbortSignal.timeout(5) },
+      { ledgerPath: errorLedgerPath, signal: cancellation.signal },
     );
+  } else if (mode === "interaction-cancel") {
+    const cancellation = new AbortController();
+    const ask = interaction({
+      id: "ask",
+      requestSchema: z.object({ current: z.number() }),
+      responseSchema: z.object({ next: z.number() }),
+      request: (state) => ({ current: state.count }),
+      handle: (request, { signal }) =>
+        new Promise((resolve, reject) => {
+          const abort = setTimeout(
+            () => cancellation.abort(new Error("cancelled during interaction")),
+            20,
+          );
+          const delayedMutation = setTimeout(() => {
+            handlerCompleted = true;
+            mutatedAfterAbort = true;
+            resolve({ next: request.current + 1 });
+          }, 500);
+          signal.addEventListener(
+            "abort",
+            () => {
+              abortObserved = true;
+              clearTimeout(abort);
+              clearTimeout(delayedMutation);
+              reject(signal.reason);
+            },
+            { once: true },
+          );
+        }),
+      apply: (state, response) => {
+        interactionApplied = true;
+        return { ...state, count: response.next, done: true };
+      },
+    });
+    const graph = pipeline({
+      name: mode,
+      state: State,
+      nodes: [ask, done],
+      start: ask,
+      routes: [route({ from: ask, to: done, label: "answered" })],
+      outputs: [done],
+    });
+    await run(graph, { count: 0, done: false }, { signal: cancellation.signal });
+  } else if (mode === "unknown-inspect") {
+    await run(
+      make((state) => state),
+      { count: 0, done: false },
+      { ledgerPath: errorLedgerPath },
+    );
+    try {
+      await inspectAccepted({ ledgerPath: errorLedgerPath, runId: randomUUID() });
+      throw new Error("Unknown run inspection unexpectedly succeeded.");
+    } catch (error) {
+      console.log(JSON.stringify({ error: String(error), operation: error.operation }));
+    }
+    for (const suffix of ["", "-shm", "-wal"]) {
+      rmSync(errorLedgerPath + suffix, { force: true });
+    }
+    process.exit(0);
   } else if (mode === "failed") {
     const failed = output({ id: "failed", failed: true, summary: () => "declared failure" });
     const work = stage({ id: "work", execute: (state) => state });
@@ -98,6 +183,37 @@ try {
     const result = await run(graph, { count: 4, done: false });
     console.log(JSON.stringify({ count: result.state.count, done: result.state.done }));
     process.exit(0);
+  } else if (mode === "interaction-chain") {
+    const first = interaction({
+      id: "first",
+      requestSchema: z.object({ current: z.number() }),
+      responseSchema: z.object({ next: z.number() }),
+      request: (state) => ({ current: state.count }),
+      handle: (request) => ({ next: request.current + 1 }),
+      apply: (state, response) => ({ ...state, count: response.next }),
+    });
+    const second = interaction({
+      id: "second",
+      requestSchema: z.object({ current: z.number() }),
+      responseSchema: z.object({ next: z.number() }),
+      request: (state) => ({ current: state.count }),
+      handle: (request) => ({ next: request.current + 1 }),
+      apply: (state, response) => ({ ...state, count: response.next, done: true }),
+    });
+    const graph = pipeline({
+      name: mode,
+      state: State,
+      nodes: [first, second, done],
+      start: first,
+      routes: [
+        route({ from: first, to: second, label: "continue" }),
+        route({ from: second, to: done, label: "answered" }),
+      ],
+      outputs: [done],
+    });
+    const result = await run(graph, { count: 4, done: false });
+    console.log(JSON.stringify({ count: result.state.count, done: result.state.done }));
+    process.exit(0);
   } else {
     const count = mode === "soak" ? 25 : mode === "concurrent" ? 8 : mode === "repeated" ? 5 : 1;
     const graph = make((state) => ({ count: state.count + 1, done: true }));
@@ -139,6 +255,9 @@ try {
   }
   throw new Error(`${mode} unexpectedly succeeded`);
 } catch (error) {
+  if (mode === "cancel" || mode === "interaction-cancel") {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+  }
   let runs = [];
   if (existsSync(errorLedgerPath)) {
     const db = new DatabaseSync(errorLedgerPath, { readOnly: true });
@@ -154,10 +273,14 @@ try {
       problems: error?.problems ?? null,
       statuses: runs.map((row) => row.status),
       terminalized: runs.every((row) => row.ended_at !== null),
+      abortObserved,
+      mutatedAfterAbort,
+      handlerCompleted,
+      interactionApplied,
     }),
   );
   for (const suffix of ["", "-shm", "-wal"]) {
     rmSync(errorLedgerPath + suffix, { force: true });
   }
-  process.exit(["invalid", "failure", "cancel"].includes(mode) ? 0 : 1);
+  process.exit(["invalid", "failure", "cancel", "interaction-cancel"].includes(mode) ? 0 : 1);
 }

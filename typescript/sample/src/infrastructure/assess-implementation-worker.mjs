@@ -1,4 +1,5 @@
 import vm from "node:vm";
+import { z } from "zod";
 
 const chunks = [];
 for await (const chunk of process.stdin) {
@@ -9,36 +10,34 @@ const context = vm.createContext(Object.create(null), {
   codeGeneration: { strings: false, wasm: false },
 });
 
-try {
-  new vm.Script(`"use strict"; globalThis.__candidate = (${request.source});`).runInContext(
-    context,
-    { timeout: request.timeoutMs },
-  );
-  const kind = new vm.Script(
-    "[typeof __candidate, __candidate.length, __candidate.constructor.name, Function.prototype.toString.call(__candidate)]",
-  ).runInContext(context, { timeout: request.timeoutMs });
-  if (
-    kind[0] !== "function" ||
-    kind[1] !== 1 ||
-    kind[2] !== "Function" ||
-    kind[3] !== request.source.trim()
-  ) {
-    throw new Error(
-      "Candidate must be exactly one synchronous function expression accepting one input.",
-    );
+const Slugify = z.string().transform((source, issueContext) => {
+  try {
+    const script = new vm.Script(`"use strict"; (${source})`);
+    const implementation = script.runInContext(context, { timeout: 100 });
+    if (typeof implementation !== "function") {
+      issueContext.addIssue({ code: "custom", message: "JavaScript must evaluate to a function" });
+      return z.NEVER;
+    }
+    return implementation;
+  } catch (error) {
+    issueContext.addIssue({
+      code: "custom",
+      message: `Invalid JavaScript: ${error instanceof Error ? error.message : String(error)}`,
+    });
+    return z.NEVER;
   }
+});
 
+try {
+  const implementation = Slugify.parse(request.source);
   const cases = request.cases.map(({ input, expected }) => {
-    context.__input = input;
     try {
-      const actual = new vm.Script("__candidate(__input)").runInContext(context, {
-        timeout: request.timeoutMs,
-      });
+      const actual = implementation(input);
       if (Object.prototype.toString.call(actual) === "[object Promise]") {
-        throw new Error("Candidate returned a Promise; a synchronous string result is required.");
+        throw new Error("Implementation returned a Promise; a synchronous string is required.");
       }
       if (typeof actual !== "string") {
-        throw new Error(`Candidate returned ${typeof actual}; a string is required.`);
+        throw new Error(`Implementation returned ${typeof actual}; a string is required.`);
       }
       return { input, expected, actual, passed: actual === expected, error: null };
     } catch (error) {
@@ -49,8 +48,6 @@ try {
         passed: false,
         error: error instanceof Error ? error.message : String(error),
       };
-    } finally {
-      delete context.__input;
     }
   });
   process.stdout.write(

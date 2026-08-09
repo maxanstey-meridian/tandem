@@ -479,7 +479,7 @@ public sealed class PackageConsumerTests
             .Create<DebateState>("json-output", "Return JSON.", new ScriptedChatClient(ScriptedChatClient.Text("{\"value\":1}")))
             .WithMessage(_ => "Return a value.")
             .WithJsonOutput(
-                new AgentJsonOutputDefinition<DebateState>(schema.RootElement, "Return a value.", _ => [], ContractName: "package.dynamic-output"),
+                new AgentJsonOutputDefinition<DebateState>(schema.RootElement, "Return a value.", _ => [], ValueType: "package.dynamic-output"),
                 (state, _) => state
             )
             .Build();

@@ -6,10 +6,19 @@ internal static class RegisteredRouteRegistration
         RegisteredParticipant start,
         string name
     ) =>
-        start.Interaction is not null ? Pipeline.Start(start.Interaction, name)
-        : start.Stage is not null
-            ? Pipeline.Start<JavaScriptState, GeneratedStepCompletion>(start.Stage, name)
-        : Pipeline.Start<JavaScriptState, Outcome<JavaScriptState>>(start.Standard!, name);
+        start switch
+        {
+            RegisteredInteraction interaction => Pipeline.Start(interaction.Interaction, name),
+            RegisteredStage stage => Pipeline.Start<JavaScriptState, GeneratedStepCompletion>(
+                stage.Stage,
+                name
+            ),
+            RegisteredStandard standard => Pipeline.Start<
+                JavaScriptState,
+                Outcome<JavaScriptState>
+            >(standard.Standard, name),
+            _ => throw new InvalidOperationException("A terminal cannot start a pipeline."),
+        };
 
     public static void Add(
         PipelineBuilder<JavaScriptState> builder,
@@ -21,31 +30,80 @@ internal static class RegisteredRouteRegistration
         var source = nodes[route.Source!];
         var target = nodes[route.Target!];
         bool Predicate(JavaScriptState state) =>
-            route.PredicateCallback is null
-            || bool.Parse(callbacks.Invoke(route.PredicateCallback, state.Json, ""));
-        if (source.Standard is not null)
+            bool.Parse(callbacks.Invoke(route.PredicateCallback!, state.Json, ""));
+        if (source is RegisteredStandard standard)
         {
-            var selector = route.Outcome == "failed" ? source.Failed!.Value : source.Success!.Value;
-            if (target.Interaction is not null)
+            var selector = route.Outcome == "failed" ? standard.Failed : standard.Success;
+            if (target is RegisteredInteraction targetInteraction)
             {
-                builder.Route(selector, Predicate, target.Interaction, route.Label!);
+                if (route.PredicateCallback is null)
+                    builder.Route(selector, targetInteraction.Interaction, route.Label!);
+                else
+                    builder.Route(selector, Predicate, targetInteraction.Interaction, route.Label!);
             }
             else
             {
-                builder.Route(selector, Predicate, target.Node, route.Label!);
+                if (route.PredicateCallback is null)
+                    builder.Route(selector, Destination(target), route.Label!);
+                else
+                    builder.Route(selector, Predicate, Destination(target), route.Label!);
             }
         }
-        else if (source.Interaction is not null)
+        else if (source is RegisteredInteraction sourceInteraction)
         {
-            builder.Route(Predicate, source.Interaction, target.Node, route.Label!);
+            if (target is RegisteredInteraction targetInteraction)
+            {
+                if (route.PredicateCallback is null)
+                    builder.Route(
+                        sourceInteraction.Interaction,
+                        targetInteraction.Interaction,
+                        route.Label!
+                    );
+                else
+                    builder.Route(
+                        Predicate,
+                        sourceInteraction.Interaction,
+                        targetInteraction.Interaction,
+                        route.Label!
+                    );
+            }
+            else
+            {
+                if (route.PredicateCallback is null)
+                    builder.Route(sourceInteraction.Interaction, Destination(target), route.Label!);
+                else
+                    builder.Route(
+                        Predicate,
+                        sourceInteraction.Interaction,
+                        Destination(target),
+                        route.Label!
+                    );
+            }
         }
-        else if (target.Interaction is not null)
+        else if (source is RegisteredStage stage && target is RegisteredInteraction interaction)
         {
-            builder.Route(Predicate, source.Stage!, target.Interaction, route.Label!);
+            if (route.PredicateCallback is null)
+                builder.Route(stage.Stage, interaction.Interaction, route.Label!);
+            else
+                builder.Route(Predicate, stage.Stage, interaction.Interaction, route.Label!);
         }
-        else
+        else if (source is RegisteredStage sourceStage)
         {
-            builder.Route(Predicate, source.Stage!, target.Node, route.Label!);
+            if (route.PredicateCallback is null)
+                builder.Route(sourceStage.Stage, Destination(target), route.Label!);
+            else
+                builder.Route(Predicate, sourceStage.Stage, Destination(target), route.Label!);
         }
     }
+
+    private static IPipelineNode<JavaScriptState> Destination(RegisteredParticipant participant) =>
+        participant switch
+        {
+            RegisteredStage stage => stage.Stage,
+            RegisteredStandard standard => standard.Standard,
+            RegisteredTerminal terminal => terminal.Terminal,
+            _ => throw new InvalidOperationException(
+                "Interaction destinations must be registered through their request node."
+            ),
+        };
 }

@@ -8,6 +8,20 @@ namespace Tandem.Tests.Infrastructure;
 public sealed class InProcessPipelineRunnerTests
 {
     [Fact]
+    public async Task DynamicStageFactory_ExecutesWithoutGeneratedDescriptorAuthorship()
+    {
+        var increment = PipelineNodes.Stage<RunnerState>(
+            "dynamic-increment",
+            (state, _) => ValueTask.FromResult(state with { Count = state.Count + 1 })
+        );
+        var pipeline = Pipeline.Start(increment, "dynamic-stage").Build(increment);
+
+        var result = await new PipelineRunner().RunAsync(pipeline, new RunnerState(1));
+
+        result.State.Count.Should().Be(2);
+    }
+
+    [Fact]
     public async Task RunAsync_ReturnsTypedPipelineOutput()
     {
         var increment = new IncrementStage();
@@ -195,6 +209,42 @@ public sealed class InProcessPipelineRunnerTests
 
         result.Status.Should().Be(PipelineRunStatus.Succeeded);
         result.State.Answer.Should().Be("continued");
+    }
+
+    [Fact]
+    public async Task InteractionRoute_CanContinueToAnotherInteraction()
+    {
+        var first = PipelineNodes.WaitFor<RunnerState, ProbeQuestion, ProbeAnswer>(
+            "first-input",
+            _ => new ProbeQuestion("first"),
+            (state, answer) => state with { Answer = answer.Text }
+        );
+        var second = PipelineNodes.WaitFor<RunnerState, ProbeQuestion, ProbeAnswer>(
+            "second-input",
+            state => new ProbeQuestion(state.Answer!),
+            (state, answer) => state with { Answer = answer.Text }
+        );
+        var complete = PipelineNodes.Complete(new TestCompletion<RunnerState>("complete"));
+        var pipeline = Pipeline
+            .Start(first, "interaction-chain")
+            .Route(from: first, to: second, label: "continue")
+            .Route(from: second, to: complete, label: "complete")
+            .Build(complete);
+        var handlers = new PipelineInteractionHandlers()
+            .Handle(first, (_, _) => ValueTask.FromResult(new ProbeAnswer("first answered")))
+            .Handle(
+                second,
+                (request, _) => ValueTask.FromResult(new ProbeAnswer(request.Request.Text))
+            );
+
+        var result = await new PipelineRunner().RunAsync(
+            pipeline,
+            new RunnerState(0),
+            new PipelineRunOptions(Interactions: handlers)
+        );
+
+        result.Status.Should().Be(PipelineRunStatus.Succeeded);
+        result.State.Answer.Should().Be("first answered");
     }
 
     [Theory]

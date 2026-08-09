@@ -14,7 +14,7 @@ public sealed class OpenAiCompatibleChatClientsTests
         var descriptor = Client(server.BaseUrl) with { VerifyModel = true };
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            OpenAiCompatibleChatClients.CreateAsync(descriptor)
+            OpenAiCompatibleChatClients.CreateAsync(descriptor, CancellationToken.None)
         );
 
         Assert.Contains("does not expose required model 'required-model'", exception.Message);
@@ -30,11 +30,29 @@ public sealed class OpenAiCompatibleChatClientsTests
             Client(server.BaseUrl) with
             {
                 VerifyModel = true,
-            }
+            },
+            CancellationToken.None
         );
 
         Assert.NotNull(client);
         await server.Completion;
+    }
+
+    [Fact]
+    public async Task ModelPreflightObservesCancellation()
+    {
+        using var server = new ModelServer("required-model", respond: false);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            OpenAiCompatibleChatClients.CreateAsync(
+                Client(server.BaseUrl) with
+                {
+                    VerifyModel = true,
+                },
+                cancellation.Token
+            )
+        );
     }
 
     private static RegisteredChatClientContract Client(string endpoint) =>
@@ -44,22 +62,26 @@ public sealed class OpenAiCompatibleChatClientsTests
     {
         private readonly HttpListener _listener = new();
 
-        public ModelServer(string model)
+        public ModelServer(string model, bool respond = true)
         {
             var port = Random.Shared.Next(20000, 50000);
             BaseUrl = $"http://127.0.0.1:{port}/v1";
             _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
             _listener.Start();
-            Completion = ServeAsync(model);
+            Completion = ServeAsync(model, respond);
         }
 
         public string BaseUrl { get; }
         public Task Completion { get; }
 
-        private async Task ServeAsync(string model)
+        private async Task ServeAsync(string model, bool respond)
         {
             var context = await _listener.GetContextAsync();
             Assert.Equal("/v1/models", context.Request.Url?.AbsolutePath);
+            if (!respond)
+            {
+                return;
+            }
             var body = Encoding.UTF8.GetBytes(
                 JsonSerializer.Serialize(new { data = new[] { new { id = model } } })
             );

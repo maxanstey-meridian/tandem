@@ -259,7 +259,7 @@ public sealed class AgentBuilder<TState>
     {
         ArgumentNullException.ThrowIfNull(output);
         ArgumentException.ThrowIfNullOrWhiteSpace(output.Instructions);
-        ArgumentException.ThrowIfNullOrWhiteSpace(output.ContractName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(output.ValueType);
         ArgumentNullException.ThrowIfNull(output.Validate);
         ArgumentNullException.ThrowIfNull(apply);
         if (
@@ -280,7 +280,7 @@ public sealed class AgentBuilder<TState>
             (response, state) => ParseJsonOutput(response, state, output),
             Apply: (state, candidate) => apply(state, (JsonElement)candidate),
             OutputType: typeof(JsonElement),
-            OutputValueType: output.ContractName,
+            ValueType: output.ValueType,
             Instructions: output.Instructions
         );
         _configureChatOptions = options =>
@@ -319,18 +319,16 @@ public sealed class AgentBuilder<TState>
             );
         }
 
-        AgentStructuredOutputProblem[] problems;
-        try
+        var problems = output
+            .Validate(candidate)
+            .Select(problem => new AgentStructuredOutputProblem(problem.Field, problem.Message))
+            .ToArray();
+        if (problems.Length == 0 && output.ValidateFor is not null)
         {
             problems = output
-                .Validate(candidate)
-                .Concat(output.ValidateFor?.Invoke(state, candidate) ?? [])
+                .ValidateFor(state, candidate)
                 .Select(problem => new AgentStructuredOutputProblem(problem.Field, problem.Message))
                 .ToArray();
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            problems = [new AgentStructuredOutputProblem("$", exception.Message)];
         }
         return problems.Length > 0
             ? new AgentStructuredOutputResult<TState>(null, problems, response, candidate)

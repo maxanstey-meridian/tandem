@@ -9,6 +9,8 @@ namespace Tandem;
 /// object root. <see cref="Validate"/> is mandatory and authoritative, runs before
 /// <see cref="ValidateFor"/>, and both complete before summary, acceptance, or application.
 /// Tandem does not independently enforce general JSON Schema keywords.
+/// This API is intended for adapters that supply schema-backed contracts dynamically;
+/// ordinary C# authoring should remain typed.
 /// </summary>
 public sealed record AgentJsonCapabilityDefinition<TState>(
     string ToolName,
@@ -17,7 +19,7 @@ public sealed record AgentJsonCapabilityDefinition<TState>(
     Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>> Validate,
     Func<TState, JsonElement, IReadOnlyList<AgentJsonValidationProblem>>? ValidateFor,
     Func<JsonElement, string> Summarize,
-    string ContractName = "json"
+    string ValueType
 );
 
 public static partial class AgentCapabilities
@@ -30,7 +32,7 @@ public static partial class AgentCapabilities
         ArgumentNullException.ThrowIfNull(capability);
         ArgumentException.ThrowIfNullOrWhiteSpace(capability.ToolName);
         ArgumentException.ThrowIfNullOrWhiteSpace(capability.Instructions);
-        ArgumentException.ThrowIfNullOrWhiteSpace(capability.ContractName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(capability.ValueType);
         ArgumentNullException.ThrowIfNull(capability.Validate);
         ArgumentNullException.ThrowIfNull(capability.Summarize);
         ArgumentNullException.ThrowIfNull(apply);
@@ -49,18 +51,30 @@ public static partial class AgentCapabilities
         capability = capability with { JsonSchema = capability.JsonSchema.Clone() };
 
         var capabilityId = $"capability:{typeof(TState).FullName}:{capability.ToolName}";
-        return new AgentCapability<TState>(
-            new AgentCapabilityDescriptor<TState>(
+        return new AgentCapability<TState>(CreateDescriptor(capabilityId, capability, apply, null));
+
+        static AgentCapabilityDescriptor<TState> CreateDescriptor(
+            string capabilityId,
+            AgentJsonCapabilityDefinition<TState> capability,
+            Func<TState, JsonElement, TState> apply,
+            Func<
+                CapabilityAcceptanceContext<TState, JsonElement>,
+                CancellationToken,
+                ValueTask
+            >? accept
+        ) =>
+            new(
                 capabilityId,
                 capability.ToolName,
                 invocation => new JsonCapabilityFunction<TState>(
                     capabilityId,
                     capability,
                     apply,
+                    accept,
                     invocation
-                )
-            )
-        );
+                ),
+                nextAccept => CreateDescriptor(capabilityId, capability, apply, nextAccept)
+            );
     }
 }
 
@@ -68,6 +82,7 @@ internal sealed class JsonCapabilityFunction<TState>(
     string capabilityId,
     AgentJsonCapabilityDefinition<TState> definition,
     Func<TState, JsonElement, TState> apply,
+    Func<CapabilityAcceptanceContext<TState, JsonElement>, CancellationToken, ValueTask>? accept,
     CapabilityInvocationState<TState> invocation
 ) : AIFunction
 {
@@ -84,55 +99,38 @@ internal sealed class JsonCapabilityFunction<TState>(
     )
     {
         var request = JsonSerializer.SerializeToElement(arguments, _jsonOptions);
-        AgentJsonValidationProblem[] problems;
-        try
+        var problems = definition.Validate(request).ToArray();
+        if (problems.Length > 0)
         {
-            problems = definition
-                .Validate(request)
-                .Concat(definition.ValidateFor?.Invoke(invocation.State, request) ?? [])
-                .ToArray();
+            return ValidationError($"invalid {definition.ToolName} call", problems);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            return Error($"invalid {definition.ToolName} call", [exception.Message]);
-        }
+        problems = definition.ValidateFor?.Invoke(invocation.State, request).ToArray() ?? [];
         if (problems.Length > 0)
         {
             return ValidationError($"invalid {definition.ToolName} call", problems);
         }
 
-        string summary;
-        try
-        {
-            summary = definition.Summarize(request);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            return Error($"invalid {definition.ToolName} call", [exception.Message]);
-        }
+        var summary = definition.Summarize(request);
+        var context = new CapabilityAcceptanceContext<TState, JsonElement>(
+            invocation.RunId,
+            invocation.StepId,
+            invocation.InvocationId,
+            capabilityId,
+            invocation.State,
+            request
+        );
         return await CapabilityAcceptanceRuntime.AcceptAsync(
             invocation,
             capabilityId,
             definition.ToolName,
-            definition.ContractName,
+            definition.ValueType,
             request,
             summary,
-            null,
+            accept is null ? null : ct => accept(context, ct),
             state => apply(state, request),
             cancellationToken
         );
     }
-
-    private static JsonElement Error(string error, IEnumerable<string> problems) =>
-        JsonSerializer.SerializeToElement(
-            new
-            {
-                isError = true,
-                error,
-                problems = problems.ToArray(),
-            },
-            _jsonOptions
-        );
 
     private static JsonElement ValidationError(
         string error,

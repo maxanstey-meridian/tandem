@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFunctionImplementationPipeline } from "../sample/src/function-implementation.js";
+import { createPipeline } from "../sample/src/pipeline.js";
 
 const directory = mkdtempSync(join(tmpdir(), "tandem-function-protocol-"));
 const logPath = join(directory, "requests.jsonl");
@@ -37,7 +37,7 @@ const reviewer: ChatClient = {
 
 try {
   const result = await run(
-    createFunctionImplementationPipeline({ implementer, reviewer }),
+    createPipeline({ implementer, reviewer }),
     {
       requirements: [
         "Implement synchronous pure JavaScript slugify(input).",

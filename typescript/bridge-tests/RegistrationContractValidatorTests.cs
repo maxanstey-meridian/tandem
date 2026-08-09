@@ -6,11 +6,11 @@ namespace Tandem.NodeApiSpike;
 public sealed class RegistrationContractValidatorTests
 {
     [Fact]
-    public void AcceptsVersionTwoAgentWithOutputAndMultipleCapabilities()
+    public void AcceptsVersionThreeAgentWithOutputAndMultipleCapabilities()
     {
         var contract = RegistrationContractValidator.ParseAndValidate(ValidContract());
 
-        Assert.Equal(2, contract.ContractVersion);
+        Assert.Equal(3, contract.ContractVersion);
         Assert.Equal(2, contract.Nodes![0].Capabilities!.Length);
         Assert.NotNull(contract.Nodes[0].Output);
     }
@@ -26,19 +26,6 @@ public sealed class RegistrationContractValidatorTests
             Capability("same", validate: null),
             Capability("same", validate: "agent.second.validate"),
         };
-        value["callbacks"] = new[]
-        {
-            "agent.message",
-            "agent.output.validate",
-            "agent.output.apply",
-            "agent.first.apply",
-            "agent.first.summary",
-            "agent.second.validate",
-            "agent.second.apply",
-            "agent.second.summary",
-            "done.summary",
-        };
-
         var message = Assert
             .Throws<InvalidOperationException>(() =>
                 RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
@@ -84,8 +71,96 @@ public sealed class RegistrationContractValidatorTests
             )
             .Message;
 
-        Assert.Contains("contractVersion must be 2", message);
+        Assert.Contains("contractVersion must be 3", message);
         Assert.Contains("object root with type 'object'", message);
+    }
+
+    [Fact]
+    public void RejectsTerminalStart()
+    {
+        var value = ContractObject();
+        value["start"] = "done";
+
+        var message = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
+            )
+            .Message;
+
+        Assert.Contains("start node 'done' cannot be a terminal", message);
+    }
+
+    [Fact]
+    public void RejectsEffectivePersistenceWithoutLedgerPath()
+    {
+        var value = ContractObject();
+        var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        agent["persist"] = true;
+
+        var message = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
+            )
+            .Message;
+
+        Assert.Contains("ledgerPath is required when persistence is enabled", message);
+    }
+
+    [Fact]
+    public void RejectsMultipleUnconditionalRoutesForOneOutcome()
+    {
+        var value = ContractObject();
+        value["routes"] = new object[]
+        {
+            new
+            {
+                source = "agent",
+                target = "done",
+                label = "first",
+                outcome = "success",
+            },
+            new
+            {
+                source = "agent",
+                target = "done",
+                label = "second",
+                outcome = "success",
+            },
+        };
+
+        var message = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
+            )
+            .Message;
+
+        Assert.Contains("more than one unconditional route", message);
+    }
+
+    [Fact]
+    public void RejectsReachableTerminalMissingFromOutputsAndUnreachableOutput()
+    {
+        var value = ContractObject();
+        var nodes = ((object[])value["nodes"]!).ToList();
+        nodes.Add(
+            new Dictionary<string, object?>
+            {
+                ["id"] = "unused",
+                ["kind"] = "failure",
+                ["summaryCallback"] = "unused.summary",
+            }
+        );
+        value["nodes"] = nodes;
+        value["outputs"] = new[] { "unused" };
+
+        var message = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
+            )
+            .Message;
+
+        Assert.Contains("reachable terminal 'done' must be listed", message);
+        Assert.Contains("output 'unused' is unreachable", message);
     }
 
     private static string ValidContract() => JsonSerializer.Serialize(ContractObject());
@@ -93,24 +168,11 @@ public sealed class RegistrationContractValidatorTests
     private static Dictionary<string, object?> ContractObject() =>
         new()
         {
-            ["contractVersion"] = 2,
+            ["contractVersion"] = 3,
             ["name"] = "test",
             ["start"] = "agent",
             ["initialState"] = "{}",
             ["persist"] = false,
-            ["callbacks"] = new[]
-            {
-                "agent.message",
-                "agent.output.validate",
-                "agent.output.apply",
-                "agent.first.validate",
-                "agent.first.apply",
-                "agent.first.summary",
-                "agent.second.validate",
-                "agent.second.apply",
-                "agent.second.summary",
-                "done.summary",
-            },
             ["nodes"] = new object[]
             {
                 new Dictionary<string, object?>
@@ -125,7 +187,7 @@ public sealed class RegistrationContractValidatorTests
                         ["jsonSchema"] = "{\"type\":\"object\"}",
                         ["validateCallback"] = "agent.output.validate",
                         ["applyCallback"] = "agent.output.apply",
-                        ["contractName"] = "result",
+                        ["valueType"] = "result",
                     },
                     ["capabilities"] = new object[]
                     {
@@ -173,6 +235,6 @@ public sealed class RegistrationContractValidatorTests
             ["validateCallback"] = validate,
             ["applyCallback"] = $"agent.{name}.apply",
             ["summaryCallback"] = $"agent.{name}.summary",
-            ["contractName"] = $"capability.{name}",
+            ["valueType"] = $"capability.{name}",
         };
 }

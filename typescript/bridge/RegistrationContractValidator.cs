@@ -36,8 +36,8 @@ internal static partial class RegistrationContractValidator
             throw Invalid("registration must not be null.");
 
         var errors = new List<string>();
-        if (graph.ContractVersion != 2)
-            errors.Add($"contractVersion must be 2; received {graph.ContractVersion}.");
+        if (graph.ContractVersion != 3)
+            errors.Add($"contractVersion must be 3; received {graph.ContractVersion}.");
         Required(errors, "name", graph.Name);
         Required(errors, "start", graph.Start);
         Required(errors, "initialState", graph.InitialState);
@@ -48,15 +48,16 @@ internal static partial class RegistrationContractValidator
             errors.Add("routes is required and must not be null.");
         if (graph.Outputs is null)
             errors.Add("outputs is required and must not be null.");
-        if (graph.Callbacks is null)
-            errors.Add("callbacks is required and must not be null.");
         if (graph.Outputs is { Length: 0 })
             errors.Add("outputs must contain at least one node ID.");
         if (graph.LedgerPath is not null && string.IsNullOrWhiteSpace(graph.LedgerPath))
             errors.Add("ledgerPath must be non-blank when provided.");
+        if (
+            graph.LedgerPath is null
+            && (graph.Persist || (graph.Nodes ?? []).Any(node => node?.Persist == true))
+        )
+            errors.Add("ledgerPath is required when persistence is enabled.");
 
-        var callbacks = Unique(errors, "callbacks", graph.Callbacks);
-        var referenced = new HashSet<string>(StringComparer.Ordinal);
         var nodes = new Dictionary<string, RegisteredNodeContract>(StringComparer.Ordinal);
         foreach (var (node, index) in (graph.Nodes ?? []).Select((value, index) => (value, index)))
         {
@@ -70,10 +71,15 @@ internal static partial class RegistrationContractValidator
             Required(errors, $"{path}.kind", node.Kind);
             if (!string.IsNullOrWhiteSpace(node.Id) && !nodes.TryAdd(node.Id, node))
                 errors.Add($"{path}.id duplicates node ID '{node.Id}'.");
-            ValidateNode(errors, callbacks, referenced, node, path);
+            ValidateNode(errors, node, path);
         }
         if (!string.IsNullOrWhiteSpace(graph.Start) && !nodes.ContainsKey(graph.Start))
             errors.Add($"start references unknown node '{graph.Start}'.");
+        else if (
+            !string.IsNullOrWhiteSpace(graph.Start)
+            && nodes[graph.Start].Kind is "completion" or "failure"
+        )
+            errors.Add($"start node '{graph.Start}' cannot be a terminal.");
 
         Unique(errors, "outputs", graph.Outputs);
         foreach (var (id, index) in (graph.Outputs ?? []).Select((value, index) => (value, index)))
@@ -101,14 +107,7 @@ internal static partial class RegistrationContractValidator
             Required(errors, $"{path}.label", route.Label);
             Reference(errors, nodes, $"{path}.source", route.Source);
             Reference(errors, nodes, $"{path}.target", route.Target);
-            Callback(
-                errors,
-                callbacks,
-                referenced,
-                $"{path}.predicateCallback",
-                route.PredicateCallback,
-                false
-            );
+            OptionalCallback(errors, $"{path}.predicateCallback", route.PredicateCallback);
             if (route.Outcome is not null && route.Outcome is not ("success" or "failed"))
                 errors.Add($"{path}.outcome must be 'success' or 'failed'.");
             if (
@@ -128,26 +127,68 @@ internal static partial class RegistrationContractValidator
                     );
             }
         }
-        foreach (
-            var (callback, index) in (graph.Callbacks ?? []).Select(
-                (value, index) => (value, index)
-            )
-        )
-            if (!string.IsNullOrWhiteSpace(callback) && !referenced.Contains(callback))
-                errors.Add($"callbacks[{index}] '{callback}' is not referenced by the contract.");
-
+        ValidateGraphShape(errors, graph, nodes);
         if (errors.Count > 0)
             throw Invalid(string.Join("\n", errors.Select(error => $"- {error}")));
         return graph;
     }
 
-    private static void ValidateNode(
+    private static void ValidateGraphShape(
         List<string> errors,
-        HashSet<string> callbacks,
-        HashSet<string> referenced,
-        RegisteredNodeContract node,
-        string path
+        RegisteredGraphContract graph,
+        IReadOnlyDictionary<string, RegisteredNodeContract> nodes
     )
+    {
+        var validRoutes = (graph.Routes ?? []).Where(route =>
+            route is not null
+            && !string.IsNullOrWhiteSpace(route.Source)
+            && !string.IsNullOrWhiteSpace(route.Target)
+            && nodes.ContainsKey(route.Source)
+            && nodes.ContainsKey(route.Target)
+        );
+        foreach (var group in validRoutes.GroupBy(route => (route!.Source!, route.Outcome)))
+        {
+            if (group.Count(route => route!.PredicateCallback is null) > 1)
+            {
+                errors.Add(
+                    $"routes from '{group.Key.Item1}' for outcome '{group.Key.Outcome ?? "default"}' contain more than one unconditional route."
+                );
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(graph.Start) || !nodes.ContainsKey(graph.Start))
+            return;
+        var reachable = new HashSet<string>(StringComparer.Ordinal) { graph.Start };
+        var pending = new Queue<string>();
+        pending.Enqueue(graph.Start);
+        var bySource = validRoutes
+            .GroupBy(route => route!.Source!)
+            .ToDictionary(group => group.Key);
+        while (pending.TryDequeue(out var source))
+        {
+            if (!bySource.TryGetValue(source, out var routes))
+                continue;
+            foreach (var route in routes)
+            {
+                if (reachable.Add(route!.Target!))
+                    pending.Enqueue(route.Target!);
+            }
+        }
+
+        var outputs = (graph.Outputs ?? []).ToHashSet(StringComparer.Ordinal);
+        foreach (var terminal in reachable.Where(id => nodes[id].Kind is "completion" or "failure"))
+        {
+            if (!outputs.Contains(terminal))
+                errors.Add($"reachable terminal '{terminal}' must be listed in outputs.");
+        }
+        foreach (var output in outputs.Where(nodes.ContainsKey))
+        {
+            if (!reachable.Contains(output))
+                errors.Add($"output '{output}' is unreachable from start '{graph.Start}'.");
+        }
+    }
+
+    private static void ValidateNode(List<string> errors, RegisteredNodeContract node, string path)
     {
         if (node.Kind is not ("stage" or "interaction" or "agent" or "completion" or "failure"))
         {
@@ -155,66 +196,24 @@ internal static partial class RegistrationContractValidator
                 errors.Add($"{path}.kind '{node.Kind}' is unsupported.");
             return;
         }
+        Field(errors, path, "runCallback", node.RunCallback, node.Kind == "stage");
+        Field(errors, path, "requestCallback", node.RequestCallback, node.Kind == "interaction");
+        Field(errors, path, "handleCallback", node.HandleCallback, node.Kind == "interaction");
+        Field(errors, path, "applyCallback", node.ApplyCallback, node.Kind == "interaction");
         Field(
             errors,
-            callbacks,
-            referenced,
-            path,
-            "runCallback",
-            node.RunCallback,
-            node.Kind == "stage"
-        );
-        Field(
-            errors,
-            callbacks,
-            referenced,
-            path,
-            "requestCallback",
-            node.RequestCallback,
-            node.Kind == "interaction"
-        );
-        Field(
-            errors,
-            callbacks,
-            referenced,
-            path,
-            "handleCallback",
-            node.HandleCallback,
-            node.Kind == "interaction"
-        );
-        Field(
-            errors,
-            callbacks,
-            referenced,
-            path,
-            "applyCallback",
-            node.ApplyCallback,
-            node.Kind == "interaction"
-        );
-        Field(
-            errors,
-            callbacks,
-            referenced,
             path,
             "summaryCallback",
             node.SummaryCallback,
             node.Kind is "completion" or "failure"
         );
-        Field(
-            errors,
-            callbacks,
-            referenced,
-            path,
-            "messageCallback",
-            node.MessageCallback,
-            node.Kind == "agent"
-        );
+        Field(errors, path, "messageCallback", node.MessageCallback, node.Kind == "agent");
         if (node.Kind == "agent")
             Required(errors, $"{path}.instructions", node.Instructions);
         else if (node.Instructions is not null)
             errors.Add($"{path}.instructions is forbidden.");
         if (node.Kind == "agent")
-            ValidateAgent(errors, callbacks, referenced, node, path);
+            ValidateAgent(errors, node, path);
         else
         {
             if (node.Client is not null)
@@ -237,13 +236,7 @@ internal static partial class RegistrationContractValidator
             );
     }
 
-    private static void ValidateAgent(
-        List<string> errors,
-        HashSet<string> callbacks,
-        HashSet<string> referenced,
-        RegisteredNodeContract node,
-        string path
-    )
+    private static void ValidateAgent(List<string> errors, RegisteredNodeContract node, string path)
     {
         if (node.Client is null)
             errors.Add($"{path}.client is required.");
@@ -253,24 +246,10 @@ internal static partial class RegistrationContractValidator
             errors.Add($"{path}.capabilities is required and must not be null.");
         if (node.Output is { } output)
         {
-            Required(errors, $"{path}.output.contractName", output.ContractName);
+            Required(errors, $"{path}.output.valueType", output.ValueType);
             Json(errors, $"{path}.output.jsonSchema", output.JsonSchema, objectRoot: true);
-            Callback(
-                errors,
-                callbacks,
-                referenced,
-                $"{path}.output.validateCallback",
-                output.ValidateCallback,
-                true
-            );
-            Callback(
-                errors,
-                callbacks,
-                referenced,
-                $"{path}.output.applyCallback",
-                output.ApplyCallback,
-                true
-            );
+            Required(errors, $"{path}.output.validateCallback", output.ValidateCallback);
+            Required(errors, $"{path}.output.applyCallback", output.ApplyCallback);
         }
         var names = new HashSet<string>(StringComparer.Ordinal);
         foreach (
@@ -288,32 +267,11 @@ internal static partial class RegistrationContractValidator
             Required(errors, $"{capabilityPath}.name", capability.Name);
             if (!string.IsNullOrWhiteSpace(capability.Name) && !names.Add(capability.Name))
                 errors.Add($"{capabilityPath}.name duplicates capability '{capability.Name}'.");
-            Required(errors, $"{capabilityPath}.contractName", capability.ContractName);
+            Required(errors, $"{capabilityPath}.valueType", capability.ValueType);
             Json(errors, $"{capabilityPath}.jsonSchema", capability.JsonSchema, objectRoot: true);
-            Callback(
-                errors,
-                callbacks,
-                referenced,
-                $"{capabilityPath}.validateCallback",
-                capability.ValidateCallback,
-                true
-            );
-            Callback(
-                errors,
-                callbacks,
-                referenced,
-                $"{capabilityPath}.applyCallback",
-                capability.ApplyCallback,
-                true
-            );
-            Callback(
-                errors,
-                callbacks,
-                referenced,
-                $"{capabilityPath}.summaryCallback",
-                capability.SummaryCallback,
-                true
-            );
+            Required(errors, $"{capabilityPath}.validateCallback", capability.ValidateCallback);
+            Required(errors, $"{capabilityPath}.applyCallback", capability.ApplyCallback);
+            Required(errors, $"{capabilityPath}.summaryCallback", capability.SummaryCallback);
         }
     }
 
@@ -364,8 +322,6 @@ internal static partial class RegistrationContractValidator
 
     private static void Field(
         List<string> errors,
-        HashSet<string> callbacks,
-        HashSet<string> referenced,
         string path,
         string name,
         string? value,
@@ -374,26 +330,14 @@ internal static partial class RegistrationContractValidator
     {
         if (!required && value is not null)
             errors.Add($"{path}.{name} is forbidden.");
-        else
-            Callback(errors, callbacks, referenced, $"{path}.{name}", value, required);
+        else if (required)
+            Required(errors, $"{path}.{name}", value);
     }
 
-    private static void Callback(
-        List<string> errors,
-        HashSet<string> callbacks,
-        HashSet<string> referenced,
-        string path,
-        string? value,
-        bool required
-    )
+    private static void OptionalCallback(List<string> errors, string path, string? value)
     {
-        if (required)
-            Required(errors, path, value);
-        if (string.IsNullOrWhiteSpace(value))
-            return;
-        referenced.Add(value);
-        if (!callbacks.Contains(value))
-            errors.Add($"{path} references undeclared callback '{value}'.");
+        if (value is not null && string.IsNullOrWhiteSpace(value))
+            errors.Add($"{path} must be non-blank when provided.");
     }
 
     private static void Required(List<string> errors, string path, string? value)

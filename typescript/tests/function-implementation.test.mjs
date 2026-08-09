@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { test } from "node:test";
 import { promisify } from "node:util";
-import vm from "node:vm";
+import { assessImplementation } from "../sample/src/infrastructure/assess-implementation.ts";
 
 const exec = promisify(execFile);
 
@@ -52,13 +52,21 @@ test("function implementation loops through verification and review to accepted 
     summary: "The slugify implementation is accepted.",
     findings: [],
   });
-  const slugify = new vm.Script(`(${result.state.implementation.source})`).runInNewContext();
-  assert.equal(slugify("  Crème brûlée!!!  "), "creme-brulee");
-  assert.equal(slugify("!!!"), "");
+  assert.equal((await assessImplementation(result.state.implementation.source)).passed, true);
 
   assert.deepEqual(
     accepted.filter(({ kind }) => kind === "CapabilityAccepted").map(({ stepId }) => stepId),
     ["implementer", "implementer", "implementer"],
+  );
+  assert.deepEqual(
+    accepted
+      .filter(({ kind }) => kind === "CapabilityAccepted")
+      .map(({ payload }) => payload.implementation),
+    [
+      `(input) => input.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")`,
+      `(input) => input.trim().toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")`,
+      `function slugify(input) { return input.trim().toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""); }`,
+    ],
   );
   assert.deepEqual(
     accepted.filter(({ kind }) => kind === "StructuredOutputAccepted").map(({ stepId }) => stepId),

@@ -38,6 +38,13 @@ const reset = capability<State, { reason: string }>({
   apply: () => ({ count: 0 }),
   summarize: (request) => request.reason,
 });
+const callable = z.string().transform(() => (amount: number) => amount + 1);
+capability({
+  name: "callable",
+  schema: z.object({ apply: callable }),
+  apply: (state: State, request) => ({ count: request.apply(state.count) }),
+  summarize: (request) => String(request.apply(0)),
+});
 const granted: readonly Capability<State>[] = [record, reset];
 const client = {
   kind: "openai-compatible",
@@ -55,6 +62,16 @@ const worker = agent<State, { amount: number }>({
   output: {
     schema: z.object({ amount: z.number() }),
     apply: (state, value) => ({ count: state.count + value.amount }),
+  },
+});
+agent({
+  id: "transforming-worker",
+  instructions: "Work.",
+  client,
+  message: () => "work",
+  output: {
+    schema: z.object({ apply: callable }),
+    apply: (state: State, value) => ({ count: value.apply(state.count) }),
   },
 });
 route({ from: worker, to: done, label: "worked", outcome: "success" });

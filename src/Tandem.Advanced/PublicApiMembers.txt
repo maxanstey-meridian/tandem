@@ -37,6 +37,7 @@ P TRequest Request { get; set; }
 P TState State { get; set; }
 T Tandem.Advanced.AgentCapabilityAcceptanceExtensions
 M static Tandem.AgentCapability<TState,TRequest> WithAcceptance<TState,TRequest>(Tandem.AgentCapability<TState,TRequest> capability, System.Func<Tandem.Advanced.AgentCapabilityAcceptanceContext<TState,TRequest>,System.Threading.CancellationToken,System.Threading.Tasks.ValueTask> accept) where TRequest : class
+M static Tandem.AgentCapability<TState> WithAcceptance<TState>(Tandem.AgentCapability<TState> capability, System.Func<Tandem.Advanced.AgentCapabilityAcceptanceContext<TState,System.Text.Json.JsonElement>,System.Threading.CancellationToken,System.Threading.Tasks.ValueTask> accept)
 T Tandem.Advanced.AgentCheckpointContext<TState>
 C (TState State, System.Int32 CurrentContextTokens)
 M System.Boolean Equals(System.Object? obj)

@@ -7,19 +7,21 @@ internal static class RegisteredParticipantFactory
 {
     public static async Task<RegisteredParticipant> CreateAsync(
         RegisteredNodeContract node,
-        CallbackDispatcher callbacks
+        CallbackDispatcher callbacks,
+        CancellationToken cancellationToken
     ) =>
         node.Kind switch
         {
             "stage" => RegisteredParticipant.ForStage(
                 node,
-                new JavaScriptStage(
+                PipelineNodes.Stage<JavaScriptState>(
                     node.Id!,
-                    state => callbacks.InvokeAsync(node.RunCallback!, state, "")
+                    async (state, token) =>
+                        new(await callbacks.InvokeAsync(node.RunCallback!, state.Json, "", token))
                 )
             ),
             "interaction" => CreateInteraction(node, callbacks),
-            "agent" => await CreateAgentAsync(node, callbacks),
+            "agent" => await CreateAgentAsync(node, callbacks, cancellationToken),
             "completion" => RegisteredParticipant.ForNode(
                 node,
                 PipelineNodes.Complete(
@@ -56,14 +58,15 @@ internal static class RegisteredParticipantFactory
 
     private static async Task<RegisteredParticipant> CreateAgentAsync(
         RegisteredNodeContract node,
-        CallbackDispatcher callbacks
+        CallbackDispatcher callbacks,
+        CancellationToken cancellationToken
     )
     {
         var builder = Agent
             .Create<JavaScriptState>(
                 node.Id!,
                 node.Instructions!,
-                await OpenAiCompatibleChatClients.CreateAsync(node.Client!)
+                await OpenAiCompatibleChatClients.CreateAsync(node.Client!, cancellationToken)
             )
             .WithMessage(state => callbacks.Invoke(node.MessageCallback!, state.Json, ""));
         if (node.Output is { } outputContract)
@@ -74,14 +77,14 @@ internal static class RegisteredParticipantFactory
                     schema.RootElement.Clone(),
                     "Return the requested structured value.",
                     candidate =>
-                        Problems(
+                        ParseValidationProblems(
                             callbacks.Invoke(
                                 outputContract.ValidateCallback!,
                                 "",
                                 candidate.GetRawText()
                             )
                         ),
-                    ContractName: outputContract.ContractName!
+                    ValueType: outputContract.ValueType!
                 ),
                 (state, candidate) =>
                     new(
@@ -103,7 +106,7 @@ internal static class RegisteredParticipantFactory
                         $"Invoke {capabilityContract.Name}.",
                         schema.RootElement.Clone(),
                         request =>
-                            Problems(
+                            ParseValidationProblems(
                                 callbacks.Invoke(
                                     capabilityContract.ValidateCallback!,
                                     "",
@@ -117,7 +120,7 @@ internal static class RegisteredParticipantFactory
                                 "",
                                 request.GetRawText()
                             ),
-                        capabilityContract.ContractName!
+                        capabilityContract.ValueType!
                     ),
                     (state, request) =>
                         new(
@@ -151,73 +154,65 @@ internal static class RegisteredParticipantFactory
         }
     }
 
-    private static IReadOnlyList<AgentJsonValidationProblem> Problems(string problems)
+    internal static IReadOnlyList<AgentJsonValidationProblem> ParseValidationProblems(
+        string problems
+    )
     {
         if (string.IsNullOrWhiteSpace(problems))
         {
             return [];
         }
 
-        try
-        {
-            return JsonSerializer.Deserialize<AgentJsonValidationProblem[]>(
-                    problems,
-                    new JsonSerializerOptions(JsonSerializerDefaults.Web)
-                ) ?? [];
-        }
-        catch (JsonException)
-        {
-            return [new AgentJsonValidationProblem("$", problems)];
-        }
+        return JsonSerializer.Deserialize<AgentJsonValidationProblem[]>(
+                problems,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            ) ?? [];
     }
 }
 
-internal sealed class RegisteredParticipant
+internal abstract record RegisteredParticipant(RegisteredNodeContract Contract)
 {
-    private RegisteredParticipant(RegisteredNodeContract contract) => Contract = contract;
-
-    public RegisteredNodeContract Contract { get; }
-    public IGeneratedPipelineStep<JavaScriptState, GeneratedStepCompletion>? Stage
-    {
-        get;
-        private init;
-    }
-    public IStandardOutcomePipelineStep<JavaScriptState>? Standard { get; private init; }
-    public PipelineOutcomeSelector<JavaScriptState>? Success { get; private init; }
-    public PipelineOutcomeSelector<JavaScriptState>? Failed { get; private init; }
-    public PipelineInteraction<JavaScriptState, string, string>? Interaction { get; private init; }
-    public IPipelineNode<JavaScriptState> Node =>
-        NodeOverride
-        ?? (IPipelineNode<JavaScriptState>?)Stage
-        ?? Standard
-        ?? throw new UnreachableException();
-    private IPipelineNode<JavaScriptState>? NodeOverride { get; init; }
-
     public static RegisteredParticipant ForStage(
         RegisteredNodeContract c,
         IGeneratedPipelineStep<JavaScriptState, GeneratedStepCompletion> s
-    ) => new(c) { Stage = s };
+    ) => new RegisteredStage(c, s);
 
     public static RegisteredParticipant ForStandard(
         RegisteredNodeContract c,
         IStandardOutcomePipelineStep<JavaScriptState> s,
         PipelineOutcomeSelector<JavaScriptState> success,
         PipelineOutcomeSelector<JavaScriptState> failed
-    ) =>
-        new(c)
-        {
-            Standard = s,
-            Success = success,
-            Failed = failed,
-        };
+    ) => new RegisteredStandard(c, s, success, failed);
 
     public static RegisteredParticipant ForInteraction(
         RegisteredNodeContract c,
         PipelineInteraction<JavaScriptState, string, string> i
-    ) => new(c) { Interaction = i };
+    ) => new RegisteredInteraction(c, i);
 
     public static RegisteredParticipant ForNode(
         RegisteredNodeContract c,
         IPipelineNode<JavaScriptState> n
-    ) => new(c) { NodeOverride = n };
+    ) => new RegisteredTerminal(c, n);
 }
+
+internal sealed record RegisteredStage(
+    RegisteredNodeContract Contract,
+    IGeneratedPipelineStep<JavaScriptState, GeneratedStepCompletion> Stage
+) : RegisteredParticipant(Contract);
+
+internal sealed record RegisteredStandard(
+    RegisteredNodeContract Contract,
+    IStandardOutcomePipelineStep<JavaScriptState> Standard,
+    PipelineOutcomeSelector<JavaScriptState> Success,
+    PipelineOutcomeSelector<JavaScriptState> Failed
+) : RegisteredParticipant(Contract);
+
+internal sealed record RegisteredInteraction(
+    RegisteredNodeContract Contract,
+    PipelineInteraction<JavaScriptState, string, string> Interaction
+) : RegisteredParticipant(Contract);
+
+internal sealed record RegisteredTerminal(
+    RegisteredNodeContract Contract,
+    IPipelineNode<JavaScriptState> Terminal
+) : RegisteredParticipant(Contract);

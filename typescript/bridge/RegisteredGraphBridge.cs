@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using Tandem.Advanced;
 using Tandem.Ledger;
 
 namespace Tandem.NodeApiSpike;
@@ -21,6 +22,15 @@ public static partial class NodePipelineBridge
         }.ToString();
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync();
+        await using (var run = connection.CreateCommand())
+        {
+            run.CommandText = "SELECT EXISTS(SELECT 1 FROM runs WHERE run_id = $run_id)";
+            run.Parameters.AddWithValue("$run_id", parsedRunId.ToString("N"));
+            if (Convert.ToInt64(await run.ExecuteScalarAsync()) == 0)
+            {
+                throw new KeyNotFoundException($"Run '{runId}' does not exist.");
+            }
+        }
         await using var command = connection.CreateCommand();
         command.CommandText =
             "SELECT payload FROM run_entries WHERE run_id = $run_id ORDER BY sequence";
@@ -52,7 +62,8 @@ public static partial class NodePipelineBridge
     /// <summary>Registers and runs a complete JavaScript-authored Tandem graph.</summary>
     public static async Task<string> RunRegisteredGraphAsync(
         string definitionJson,
-        Func<string, string, string, Task<string>> invokeCallback,
+        Func<string, string, string, string> invokeSyncCallback,
+        Func<string, string, string, CancellationToken, Task<string>> invokeAsyncCallback,
         CancellationToken cancellationToken = default
     )
     {
@@ -63,11 +74,19 @@ public static partial class NodePipelineBridge
                 "A JavaScript synchronization context is required."
             );
         var definition = RegistrationContractValidator.ParseAndValidate(definitionJson);
-        var callbacks = new CallbackDispatcher(context, invokeCallback);
+        var callbacks = new CallbackDispatcher(
+            context,
+            invokeSyncCallback,
+            invokeAsyncCallback,
+            cancellationToken
+        );
         var nodes = new Dictionary<string, RegisteredParticipant>(StringComparer.Ordinal);
         foreach (var node in definition.Nodes!)
         {
-            nodes.Add(node.Id!, await RegisteredParticipantFactory.CreateAsync(node, callbacks));
+            nodes.Add(
+                node.Id!,
+                await RegisteredParticipantFactory.CreateAsync(node, callbacks, cancellationToken)
+            );
         }
         var builder = RegisteredRouteRegistration.Start(nodes[definition.Start!], definition.Name!);
         ApplyPersistence(builder, definition, nodes.Values);
@@ -76,18 +95,21 @@ public static partial class NodePipelineBridge
             RegisteredRouteRegistration.Add(builder, nodes, route, callbacks);
         }
 
-        var pipeline = builder.Build(definition.Outputs!.Select(id => nodes[id].Node).ToArray());
+        var pipeline = builder.Build(
+            definition.Outputs!.Select(id => ((RegisteredTerminal)nodes[id]).Terminal).ToArray()
+        );
         var handlers = new PipelineInteractionHandlers();
-        foreach (var participant in nodes.Values.Where(node => node.Interaction is not null))
+        foreach (var participant in nodes.Values.OfType<RegisteredInteraction>())
         {
             handlers.Handle(
-                participant.Interaction!,
-                (request, _) =>
+                participant.Interaction,
+                (request, token) =>
                     new(
                         callbacks.InvokeAsync(
                             participant.Contract.HandleCallback!,
                             "",
-                            request.Request
+                            request.Request,
+                            token
                         )
                     )
             );
@@ -105,10 +127,19 @@ public static partial class NodePipelineBridge
         var preserveActiveFailure = false;
         try
         {
+            var options = new PipelineRunOptions(
+                RunId: runId,
+                Interactions: handlers,
+                Observer: observer
+            );
+            if (store is not null)
+            {
+                options = options.WithAcceptanceUnitOfWork(new LedgerAcceptanceUnitOfWork(store));
+            }
             var result = await new PipelineRunner().RunAsync(
                 pipeline,
                 new JavaScriptState(definition.InitialState!),
-                new PipelineRunOptions(RunId: runId, Interactions: handlers, Observer: observer),
+                options,
                 cancellationToken
             );
             terminalStatus = result.Succeeded ? LedgerRunStatus.Ready : LedgerRunStatus.Failed;
@@ -126,6 +157,17 @@ public static partial class NodePipelineBridge
         {
             terminalStatus = LedgerRunStatus.Faulted;
             preserveActiveFailure = true;
+            if (FindCallbackContractException(exception) is { } contract)
+            {
+                throw new InvalidOperationException(
+                    "TANDEM_CALLBACK_CONTRACT:"
+                        + JsonSerializer.Serialize(
+                            new { boundary = contract.Boundary, problems = contract.Problems },
+                            new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                        ),
+                    exception
+                );
+            }
             throw new InvalidOperationException(
                 exception.InnerException?.ToString() ?? exception.ToString(),
                 exception
@@ -159,6 +201,25 @@ public static partial class NodePipelineBridge
         }
     }
 
+    private static CallbackContractException? FindCallbackContractException(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is CallbackContractException contract)
+                return contract;
+        }
+        return null;
+    }
+
+    private sealed class LedgerAcceptanceUnitOfWork(SqliteLedgerStore store)
+        : IPipelineAcceptanceUnitOfWork
+    {
+        public ValueTask<T> ExecuteAsync<T>(
+            Func<CancellationToken, ValueTask<T>> operation,
+            CancellationToken cancellationToken
+        ) => store.ExecuteAsync(operation, cancellationToken);
+    }
+
     private static void ApplyPersistence(
         PipelineBuilder<JavaScriptState> builder,
         RegisteredGraphContract graph,
@@ -172,25 +233,38 @@ public static partial class NodePipelineBridge
 
         foreach (var participant in participants.Where(node => node.Contract.Persist is not null))
         {
-            if (participant.Interaction is not null)
+            if (participant is RegisteredInteraction interaction)
             {
                 if (participant.Contract.Persist!.Value)
                 {
-                    builder.Persist(participant.Interaction);
+                    builder.Persist(interaction.Interaction);
                 }
                 else
                 {
-                    builder.DoNotPersist(participant.Interaction);
+                    builder.DoNotPersist(interaction.Interaction);
                 }
             }
             else if (participant.Contract.Persist!.Value)
             {
-                builder.Persist(participant.Node);
+                builder.Persist(PersistableNode(participant));
             }
             else
             {
-                builder.DoNotPersist(participant.Node);
+                builder.DoNotPersist(PersistableNode(participant));
             }
         }
     }
+
+    private static IPipelineNode<JavaScriptState> PersistableNode(
+        RegisteredParticipant participant
+    ) =>
+        participant switch
+        {
+            RegisteredStage stage => stage.Stage,
+            RegisteredStandard standard => standard.Standard,
+            RegisteredTerminal terminal => terminal.Terminal,
+            _ => throw new InvalidOperationException(
+                "Interaction persistence must be applied to the interaction definition."
+            ),
+        };
 }

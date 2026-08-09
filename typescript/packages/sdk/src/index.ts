@@ -2,7 +2,8 @@ import { inspectAcceptedAsync, runRegisteredGraphAsync } from "@tandem/runtime";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 
-type Callback = (state: string, input: string) => string | Promise<string>;
+type SyncCallback = (state: string, input: string) => string;
+type AsyncCallback = (state: string, input: string, signal: AbortSignal) => Promise<string>;
 const participantBrand: unique symbol = Symbol("participant");
 const compileCapabilityBrand: unique symbol = Symbol("compileCapability");
 
@@ -31,7 +32,10 @@ export class TandemCancellationError extends TandemRuntimeError {
 }
 export class ContractValidationError extends TandemError {
   readonly problems: ReadonlyArray<{ path: string; message: string }>;
-  constructor(boundary: string, problems: ReadonlyArray<{ path: string; message: string }>) {
+  constructor(
+    readonly boundary: string,
+    problems: ReadonlyArray<{ path: string; message: string }>,
+  ) {
     super(
       `${boundary} validation failed: ${problems.map((p) => `${p.path}: ${p.message}`).join("; ")}`,
     );
@@ -40,12 +44,90 @@ export class ContractValidationError extends TandemError {
   }
 }
 
+type CallbackFailure = {
+  readonly boundary: string;
+  readonly problems: ReadonlyArray<{ path: string; message: string }>;
+};
+type CallbackResult =
+  | { readonly succeeded: true; readonly value: string }
+  | {
+      readonly succeeded: false;
+      readonly error: {
+        readonly name: string;
+        readonly message: string;
+        readonly boundary?: string;
+        readonly problems?: ReadonlyArray<{ path: string; message: string }>;
+      };
+    };
+
+function callbackResult(callback: () => string): string {
+  try {
+    return JSON.stringify({ succeeded: true, value: callback() } satisfies CallbackResult);
+  } catch (error) {
+    return JSON.stringify({
+      succeeded: false,
+      error: callbackError(error),
+    } satisfies CallbackResult);
+  }
+}
+
+async function callbackResultAsync(callback: () => Promise<string>): Promise<string> {
+  try {
+    return JSON.stringify({ succeeded: true, value: await callback() } satisfies CallbackResult);
+  } catch (error) {
+    return JSON.stringify({
+      succeeded: false,
+      error: callbackError(error),
+    } satisfies CallbackResult);
+  }
+}
+
+function callbackError(error: unknown): Extract<CallbackResult, { succeeded: false }>["error"] {
+  return error instanceof ContractValidationError
+    ? {
+        name: error.name,
+        message: error.message,
+        boundary: error.boundary,
+        problems: error.problems,
+      }
+    : {
+        name: error instanceof Error ? error.name : "Error",
+        message: error instanceof Error ? error.message : String(error),
+      };
+}
+
+function callbackContractFailure(error: unknown): CallbackFailure | null {
+  const marker = "TANDEM_CALLBACK_CONTRACT:";
+  const message = error instanceof Error ? error.message : String(error);
+  const start = message.indexOf(marker);
+  if (start < 0) {
+    return null;
+  }
+  try {
+    return JSON.parse(message.slice(start + marker.length)) as CallbackFailure;
+  } catch {
+    return null;
+  }
+}
+
+function isCancellationError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.name === "AbortError" ||
+    /\b(?:operation was cancel(?:l)?ed|operation was aborted|this operation was aborted)\b/i.test(
+      error.message,
+    )
+  );
+}
+
 function path(parts: PropertyKey[]): string {
   return parts.length === 0
     ? "$"
     : `$${parts.map((part) => (typeof part === "number" ? `[${part}]` : `.${String(part)}`)).join("")}`;
 }
-function parse<T>(schema: z.ZodType<T>, value: unknown, boundary: string): T {
+function parseValidated<T>(schema: z.ZodType<T>, value: unknown, boundary: string): T {
   let result: z.ZodSafeParseResult<T>;
   try {
     result = schema.safeParse(value);
@@ -67,7 +149,11 @@ function parse<T>(schema: z.ZodType<T>, value: unknown, boundary: string): T {
       result.error.issues.map((issue) => ({ path: path(issue.path), message: issue.message })),
     );
   }
-  if (!isDeepStrictEqual(result.data, value)) {
+  return result.data;
+}
+function parse<T>(schema: z.ZodType<T>, value: unknown, boundary: string): T {
+  const result = parseValidated(schema, value, boundary);
+  if (!isDeepStrictEqual(result, value)) {
     throw new ContractValidationError(boundary, [
       {
         path: "$",
@@ -76,7 +162,7 @@ function parse<T>(schema: z.ZodType<T>, value: unknown, boundary: string): T {
       },
     ]);
   }
-  return result.data;
+  return result;
 }
 function parseJson<T>(schema: z.ZodType<T>, json: string, boundary: string): T {
   let value: unknown;
@@ -87,9 +173,10 @@ function parseJson<T>(schema: z.ZodType<T>, json: string, boundary: string): T {
   }
   return parse(schema, value, boundary);
 }
-function jsonSchema<T>(schema: z.ZodType<T>, boundary: string): string {
+function inputJsonSchema<T>(schema: z.ZodType<T>, boundary: string): string {
   try {
-    return JSON.stringify(z.toJSONSchema(schema));
+    z.toJSONSchema(schema, { io: "output" });
+    return JSON.stringify(z.toJSONSchema(schema, { io: "input" }));
   } catch (error) {
     throw new ContractValidationError(boundary, [
       { path: "$", message: error instanceof Error ? error.message : String(error) },
@@ -133,14 +220,17 @@ class StageImplementation<TState> extends NodeImplementation<TState> implements 
   constructor(
     id: string,
     persist: boolean | undefined,
-    readonly execute: (state: TState) => TState | Promise<TState>,
+    readonly execute: (
+      state: TState,
+      context: { readonly signal: AbortSignal },
+    ) => TState | Promise<TState>,
   ) {
     super(id, persist);
   }
 }
 export function stage<TState>(definition: {
   id: string;
-  execute: (state: TState) => TState | Promise<TState>;
+  execute: (state: TState, context: { readonly signal: AbortSignal }) => TState | Promise<TState>;
   persist?: boolean;
 }): Stage<TState> {
   return new StageImplementation(definition.id, definition.persist, definition.execute);
@@ -159,7 +249,10 @@ class InteractionImplementation<TState, TRequest, TResponse>
     readonly requestSchema: z.ZodType<TRequest>,
     readonly responseSchema: z.ZodType<TResponse>,
     readonly request: (state: TState) => TRequest,
-    readonly handle: (request: TRequest) => TResponse | Promise<TResponse>,
+    readonly handle: (
+      request: TRequest,
+      context: { readonly signal: AbortSignal },
+    ) => TResponse | Promise<TResponse>,
     readonly apply: (state: TState, response: TResponse) => TState,
   ) {
     super(id, persist);
@@ -170,7 +263,10 @@ export function interaction<TState, TRequest, TResponse>(definition: {
   requestSchema: z.ZodType<TRequest>;
   responseSchema: z.ZodType<TResponse>;
   request: (state: TState) => TRequest;
-  handle: (request: TRequest) => TResponse | Promise<TResponse>;
+  handle: (
+    request: TRequest,
+    context: { readonly signal: AbortSignal },
+  ) => TResponse | Promise<TResponse>;
   apply: (state: TState, response: TResponse) => TState;
   persist?: boolean;
 }): Interaction<TState, TRequest, TResponse> {
@@ -189,7 +285,7 @@ interface CapabilityCompileContext<TState> {
   readonly id: string;
   readonly index: number;
   readonly stateSchema: z.ZodType<TState>;
-  readonly callbacks: Record<string, Callback>;
+  readonly callbacks: Record<string, SyncCallback>;
 }
 export interface Capability<TState> {
   readonly name: string;
@@ -203,7 +299,7 @@ class CapabilityImplementation<TState, TRequest> implements Capability<TState> {
     readonly apply: (state: TState, request: TRequest) => TState,
     readonly summarize: (request: TRequest) => string,
   ) {
-    this.requestJsonSchema = jsonSchema(schema, `capability '${name}' schema`);
+    this.requestJsonSchema = inputJsonSchema(schema, `capability '${name}' schema`);
   }
   [compileCapabilityBrand]({
     id,
@@ -235,7 +331,7 @@ class CapabilityImplementation<TState, TRequest> implements Capability<TState> {
       validateCallback: validate,
       applyCallback: apply,
       summaryCallback: summary,
-      contractName: `${id}.capability.${this.name}`,
+      valueType: `${id}.capability.${this.name}`,
     };
   }
 }
@@ -377,7 +473,7 @@ export interface Pipeline<TState> {
   readonly name: string;
   readonly state: z.ZodType<TState>;
   readonly nodes: readonly Node<TState>[];
-  readonly start: Node<TState>;
+  readonly start: Exclude<Node<TState>, Terminal<TState>>;
   readonly routes: readonly Route<TState>[];
   readonly outputs: readonly Terminal<TState>[];
   readonly persist: boolean;
@@ -386,11 +482,12 @@ export function pipeline<TState>(definition: {
   name: string;
   state: z.ZodType<TState>;
   nodes: readonly Node<NoInfer<TState>>[];
-  start: Node<NoInfer<TState>>;
+  start: Exclude<Node<NoInfer<TState>>, Terminal<NoInfer<TState>>>;
   routes: readonly Route<NoInfer<TState>>[];
   outputs: readonly Terminal<NoInfer<TState>>[];
   persist?: boolean;
 }): Pipeline<TState> {
+  const start = definition.start as Node<TState>;
   const members = new Set<Node<TState>>(definition.nodes);
   if (members.size !== definition.nodes.length) {
     throw new Error("Pipeline nodes must contain each participant object exactly once.");
@@ -404,14 +501,56 @@ export function pipeline<TState>(definition: {
       `Pipeline start '${definition.start.id}' must be the registered participant object.`,
     );
   }
+  if (start.kind === "terminal") {
+    throw new Error(`Pipeline start '${start.id}' cannot be a terminal.`);
+  }
   for (const item of definition.routes) {
     if (!members.has(item.from) || !members.has(item.to)) {
       throw new Error(`Route '${item.label}' endpoints must be registered participant objects.`);
     }
   }
+  const unconditionalRoutes = new Map<string, Route<TState>>();
+  for (const item of definition.routes) {
+    if (item.when) {
+      continue;
+    }
+    const key = `${item.from.id}\u0000${item.outcome ?? "default"}`;
+    const existing = unconditionalRoutes.get(key);
+    if (existing) {
+      throw new Error(
+        `Routes '${existing.label}' and '${item.label}' are both unconditional from '${item.from.id}'.`,
+      );
+    }
+    unconditionalRoutes.set(key, item);
+  }
+  if (new Set(definition.outputs).size !== definition.outputs.length) {
+    throw new Error("Pipeline outputs must contain each terminal exactly once.");
+  }
   for (const item of definition.outputs) {
     if (!members.has(item)) {
       throw new Error(`Output '${item.id}' must be the registered participant object.`);
+    }
+  }
+  const reachable = new Set<Node<TState>>([start]);
+  const pending: Node<TState>[] = [start];
+  while (pending.length > 0) {
+    const source = pending.pop()!;
+    for (const item of definition.routes) {
+      if (item.from === source && !reachable.has(item.to)) {
+        reachable.add(item.to);
+        pending.push(item.to);
+      }
+    }
+  }
+  const outputs = new Set<Node<TState>>(definition.outputs);
+  for (const node of reachable) {
+    if (node.kind === "terminal" && !outputs.has(node)) {
+      throw new Error(`Reachable terminal '${node.id}' must be listed in outputs.`);
+    }
+  }
+  for (const item of definition.outputs) {
+    if (!reachable.has(item)) {
+      throw new Error(`Output '${item.id}' must be reachable from start '${start.id}'.`);
     }
   }
   return { ...definition, persist: definition.persist ?? false };
@@ -498,12 +637,21 @@ export async function run<TState>(
   options: RunOptions = {},
 ): Promise<RunResult<TState>> {
   const initialState = parse(graph.state, initial, "initial state");
-  const callbacks: Record<string, Callback> = {};
-  const nodes = graph.nodes.map((node) => compileNode(node, graph.state, callbacks));
+  if (
+    (graph.persist || graph.nodes.some((node) => (node as NodeImplementation<TState>).persist)) &&
+    !options.ledgerPath
+  ) {
+    throw new TandemError("ledgerPath is required when persistence is enabled.");
+  }
+  const syncCallbacks: Record<string, SyncCallback> = {};
+  const asyncCallbacks: Record<string, AsyncCallback> = {};
+  const nodes = graph.nodes.map((node) =>
+    compileNode(node, graph.state, syncCallbacks, asyncCallbacks),
+  );
   const routes = graph.routes.map((item, index) => {
     const callback = item.when ? `route.${index}.when` : undefined;
     if (item.when) {
-      callbacks[callback!] = (state) =>
+      syncCallbacks[callback!] = (state) =>
         String(item.when!(parseJson(graph.state, state, `route '${item.label}' state`)));
     }
     return {
@@ -517,7 +665,7 @@ export async function run<TState>(
   try {
     const resultJson = await runRegisteredGraphAsync(
       JSON.stringify({
-        contractVersion: 2,
+        contractVersion: 3,
         name: graph.name,
         start: graph.start.id,
         initialState: JSON.stringify(initialState),
@@ -526,14 +674,23 @@ export async function run<TState>(
         nodes,
         routes,
         outputs: graph.outputs.map((item) => item.id),
-        callbacks: Object.keys(callbacks),
       }),
-      async (id: string, state: string, input: string) => {
-        const callback = callbacks[id];
-        if (!callback) {
-          throw new Error(`Unknown internal callback '${id}'.`);
-        }
-        return await callback(state, input);
+      (id: string, state: string, input: string) =>
+        callbackResult(() => {
+          const callback = syncCallbacks[id];
+          if (!callback) {
+            throw new Error(`Unknown internal callback '${id}'.`);
+          }
+          return callback(state, input);
+        }),
+      async (id: string, state: string, input: string, signal: AbortSignal) => {
+        return await callbackResultAsync(async () => {
+          const callback = asyncCallbacks[id];
+          if (!callback) {
+            throw new Error(`Unknown internal async callback '${id}'.`);
+          }
+          return await callback(state, input, signal);
+        });
       },
       options.signal,
     );
@@ -543,7 +700,11 @@ export async function run<TState>(
     if (error instanceof ContractValidationError) {
       throw error;
     }
-    if (options.signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
+    const callbackFailure = callbackContractFailure(error);
+    if (callbackFailure) {
+      throw new ContractValidationError(callbackFailure.boundary, callbackFailure.problems);
+    }
+    if (isCancellationError(error)) {
       throw new TandemCancellationError(error);
     }
     throw new TandemRuntimeError("run", error);
@@ -561,27 +722,29 @@ function issues<T>(schema: z.ZodType<T>, input: string): string {
     parse(schema, value, "agent contract");
     return "";
   } catch (error) {
-    return error instanceof ContractValidationError
-      ? JSON.stringify(error.problems)
-      : JSON.stringify([
-          { path: "$", message: error instanceof Error ? error.message : String(error) },
-        ]);
+    if (error instanceof ContractValidationError) {
+      return JSON.stringify(error.problems);
+    }
+    throw error;
   }
 }
 function compileNode<TState>(
   node: Node<TState>,
   stateSchema: z.ZodType<TState>,
-  callbacks: Record<string, Callback>,
+  callbacks: Record<string, SyncCallback>,
+  asyncCallbacks: Record<string, AsyncCallback>,
 ): object {
   const implementation = node as NodeImplementation<TState>;
   const base = { id: node.id, persist: implementation.persist };
   if (implementation instanceof StageImplementation) {
     const run = `${node.id}.run`;
-    callbacks[run] = async (state) =>
+    asyncCallbacks[run] = async (state, _, signal) =>
       JSON.stringify(
         parse(
           stateSchema,
-          await implementation.execute(parseJson(stateSchema, state, `${node.id} input`)),
+          await implementation.execute(parseJson(stateSchema, state, `${node.id} input`), {
+            signal,
+          }),
           `${node.id} output`,
         ),
       );
@@ -599,12 +762,13 @@ function compileNode<TState>(
           `${node.id} request`,
         ),
       );
-    callbacks[handle] = async (_, input) =>
+    asyncCallbacks[handle] = async (_, input, signal) =>
       JSON.stringify(
         parse(
           implementation.responseSchema,
           await implementation.handle(
             parseJson(implementation.requestSchema, input, `${node.id} request input`),
+            { signal },
           ),
           `${node.id} response`,
         ),
@@ -661,7 +825,7 @@ function compileAgentOutput<TState, TOutput>(
   id: string,
   output: { schema: z.ZodType<TOutput>; apply: (state: TState, output: TOutput) => TState },
   stateSchema: z.ZodType<TState>,
-  callbacks: Record<string, Callback>,
+  callbacks: Record<string, SyncCallback>,
 ): object {
   const validate = `${id}.output.validate`,
     apply = `${id}.output.apply`;
@@ -678,9 +842,9 @@ function compileAgentOutput<TState, TOutput>(
       ),
     );
   return {
-    jsonSchema: jsonSchema(output.schema, `${id} output schema`),
+    jsonSchema: inputJsonSchema(output.schema, `${id} output schema`),
     validateCallback: validate,
     applyCallback: apply,
-    contractName: `${id}.output`,
+    valueType: `${id}.output`,
   };
 }

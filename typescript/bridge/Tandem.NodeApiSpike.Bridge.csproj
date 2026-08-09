@@ -14,6 +14,7 @@
         <PackageReference Include="OpenAI" Version="2.12.0" />
         <PackageReference Include="System.ClientModel" Version="1.14.0" />
         <ProjectReference Include="../../src/Tandem/Tandem.csproj" />
+        <ProjectReference Include="../../src/Tandem.Advanced/Tandem.Advanced.csproj" />
         <ProjectReference Include="../../src/Tandem.Ledger/Tandem.Ledger.csproj" />
     </ItemGroup>
 </Project>

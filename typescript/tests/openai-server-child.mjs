@@ -21,66 +21,128 @@ const server = createServer(async (request, response) => {
   }
   if (request.url === "/v1/responses") {
     const text = JSON.stringify({ answer: 42 });
-    response.end(
-      JSON.stringify({
-        id: "resp_test",
-        object: "response",
-        created_at: 1,
-        status: "completed",
-        error: null,
-        incomplete_details: null,
-        instructions: null,
-        max_output_tokens: null,
-        model: "gpt-5.6-sol",
-        output: [
-          {
-            id: "msg_test",
-            type: "message",
-            status: "completed",
-            role: "assistant",
-            content: [{ type: "output_text", text, annotations: [] }],
-          },
-        ],
-        parallel_tool_calls: true,
-        previous_response_id: null,
-        reasoning: { effort: "low", summary: null },
-        store: false,
-        temperature: 1,
-        text: { format: { type: "text" } },
-        tool_choice: "auto",
-        tools: [],
-        top_p: 1,
-        truncation: "disabled",
-        usage: {
-          input_tokens: 1,
-          input_tokens_details: { cached_tokens: 0 },
-          output_tokens: 1,
-          output_tokens_details: { reasoning_tokens: 0 },
-          total_tokens: 2,
+    const completed = {
+      id: "resp_test",
+      object: "response",
+      created_at: 1,
+      status: "completed",
+      error: null,
+      incomplete_details: null,
+      instructions: null,
+      max_output_tokens: null,
+      model: "gpt-5.6-sol",
+      output: [
+        {
+          id: "msg_test",
+          type: "message",
+          status: "completed",
+          role: "assistant",
+          content: [{ type: "output_text", text, annotations: [] }],
         },
-        user: null,
-        metadata: {},
-      }),
-    );
+      ],
+      parallel_tool_calls: true,
+      previous_response_id: null,
+      reasoning: { effort: "low", summary: null },
+      store: false,
+      temperature: 1,
+      text: { format: { type: "text" } },
+      tool_choice: "auto",
+      tools: [],
+      top_p: 1,
+      truncation: "disabled",
+      usage: {
+        input_tokens: 1,
+        input_tokens_details: { cached_tokens: 0 },
+        output_tokens: 1,
+        output_tokens_details: { reasoning_tokens: 0 },
+        total_tokens: 2,
+      },
+      user: null,
+      metadata: {},
+    };
+    const item = completed.output[0];
+    const part = item.content[0];
+    response.setHeader("content-type", "text/event-stream");
+    const event = (type, data) =>
+      response.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+    event("response.created", {
+      type: "response.created",
+      response: { ...completed, status: "in_progress", output: [] },
+    });
+    event("response.output_item.added", {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { ...item, status: "in_progress", content: [] },
+    });
+    event("response.content_part.added", {
+      type: "response.content_part.added",
+      item_id: item.id,
+      output_index: 0,
+      content_index: 0,
+      part: { ...part, text: "" },
+    });
+    event("response.output_text.delta", {
+      type: "response.output_text.delta",
+      item_id: item.id,
+      output_index: 0,
+      content_index: 0,
+      delta: part.text,
+    });
+    event("response.output_text.done", {
+      type: "response.output_text.done",
+      item_id: item.id,
+      output_index: 0,
+      content_index: 0,
+      text: part.text,
+    });
+    event("response.content_part.done", {
+      type: "response.content_part.done",
+      item_id: item.id,
+      output_index: 0,
+      content_index: 0,
+      part,
+    });
+    event("response.output_item.done", {
+      type: "response.output_item.done",
+      output_index: 0,
+      item,
+    });
+    event("response.completed", { type: "response.completed", response: completed });
+    response.end();
     return;
   }
   if (request.url === "/v1/chat/completions") {
-    response.end(
-      JSON.stringify({
-        id: "chat_test",
-        object: "chat.completion",
-        created: 1,
-        model: "deepseek/deepseek-v4-flash-0731",
-        choices: [
-          {
-            index: 0,
-            finish_reason: "stop",
-            message: { role: "assistant", content: "fixture response" },
+    response.setHeader("content-type", "text/event-stream");
+    const chunk = {
+      id: "chat_test",
+      object: "chat.completion.chunk",
+      created: 1,
+      model: "fixture",
+      choices: [
+        {
+          index: 0,
+          finish_reason: null,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: "call_accept",
+                type: "function",
+                function: { name: "accept", arguments: JSON.stringify({ accepted: true }) },
+              },
+            ],
           },
-        ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      }),
+        },
+      ],
+    };
+    response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+    response.write(
+      `data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, finish_reason: "tool_calls", delta: {} }] })}\n\n`,
     );
+    response.write(
+      `data: ${JSON.stringify({ ...chunk, choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } })}\n\n`,
+    );
+    response.end("data: [DONE]\n\n");
     return;
   }
   response.statusCode = 404;

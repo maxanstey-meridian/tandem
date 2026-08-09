@@ -32,6 +32,20 @@ public abstract class PipelineNodeDescriptor
 
 public static class PipelineNodes
 {
+    /// <summary>
+    /// Creates the adapter-authoring seam for a dynamically supplied state stage.
+    /// Ordinary C# applications should prefer a generated <c>[PipelineStage]</c> class.
+    /// </summary>
+    public static IGeneratedPipelineStep<TState, GeneratedStepCompletion> Stage<TState>(
+        string id,
+        Func<TState, CancellationToken, ValueTask<TState>> execute
+    )
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        ArgumentNullException.ThrowIfNull(execute);
+        return new DynamicStatePipelineStep<TState>(id, execute);
+    }
+
     public static IPipelineNode<TState> Failed<TState>(IPipelineFailure<TState> failure) =>
         new DefinitionFailedNode<TState>(failure);
 
@@ -47,6 +61,16 @@ public static class PipelineNodes
         Func<TState, TRequest> createRequest,
         Func<TState, TResponse, TState> applyResponse
     ) => new(id, createRequest, applyResponse);
+}
+
+internal sealed class DynamicStatePipelineStep<TState>(
+    string id,
+    Func<TState, CancellationToken, ValueTask<TState>> execute
+) : IGeneratedPipelineStep<TState, GeneratedStepCompletion>
+{
+    public string Id { get; } = id;
+    public PipelineNodeDescriptor Descriptor { get; } =
+        new GeneratedStateStepDescriptor<TState>(id, execute);
 }
 
 public interface IPipelineCompletion<TState>
@@ -994,6 +1018,23 @@ public sealed class PipelineBuilder<TState>
         return this;
     }
 
+    public PipelineBuilder<TState> Route<
+        TSourceRequest,
+        TSourceResponse,
+        TTargetRequest,
+        TTargetResponse
+    >(
+        PipelineInteraction<TState, TSourceRequest, TSourceResponse> from,
+        PipelineInteraction<TState, TTargetRequest, TTargetResponse> to,
+        string label
+    )
+    {
+        EnsureInteraction(from);
+        EnsureInteraction(to);
+        AddRoute(from.Resume, to.Request, _ => true, label, unconditional: true);
+        return this;
+    }
+
     public PipelineBuilder<TState> Route<TRequest, TResponse>(
         Func<TState, bool> when,
         PipelineInteraction<TState, TRequest, TResponse> from,
@@ -1003,6 +1044,24 @@ public sealed class PipelineBuilder<TState>
     {
         EnsureInteraction(from);
         AddRoute(from.Resume, to, pipeline => when(pipeline.State), label);
+        return this;
+    }
+
+    public PipelineBuilder<TState> Route<
+        TSourceRequest,
+        TSourceResponse,
+        TTargetRequest,
+        TTargetResponse
+    >(
+        Func<TState, bool> when,
+        PipelineInteraction<TState, TSourceRequest, TSourceResponse> from,
+        PipelineInteraction<TState, TTargetRequest, TTargetResponse> to,
+        string label
+    )
+    {
+        EnsureInteraction(from);
+        EnsureInteraction(to);
+        AddRoute(from.Resume, to.Request, pipeline => when(pipeline.State), label);
         return this;
     }
 

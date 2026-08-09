@@ -9,7 +9,6 @@ internal sealed record RegisteredGraphContract(
     RegisteredNodeContract[]? Nodes,
     RegisteredRouteContract[]? Routes,
     string[]? Outputs,
-    string[]? Callbacks,
     string? LedgerPath
 );
 
@@ -46,7 +45,7 @@ internal sealed record RegisteredAgentOutputContract(
     string? JsonSchema,
     string? ValidateCallback,
     string? ApplyCallback,
-    string? ContractName
+    string? ValueType
 );
 
 internal sealed record RegisteredCapabilityContract(
@@ -55,7 +54,7 @@ internal sealed record RegisteredCapabilityContract(
     string? ValidateCallback,
     string? ApplyCallback,
     string? SummaryCallback,
-    string? ContractName
+    string? ValueType
 );
 
 internal sealed record RegisteredRouteContract(

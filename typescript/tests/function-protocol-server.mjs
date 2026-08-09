@@ -31,7 +31,7 @@ const server = createServer(async (request, response) => {
   if (request.url === "/v1/chat/completions") {
     const source = sources[implementerVisit++];
     const implementation = {
-      source,
+      implementation: source,
       rationale: `Implementation revision ${implementerVisit}`,
     };
     response.setHeader("content-type", "text/event-stream");

@@ -1,33 +1,38 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { test } from "node:test";
-import { verifyFunctionSource } from "../sample/src/support/verify-function-source.ts";
+import { promisify } from "node:util";
 
 const valid = `(input) => input.trim().toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")`;
+const sources = [
+  valid,
+  "(input) => {",
+  "42",
+  "(input) => { while (true) {} }",
+  "(input) => process.exit(0)",
+];
+const exec = promisify(execFile);
 
-test("function verifier accepts a valid slugify expression", async () => {
-  const result = await verifyFunctionSource(valid);
+test("function verifier accepts valid source and rejects invalid source", async () => {
+  const { stdout } = await exec(
+    "pnpm",
+    ["exec", "tsx", new URL("function-verifier-child.ts", import.meta.url).pathname, ...sources],
+    { timeout: 30_000 },
+  );
+  const [result, syntaxError, nonFunction, nonTerminating, exiting] = JSON.parse(stdout.trim());
+
   assert.equal(result.passed, true);
   assert.equal(result.error, null);
   assert.equal(
     result.cases.every(({ passed }) => passed),
     true,
   );
+  assert.equal(syntaxError.passed, false);
+  assert.match(JSON.stringify(syntaxError), /Invalid JavaScript/);
+  assert.equal(nonFunction.passed, false);
+  assert.match(JSON.stringify(nonFunction), /must evaluate to a function/);
+  assert.equal(nonTerminating.passed, false);
+  assert.match(nonTerminating.error, /timed out/);
+  assert.equal(exiting.passed, false);
+  assert.match(JSON.stringify(exiting), /process is not defined/);
 });
-
-for (const [name, source, error] of [
-  ["syntax errors", "(input) => {", /Unexpected|Invalid/],
-  ["infinite loops", "function (input) { while (true) {} }", /timed out/],
-  ["Promise returns", "(input) => Promise.resolve(input)", /Promise|not defined/],
-  ["non-string returns", "(input) => 42", /string is required/],
-  [
-    "process and filesystem access",
-    "(input) => process.mainModule.require('node:fs').readFileSync(input, 'utf8')",
-    /process is not defined/,
-  ],
-]) {
-  test(`function verifier rejects ${name}`, async () => {
-    const result = await verifyFunctionSource(source);
-    assert.equal(result.passed, false);
-    assert.match(JSON.stringify(result), error);
-  });
-}

@@ -56,6 +56,8 @@ test("translates callback failures and cancellation", async () => {
   assert.match(cancelled.cause, /cancel/i);
   assert.deepEqual(cancelled.statuses, ["Cancelled"]);
   assert.equal(cancelled.terminalized, true);
+  assert.equal(cancelled.abortObserved, true);
+  assert.equal(cancelled.mutatedAfterAbort, false);
 });
 
 test("terminalizes declared pipeline failure", async () => {
@@ -65,26 +67,45 @@ test("terminalizes declared pipeline failure", async () => {
   assert.equal(result.terminalized, true);
 });
 
-test("executes a typed interaction through Tandem", async () => {
-  assert.deepEqual(await child("interaction"), { count: 5, done: true });
+test("rejects inspection of an unknown run", async () => {
+  const result = await child("unknown-inspect");
+  assert.match(result.error, /does not exist/);
+  assert.equal(result.operation, "inspect");
 });
 
-test("supports concurrent runs and repeated startup", async () => {
+test("executes a typed interaction through Tandem", async () => {
+  assert.deepEqual(await child("interaction"), { count: 5, done: true });
+  assert.deepEqual(await child("interaction-chain"), { count: 6, done: true });
+});
+
+test("cancels an active interaction through its AbortSignal without applying a response", async () => {
+  const cancelled = await child("interaction-cancel");
+  assert.equal(cancelled.name, "AbortError");
+  assert.equal(cancelled.abortObserved, true);
+  assert.equal(cancelled.handlerCompleted, false);
+  assert.equal(cancelled.interactionApplied, false);
+  assert.equal(cancelled.mutatedAfterAbort, false);
+});
+
+test("supports concurrent and repeated runs in one loaded host", async () => {
   assert.equal((await child("concurrent")).results, 8);
   assert.equal((await child("repeated")).results, 5);
 });
 
-test("rejects unregistered participant identities for start, routes, and outputs", async () => {
+test("rejects invalid participant identities and incomplete graph shapes", async () => {
   const { stdout } = await exec(
     process.execPath,
     [new URL("identity-child.mjs", import.meta.url).pathname],
     { timeout: 10_000 },
   );
   const errors = JSON.parse(stdout.trim());
-  assert.equal(errors.length, 3);
+  assert.equal(errors.length, 6);
   assert.match(errors[0], /start/);
   assert.match(errors[1], /Route/);
   assert.match(errors[2], /Output/);
+  assert.match(errors[3], /both unconditional/);
+  assert.match(errors[4], /must be listed in outputs/);
+  assert.match(errors[5], /must be reachable/);
 });
 
 test("bounded soak completes and exits", async () => {
@@ -105,6 +126,8 @@ test("planner preflight and model requests proceed through a local protocol fixt
     { timeout: 15_000 },
   );
   const result = JSON.parse(stdout.trim());
+  assert.equal(result.error, null);
+  assert.equal(result.answer, 42);
   assert.equal(result.urls[0], "/v1/models");
   assert(result.urls.slice(1).every((url) => url === "/v1/responses"));
   assert(result.urls.length >= 2);
@@ -122,10 +145,29 @@ test("one agent composes its authored message, multiple capabilities, structured
     ],
     { timeout: 15_000 },
   );
-  const body = JSON.parse(stdout.trim());
-  assert.match(JSON.stringify(body), /CAPABILITY STATE MESSAGE: from-typescript-capability-state/);
-  assert.match(JSON.stringify(body), /accept/);
-  assert.match(JSON.stringify(body), /reject/);
-  assert.equal(body.tools.length, 2);
-  assert.match(JSON.stringify(body.response_format), /json_schema/);
+  const result = JSON.parse(stdout.trim());
+  assert.equal(result.error, null);
+  assert.equal(result.accepted, true);
+  assert.match(
+    JSON.stringify(result.body),
+    /CAPABILITY STATE MESSAGE: from-typescript-capability-state/,
+  );
+  assert.match(JSON.stringify(result.body), /accept/);
+  assert.match(JSON.stringify(result.body), /reject/);
+  assert.equal(result.body.tools.length, 2);
+  assert.match(JSON.stringify(result.body.response_format), /json_schema/);
+});
+
+test("rolls back durable acceptance when JavaScript state application faults", async () => {
+  for (const mode of ["capability", "output"]) {
+    const { stdout } = await exec(
+      process.execPath,
+      [new URL("acceptance-atomicity-child.mjs", import.meta.url).pathname, mode],
+      { timeout: 15_000 },
+    );
+    const result = JSON.parse(stdout.trim());
+    assert.equal(result.applyCalled, true);
+    assert.match(result.error, /apply failed after durable acceptance/);
+    assert.equal(result.persistedAcceptance, false);
+  }
 });

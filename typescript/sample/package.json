@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "function": "tsx src/run-function-implementation.ts"
+    "run": "tsx src/run.ts"
   },
   "dependencies": {
     "@tandem/sdk": "0.0.0-experiment",
