@@ -1,0 +1,12 @@
+{
+  "name": "tandem-function-implementation-sample",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "function": "tsx src/run-function-implementation.ts"
+  },
+  "dependencies": {
+    "@tandem/sdk": "0.0.0-experiment",
+    "zod": "^4.3.6"
+  }
+}
