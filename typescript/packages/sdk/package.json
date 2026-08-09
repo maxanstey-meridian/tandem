@@ -1,0 +1,30 @@
+{
+  "name": "@tandem/sdk",
+  "version": "0.0.0-experiment",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "import": "./dist/cli.js"
+    }
+  },
+  "dependencies": {
+    "@tandem/runtime": "0.0.0-experiment"
+  },
+  "devDependencies": {
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "zod": "^4.3.6"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

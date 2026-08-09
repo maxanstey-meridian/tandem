@@ -1,0 +1,22 @@
+{
+  "name": "@tandem/runtime",
+  "version": "0.0.0-experiment",
+  "files": [
+    "index.mjs",
+    "index.d.ts"
+  ],
+  "type": "module",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs"
+    }
+  },
+  "optionalDependencies": {
+    "@tandem/runtime-darwin-arm64": "0.0.0-experiment"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

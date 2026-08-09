@@ -1,0 +1,35 @@
+{
+  "name": "tandem-node-api-productization",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "sample"
+  ],
+  "type": "module",
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build:bridge": "dotnet publish bridge/Tandem.NodeApiSpike.Bridge.csproj -r osx-arm64 --self-contained false --output .runtime-publish && node scripts/stage-runtime.mjs",
+    "build": "pnpm clean && pnpm build:bridge && tsc -p packages/sdk/tsconfig.json && node scripts/verify-package.mjs",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tests/types/negative/tsconfig.json",
+    "lint": "oxlint .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check",
+    "test:bridge": "dotnet test bridge-tests/Tandem.NodeApiSpike.Bridge.Tests.csproj",
+    "test": "pnpm build && pnpm typecheck && pnpm test:bridge && node --test tests/*.test.mjs && pnpm pack-consumer",
+    "pack-consumer": "node scripts/pack-consumer.mjs",
+    "dogfood:function": "pnpm build && tsx sample/src/run-function-implementation.ts"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@tandem/sdk": "workspace:*",
+    "@types/node": "^24.10.1",
+    "oxfmt": "^0.62.0",
+    "oxlint": "^1.77.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "packageManager": "pnpm@11.20.0"
+}

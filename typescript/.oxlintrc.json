@@ -1,0 +1,21 @@
+{
+  "categories": {
+    "correctness": "warn"
+  },
+  "rules": {
+    "no-unused-vars": "warn",
+    "curly": ["error", "all"]
+  },
+  "ignorePatterns": [
+    ".runtime-publish/**",
+    "bridge/bin/**",
+    "bridge/obj/**",
+    "bridge/out/**",
+    "bridge-tests/bin/**",
+    "bridge-tests/obj/**",
+    "node_modules/**",
+    "packages/runtime-darwin-arm64/runtime/**",
+    "packages/sdk/dist/**",
+    "sample/dist/**"
+  ]
+}

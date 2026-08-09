@@ -1,0 +1,26 @@
+{
+  "name": "@tandem/runtime-darwin-arm64",
+  "version": "0.0.0-experiment",
+  "files": [
+    "index.mjs",
+    "index.d.ts",
+    "runtime"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "type": "module",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs"
+    }
+  },
+  "dependencies": {
+    "node-api-dotnet": "0.9.21"
+  }
+}
