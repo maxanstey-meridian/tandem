@@ -32,7 +32,7 @@ internal sealed class DeliveryLedger(RunLedger ledger) : IDeliveryRecordSink
     )
     {
         var baseline = (await ledger.ReadDocumentAsync(_outcomes, cancellationToken))?.Value;
-        var journal = (await ledger.ReadAsync(LedgerPipelineObserver.Journal, cancellationToken))
+        var journal = (await ledger.ReadAsync(PipelineJournal.Stream, cancellationToken))
             .Select(entry => entry.Value)
             .ToArray();
         var plannerDecisions = journal
@@ -216,7 +216,7 @@ internal sealed class DeliveryLedger(RunLedger ledger) : IDeliveryRecordSink
         PublicationResultRecord result,
         CancellationToken cancellationToken
     ) =>
-        await ledger.AppendAsync(
+        await ledger.AppendAfterTerminalAsync(
             PublicationResults,
             $"publication--{result.Branch}--{result.CandidateSha}",
             result,

@@ -316,7 +316,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var store = await CreateStoreAsync(DatabasePath());
         var runId = Guid.CreateVersion7();
         await store.CreateRunAsync(runId, "delivery");
-        var observer = new LedgerPipelineObserver(store.ForRun(runId));
+        var observer = new SqlitePipelineObserver(store.ForRun(runId));
         var decision = new PlannerDecision(
             PlannerDecisionValue.Proceed,
             "Proceed.",
@@ -354,7 +354,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var store = await CreateStoreAsync(DatabasePath());
         var runId = Guid.CreateVersion7();
         await store.CreateRunAsync(runId, "delivery");
-        var observer = new LedgerPipelineObserver(store.ForRun(runId));
+        var observer = new SqlitePipelineObserver(store.ForRun(runId));
         var request = new AskPlannerRequest("What next?", "Inspect first.", ["README.md"]);
 
         var observation = new PipelineCapabilityAccepted(
@@ -390,7 +390,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var runId = Guid.CreateVersion7();
         await store.CreateRunAsync(runId, "delivery");
         var adapter = new DeliveryLedger(store.ForRun(runId));
-        var observer = new LedgerPipelineObserver(store.ForRun(runId));
+        var observer = new SqlitePipelineObserver(store.ForRun(runId));
         var question = new HumanQuestion("Which behavior?", "Decision required.");
         var answer = new HumanAnswer("Use strict behavior.");
         var verification = new VerificationResult(
@@ -439,7 +439,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             CancellationToken.None
         );
         context.HumanAnswers.Should().ContainSingle().Which.Answer.Should().Be(answer);
-        (await ledger.ReadAsync(LedgerPipelineObserver.Journal)).Should().HaveCount(2);
+        (await ledger.ReadAsync(PipelineJournal.Stream)).Should().HaveCount(2);
         verificationResults.Should().ContainSingle();
         verificationResults[0].Value.Result.Should().Be(verification);
 
@@ -467,7 +467,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var runId = Guid.CreateVersion7();
         await store.CreateRunAsync(runId, "delivery");
         var adapter = new DeliveryLedger(store.ForRun(runId));
-        var observer = new LedgerPipelineObserver(store.ForRun(runId));
+        var observer = new SqlitePipelineObserver(store.ForRun(runId));
         var packet = new Packet(
             "Packet",
             "file:///repo",
@@ -573,7 +573,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var store = await CreateStoreAsync(DatabasePath());
         var runId = Guid.CreateVersion7();
         await store.CreateRunAsync(runId, "delivery");
-        var observer = new LedgerPipelineObserver(store.ForRun(runId));
+        var observer = new SqlitePipelineObserver(store.ForRun(runId));
 
         await observer.RecordRunStartedAsync(CancellationToken.None);
         await observer.ObserveAsync(
@@ -644,7 +644,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var store = await CreateStoreAsync(DatabasePath());
         var runId = Guid.CreateVersion7();
         await store.CreateRunAsync(runId, "test");
-        var observer = new LedgerPipelineObserver(store.ForRun(runId));
+        var observer = new SqlitePipelineObserver(store.ForRun(runId));
         var successPayload = JsonSerializer.SerializeToElement(
             new { value = "accepted elsewhere" }
         );
@@ -683,7 +683,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             CancellationToken.None
         );
 
-        var records = await store.ForRun(runId).ReadAsync(LedgerPipelineObserver.Journal);
+        var records = await store.ForRun(runId).ReadAsync(PipelineJournal.Stream);
         records[0].Value.ValueType.Should().Be(typeof(RunnerState).FullName);
         records[0].Value.Payload!.Value.GetRawText().Should().Be(successPayload.GetRawText());
         records[1].Value.Payload!.Value.GetRawText().Should().Be(failurePayload.GetRawText());
@@ -695,23 +695,19 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var path = DatabasePath();
         var store = await CreateStoreAsync(path);
         var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "state-stage");
         var stage = new IncrementStage();
         var pipeline = Pipeline.Start(stage, "state-stage").Persist().Build(stage);
+        var observer = await store.CreateObserverAsync(runId, pipeline);
 
         await new PipelineRunner().RunAsync(
             pipeline,
             new RunnerState(4),
-            new PipelineRunOptions(runId, Observer: new LedgerPipelineObserver(store.ForRun(runId)))
+            new PipelineRunOptions(runId, Observer: observer)
         );
 
         var reopened = await CreateStoreAsync(path);
-        var records = await reopened.ForRun(runId).ReadAsync(LedgerPipelineObserver.Journal);
-        var completed = records
-            .Select(entry => entry.Value)
-            .Single(record => record.Kind == RuntimeJournalKind.StepCompleted);
-        completed.ValueType.Should().Be(typeof(RunnerState).FullName);
-        completed.Payload!.Value.GetProperty("count").GetInt32().Should().Be(5);
+        var accepted = await reopened.ReadLatestAcceptedAsync<RunnerState>(runId, stage.Id);
+        accepted!.Value.Count.Should().Be(5);
     }
 
     [Fact]
@@ -720,23 +716,19 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var path = DatabasePath();
         var store = await CreateStoreAsync(path);
         var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "outcome-stage");
         var stage = new SuccessfulOutcomeStage();
         var pipeline = Pipeline.Start(stage, "outcome-stage").Persist().Build(stage);
+        var observer = await store.CreateObserverAsync(runId, pipeline);
 
         await new PipelineRunner().RunAsync(
             pipeline,
             new RunnerState(4),
-            new PipelineRunOptions(runId, Observer: new LedgerPipelineObserver(store.ForRun(runId)))
+            new PipelineRunOptions(runId, Observer: observer)
         );
 
         var reopened = await CreateStoreAsync(path);
-        var records = await reopened.ForRun(runId).ReadAsync(LedgerPipelineObserver.Journal);
-        var completed = records
-            .Select(entry => entry.Value)
-            .Single(record => record.Kind == RuntimeJournalKind.StepCompleted);
-        completed.ValueType.Should().Be(typeof(RunnerState).FullName);
-        completed.Payload!.Value.GetProperty("count").GetInt32().Should().Be(6);
+        var accepted = await reopened.ReadLatestAcceptedAsync<RunnerState>(runId, stage.Id);
+        accepted!.Value.Count.Should().Be(6);
     }
 
     [Fact]
@@ -752,11 +744,11 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         await new PipelineRunner().RunAsync(
             pipeline,
             new RunnerBaseState(1),
-            new PipelineRunOptions(runId, Observer: new LedgerPipelineObserver(store.ForRun(runId)))
+            new PipelineRunOptions(runId, Observer: new SqlitePipelineObserver(store.ForRun(runId)))
         );
 
         var reopened = await CreateStoreAsync(path);
-        var completed = (await reopened.ForRun(runId).ReadAsync(LedgerPipelineObserver.Journal))
+        var completed = (await reopened.ForRun(runId).ReadAsync(PipelineJournal.Stream))
             .Select(entry => entry.Value)
             .Single(record => record.Kind == RuntimeJournalKind.StepCompleted);
         completed.ValueType.Should().Be(typeof(RunnerDerivedState).FullName);
@@ -770,7 +762,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var runId = Guid.CreateVersion7();
         await store.CreateRunAsync(runId, "delivery");
         var adapter = new DeliveryLedger(store.ForRun(runId));
-        var observer = new LedgerPipelineObserver(store.ForRun(runId));
+        var observer = new SqlitePipelineObserver(store.ForRun(runId));
         await adapter.InitializeAsync(
             new Packet(
                 "Packet",
@@ -836,6 +828,169 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var formatted = DeliveryLedgerContextFormatter.Format(reviewer);
         formatted.Should().HaveLength(8_000);
         formatted.Should().EndWith("[durable context truncated]\n</durable-delivery-context>");
+    }
+
+    [Fact]
+    public async Task PublicObserverAndReader_ReturnLatestAcceptedValueBySequenceAndIsolateScope()
+    {
+        var path = DatabasePath();
+        var store = new SqliteLedgerStore(path);
+        var firstRun = Guid.CreateVersion7();
+        var secondRun = Guid.CreateVersion7();
+        var first = await store.CreateObserverAsync(firstRun, "first");
+        var second = await store.CreateObserverAsync(secondRun, "second");
+        await first.ObserveAsync(AcceptedStep(firstRun, "shared", new RunnerState(1)), default);
+        await first.ObserveAsync(AcceptedStep(firstRun, "other", new RunnerState(9)), default);
+        await first.ObserveAsync(AcceptedStep(firstRun, "shared", new RunnerState(2)), default);
+        await second.ObserveAsync(AcceptedStep(secondRun, "shared", new RunnerState(7)), default);
+
+        var reopened = new SqliteLedgerStore(path);
+        await reopened.InitializeAsync();
+        var latest = await reopened.ReadLatestAcceptedAsync<RunnerState>(firstRun, "shared");
+        var other = await reopened.ReadLatestAcceptedAsync<RunnerState>(firstRun, "other");
+        var isolated = await reopened.ReadLatestAcceptedAsync<RunnerState>(secondRun, "shared");
+
+        latest!.Value.Count.Should().Be(2);
+        latest.Sequence.Should().BeGreaterThan(other!.Sequence);
+        other.Value.Count.Should().Be(9);
+        isolated!.Value.Count.Should().Be(7);
+    }
+
+    [Fact]
+    public async Task ReopenedObservers_ContinueJournalSequenceWithoutIdentityCollisions()
+    {
+        var path = DatabasePath();
+        var runId = Guid.CreateVersion7();
+        var firstStore = new SqliteLedgerStore(path);
+        var first = await firstStore.CreateObserverAsync(runId, "pipeline");
+        await first.ObserveAsync(new PipelineStepStarted(runId, "first"), default);
+
+        var reopenedStore = new SqliteLedgerStore(path);
+        var reopened = await reopenedStore.CreateObserverAsync(runId, "pipeline");
+        await reopened.ObserveAsync(new PipelineStepStarted(runId, "second"), default);
+        await Task.WhenAll(
+            first.ObserveAsync(new PipelineStepStarted(runId, "third"), default).AsTask(),
+            reopened.ObserveAsync(new PipelineStepStarted(runId, "fourth"), default).AsTask()
+        );
+
+        var entries = await reopenedStore.ForRun(runId).ReadAsync(PipelineJournal.Stream);
+        entries.Select(entry => entry.Sequence).Should().Equal(1, 2, 3, 4);
+        entries.Select(entry => entry.EntryId).Should().OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public async Task ObserverFactory_RejectsCompositionConflictsAndTerminalRuns()
+    {
+        var store = new SqliteLedgerStore(DatabasePath());
+        var runId = Guid.CreateVersion7();
+        var observer = await store.CreateObserverAsync(runId, "pipeline");
+        var conflict = async () => await store.CreateObserverAsync(runId, "other");
+        await conflict.Should().ThrowAsync<LedgerConflictException>();
+        var mismatchedObservation = async () =>
+            await observer.ObserveAsync(
+                new PipelineStepStarted(Guid.CreateVersion7(), "wrong-run"),
+                default
+            );
+        await mismatchedObservation.Should().ThrowAsync<LedgerConflictException>();
+        await store.CompleteRunAsync(runId, LedgerRunStatus.Ready);
+
+        var reopen = async () => await store.CreateObserverAsync(runId, "pipeline");
+        var append = async () =>
+            await observer.ObserveAsync(new PipelineStepStarted(runId, "late"), default);
+        var directAppend = async () =>
+            await store
+                .ForRun(runId)
+                .AppendAsync(new LedgerStream<string>("terminal", "test.terminal"), "late", "late");
+        var write = async () =>
+            await store
+                .ForRun(runId)
+                .WriteDocumentAsync(
+                    new LedgerDocument<RunnerState>("state", "test.state"),
+                    new RunnerState(1),
+                    0
+                );
+
+        await reopen.Should().ThrowAsync<LedgerConflictException>();
+        await append.Should().ThrowAsync<LedgerConflictException>();
+        await directAppend.Should().ThrowAsync<LedgerConflictException>();
+        await write.Should().ThrowAsync<LedgerConflictException>();
+    }
+
+    [Fact]
+    public async Task JournalCompletionAndTerminalStatus_CommitAtomically()
+    {
+        var store = new SqliteLedgerStore(DatabasePath());
+        var runId = Guid.CreateVersion7();
+        var observer = await store.CreateObserverAsync(runId, "pipeline");
+
+        await store.ExecuteAsync(async cancellationToken =>
+        {
+            await observer.RecordRunCompletedAsync("Ready", cancellationToken);
+            await store.CompleteRunAsync(runId, LedgerRunStatus.Ready, cancellationToken);
+            return true;
+        });
+
+        (await store.GetRunAsync(runId)).Status.Should().Be(LedgerRunStatus.Ready);
+        var journal = await store.ForRun(runId).ReadAsync(PipelineJournal.Stream);
+        journal
+            .Should()
+            .ContainSingle(entry => entry.Value.Kind == RuntimeJournalKind.RunCompleted);
+    }
+
+    [Fact]
+    public async Task AcceptedReader_ReturnsExplicitAbsenceAndRejectsTypeMismatchAndMalformedData()
+    {
+        var store = new SqliteLedgerStore(DatabasePath());
+        var runId = Guid.CreateVersion7();
+        var observer = await store.CreateObserverAsync(runId, "pipeline");
+        (await store.ReadLatestAcceptedAsync<RunnerState>(runId, "missing")).Should().BeNull();
+        await observer.ObserveAsync(AcceptedStep(runId, "typed", new RunnerState(1)), default);
+        await observer.ObserveAsync(
+            new PipelineStepCompleted(
+                runId,
+                "malformed",
+                new PipelineRunOutcome(
+                    StandardOutcomeKinds.Success,
+                    "malformed",
+                    "Succeeded",
+                    default,
+                    TimeSpan.Zero
+                ),
+                new PipelineAcceptedValue(
+                    typeof(RunnerState).FullName!,
+                    JsonSerializer.SerializeToElement(new { count = "not-an-integer" })
+                )
+            ),
+            default
+        );
+        await observer.ObserveAsync(
+            new PipelineStepCompleted(
+                runId,
+                "null",
+                new PipelineRunOutcome(
+                    StandardOutcomeKinds.Success,
+                    "null",
+                    "Succeeded",
+                    default,
+                    TimeSpan.Zero
+                ),
+                new PipelineAcceptedValue(
+                    typeof(RunnerState).FullName!,
+                    JsonSerializer.SerializeToElement<RunnerState?>(null)
+                )
+            ),
+            default
+        );
+
+        var mismatch = async () =>
+            await store.ReadLatestAcceptedAsync<RunnerDerivedState>(runId, "typed");
+        var malformed = async () =>
+            await store.ReadLatestAcceptedAsync<RunnerState>(runId, "malformed");
+        var nullValue = async () => await store.ReadLatestAcceptedAsync<RunnerState>(runId, "null");
+
+        await mismatch.Should().ThrowAsync<LedgerValueTypeMismatchException>();
+        await malformed.Should().ThrowAsync<LedgerDataException>();
+        await nullValue.Should().ThrowAsync<LedgerDataException>();
     }
 
     [Fact]
@@ -906,6 +1061,27 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         await store.InitializeAsync();
         return store;
     }
+
+    private static PipelineStepCompleted AcceptedStep(
+        Guid runId,
+        string stepId,
+        RunnerState state
+    ) =>
+        new(
+            runId,
+            stepId,
+            new PipelineRunOutcome(
+                StandardOutcomeKinds.Success,
+                stepId,
+                "Succeeded",
+                default,
+                TimeSpan.Zero
+            ),
+            new PipelineAcceptedValue(
+                typeof(RunnerState).FullName!,
+                JsonSerializer.SerializeToElement(state, JsonSerializerOptions.Web)
+            )
+        );
 
     private static async Task<WorkerResult> RunWorkerAsync(
         string databasePath,

@@ -21,6 +21,12 @@
     </ItemGroup>
 
     <ItemGroup>
+        <ProjectReference Include="..\Tandem\Tandem.csproj" />
+        <InternalsVisibleTo Include="Tandem.Tests" />
+        <InternalsVisibleTo Include="Tandem.Tool" />
+    </ItemGroup>
+
+    <ItemGroup>
         <None Include="../../README.md" Pack="true" PackagePath="/" />
     </ItemGroup>
 </Project>

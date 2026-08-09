@@ -23,6 +23,11 @@ public sealed class PublicApiBoundaryTests
         "src/Tandem.Advanced/ExportedApi.txt",
         "src/Tandem.Advanced/PublicApiMembers.txt"
     )]
+    [InlineData(
+        typeof(Tandem.Ledger.SqliteLedgerStore),
+        "src/Tandem.Ledger/ExportedApi.txt",
+        "src/Tandem.Ledger/PublicApiMembers.txt"
+    )]
     public void PublicApi_MatchesReviewedManifest(
         Type assemblyMarker,
         string typeManifestPath,

@@ -269,6 +269,30 @@ pipeline. A pipeline requiring persistence fails before execution when its host 
 no persistence observer. Application values need no persistence interfaces or save
 callbacks.
 
+External hosts use the SQLite adapter from `Tandem.Ledger` rather than implementing
+the observation journal themselves:
+
+```csharp
+var store = new SqliteLedgerStore("tandem.sqlite3");
+var observer = await store.CreateObserverAsync(runId, pipeline, cancellationToken);
+
+await new PipelineRunner().RunAsync(
+    pipeline,
+    initialState,
+    new PipelineRunOptions(runId, Observer: observer),
+    cancellationToken);
+
+var accepted = await store.ReadLatestAcceptedAsync<MyState>(
+    runId,
+    stepId,
+    cancellationToken);
+```
+
+The nullable reader result means no accepted value exists. Type-incompatible and
+malformed persisted values fail explicitly. Reading a value is not workflow resume;
+a host may choose to use it as the initial state of a new run. The host separately
+owns terminal run status through `CompleteRunAsync`.
+
 Tandem persists accepted semantic boundaries, not state snapshots, failed candidates,
 prompts, reasoning, streaming prose, or arbitrary tool bodies.
 

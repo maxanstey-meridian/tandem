@@ -161,8 +161,11 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
 
     var runPaths = new RunSetup().Create(tandemHome);
     var ledgerStore = new SqliteLedgerStore(Path.Combine(tandemHome, "ledger.sqlite3"));
-    await ledgerStore.InitializeAsync(cancellationToken);
-    await ledgerStore.CreateRunAsync(runPaths.RunId, "delivery", cancellationToken);
+    var journalObserver = await ledgerStore.CreateObserverAsync(
+        runPaths.RunId,
+        "delivery",
+        cancellationToken
+    );
     var deliveryLedger = new DeliveryLedger(ledgerStore.ForRun(runPaths.RunId));
     await deliveryLedger.InitializeAsync(packet, cancellationToken);
     await using var provider = BuildDeliveryServices(config, deliveryLedger);
@@ -170,7 +173,6 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
     var composition = provider.GetRequiredService<DeliveryComposition>();
 
     var renderer = new StreamRenderer();
-    var journalObserver = new LedgerPipelineObserver(ledgerStore.ForRun(runPaths.RunId));
     var liveTranscript = new LiveTranscript();
     try
     {
@@ -379,7 +381,7 @@ static async Task PersistTerminalAsync(
     Guid runId,
     PipelineRunResult<DeliveryState> final,
     SqliteLedgerStore ledgerStore,
-    LedgerPipelineObserver journalObserver,
+    SqlitePipelineObserver journalObserver,
     CancellationToken cancellationToken
 )
 {
@@ -387,10 +389,19 @@ static async Task PersistTerminalAsync(
         final.Status == PipelineRunStatus.Succeeded
             ? Tandem.Delivery.RunStatus.Ready
             : Tandem.Delivery.RunStatus.Failed;
-    await journalObserver.RecordRunCompletedAsync(status.ToString(), cancellationToken);
-    await ledgerStore.CompleteRunAsync(
-        runId,
-        status == Tandem.Delivery.RunStatus.Ready ? LedgerRunStatus.Ready : LedgerRunStatus.Failed,
+    await ledgerStore.ExecuteAsync(
+        async ct =>
+        {
+            await journalObserver.RecordRunCompletedAsync(status.ToString(), ct);
+            await ledgerStore.CompleteRunAsync(
+                runId,
+                status == Tandem.Delivery.RunStatus.Ready
+                    ? LedgerRunStatus.Ready
+                    : LedgerRunStatus.Failed,
+                ct
+            );
+            return true;
+        },
         cancellationToken
     );
 }
@@ -398,19 +409,26 @@ static async Task PersistTerminalAsync(
 static async Task TryPersistInterruptedRunAsync(
     Guid runId,
     SqliteLedgerStore ledgerStore,
-    LedgerPipelineObserver journalObserver,
+    SqlitePipelineObserver journalObserver,
     Tandem.Delivery.RunStatus status,
     string reason
 )
 {
     try
     {
-        await journalObserver.RecordRunCompletedAsync(status.ToString(), CancellationToken.None);
-        await ledgerStore.CompleteRunAsync(
-            runId,
-            status == Tandem.Delivery.RunStatus.Cancelled
-                ? LedgerRunStatus.Cancelled
-                : LedgerRunStatus.Faulted,
+        await ledgerStore.ExecuteAsync(
+            async ct =>
+            {
+                await journalObserver.RecordRunCompletedAsync(status.ToString(), ct);
+                await ledgerStore.CompleteRunAsync(
+                    runId,
+                    status == Tandem.Delivery.RunStatus.Cancelled
+                        ? LedgerRunStatus.Cancelled
+                        : LedgerRunStatus.Faulted,
+                    ct
+                );
+                return true;
+            },
             CancellationToken.None
         );
     }
