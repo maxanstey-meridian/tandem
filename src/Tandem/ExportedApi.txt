@@ -5,6 +5,9 @@ Tandem.AgentCapability`1
 Tandem.AgentCapability`2
 Tandem.AgentDefinition`1
 Tandem.Agent
+Tandem.AgentJsonCapabilityDefinition`1
+Tandem.AgentJsonOutputDefinition`1
+Tandem.AgentJsonValidationProblem
 Tandem.AgentOutputExample`1
 Tandem.FailureEvidence
 Tandem.IAgentCapabilityDefinition`2

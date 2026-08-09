@@ -66,6 +66,7 @@ internal sealed record AgentStructuredOutputDescriptor<TState>(
     >? AcceptAsync = null,
     string? CorrectionRequiredToolName = null,
     Type? OutputType = null,
+    string? OutputValueType = null,
     string? Instructions = null,
     Func<TState, IReadOnlyList<AgentOutputExampleDescriptor>>? Examples = null
 );

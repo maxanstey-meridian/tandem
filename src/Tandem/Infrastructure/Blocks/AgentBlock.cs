@@ -297,7 +297,8 @@ internal sealed class AgentBlock<TState>(
                                         config.StepId,
                                         acceptedOutputId,
                                         structuredResult.Outcome!.Kind,
-                                        config.StructuredOutput!.OutputType?.FullName
+                                        config.StructuredOutput!.OutputValueType
+                                            ?? config.StructuredOutput.OutputType?.FullName
                                             ?? config.StructuredOutput.OutputType?.Name,
                                         observedRunContext.ShouldPersist(config.StepId)
                                             ? structuredResult.Outcome!.Payload

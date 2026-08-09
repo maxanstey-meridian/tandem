@@ -4,12 +4,14 @@ M static Tandem.AgentBuilder<TState> Create<TState>(System.String id, System.Str
 T Tandem.AgentBuilder<TState>
 M Tandem.AgentBuilder<TState> ContinueSession()
 M Tandem.AgentBuilder<TState> WithCapability(Tandem.AgentCapability<TState> capability)
+M Tandem.AgentBuilder<TState> WithJsonOutput(Tandem.AgentJsonOutputDefinition<TState> output, System.Func<TState,System.Text.Json.JsonElement,TState> apply)
 M Tandem.AgentBuilder<TState> WithMessage(System.Func<TState,System.String> message)
 M Tandem.AgentBuilder<TState> WithOutput<TOutput>(Tandem.IAgentOutputDefinition<TState,TOutput> output, System.Func<TState,TOutput,TState> apply)
 M Tandem.AgentBuilder<TState> WithTimeout(System.TimeSpan timeout)
 M Tandem.AgentDefinition<TState> Build()
 T Tandem.AgentCapabilities
 M static Tandem.AgentCapability<TState,TRequest> Create<TState,TRequest>(Tandem.IAgentCapabilityDefinition<TState,TRequest> capability, System.Func<TState,TRequest,TState> apply) where TRequest : class
+M static Tandem.AgentCapability<TState> CreateJson<TState>(Tandem.AgentJsonCapabilityDefinition<TState> capability, System.Func<TState,System.Text.Json.JsonElement,TState> apply)
 T Tandem.AgentCapability<TState>
 T Tandem.AgentCapability<TState,TRequest> where TRequest : class
 T Tandem.AgentDefinition<TState>
@@ -17,6 +19,44 @@ P System.String Id { get; }
 P Tandem.PipelineNodeDescriptor Descriptor { get; }
 P Tandem.PipelineOutcomeSelector<TState> Failed { get; }
 P Tandem.PipelineOutcomeSelector<TState> Success { get; }
+T Tandem.AgentJsonCapabilityDefinition<TState>
+C (System.String ToolName, System.String Instructions, System.Text.Json.JsonElement JsonSchema, System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>> Validate, System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>>? ValidateFor, System.Func<System.Text.Json.JsonElement,System.String> Summarize, System.String ContractName = "json")
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.AgentJsonCapabilityDefinition<TState>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String ToolName, out System.String Instructions, out System.Text.Json.JsonElement JsonSchema, out System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>> Validate, out System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>>? ValidateFor, out System.Func<System.Text.Json.JsonElement,System.String> Summarize, out System.String ContractName)
+M Tandem.AgentJsonCapabilityDefinition<TState> <Clone>$()
+P System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>> Validate { get; set; }
+P System.Func<System.Text.Json.JsonElement,System.String> Summarize { get; set; }
+P System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>>? ValidateFor { get; set; }
+P System.String ContractName { get; set; }
+P System.String Instructions { get; set; }
+P System.String ToolName { get; set; }
+P System.Text.Json.JsonElement JsonSchema { get; set; }
+T Tandem.AgentJsonOutputDefinition<TState>
+C (System.Text.Json.JsonElement JsonSchema, System.String Instructions, System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>> Validate, System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>>? ValidateFor = null, System.String ContractName = "json")
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.AgentJsonOutputDefinition<TState>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Text.Json.JsonElement JsonSchema, out System.String Instructions, out System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>> Validate, out System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>>? ValidateFor, out System.String ContractName)
+M Tandem.AgentJsonOutputDefinition<TState> <Clone>$()
+P System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>> Validate { get; set; }
+P System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>>? ValidateFor { get; set; }
+P System.String ContractName { get; set; }
+P System.String Instructions { get; set; }
+P System.Text.Json.JsonElement JsonSchema { get; set; }
+T Tandem.AgentJsonValidationProblem
+C (System.String Field, System.String Message)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.AgentJsonValidationProblem? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Field, out System.String Message)
+M Tandem.AgentJsonValidationProblem <Clone>$()
+P System.String Field { get; set; }
+P System.String Message { get; set; }
 T Tandem.AgentOutputExample<TOutput>
 C (System.String Input, TOutput Output)
 M System.Boolean Equals(System.Object? obj)
@@ -105,6 +145,8 @@ M Tandem.PipelineBuilder<TState> Route<TRequest,TResponse>(System.Func<TState,Sy
 M Tandem.PipelineBuilder<TState> Route<TRequest,TResponse>(Tandem.PipelineInteraction<TState,TRequest,TResponse> from, Tandem.IPipelineNode<TState> to, System.String label)
 M Tandem.PipelineBuilder<TState> Route<TRequest,TResponse>(Tandem.PipelineOutcomeSelector<TState> on, System.Func<TState,System.Boolean> when, Tandem.PipelineInteraction<TState,TRequest,TResponse> to, System.String label)
 M Tandem.PipelineBuilder<TState> Route<TRequest,TResponse>(Tandem.PipelineOutcomeSelector<TState> on, Tandem.PipelineInteraction<TState,TRequest,TResponse> to, System.String label)
+M Tandem.PipelineBuilder<TState> Route<TSourceResult,TRequest,TResponse>(System.Func<TState,System.Boolean> when, Tandem.IGeneratedPipelineStep<TState,TSourceResult> from, Tandem.PipelineInteraction<TState,TRequest,TResponse> to, System.String label)
+M Tandem.PipelineBuilder<TState> Route<TSourceResult,TRequest,TResponse>(Tandem.IGeneratedPipelineStep<TState,TSourceResult> on, Tandem.PipelineInteraction<TState,TRequest,TResponse> to, System.String label)
 M Tandem.PipelineBuilder<TState> Route<TSourceResult>(System.Func<TState,System.Boolean> when, Tandem.IGeneratedPipelineStep<TState,TSourceResult> from, Tandem.IPipelineNode<TState> to, System.String label)
 M Tandem.PipelineBuilder<TState> Route<TSourceResult>(Tandem.IGeneratedPipelineStep<TState,TSourceResult> on, Tandem.IPipelineNode<TState> to, System.String label)
 T Tandem.PipelineInspection

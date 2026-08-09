@@ -160,6 +160,90 @@ public sealed class InProcessPipelineRunnerTests
         output.LatestResult!.CaseId.Should().Be(nameof(Outcome<RunnerState>.Failed));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GeneratedStep_UnconditionalInteractionRoute_ContinuesAfterAnyOutcome(
+        bool fail
+    )
+    {
+        IGeneratedPipelineStep<RunnerState, Outcome<RunnerState>> start = fail
+            ? new DeclaredFailureStage()
+            : new SuccessfulOutcomeStage();
+        var interaction = PipelineNodes.WaitFor<RunnerState, ProbeQuestion, ProbeAnswer>(
+            "generated-step-input",
+            state => new ProbeQuestion($"Current count: {state.Count}"),
+            (state, answer) => state with { Answer = answer.Text }
+        );
+        var complete = PipelineNodes.Complete(new TestCompletion<RunnerState>("complete"));
+        var pipeline = Pipeline
+            .Start(start, "generated-step-unconditional-interaction")
+            .Route(on: start, to: interaction, label: "ask")
+            .Route(from: interaction, to: complete, label: "answered")
+            .Build(complete);
+
+        var result = await new PipelineRunner().RunAsync(
+            pipeline,
+            new RunnerState(0),
+            new PipelineRunOptions(
+                Interactions: new PipelineInteractionHandlers().Handle(
+                    interaction,
+                    (_, _) => ValueTask.FromResult(new ProbeAnswer("continued"))
+                )
+            )
+        );
+
+        result.Status.Should().Be(PipelineRunStatus.Succeeded);
+        result.State.Answer.Should().Be("continued");
+    }
+
+    [Theory]
+    [InlineData(false, false, PipelineRunStatus.Succeeded)]
+    [InlineData(false, true, PipelineRunStatus.Succeeded)]
+    [InlineData(true, false, PipelineRunStatus.Failed)]
+    [InlineData(true, true, PipelineRunStatus.Succeeded)]
+    public async Task GeneratedStep_ConditionalInteractionRoute_RespectsPredicateAndFailureDisposition(
+        bool fail,
+        bool matches,
+        PipelineRunStatus expectedStatus
+    )
+    {
+        IGeneratedPipelineStep<RunnerState, Outcome<RunnerState>> start = fail
+            ? new DeclaredFailureStage()
+            : new SuccessfulOutcomeStage();
+        var interaction = PipelineNodes.WaitFor<RunnerState, ProbeQuestion, ProbeAnswer>(
+            "conditional-generated-step-input",
+            state => new ProbeQuestion($"Current count: {state.Count}"),
+            (state, answer) => state with { Answer = answer.Text }
+        );
+        var complete = PipelineNodes.Complete(new TestCompletion<RunnerState>("complete"));
+        var pipeline = Pipeline
+            .Start(start, "generated-step-conditional-interaction")
+            .Route(when: _ => matches, from: start, to: interaction, label: "ask")
+            .Route(from: interaction, to: complete, label: "answered")
+            .Build(start, complete);
+        var interactionCount = 0;
+
+        var result = await new PipelineRunner().RunAsync(
+            pipeline,
+            new RunnerState(0),
+            new PipelineRunOptions(
+                Interactions: new PipelineInteractionHandlers().Handle(
+                    interaction,
+                    (_, _) =>
+                    {
+                        interactionCount++;
+                        return ValueTask.FromResult(new ProbeAnswer("continued"));
+                    }
+                )
+            )
+        );
+
+        result.Status.Should().Be(expectedStatus);
+        interactionCount.Should().Be(matches ? 1 : 0);
+        result.State.Answer.Should().Be(matches ? "continued" : null);
+    }
+
     [Fact]
     public async Task CompletionDefinition_InfersState_AppliesOnce_AndPublishesStandardCompletionOnce()
     {

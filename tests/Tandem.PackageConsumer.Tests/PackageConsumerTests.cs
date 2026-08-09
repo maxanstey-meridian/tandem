@@ -442,6 +442,7 @@ public sealed class PackageConsumerTests
         """;
 
     private const string DebateProgram = """
+        using System.Text.Json;
         using FluentValidation;
         using Microsoft.Extensions.AI;
         using Tandem;
@@ -472,5 +473,49 @@ public sealed class PackageConsumerTests
             cancellationToken: CancellationToken.None
         );
         if (!result.Succeeded || result.State.Verdict?.Value != "Affirmed") throw new Exception("Debate package proof failed.");
+
+        using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
+        var jsonOutput = Agent
+            .Create<DebateState>("json-output", "Return JSON.", new ScriptedChatClient(ScriptedChatClient.Text("{\"value\":1}")))
+            .WithMessage(_ => "Return a value.")
+            .WithJsonOutput(
+                new AgentJsonOutputDefinition<DebateState>(schema.RootElement, "Return a value.", _ => [], ContractName: "package.dynamic-output"),
+                (state, _) => state
+            )
+            .Build();
+        var outputResult = await new PipelineRunner().RunAsync(
+            Pipeline.Start(jsonOutput, "json-output-proof").Build(jsonOutput),
+            new DebateState("JSON output", [], 0, null)
+        );
+        if (!outputResult.Succeeded) throw new Exception("JSON output package proof failed.");
+
+        var jsonCapability = AgentCapabilities.CreateJson(
+            new AgentJsonCapabilityDefinition<DebateState>(
+                "accept_json",
+                "Accept JSON.",
+                schema.RootElement,
+                _ => [],
+                null,
+                _ => "Accepted JSON.",
+                "package.dynamic-capability"
+            ),
+            (state, _) => state
+        );
+        var capabilityResponse = new ChatResponse(
+            new ChatMessage(
+                ChatRole.Assistant,
+                [new FunctionCallContent("json-1", "accept_json", new Dictionary<string, object?> { ["value"] = 1 })]
+            )
+        ) { FinishReason = ChatFinishReason.ToolCalls, ModelId = "package-proof" };
+        var jsonCapabilityAgent = Agent
+            .Create<DebateState>("json-capability", "Accept JSON.", new ScriptedChatClient(capabilityResponse))
+            .WithMessage(_ => "Accept a value.")
+            .WithCapability(jsonCapability)
+            .Build();
+        var capabilityResult = await new PipelineRunner().RunAsync(
+            Pipeline.Start(jsonCapabilityAgent, "json-capability-proof").Build(jsonCapabilityAgent),
+            new DebateState("JSON capability", [], 0, null)
+        );
+        if (!capabilityResult.Succeeded) throw new Exception("JSON capability package proof failed.");
         """;
 }

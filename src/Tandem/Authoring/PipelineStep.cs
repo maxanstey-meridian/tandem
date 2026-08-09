@@ -943,6 +943,19 @@ public sealed class PipelineBuilder<TState>
         return this;
     }
 
+    public PipelineBuilder<TState> Route<TSourceResult, TRequest, TResponse>(
+        IGeneratedPipelineStep<TState, TSourceResult> on,
+        PipelineInteraction<TState, TRequest, TResponse> to,
+        string label
+    )
+    {
+        EnsureRouteMode(on, RouteMode.Output);
+        TrackFailureRoute(on, when: null);
+        EnsureInteraction(to);
+        AddRoute(on, to.Request, _ => true, label, unconditional: true);
+        return this;
+    }
+
     public PipelineBuilder<TState> Route<TSourceResult>(
         Func<TState, bool> when,
         IGeneratedPipelineStep<TState, TSourceResult> from,
@@ -953,6 +966,20 @@ public sealed class PipelineBuilder<TState>
         EnsureRouteMode(from, RouteMode.Output);
         TrackFailureRoute(from, pipeline => when(pipeline.State));
         AddRoute(from, to, pipeline => when(pipeline.State), label);
+        return this;
+    }
+
+    public PipelineBuilder<TState> Route<TSourceResult, TRequest, TResponse>(
+        Func<TState, bool> when,
+        IGeneratedPipelineStep<TState, TSourceResult> from,
+        PipelineInteraction<TState, TRequest, TResponse> to,
+        string label
+    )
+    {
+        EnsureRouteMode(from, RouteMode.Output);
+        TrackFailureRoute(from, pipeline => when(pipeline.State));
+        EnsureInteraction(to);
+        AddRoute(from, to.Request, pipeline => when(pipeline.State), label);
         return this;
     }
 

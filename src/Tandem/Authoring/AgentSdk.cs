@@ -252,6 +252,100 @@ public sealed class AgentBuilder<TState>
         return this;
     }
 
+    public AgentBuilder<TState> WithJsonOutput(
+        AgentJsonOutputDefinition<TState> output,
+        Func<TState, JsonElement, TState> apply
+    )
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentException.ThrowIfNullOrWhiteSpace(output.Instructions);
+        ArgumentException.ThrowIfNullOrWhiteSpace(output.ContractName);
+        ArgumentNullException.ThrowIfNull(output.Validate);
+        ArgumentNullException.ThrowIfNull(apply);
+        if (
+            output.JsonSchema.ValueKind is not JsonValueKind.Object
+            || !output.JsonSchema.TryGetProperty("type", out var rootType)
+            || rootType.ValueKind is not JsonValueKind.String
+            || rootType.GetString() != "object"
+        )
+        {
+            throw new ArgumentException(
+                "Output JSON schema must declare an object root with type 'object'.",
+                nameof(output)
+            );
+        }
+        var jsonSchema = output.JsonSchema.Clone();
+
+        _structuredOutput = new AgentStructuredOutputDescriptor<TState>(
+            (response, state) => ParseJsonOutput(response, state, output),
+            Apply: (state, candidate) => apply(state, (JsonElement)candidate),
+            OutputType: typeof(JsonElement),
+            OutputValueType: output.ContractName,
+            Instructions: output.Instructions
+        );
+        _configureChatOptions = options =>
+            options.ResponseFormat = ChatResponseFormat.ForJsonSchema(jsonSchema);
+        return this;
+    }
+
+    private static AgentStructuredOutputResult<TState> ParseJsonOutput(
+        string response,
+        TState state,
+        AgentJsonOutputDefinition<TState> output
+    )
+    {
+        JsonElement candidate;
+        try
+        {
+            var json = AgentStructuredJsonExtractor.Extract(response);
+            using var document = JsonDocument.Parse(json);
+            candidate = document.RootElement.Clone();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or JsonException)
+        {
+            return new AgentStructuredOutputResult<TState>(
+                null,
+                [new AgentStructuredOutputProblem("$", exception.Message)],
+                response
+            );
+        }
+        if (candidate.ValueKind is not JsonValueKind.Object)
+        {
+            return new AgentStructuredOutputResult<TState>(
+                null,
+                [new AgentStructuredOutputProblem("$", "Response must contain a JSON object.")],
+                response,
+                candidate
+            );
+        }
+
+        AgentStructuredOutputProblem[] problems;
+        try
+        {
+            problems = output
+                .Validate(candidate)
+                .Concat(output.ValidateFor?.Invoke(state, candidate) ?? [])
+                .Select(problem => new AgentStructuredOutputProblem(problem.Field, problem.Message))
+                .ToArray();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            problems = [new AgentStructuredOutputProblem("$", exception.Message)];
+        }
+        return problems.Length > 0
+            ? new AgentStructuredOutputResult<TState>(null, problems, response, candidate)
+            : new AgentStructuredOutputResult<TState>(
+                new AgentStructuredOutcome<TState>(
+                    StandardOutcomeKinds.Success,
+                    "Succeeded",
+                    candidate
+                ),
+                [],
+                response,
+                candidate
+            );
+    }
+
     private static void ValidateExample<TOutput>(
         TOutput example,
         IValidator<TOutput> intrinsic,

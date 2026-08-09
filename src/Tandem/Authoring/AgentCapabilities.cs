@@ -94,7 +94,7 @@ public sealed class AgentCapability<TState, TRequest> : AgentCapability<TState>
     }
 }
 
-public static class AgentCapabilities
+public static partial class AgentCapabilities
 {
     public static AgentCapability<TState, TRequest> Create<TState, TRequest>(
         IAgentCapabilityDefinition<TState, TRequest> capability,
@@ -232,73 +232,25 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
             return Error($"invalid {_name} call", [ex.Message]);
         }
 
-        if (!_invocation.TryReserve())
-        {
-            return Error("conflicting capability outcome", []);
-        }
-
-        try
-        {
-            var context = new CapabilityAcceptanceContext<TState, TRequest>(
-                _invocation.RunId,
-                _invocation.StepId,
-                _invocation.InvocationId,
-                _capabilityId,
-                _invocation.State,
-                request
-            );
-            async ValueTask<AcceptedCapability<TState>> AcceptAsync(CancellationToken ct)
-            {
-                if (_accept is not null)
-                {
-                    await _accept(context, ct);
-                }
-                if (_invocation.RunContext is { } observedRunContext)
-                {
-                    await observedRunContext.ObserveAsync(
-                        new PipelineCapabilityAccepted(
-                            _invocation.RunId,
-                            _invocation.StepId,
-                            _invocation.InvocationId,
-                            _capabilityId,
-                            _name,
-                            context.AcceptedCallId,
-                            typeof(TRequest).FullName ?? typeof(TRequest).Name,
-                            observedRunContext.ShouldPersist(_invocation.StepId) ? payload : null
-                        ),
-                        ct
-                    );
-                }
-                ct.ThrowIfCancellationRequested();
-                var acceptedState = _apply(context.State, context.Request);
-                return new AcceptedCapability<TState>(
-                    _capabilityId,
-                    _name,
-                    acceptedState,
-                    summary,
-                    payload
-                );
-            }
-
-            var accepted = _invocation.RunContext is { } runContext
-                ? await runContext.ExecuteAsync(AcceptAsync, cancellationToken)
-                : await AcceptAsync(cancellationToken);
-            _invocation.Commit(accepted);
-            return JsonSerializer.SerializeToElement(
-                new { accepted = true, outcome = new { kind = _capabilityId, payload } },
-                _jsonOptions
-            );
-        }
-        catch (OperationCanceledException)
-        {
-            _invocation.Release();
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _invocation.Release();
-            return Error("capability acceptance failed", [ex.Message]);
-        }
+        var context = new CapabilityAcceptanceContext<TState, TRequest>(
+            _invocation.RunId,
+            _invocation.StepId,
+            _invocation.InvocationId,
+            _capabilityId,
+            _invocation.State,
+            request
+        );
+        return await CapabilityAcceptanceRuntime.AcceptAsync(
+            _invocation,
+            _capabilityId,
+            _name,
+            typeof(TRequest).FullName ?? typeof(TRequest).Name,
+            payload,
+            summary,
+            _accept is null ? null : ct => _accept(context, ct),
+            state => _apply(state, request),
+            cancellationToken
+        );
     }
 
     private static JsonElement Error(string error, IEnumerable<string> problems) =>
