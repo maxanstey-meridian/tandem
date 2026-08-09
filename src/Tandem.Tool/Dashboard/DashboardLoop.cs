@@ -54,11 +54,7 @@ internal sealed class DashboardLoop(
         long journalSequence = 0;
         while (!ct.IsCancellationRequested)
         {
-            var journal = await ledger.ReadAfterAsync(
-                LedgerPipelineObserver.Journal,
-                journalSequence,
-                ct
-            );
+            var journal = await ledger.ReadAfterAsync(PipelineJournal.Stream, journalSequence, ct);
             if (journal.Count > 0)
             {
                 journalSequence = journal[^1].Sequence;

@@ -201,6 +201,7 @@ public sealed class DeliveryBlockFailureTests
             candidate,
             CancellationToken.None
         );
+        await store.CompleteRunAsync(runId, LedgerRunStatus.Ready);
         var first = new PublicationOperation(new GitProcess(fakeGit), records);
         var second = new PublicationOperation(new GitProcess(fakeGit), records);
 

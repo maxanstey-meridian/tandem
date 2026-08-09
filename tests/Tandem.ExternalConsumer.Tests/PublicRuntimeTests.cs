@@ -2,11 +2,48 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
+using Tandem.Ledger;
 
 namespace Tandem.ExternalConsumer.Tests;
 
 public sealed class PublicRuntimeTests
 {
+    [Fact]
+    public async Task ExternalHost_CanPersistAndReadReturnedStateWithPublicLedgerApis()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"tandem-external-{Guid.NewGuid():N}.sqlite3");
+        try
+        {
+            var runId = Guid.CreateVersion7();
+            var stage = new DurablePublicStage();
+            var pipeline = Pipeline.Start(stage, "external-durable").Persist().Build(stage);
+            var store = new SqliteLedgerStore(path);
+            var observer = await store.CreateObserverAsync(runId, pipeline);
+
+            await new PipelineRunner().RunAsync(
+                pipeline,
+                new DurablePublicState(3),
+                new PipelineRunOptions(runId, Observer: observer)
+            );
+
+            var reopened = new SqliteLedgerStore(path);
+            var accepted = await reopened.ReadLatestAcceptedAsync<DurablePublicState>(
+                runId,
+                stage.Id
+            );
+            accepted.Should().NotBeNull();
+            accepted!.StepId.Should().Be(stage.Id);
+            accepted.Value.Count.Should().Be(4);
+            accepted.Sequence.Should().BePositive();
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete($"{path}-shm");
+            File.Delete($"{path}-wal");
+        }
+    }
+
     [Fact]
     public async Task Interaction_CanBeTheSemanticPipelineStart()
     {
@@ -347,6 +384,17 @@ public sealed record PublicQuestion(string Text);
 public sealed record OpaqueQuestion(NonSerializableReference Reference);
 
 public sealed record PublicAnswer(string Text);
+
+public sealed record DurablePublicState(int Count);
+
+[PipelineStage("durable-public-stage")]
+public sealed partial class DurablePublicStage
+{
+    public ValueTask<DurablePublicState> ExecuteAsync(
+        DurablePublicState state,
+        CancellationToken _
+    ) => ValueTask.FromResult(state with { Count = state.Count + 1 });
+}
 
 public sealed class PublicCompletion(string id) : IPipelineCompletion<PublicState>
 {

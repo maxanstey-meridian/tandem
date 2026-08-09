@@ -11,7 +11,7 @@ public sealed class RunInspectorTests : IDisposable
     public async Task Inspect_AcceptedExcludesNonPersistentInteractionMetadata()
     {
         var (store, runId) = await CreateRunAsync();
-        await new LedgerPipelineObserver(store.ForRun(runId)).ObserveAsync(
+        await new SqlitePipelineObserver(store.ForRun(runId)).ObserveAsync(
             new PipelineInteractionRequested<HumanQuestion>(
                 runId,
                 "human-review",
@@ -43,12 +43,12 @@ public sealed class RunInspectorTests : IDisposable
         var (store, runId) = await CreateRunAsync();
         var ledger = store.ForRun(runId);
         await ledger.AppendAsync(
-            LedgerPipelineObserver.Journal,
+            PipelineJournal.Stream,
             "second-semantic-id",
             new RuntimeJournalRecord(RuntimeJournalKind.StepCompleted, "second")
         );
         await ledger.AppendAsync(
-            LedgerPipelineObserver.Journal,
+            PipelineJournal.Stream,
             "first-lexical-id",
             new RuntimeJournalRecord(RuntimeJournalKind.StepStarted, "first")
         );
@@ -69,7 +69,7 @@ public sealed class RunInspectorTests : IDisposable
     public async Task Inspect_AcceptedIncludesFailureEvidenceAndAppliesTypeFilter()
     {
         var (store, runId) = await CreateRunAsync();
-        var observer = new LedgerPipelineObserver(store.ForRun(runId));
+        var observer = new SqlitePipelineObserver(store.ForRun(runId));
         await observer.ObserveAsync(
             new PipelineStepCompleted(
                 runId,
@@ -117,7 +117,7 @@ public sealed class RunInspectorTests : IDisposable
     {
         var (store, runId) = await CreateRunAsync();
         var payload = JsonSerializer.SerializeToElement(new RunnerState(3));
-        await new LedgerPipelineObserver(store.ForRun(runId)).ObserveAsync(
+        await new SqlitePipelineObserver(store.ForRun(runId)).ObserveAsync(
             new PipelineStepCompleted(
                 runId,
                 "increment",
@@ -151,7 +151,7 @@ public sealed class RunInspectorTests : IDisposable
     public async Task Inspect_JsonDtoHasStableNamedContractAndPayload()
     {
         var (store, runId) = await CreateRunAsync();
-        var observer = new LedgerPipelineObserver(store.ForRun(runId));
+        var observer = new SqlitePipelineObserver(store.ForRun(runId));
         await observer.ObserveAsync(
             new PipelineStructuredOutputAccepted(
                 runId,

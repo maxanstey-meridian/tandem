@@ -35,7 +35,7 @@ public sealed class DashboardTests : IDisposable
     {
         var (store, runId) = await CreateAsync();
         var ledger = store.ForRun(runId);
-        var observer = new LedgerPipelineObserver(ledger);
+        var observer = new SqlitePipelineObserver(ledger);
         await observer.ObserveAsync(
             new PipelineStepStarted(runId, "executor"),
             CancellationToken.None
@@ -72,7 +72,7 @@ public sealed class DashboardTests : IDisposable
 
         var model = DashboardReducer.ApplyJournal(
             new DashboardModel(),
-            await ledger.ReadAfterAsync(LedgerPipelineObserver.Journal, 0)
+            await ledger.ReadAfterAsync(PipelineJournal.Stream, 0)
         );
         model = DashboardReducer.ApplyRun(model, await store.GetRunAsync(runId));
         model = DashboardReducer.ApplyDelivery(

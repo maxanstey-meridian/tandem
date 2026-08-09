@@ -143,6 +143,8 @@ Tandem currently targets .NET 10. Reference the core package and its source gene
 <PackageReference Include="Tandem" Version="..." />
 <!-- Generates typed adapters for [PipelineStage] classes. -->
 <PackageReference Include="Tandem.Generators" Version="..." PrivateAssets="all" />
+<!-- Optional SQLite adapter for pipelines using .Persist(). -->
+<PackageReference Include="Tandem.Ledger" Version="..." />
 ```
 
 1. Define an immutable state record containing application facts.
@@ -205,7 +207,26 @@ Use `--accepted` for accepted semantic values only, `--step <id>` and
 projection. Inspection reads only the authoritative SQLite history; streaming text,
 reasoning, and generic tool payloads are process-local and are not inspectable.
 
-The bundled Tool provides the required host persistence observer automatically. Use
+`Tandem.Tool` provides the observer automatically. Other hosts can use the same
+public SQLite adapter and typed reader:
+
+```csharp
+var store = new SqliteLedgerStore("tandem.sqlite3");
+var observer = await store.CreateObserverAsync(runId, pipeline, cancellationToken);
+await new PipelineRunner().RunAsync(
+    pipeline,
+    initialState,
+    new PipelineRunOptions(runId, Observer: observer),
+    cancellationToken);
+var accepted = await store.ReadLatestAcceptedAsync<CodingState>(
+    runId,
+    "code-checks",
+    cancellationToken);
+```
+
+The reader exposes accepted application values; it does not resume a MAF workflow.
+The host remains responsible for marking its ledger run terminal with
+`CompleteRunAsync`. Use
 `.DoNotPersist(step)` for a sensitive participant, or `.Persist(step)` to retain one
 participant in an otherwise ephemeral pipeline. For ordinary state-returning stages,
 the returned state is the accepted typed value. Tandem records that value at the

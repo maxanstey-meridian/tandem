@@ -191,7 +191,7 @@ public sealed class LocalCapabilityTests
                         )
                 );
             var observer = new CompositePipelineObserver(
-                new LedgerPipelineObserver(ledger),
+                new SqlitePipelineObserver(ledger),
                 new FailingAcceptanceObserver()
             );
             var client = new ScriptedChatClient(

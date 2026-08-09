@@ -53,7 +53,7 @@ public sealed class ProjectBoundaryTests
         advanced.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         delivery.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         delivery.Should().Contain(reference => reference.EndsWith("Tandem.Advanced.csproj"));
-        ledger.Should().BeEmpty();
+        ledger.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         tool.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         tool.Should().Contain(reference => reference.EndsWith("Tandem.Delivery.csproj"));
         tool.Should().Contain(reference => reference.EndsWith("Tandem.Ledger.csproj"));
@@ -391,7 +391,10 @@ public sealed class ProjectBoundaryTests
     public void Tool_UsesOneProcessOwnedRuntimeAndSQLiteSemanticAuthority()
     {
         var source = File.ReadAllText(Path("src/Tandem.Tool/Program.cs"));
-        var persistence = source.IndexOf("ledgerStore.CreateRunAsync(", StringComparison.Ordinal);
+        var persistence = source.IndexOf(
+            "ledgerStore.CreateObserverAsync(",
+            StringComparison.Ordinal
+        );
         var publication = source.IndexOf(
             "Console.WriteLine($\"Run:       {runPaths.RunId}\")",
             StringComparison.Ordinal

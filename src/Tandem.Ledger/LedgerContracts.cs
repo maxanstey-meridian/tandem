@@ -55,7 +55,21 @@ public sealed record LedgerRun(
     DateTimeOffset? EndedAt
 );
 
+public sealed record AcceptedPipelineValue<TValue>(
+    long Sequence,
+    string StepId,
+    string ValueType,
+    TValue Value,
+    DateTimeOffset RecordedAt
+);
+
 public sealed class LedgerConflictException(string message) : InvalidOperationException(message);
+
+public sealed class LedgerValueTypeMismatchException(string message)
+    : InvalidOperationException(message);
+
+public sealed class LedgerDataException(string message, Exception? innerException = null)
+    : InvalidOperationException(message, innerException);
 
 internal static class LedgerName
 {

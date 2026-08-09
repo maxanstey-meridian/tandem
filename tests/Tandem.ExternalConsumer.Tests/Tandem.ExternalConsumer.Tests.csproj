@@ -25,6 +25,7 @@
 
     <ItemGroup>
         <ProjectReference Include="../../src/Tandem/Tandem.csproj" />
+        <ProjectReference Include="../../src/Tandem.Ledger/Tandem.Ledger.csproj" />
         <ProjectReference
             Include="../../src/Tandem.Generators/Tandem.Generators.csproj"
             OutputItemType="Analyzer"

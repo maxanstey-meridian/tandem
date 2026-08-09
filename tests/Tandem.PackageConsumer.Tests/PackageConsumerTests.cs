@@ -27,6 +27,7 @@ public sealed class PackageConsumerTests
             await PackAsync("src/Tandem.Generators/Tandem.Generators.csproj", feed, version);
             await PackAsync("src/Tandem/Tandem.csproj", feed, version);
             await PackAsync("src/Tandem.Advanced/Tandem.Advanced.csproj", feed, version);
+            await PackAsync("src/Tandem.Ledger/Tandem.Ledger.csproj", feed, version);
             var config = WriteNuGetConfig(temp, feed);
 
             await ProveConsumerAsync(
@@ -59,6 +60,7 @@ public sealed class PackageConsumerTests
                 advanced: true,
                 DebateProgram
             );
+            await ProveLedgerConsumerAsync(temp, packages, config, version);
         }
         finally
         {
@@ -67,6 +69,72 @@ public sealed class PackageConsumerTests
                 Directory.Delete(temp, recursive: true);
             }
         }
+    }
+
+    private static async Task ProveLedgerConsumerAsync(
+        string temp,
+        string packages,
+        string config,
+        string version
+    )
+    {
+        var directory = Path.Combine(temp, "Ledger");
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(
+            Path.Combine(directory, "Ledger.csproj"),
+            $"""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <OutputType>Exe</OutputType>
+                <TargetFramework>net10.0</TargetFramework>
+                <ImplicitUsings>enable</ImplicitUsings>
+                <Nullable>enable</Nullable>
+              </PropertyGroup>
+              <ItemGroup>
+                <PackageReference Include="Tandem.Ledger" Version="{version}" />
+              </ItemGroup>
+            </Project>
+            """
+        );
+        await File.WriteAllTextAsync(
+            Path.Combine(directory, "Program.cs"),
+            """
+            using Tandem;
+            using Tandem.Ledger;
+
+            var path = Path.Combine(Path.GetTempPath(), $"tandem-packed-{Guid.NewGuid():N}.sqlite3");
+            var observer = await new SqliteLedgerStore(path).CreateObserverAsync(
+                Guid.CreateVersion7(),
+                "packed-consumer");
+            if (observer is not IPipelinePersistenceObserver)
+            {
+                throw new InvalidOperationException("Observer is not durable.");
+            }
+            """
+        );
+        var project = Path.Combine(directory, "Ledger.csproj");
+        await RunAsync(
+            directory,
+            "dotnet",
+            "restore",
+            project,
+            "--configfile",
+            config,
+            "--packages",
+            packages,
+            "--force",
+            "--no-cache"
+        );
+        await RunAsync(
+            directory,
+            "dotnet",
+            "run",
+            "--project",
+            project,
+            "--configuration",
+            "Release",
+            "--no-restore"
+        );
     }
 
     private static async Task PackAsync(string project, string feed, string version) =>

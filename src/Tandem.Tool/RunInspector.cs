@@ -16,11 +16,11 @@ internal sealed class RunInspector(SqliteLedgerStore store)
         var run = await store.GetRunAsync(runId, cancellationToken);
         var entries = await store
             .ForRun(runId)
-            .ReadAsync(LedgerPipelineObserver.Journal, cancellationToken);
+            .ReadAsync(PipelineJournal.Stream, cancellationToken);
         var items = entries
             .Select(entry =>
             {
-                var accepted = IsAccepted(entry.Value);
+                var accepted = PipelineJournal.IsAccepted(entry.Value);
                 return new RunInspectionItem(
                     entry.RecordedAt,
                     accepted ? "accepted" : "runtime",
@@ -45,16 +45,6 @@ internal sealed class RunInspector(SqliteLedgerStore store)
 
         return new RunInspection(run.RunId, run.Composition, run.Status.ToString(), items);
     }
-
-    private static bool IsAccepted(RuntimeJournalRecord record) =>
-        record.Kind
-            is RuntimeJournalKind.StructuredOutputAccepted
-                or RuntimeJournalKind.CapabilityAccepted
-        || record.Kind
-            is RuntimeJournalKind.InteractionRequested
-                or RuntimeJournalKind.InteractionAnswered
-            && record.Payload is not null
-        || record.Kind == RuntimeJournalKind.StepCompleted && record.Payload is not null;
 }
 
 internal sealed record RunInspection(
