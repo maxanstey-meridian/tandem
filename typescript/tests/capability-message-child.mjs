@@ -19,14 +19,27 @@ const { agent, capability, output, pipeline, route, run } =
   await import("../packages/sdk/dist/index.js");
 
 const State = z.object({ prompt: z.string(), accepted: z.boolean() });
+let contextualValidations = 0;
+let applications = 0;
 const accept = capability({
   name: "accept",
+  instructions: "Accept the request.",
   schema: z.object({ accepted: z.boolean() }),
-  apply: (state, request) => ({ ...state, accepted: request.accepted }),
+  validateFor: () => {
+    contextualValidations += 1;
+    return contextualValidations === 1
+      ? [{ path: "$.accepted", message: "Confirm acceptance once." }]
+      : [];
+  },
+  apply: (state, request) => {
+    applications += 1;
+    return { ...state, accepted: request.accepted };
+  },
   summarize: () => "accepted",
 });
 const reject = capability({
   name: "reject",
+  instructions: "Reject the request with a reason.",
   schema: z.object({ reason: z.string() }),
   apply: (state) => ({ ...state, accepted: false }),
   summarize: (request) => request.reason,
@@ -44,6 +57,7 @@ const executor = agent({
   message: (state) => `CAPABILITY STATE MESSAGE: ${state.prompt}`,
   capabilities: [accept, reject],
   output: {
+    instructions: "Return whether the request was accepted.",
     schema: z.object({ accepted: z.boolean() }),
     apply: (state, value) => ({ ...state, accepted: value.accepted }),
   },
@@ -75,6 +89,11 @@ try {
       accepted,
       error,
       body: requests.find((item) => item.url === "/v1/chat/completions")?.body,
+      contextualValidations,
+      applications,
+      bodies: requests
+        .filter((item) => item.url === "/v1/chat/completions")
+        .map((item) => item.body),
     }),
   );
   server.kill();

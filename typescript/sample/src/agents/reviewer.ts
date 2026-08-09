@@ -17,6 +17,10 @@ export const reviewerAgent = (client: ChatClient) =>
     instructions: reviewerInstructions,
     client,
     message: reviewerMessage,
-    output: { schema: ReviewDecision, apply: recordReview },
+    output: {
+      instructions: "Return Accept or RequestChanges with a concise summary and concrete findings.",
+      schema: ReviewDecision,
+      apply: recordReview,
+    },
     persist: true,
   });

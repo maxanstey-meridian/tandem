@@ -5,6 +5,7 @@ import { recordImplementation, type ImplementationCandidate, type State } from "
 export const submitImplementation = () =>
   capability({
     name: "submit_implementation",
+    instructions: "Submit the complete JavaScript implementation and its rationale.",
     schema: z.object({ implementation: z.string().min(1), rationale: z.string().min(1) }),
     apply: (state: State, submission): State =>
       recordImplementation(state, {

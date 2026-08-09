@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   inspectAccepted,
   interaction,
+  interactions,
   output,
   pipeline,
   route,
@@ -77,6 +78,104 @@ try {
       { count: 0, done: false },
       { ledgerPath: errorLedgerPath, signal: cancellation.signal },
     );
+  } else if (mode === "interaction-handlers") {
+    const ask = interaction({
+      id: "ask",
+      requestSchema: z.object({ current: z.number() }),
+      responseSchema: z.object({ next: z.number() }),
+      request: (state) => ({ current: state.count }),
+      apply: (state, response) => ({ ...state, count: response.next, done: true }),
+    });
+    const graph = pipeline({
+      name: mode,
+      state: State,
+      nodes: [ask, done],
+      start: ask,
+      routes: [route({ from: ask, to: done, label: "answered" })],
+      outputs: [done],
+    });
+    const [first, second] = await Promise.all([
+      run(
+        graph,
+        { count: 1, done: false },
+        {
+          interactions: interactions().handle(ask, ({ current }) => ({ next: current + 10 })),
+        },
+      ),
+      run(
+        graph,
+        { count: 2, done: false },
+        {
+          interactions: interactions().handle(ask, ({ current }) => ({ next: current + 20 })),
+        },
+      ),
+    ]);
+    console.log(JSON.stringify({ values: [first.state.count, second.state.count] }));
+    process.exit(0);
+  } else if (mode === "interaction-duplicate") {
+    const ask = interaction({
+      id: "ask",
+      requestSchema: z.object({}),
+      responseSchema: z.object({}),
+      request: () => ({}),
+      apply: (state) => state,
+    });
+    interactions()
+      .handle(ask, () => ({}))
+      .handle(ask, () => ({}));
+  } else if (mode === "interaction-foreign") {
+    const ask = interaction({
+      id: "ask",
+      requestSchema: z.object({}),
+      responseSchema: z.object({}),
+      request: () => ({}),
+      apply: (state) => state,
+    });
+    await run(
+      make((state) => state),
+      { count: 0, done: false },
+      {
+        ledgerPath: errorLedgerPath,
+        interactions: interactions().handle(ask, () => ({})),
+      },
+    );
+  } else if (mode === "interaction-missing") {
+    const ask = interaction({
+      id: "ask",
+      requestSchema: z.object({}),
+      responseSchema: z.object({}),
+      request: () => ({}),
+      apply: (state) => state,
+    });
+    const graph = pipeline({
+      name: mode,
+      state: State,
+      nodes: [ask, done],
+      start: ask,
+      routes: [route({ from: ask, to: done, label: "answered" })],
+      outputs: [done],
+    });
+    await run(graph, { count: 0, done: false });
+  } else if (mode === "interaction-unreached") {
+    const ask = interaction({
+      id: "ask",
+      requestSchema: z.object({}),
+      responseSchema: z.object({}),
+      request: () => ({}),
+      apply: (state) => state,
+    });
+    const work = stage({ id: "work", execute: (state) => ({ ...state, done: true }) });
+    const graph = pipeline({
+      name: mode,
+      state: State,
+      nodes: [work, ask, done],
+      start: work,
+      routes: [route({ from: work, to: done, label: "done" })],
+      outputs: [done],
+    });
+    const result = await run(graph, { count: 0, done: false });
+    console.log(JSON.stringify({ done: result.state.done }));
+    process.exit(0);
   } else if (mode === "interaction-cancel") {
     const cancellation = new AbortController();
     const ask = interaction({
@@ -84,7 +183,14 @@ try {
       requestSchema: z.object({ current: z.number() }),
       responseSchema: z.object({ next: z.number() }),
       request: (state) => ({ current: state.count }),
-      handle: (request, { signal }) =>
+      apply: (state, response) => {
+        interactionApplied = true;
+        return { ...state, count: response.next, done: true };
+      },
+    });
+    const handlers = interactions().handle(
+      ask,
+      (request, { signal }) =>
         new Promise((resolve, reject) => {
           const abort = setTimeout(
             () => cancellation.abort(new Error("cancelled during interaction")),
@@ -106,10 +212,45 @@ try {
             { once: true },
           );
         }),
+    );
+    const graph = pipeline({
+      name: mode,
+      state: State,
+      nodes: [ask, done],
+      start: ask,
+      routes: [route({ from: ask, to: done, label: "answered" })],
+      outputs: [done],
+    });
+    await run(
+      graph,
+      { count: 0, done: false },
+      {
+        signal: cancellation.signal,
+        interactions: handlers,
+      },
+    );
+  } else if (mode === "interaction-cancel-late") {
+    const cancellation = new AbortController();
+    const ask = interaction({
+      id: "ask",
+      requestSchema: z.object({ current: z.number() }),
+      responseSchema: z.object({ next: z.number() }),
+      request: (state) => ({ current: state.count }),
       apply: (state, response) => {
         interactionApplied = true;
         return { ...state, count: response.next, done: true };
       },
+    });
+    const handlers = interactions().handle(ask, (request, { signal }) => {
+      signal.addEventListener("abort", () => (abortObserved = true), { once: true });
+      setTimeout(() => cancellation.abort(new Error("cancelled during interaction")), 20);
+      return new Promise((resolve) =>
+        setTimeout(() => {
+          handlerCompleted = true;
+          mutatedAfterAbort = true;
+          resolve({ next: request.current + 1 });
+        }, 100),
+      );
     });
     const graph = pipeline({
       name: mode,
@@ -119,7 +260,11 @@ try {
       routes: [route({ from: ask, to: done, label: "answered" })],
       outputs: [done],
     });
-    await run(graph, { count: 0, done: false }, { signal: cancellation.signal });
+    await run(
+      graph,
+      { count: 0, done: false },
+      { signal: cancellation.signal, interactions: handlers },
+    );
   } else if (mode === "unknown-inspect") {
     await run(
       make((state) => state),
@@ -169,7 +314,6 @@ try {
       requestSchema: z.object({ current: z.number() }),
       responseSchema: z.object({ next: z.number() }),
       request: (state) => ({ current: state.count }),
-      handle: (request) => ({ next: request.current + 1 }),
       apply: (state, response) => ({ ...state, count: response.next, done: true }),
     });
     const graph = pipeline({
@@ -180,7 +324,13 @@ try {
       routes: [route({ from: ask, to: done, label: "answered" })],
       outputs: [done],
     });
-    const result = await run(graph, { count: 4, done: false });
+    const result = await run(
+      graph,
+      { count: 4, done: false },
+      {
+        interactions: interactions().handle(ask, (request) => ({ next: request.current + 1 })),
+      },
+    );
     console.log(JSON.stringify({ count: result.state.count, done: result.state.done }));
     process.exit(0);
   } else if (mode === "interaction-chain") {
@@ -189,7 +339,6 @@ try {
       requestSchema: z.object({ current: z.number() }),
       responseSchema: z.object({ next: z.number() }),
       request: (state) => ({ current: state.count }),
-      handle: (request) => ({ next: request.current + 1 }),
       apply: (state, response) => ({ ...state, count: response.next }),
     });
     const second = interaction({
@@ -197,7 +346,6 @@ try {
       requestSchema: z.object({ current: z.number() }),
       responseSchema: z.object({ next: z.number() }),
       request: (state) => ({ current: state.count }),
-      handle: (request) => ({ next: request.current + 1 }),
       apply: (state, response) => ({ ...state, count: response.next, done: true }),
     });
     const graph = pipeline({
@@ -211,7 +359,10 @@ try {
       ],
       outputs: [done],
     });
-    const result = await run(graph, { count: 4, done: false });
+    const handlers = interactions()
+      .handle(first, (request) => ({ next: request.current + 1 }))
+      .handle(second, (request) => ({ next: request.current + 1 }));
+    const result = await run(graph, { count: 4, done: false }, { interactions: handlers });
     console.log(JSON.stringify({ count: result.state.count, done: result.state.done }));
     process.exit(0);
   } else {
@@ -282,5 +433,18 @@ try {
   for (const suffix of ["", "-shm", "-wal"]) {
     rmSync(errorLedgerPath + suffix, { force: true });
   }
-  process.exit(["invalid", "failure", "cancel", "interaction-cancel"].includes(mode) ? 0 : 1);
+  process.exit(
+    [
+      "invalid",
+      "failure",
+      "cancel",
+      "interaction-cancel",
+      "interaction-cancel-late",
+      "interaction-duplicate",
+      "interaction-foreign",
+      "interaction-missing",
+    ].includes(mode)
+      ? 0
+      : 1,
+  );
 }

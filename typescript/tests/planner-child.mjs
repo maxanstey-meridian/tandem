@@ -18,6 +18,8 @@ const port = await new Promise((resolve, reject) => {
 const { agent, output, pipeline, route, run } = await import("../packages/sdk/dist/index.js");
 
 const State = z.object({ prompt: z.string(), answer: z.number().nullable() });
+let contextualValidations = 0;
+let applications = 0;
 const planner = agent({
   id: "planner",
   instructions: "Return a structured answer.",
@@ -32,8 +34,18 @@ const planner = agent({
   },
   message: (state) => `STATE MESSAGE: ${state.prompt}`,
   output: {
+    instructions: "Return the numeric answer.",
     schema: z.object({ answer: z.number() }),
-    apply: (state, value) => ({ ...state, answer: value.answer }),
+    validateFor: (_state, value) => {
+      contextualValidations += 1;
+      return contextualValidations === 1
+        ? [{ path: "$.answer", message: `${value.answer} needs confirmation` }]
+        : [];
+    },
+    apply: (state, value) => {
+      applications += 1;
+      return { ...state, answer: value.answer };
+    },
   },
 });
 const done = output({ id: "done", summary: (state) => String(state.answer) });
@@ -62,6 +74,8 @@ try {
       error,
       urls: requests.map((item) => item.url),
       modelBody: modelRequests[0]?.body,
+      contextualValidations,
+      applications,
     }),
   );
   server.kill();

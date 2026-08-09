@@ -79,6 +79,7 @@ try {
 
 const same = capability({
   name: "same",
+  instructions: "Keep state unchanged.",
   schema: z.object({ value: z.number() }),
   apply: (state) => state,
   summarize: () => "same",
@@ -104,6 +105,7 @@ try {
 try {
   capability({
     name: "unsupported",
+    instructions: "Use an unsupported schema.",
     schema: z.custom(),
     apply: (state) => state,
     summarize: () => "unsupported",
@@ -121,6 +123,7 @@ try {
 try {
   capability({
     name: "transformed",
+    instructions: "Use a transformed schema.",
     schema: z.object({ value: z.string().transform((value) => value.toUpperCase()) }),
     apply: (state) => state,
     summarize: () => "transformed",
@@ -140,7 +143,11 @@ const unsupportedOutputAgent = agent({
     wireApi: "responses",
   },
   message: () => "message",
-  output: { schema: z.custom(), apply: (state) => state },
+  output: {
+    instructions: "Return an unsupported value.",
+    schema: z.custom(),
+    apply: (state) => state,
+  },
 });
 const unsupportedOutput = pipeline({
   name: "unsupported-output",
@@ -160,6 +167,89 @@ try {
       problems: error.problems,
     }),
   );
+}
+
+for (const create of [
+  () =>
+    capability({
+      name: "blank",
+      instructions: " ",
+      schema: z.object({}),
+      apply: (state) => state,
+      summarize: () => "blank",
+    }),
+  () =>
+    agent({
+      id: "blank-agent",
+      instructions: " ",
+      client: {
+        kind: "openai-compatible",
+        version: 1,
+        endpoint: "http://localhost/v1",
+        model: "test",
+        wireApi: "responses",
+      },
+      message: () => "message",
+    }),
+  () =>
+    agent({
+      id: "blank-output",
+      instructions: "Test.",
+      client: {
+        kind: "openai-compatible",
+        version: 1,
+        endpoint: "http://localhost/v1",
+        model: "test",
+        wireApi: "responses",
+      },
+      message: () => "message",
+      output: {
+        instructions: " ",
+        schema: z.object({}),
+        apply: (state) => state,
+      },
+    }),
+]) {
+  try {
+    create();
+  } catch (error) {
+    errors.push(String(error));
+  }
+}
+
+for (const create of [
+  () =>
+    capability({
+      name: "missing-instructions",
+      schema: z.object({}),
+      apply: (state) => state,
+      summarize: () => "missing",
+    }),
+  () =>
+    agent({
+      id: "non-string-instructions",
+      instructions: 42,
+      client: {
+        kind: "openai-compatible",
+        version: 1,
+        endpoint: "http://localhost/v1",
+        model: "test",
+        wireApi: "responses",
+      },
+      message: () => "message",
+    }),
+]) {
+  try {
+    create();
+  } catch (error) {
+    errors.push(
+      JSON.stringify({
+        name: error.name,
+        contract: error instanceof ContractValidationError,
+        problems: error.problems,
+      }),
+    );
+  }
 }
 
 console.log(JSON.stringify(errors));

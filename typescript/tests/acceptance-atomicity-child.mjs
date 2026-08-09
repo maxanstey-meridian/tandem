@@ -7,11 +7,12 @@ import { z } from "zod";
 import { agent, capability, output, pipeline, route, run } from "../packages/sdk/dist/index.js";
 
 const mode = process.argv[2];
+const capabilityMode = mode.startsWith("capability");
+const jsonLossMode = mode.endsWith("json");
 const directory = mkdtempSync(join(tmpdir(), "tandem-atomicity-"));
 const logPath = join(directory, "requests.jsonl");
 const ledgerPath = join(directory, "ledger.sqlite3");
-const serverFile =
-  mode === "capability" ? "function-protocol-server.mjs" : "openai-server-child.mjs";
+const serverFile = capabilityMode ? "function-protocol-server.mjs" : "openai-server-child.mjs";
 const server = spawn(process.execPath, [new URL(serverFile, import.meta.url).pathname, logPath], {
   stdio: ["ignore", "pipe", "inherit"],
 });
@@ -24,9 +25,13 @@ const State = z.object({ value: z.number() });
 let applyCalled = false;
 const submit = capability({
   name: "submit_implementation",
+  instructions: "Submit the implementation.",
   schema: z.object({ implementation: z.string(), rationale: z.string() }),
   apply: () => {
     applyCalled = true;
+    if (jsonLossMode) {
+      return { value: Number.NaN };
+    }
     throw new Error("apply failed after durable acceptance");
   },
   summarize: ({ rationale }) => rationale,
@@ -38,21 +43,24 @@ const worker = agent({
     kind: "openai-compatible",
     version: 1,
     endpoint: `http://127.0.0.1:${port}/v1`,
-    model: mode === "capability" ? "fixture-ds4" : "gpt-5.6-sol",
-    wireApi: mode === "capability" ? "completions" : "responses",
+    model: capabilityMode ? "fixture-ds4" : "gpt-5.6-sol",
+    wireApi: capabilityMode ? "completions" : "responses",
   },
   message: () => "work",
-  capabilities: mode === "capability" ? [submit] : [],
-  output:
-    mode === "output"
-      ? {
-          schema: z.object({ answer: z.number() }),
-          apply: () => {
-            applyCalled = true;
-            throw new Error("apply failed after durable acceptance");
-          },
-        }
-      : undefined,
+  capabilities: capabilityMode ? [submit] : [],
+  output: !capabilityMode
+    ? {
+        instructions: "Return the answer.",
+        schema: z.object({ answer: z.number() }),
+        apply: () => {
+          applyCalled = true;
+          if (jsonLossMode) {
+            return { value: Number.NaN };
+          }
+          throw new Error("apply failed after durable acceptance");
+        },
+      }
+    : undefined,
   persist: true,
 });
 const done = output({ id: "done", summary: () => "done" });
@@ -87,7 +95,7 @@ try {
       error,
       succeeded,
       applyCalled,
-      persistedAcceptance: records.some(({ kind }) => kind === (mode === "capability" ? 13 : 12)),
+      persistedAcceptance: records.some(({ kind }) => kind === (capabilityMode ? 13 : 12)),
     }),
   );
 } finally {

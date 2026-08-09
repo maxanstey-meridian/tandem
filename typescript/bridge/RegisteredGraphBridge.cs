@@ -99,19 +99,13 @@ public static partial class NodePipelineBridge
             definition.Outputs!.Select(id => ((RegisteredTerminal)nodes[id]).Terminal).ToArray()
         );
         var handlers = new PipelineInteractionHandlers();
-        foreach (var participant in nodes.Values.OfType<RegisteredInteraction>())
+        foreach (var binding in definition.InteractionHandlers ?? [])
         {
+            var participant = (RegisteredInteraction)nodes[binding.Target!];
             handlers.Handle(
                 participant.Interaction,
                 (request, token) =>
-                    new(
-                        callbacks.InvokeAsync(
-                            participant.Contract.HandleCallback!,
-                            "",
-                            request.Request,
-                            token
-                        )
-                    )
+                    new(callbacks.InvokeAsync(binding.HandleCallback!, "", request.Request, token))
             );
         }
 
@@ -153,20 +147,19 @@ public static partial class NodePipelineBridge
                 }
             );
         }
+        catch (CallbackContractException exception)
+        {
+            terminalStatus = LedgerRunStatus.Faulted;
+            preserveActiveFailure = true;
+            throw CallbackContractFailure(exception, exception);
+        }
         catch (PipelineRunException exception)
         {
             terminalStatus = LedgerRunStatus.Faulted;
             preserveActiveFailure = true;
             if (FindCallbackContractException(exception) is { } contract)
             {
-                throw new InvalidOperationException(
-                    "TANDEM_CALLBACK_CONTRACT:"
-                        + JsonSerializer.Serialize(
-                            new { boundary = contract.Boundary, problems = contract.Problems },
-                            new JsonSerializerOptions(JsonSerializerDefaults.Web)
-                        ),
-                    exception
-                );
+                throw CallbackContractFailure(contract, exception);
             }
             throw new InvalidOperationException(
                 exception.InnerException?.ToString() ?? exception.ToString(),
@@ -210,6 +203,19 @@ public static partial class NodePipelineBridge
         }
         return null;
     }
+
+    private static InvalidOperationException CallbackContractFailure(
+        CallbackContractException contract,
+        Exception cause
+    ) =>
+        new(
+            "TANDEM_CALLBACK_CONTRACT:"
+                + JsonSerializer.Serialize(
+                    new { boundary = contract.Boundary, problems = contract.Problems },
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                ),
+            cause
+        );
 
     private sealed class LedgerAcceptanceUnitOfWork(SqliteLedgerStore store)
         : IPipelineAcceptanceUnitOfWork

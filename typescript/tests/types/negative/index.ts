@@ -25,12 +25,14 @@ route({ from: start, to: done, label: "impossible", outcome: "failed" });
 route({ from: done, to: start, label: "terminal" });
 const action = capability<A, { amount: number }>({
   name: "action",
+  instructions: "Perform the action.",
   schema: z.object({ amount: z.number() }),
   apply: (state) => state,
   summarize: () => "action",
 });
 const wrongStateAction = capability<B, { reason: string }>({
   name: "wrong",
+  instructions: "Perform the wrong action.",
   schema: z.object({ reason: z.string() }),
   apply: (state) => state,
   summarize: (request) => request.reason,
@@ -59,10 +61,27 @@ agent<A>({
 });
 capability<A, { amount: number }>({
   name: "bad-request",
+  instructions: "Use a bad request.",
   // @ts-expect-error capability request schemas and callbacks must agree
   schema: z.object({ amount: z.string() }),
   apply: (state) => state,
   summarize: () => "bad",
+});
+// @ts-expect-error capability instructions are required
+capability<A, { amount: number }>({
+  name: "missing-instructions",
+  schema: z.object({ amount: z.number() }),
+  apply: (state) => state,
+  summarize: () => "missing",
+});
+capability<A, { amount: number }>({
+  name: "async-contextual-validation",
+  instructions: "Validate synchronously.",
+  schema: z.object({ amount: z.number() }),
+  // @ts-expect-error contextual validation is synchronous
+  validateFor: async () => [],
+  apply: (state) => state,
+  summarize: () => "invalid",
 });
 // @ts-expect-error opaque capabilities do not expose request-specific implementation details
 void action.schema;
@@ -73,8 +92,20 @@ agent<A, { amount: number }>({
   instructions: "Work.",
   client,
   message: () => "work",
-  // @ts-expect-error output application must preserve pipeline state
-  output: { schema: z.object({ amount: z.number() }), apply: () => ({ value: "bad" }) },
+  output: {
+    instructions: "Return an amount.",
+    schema: z.object({ amount: z.number() }),
+    // @ts-expect-error output application must preserve pipeline state
+    apply: () => ({ value: "bad" }),
+  },
+});
+agent<A, { amount: number }>({
+  id: "missing-output-instructions",
+  instructions: "Work.",
+  client,
+  message: () => "work",
+  // @ts-expect-error output instructions are required
+  output: { schema: z.object({ amount: z.number() }), apply: (state) => state },
 });
 agent<A>({
   id: "bad-client",

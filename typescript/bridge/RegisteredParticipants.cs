@@ -75,7 +75,7 @@ internal static class RegisteredParticipantFactory
             builder.WithJsonOutput(
                 new AgentJsonOutputDefinition<JavaScriptState>(
                     schema.RootElement.Clone(),
-                    "Return the requested structured value.",
+                    outputContract.Instructions!,
                     candidate =>
                         ParseValidationProblems(
                             callbacks.Invoke(
@@ -84,7 +84,17 @@ internal static class RegisteredParticipantFactory
                                 candidate.GetRawText()
                             )
                         ),
-                    ValueType: outputContract.ValueType!
+                    outputContract.ValueType!,
+                    outputContract.ValidateForCallback is null
+                        ? null
+                        : (state, candidate) =>
+                            ParseValidationProblems(
+                                callbacks.Invoke(
+                                    outputContract.ValidateForCallback,
+                                    state.Json,
+                                    candidate.GetRawText()
+                                )
+                            )
                 ),
                 (state, candidate) =>
                     new(
@@ -103,7 +113,7 @@ internal static class RegisteredParticipantFactory
                 AgentCapabilities.CreateJson(
                     new AgentJsonCapabilityDefinition<JavaScriptState>(
                         capabilityContract.Name!,
-                        $"Invoke {capabilityContract.Name}.",
+                        capabilityContract.Instructions!,
                         schema.RootElement.Clone(),
                         request =>
                             ParseValidationProblems(
@@ -113,7 +123,16 @@ internal static class RegisteredParticipantFactory
                                     request.GetRawText()
                                 )
                             ),
-                        null,
+                        capabilityContract.ValidateForCallback is null
+                            ? null
+                            : (state, request) =>
+                                ParseValidationProblems(
+                                    callbacks.Invoke(
+                                        capabilityContract.ValidateForCallback,
+                                        state.Json,
+                                        request.GetRawText()
+                                    )
+                                ),
                         request =>
                             callbacks.Invoke(
                                 capabilityContract.SummaryCallback!,

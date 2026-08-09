@@ -127,6 +127,38 @@ internal static partial class RegistrationContractValidator
                     );
             }
         }
+        var handlerIds = new HashSet<string>(StringComparer.Ordinal);
+        var handlerTargets = new HashSet<string>(StringComparer.Ordinal);
+        foreach (
+            var (binding, index) in (graph.InteractionHandlers ?? []).Select(
+                (value, index) => (value, index)
+            )
+        )
+        {
+            var path = $"interactionHandlers[{index}]";
+            if (binding is null)
+            {
+                errors.Add($"{path} must not be null.");
+                continue;
+            }
+            Required(errors, $"{path}.id", binding.Id);
+            if (!string.IsNullOrWhiteSpace(binding.Id) && !handlerIds.Add(binding.Id))
+                errors.Add($"{path}.id duplicates interaction handler ID '{binding.Id}'.");
+            Required(errors, $"{path}.target", binding.Target);
+            if (!string.IsNullOrWhiteSpace(binding.Target))
+            {
+                if (!handlerTargets.Add(binding.Target))
+                    errors.Add(
+                        $"{path}.target duplicates interaction handler target '{binding.Target}'."
+                    );
+                if (!nodes.TryGetValue(binding.Target, out var target))
+                    errors.Add($"{path}.target references unknown node '{binding.Target}'.");
+                else if (target.Kind != "interaction")
+                    errors.Add($"{path}.target node '{binding.Target}' must be an interaction.");
+            }
+            Required(errors, $"{path}.handleCallback", binding.HandleCallback);
+        }
+        ValidateCallbackReferences(errors, graph);
         ValidateGraphShape(errors, graph, nodes);
         if (errors.Count > 0)
             throw Invalid(string.Join("\n", errors.Select(error => $"- {error}")));
@@ -198,7 +230,6 @@ internal static partial class RegistrationContractValidator
         }
         Field(errors, path, "runCallback", node.RunCallback, node.Kind == "stage");
         Field(errors, path, "requestCallback", node.RequestCallback, node.Kind == "interaction");
-        Field(errors, path, "handleCallback", node.HandleCallback, node.Kind == "interaction");
         Field(errors, path, "applyCallback", node.ApplyCallback, node.Kind == "interaction");
         Field(
             errors,
@@ -246,10 +277,16 @@ internal static partial class RegistrationContractValidator
             errors.Add($"{path}.capabilities is required and must not be null.");
         if (node.Output is { } output)
         {
+            Required(errors, $"{path}.output.instructions", output.Instructions);
             Required(errors, $"{path}.output.valueType", output.ValueType);
             Json(errors, $"{path}.output.jsonSchema", output.JsonSchema, objectRoot: true);
             Required(errors, $"{path}.output.validateCallback", output.ValidateCallback);
             Required(errors, $"{path}.output.applyCallback", output.ApplyCallback);
+            OptionalCallback(
+                errors,
+                $"{path}.output.validateForCallback",
+                output.ValidateForCallback
+            );
         }
         var names = new HashSet<string>(StringComparer.Ordinal);
         foreach (
@@ -265,6 +302,7 @@ internal static partial class RegistrationContractValidator
                 continue;
             }
             Required(errors, $"{capabilityPath}.name", capability.Name);
+            Required(errors, $"{capabilityPath}.instructions", capability.Instructions);
             if (!string.IsNullOrWhiteSpace(capability.Name) && !names.Add(capability.Name))
                 errors.Add($"{capabilityPath}.name duplicates capability '{capability.Name}'.");
             Required(errors, $"{capabilityPath}.valueType", capability.ValueType);
@@ -272,7 +310,71 @@ internal static partial class RegistrationContractValidator
             Required(errors, $"{capabilityPath}.validateCallback", capability.ValidateCallback);
             Required(errors, $"{capabilityPath}.applyCallback", capability.ApplyCallback);
             Required(errors, $"{capabilityPath}.summaryCallback", capability.SummaryCallback);
+            OptionalCallback(
+                errors,
+                $"{capabilityPath}.validateForCallback",
+                capability.ValidateForCallback
+            );
         }
+    }
+
+    private static void ValidateCallbackReferences(
+        List<string> errors,
+        RegisteredGraphContract graph
+    )
+    {
+        var references = new Dictionary<string, string>(StringComparer.Ordinal);
+        void Add(string path, string? reference)
+        {
+            if (string.IsNullOrWhiteSpace(reference))
+                return;
+            if (references.TryGetValue(reference, out var firstPath))
+                errors.Add($"{path} duplicates callback reference '{reference}' from {firstPath}.");
+            else
+                references.Add(reference, path);
+        }
+
+        foreach (var (node, index) in (graph.Nodes ?? []).Select((value, index) => (value, index)))
+        {
+            if (node is null)
+                continue;
+            var path = $"nodes[{index}]";
+            Add($"{path}.runCallback", node.RunCallback);
+            Add($"{path}.requestCallback", node.RequestCallback);
+            Add($"{path}.applyCallback", node.ApplyCallback);
+            Add($"{path}.summaryCallback", node.SummaryCallback);
+            Add($"{path}.messageCallback", node.MessageCallback);
+            if (node.Output is { } output)
+            {
+                Add($"{path}.output.validateCallback", output.ValidateCallback);
+                Add($"{path}.output.validateForCallback", output.ValidateForCallback);
+                Add($"{path}.output.applyCallback", output.ApplyCallback);
+            }
+            foreach (
+                var (capability, capabilityIndex) in (node.Capabilities ?? []).Select(
+                    (value, capabilityIndex) => (value, capabilityIndex)
+                )
+            )
+            {
+                if (capability is null)
+                    continue;
+                var capabilityPath = $"{path}.capabilities[{capabilityIndex}]";
+                Add($"{capabilityPath}.validateCallback", capability.ValidateCallback);
+                Add($"{capabilityPath}.validateForCallback", capability.ValidateForCallback);
+                Add($"{capabilityPath}.applyCallback", capability.ApplyCallback);
+                Add($"{capabilityPath}.summaryCallback", capability.SummaryCallback);
+            }
+        }
+        foreach (
+            var (route, index) in (graph.Routes ?? []).Select((value, index) => (value, index))
+        )
+            Add($"routes[{index}].predicateCallback", route?.PredicateCallback);
+        foreach (
+            var (binding, index) in (graph.InteractionHandlers ?? []).Select(
+                (value, index) => (value, index)
+            )
+        )
+            Add($"interactionHandlers[{index}].handleCallback", binding?.HandleCallback);
     }
 
     private static void ValidateClient(

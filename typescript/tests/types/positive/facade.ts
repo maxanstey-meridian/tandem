@@ -1,6 +1,8 @@
 import {
   agent,
   capability,
+  interaction,
+  interactions,
   pipeline,
   route,
   stage,
@@ -28,12 +30,14 @@ pipeline({
 });
 const record = capability<State, { amount: number }>({
   name: "record",
+  instructions: "Record an amount.",
   schema: z.object({ amount: z.number() }),
   apply: (state, request) => ({ count: state.count + request.amount }),
   summarize: (request) => String(request.amount),
 });
 const reset = capability<State, { reason: string }>({
   name: "reset",
+  instructions: "Reset with a reason.",
   schema: z.object({ reason: z.string() }),
   apply: () => ({ count: 0 }),
   summarize: (request) => request.reason,
@@ -41,6 +45,7 @@ const reset = capability<State, { reason: string }>({
 const callable = z.string().transform(() => (amount: number) => amount + 1);
 capability({
   name: "callable",
+  instructions: "Apply a callable.",
   schema: z.object({ apply: callable }),
   apply: (state: State, request) => ({ count: request.apply(state.count) }),
   summarize: (request) => String(request.apply(0)),
@@ -60,7 +65,10 @@ const worker = agent<State, { amount: number }>({
   message: (state) => String(state.count),
   capabilities: granted,
   output: {
+    instructions: "Return an amount.",
     schema: z.object({ amount: z.number() }),
+    validateFor: (state, value) =>
+      value.amount >= state.count ? [] : [{ path: "$.amount", message: "too small" }],
     apply: (state, value) => ({ count: state.count + value.amount }),
   },
 });
@@ -70,10 +78,22 @@ agent({
   client,
   message: () => "work",
   output: {
+    instructions: "Return a callable.",
     schema: z.object({ apply: callable }),
     apply: (state: State, value) => ({ count: value.apply(state.count) }),
   },
 });
+const review = interaction({
+  id: "review",
+  requestSchema: z.object({ count: z.number() }),
+  responseSchema: z.object({ accepted: z.boolean() }),
+  request: (state: State) => ({ count: state.count }),
+  apply: (state, response) => ({ count: response.accepted ? state.count : 0 }),
+});
+const handlers = interactions().handle(review, (request, { signal }) => ({
+  accepted: request.count > 0 && !signal.aborted,
+}));
+void handlers;
 route({ from: worker, to: done, label: "worked", outcome: "success" });
 declare const accepted: AcceptedValue;
 if (accepted.kind === "CapabilityAccepted") {

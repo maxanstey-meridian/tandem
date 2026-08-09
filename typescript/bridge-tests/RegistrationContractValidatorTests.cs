@@ -163,6 +163,125 @@ public sealed class RegistrationContractValidatorTests
         Assert.Contains("output 'unused' is unreachable", message);
     }
 
+    [Fact]
+    public void AcceptsRunLocalInteractionHandlerBinding()
+    {
+        var value = InteractionContractObject();
+        value["interactionHandlers"] = new[]
+        {
+            new
+            {
+                id = "review-handler",
+                target = "review",
+                handleCallback = "c2",
+            },
+        };
+
+        var contract = RegistrationContractValidator.ParseAndValidate(
+            JsonSerializer.Serialize(value)
+        );
+
+        var binding = Assert.Single(contract.InteractionHandlers!);
+        Assert.Equal("review", binding.Target);
+        Assert.Equal("c2", binding.HandleCallback);
+    }
+
+    [Fact]
+    public void AllowsMissingInteractionHandlerBinding()
+    {
+        var contract = RegistrationContractValidator.ParseAndValidate(
+            JsonSerializer.Serialize(InteractionContractObject())
+        );
+
+        Assert.Null(contract.InteractionHandlers);
+    }
+
+    [Fact]
+    public void RejectsInvalidInteractionHandlerBindings()
+    {
+        var value = InteractionContractObject();
+        value["interactionHandlers"] = new object[]
+        {
+            new
+            {
+                id = "handler",
+                target = "missing",
+                handleCallback = "c2",
+            },
+            new
+            {
+                id = "handler",
+                target = "done",
+                handleCallback = " ",
+            },
+            new
+            {
+                id = "first-target",
+                target = "ask",
+                handleCallback = "c20",
+            },
+            new
+            {
+                id = "second-target",
+                target = "ask",
+                handleCallback = "c21",
+            },
+        };
+
+        var message = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
+            )
+            .Message;
+
+        Assert.Contains("duplicates interaction handler ID 'handler'", message);
+        Assert.Contains("references unknown node 'missing'", message);
+        Assert.Contains("node 'done' must be an interaction", message);
+        Assert.Contains("handleCallback is required", message);
+        Assert.Contains("duplicates interaction handler target 'ask'", message);
+    }
+
+    [Fact]
+    public void RejectsDuplicateCallbackReferencesAcrossOneGlobalNamespace()
+    {
+        var value = ContractObject();
+        var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        var output = (Dictionary<string, object?>)agent["output"]!;
+        output["validateForCallback"] = "agent.message";
+
+        var message = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
+            )
+            .Message;
+
+        Assert.Contains(
+            "output.validateForCallback duplicates callback reference 'agent.message'",
+            message
+        );
+        Assert.Contains("from nodes[0].messageCallback", message);
+    }
+
+    [Fact]
+    public void RequiresAuthoredOutputAndCapabilityInstructions()
+    {
+        var value = ContractObject();
+        var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        var output = (Dictionary<string, object?>)agent["output"]!;
+        output["instructions"] = " ";
+        var capability = (Dictionary<string, object?>)((object[])agent["capabilities"]!)[0];
+        capability.Remove("instructions");
+
+        var message = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
+            )
+            .Message;
+
+        Assert.Contains("output.instructions is required and must be non-blank", message);
+        Assert.Contains("capabilities[0].instructions is required and must be non-blank", message);
+    }
+
     private static string ValidContract() => JsonSerializer.Serialize(ContractObject());
 
     private static Dictionary<string, object?> ContractObject() =>
@@ -184,6 +303,7 @@ public sealed class RegistrationContractValidatorTests
                     ["client"] = Client("http://127.0.0.1:10531/v1", null),
                     ["output"] = new Dictionary<string, object?>
                     {
+                        ["instructions"] = "Return a result.",
                         ["jsonSchema"] = "{\"type\":\"object\"}",
                         ["validateCallback"] = "agent.output.validate",
                         ["applyCallback"] = "agent.output.apply",
@@ -215,6 +335,42 @@ public sealed class RegistrationContractValidatorTests
             ["outputs"] = new[] { "done" },
         };
 
+    private static Dictionary<string, object?> InteractionContractObject() =>
+        new()
+        {
+            ["contractVersion"] = 3,
+            ["name"] = "interaction-test",
+            ["start"] = "review",
+            ["initialState"] = "{}",
+            ["persist"] = false,
+            ["nodes"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["id"] = "review",
+                    ["kind"] = "interaction",
+                    ["requestCallback"] = "c0",
+                    ["applyCallback"] = "c1",
+                },
+                new Dictionary<string, object?>
+                {
+                    ["id"] = "done",
+                    ["kind"] = "completion",
+                    ["summaryCallback"] = "c3",
+                },
+            },
+            ["routes"] = new[]
+            {
+                new
+                {
+                    source = "review",
+                    target = "done",
+                    label = "reviewed",
+                },
+            },
+            ["outputs"] = new[] { "done" },
+        };
+
     private static Dictionary<string, object?> Client(string endpoint, string? keyName) =>
         new()
         {
@@ -231,6 +387,7 @@ public sealed class RegistrationContractValidatorTests
         new()
         {
             ["name"] = name,
+            ["instructions"] = $"Invoke {name}.",
             ["jsonSchema"] = "{\"type\":\"object\"}",
             ["validateCallback"] = validate,
             ["applyCallback"] = $"agent.{name}.apply",

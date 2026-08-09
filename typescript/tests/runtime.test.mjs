@@ -78,6 +78,14 @@ test("executes a typed interaction through Tandem", async () => {
   assert.deepEqual(await child("interaction-chain"), { count: 6, done: true });
 });
 
+test("owns interaction handlers per run and validates handler registration", async () => {
+  assert.deepEqual(await child("interaction-handlers"), { values: [11, 22] });
+  assert.equal((await child("interaction-unreached")).done, true);
+  assert.match((await child("interaction-duplicate")).error, /already has a handler/);
+  assert.match((await child("interaction-foreign")).error, /must target a participant/);
+  assert.match((await child("interaction-missing")).error, /No typed handler is registered/);
+});
+
 test("cancels an active interaction through its AbortSignal without applying a response", async () => {
   const cancelled = await child("interaction-cancel");
   assert.equal(cancelled.name, "AbortError");
@@ -85,6 +93,15 @@ test("cancels an active interaction through its AbortSignal without applying a r
   assert.equal(cancelled.handlerCompleted, false);
   assert.equal(cancelled.interactionApplied, false);
   assert.equal(cancelled.mutatedAfterAbort, false);
+});
+
+test("does not apply a late interaction response after cancellation", async () => {
+  const cancelled = await child("interaction-cancel-late");
+  assert.equal(cancelled.name, "AbortError");
+  assert.equal(cancelled.abortObserved, true);
+  assert.equal(cancelled.handlerCompleted, true);
+  assert.equal(cancelled.mutatedAfterAbort, true);
+  assert.equal(cancelled.interactionApplied, false);
 });
 
 test("supports concurrent and repeated runs in one loaded host", async () => {
@@ -132,6 +149,8 @@ test("planner preflight and model requests proceed through a local protocol fixt
   assert(result.urls.slice(1).every((url) => url === "/v1/responses"));
   assert(result.urls.length >= 2);
   assert.match(JSON.stringify(result.modelBody), /STATE MESSAGE: from-typescript-state/);
+  assert.equal(result.contextualValidations, 2);
+  assert.equal(result.applications, 1);
 });
 
 test("one agent composes its authored message, multiple capabilities, structured output, and policies", async () => {
@@ -148,6 +167,10 @@ test("one agent composes its authored message, multiple capabilities, structured
   const result = JSON.parse(stdout.trim());
   assert.equal(result.error, null);
   assert.equal(result.accepted, true);
+  assert.equal(result.contextualValidations, 2);
+  assert.equal(result.applications, 1);
+  assert.match(JSON.stringify(result.bodies), /\$\.accepted/);
+  assert.match(JSON.stringify(result.bodies), /Confirm acceptance once/);
   assert.match(
     JSON.stringify(result.body),
     /CAPABILITY STATE MESSAGE: from-typescript-capability-state/,
@@ -155,6 +178,11 @@ test("one agent composes its authored message, multiple capabilities, structured
   assert.match(JSON.stringify(result.body), /accept/);
   assert.match(JSON.stringify(result.body), /reject/);
   assert.equal(result.body.tools.length, 2);
+  assert.deepEqual(
+    result.body.tools.map((tool) => tool.function.description),
+    ["Accept the request.", "Reject the request with a reason."],
+  );
+  assert.doesNotMatch(JSON.stringify(result.body), /Invoke (?:accept|reject)\./);
   assert.match(JSON.stringify(result.body.response_format), /json_schema/);
 });
 
@@ -168,6 +196,20 @@ test("rolls back durable acceptance when JavaScript state application faults", a
     const result = JSON.parse(stdout.trim());
     assert.equal(result.applyCalled, true);
     assert.match(result.error, /apply failed after durable acceptance/);
+    assert.equal(result.persistedAcceptance, false);
+  }
+});
+
+test("rejects lossy capability and output applied state before commit", async () => {
+  for (const mode of ["capability-json", "output-json"]) {
+    const { stdout } = await exec(
+      process.execPath,
+      [new URL("acceptance-atomicity-child.mjs", import.meta.url).pathname, mode],
+      { timeout: 15_000 },
+    );
+    const result = JSON.parse(stdout.trim());
+    assert.equal(result.applyCalled, true);
+    assert.match(result.error, /applied state validation failed/);
     assert.equal(result.persistedAcceptance, false);
   }
 });

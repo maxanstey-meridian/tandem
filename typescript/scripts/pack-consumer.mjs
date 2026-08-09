@@ -70,16 +70,18 @@ try {
 import { inspectAcceptedAsync, runRegisteredGraphAsync } from "@tandem/runtime";
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { output, pipeline, route, run, stage } from "@tandem/sdk";
+import { interaction, interactions, output, pipeline, route, run, stage } from "@tandem/sdk";
 import { closeCli } from "@tandem/sdk/cli";
 import { z } from "zod";
 const ledgerPath = new URL("packed.sqlite3", import.meta.url).pathname;
 if (typeof inspectAcceptedAsync !== "function" || typeof runRegisteredGraphAsync !== "function") throw new Error("runtime loader exports are unavailable");
 const State = z.object({ value: z.number() });
 const increment = stage({ id: "increment", execute: (state) => ({ value: state.value + 1 }), persist: true });
+const confirm = interaction({ id: "confirm", requestSchema: z.object({ value: z.number() }), responseSchema: z.object({ value: z.number() }), request: (state) => state, apply: (_state, response) => response, persist: true });
 const done = output({ id: "done", summary: (state) => String(state.value) });
-const graph = pipeline({ name: "packed-consumer", state: State, nodes: [increment, done], start: increment, routes: [route({ from: increment, to: done, label: "done" })], outputs: [done], persist: true });
-const result = await run(graph, { value: 1 }, { ledgerPath });
+const graph = pipeline({ name: "packed-consumer", state: State, nodes: [increment, confirm, done], start: increment, routes: [route({ from: increment, to: confirm, label: "confirm" }), route({ from: confirm, to: done, label: "done" })], outputs: [done], persist: true });
+const handlers = interactions().handle(confirm, ({ value }) => ({ value: value + 1 }));
+const result = await run(graph, { value: 1 }, { ledgerPath, interactions: handlers });
 const db = new DatabaseSync(ledgerPath, { readOnly: true });
 const row = db.prepare("select status, ended_at from runs where run_id = ?").get(result.runId.replaceAll("-", ""));
 db.close();
@@ -93,7 +95,7 @@ await closeCli(0);
     timeout: 10_000,
   });
   assert.deepEqual(JSON.parse(consumerOutput.trim()), {
-    value: 2,
+    value: 3,
     status: "Ready",
     terminalized: true,
     sqlite: true,

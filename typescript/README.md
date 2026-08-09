@@ -27,19 +27,24 @@ the installed runtime package.
   one macOS arm64 `libe_sqlite3.dylib` native asset.
 
 Zod parses initial/final state, complete bridge results, accepted-value projections,
-and every TypeScript callback input and output. Schemas are synchronous,
-JSON-serializable, and validation-only: coercion, defaults, transforms, and stripping
-are rejected whenever parsing changes a boundary value. Provider-facing schemas that
-contain transforms are rejected before registration. Async refinements and transforms
-remain unsupported.
+and every TypeScript callback input and output. Schemas are synchronous and
+validation-only: coercion, defaults, transforms, and stripping are rejected whenever
+parsing changes a boundary value. Every JavaScript-to-bridge value must also survive
+JSON serialization without loss. Non-finite numbers, bigint, undefined values, sparse
+arrays, non-plain objects, hidden or symbol state, `toJSON`, and cycles fail at their
+semantic boundary before crossing the bridge. Provider-facing schemas that contain
+transforms are rejected before registration. Async refinements and transforms remain
+unsupported.
 `ContractValidationError.problems` retains JSON-style paths and messages. The
 registration protocol, callback IDs, serialized state, CLR types, graph JSON,
 DLLs, and native loading remain private.
 
-Async stages receive `execute(state, { signal })` and interaction handlers receive
-`handle(request, { signal })`. The signal is node-api-dotnet's maintained projection
-of the active .NET `CancellationToken`; messages, predicates, interaction request/apply,
-validation, capability summaries, and terminal summaries remain synchronous.
+Async stages receive `execute(state, { signal })`. Interaction definitions own request
+and response contracts plus state projection/application; the host binds the concrete
+channel per run with `interactions().handle(interaction, (request, { signal }) => ...)`.
+The signal is node-api-dotnet's maintained projection of the active .NET
+`CancellationToken`; messages, predicates, interaction request/apply, validation,
+capability summaries, and terminal summaries remain synchronous.
 
 ## Chat Clients
 
@@ -64,11 +69,32 @@ reasoning values are closed unions. Optional model discovery gets `/models` and
 rejects unless the declared model is exposed. A future C# adapter may add another
 kind/version without changing agent semantics.
 
-An agent has one authored message, zero or more independently validated
-capabilities, and optional structured output. Each capability seals its own typed
-request contract while agents hold an opaque heterogeneous capability list. Those behaviors compile to one real
-C# `AgentBuilder`; capability acceptance concludes the visit, otherwise structured
-output correction and acceptance applies. Duplicate capability names are rejected.
+An agent has one authored message, zero or more independently validated capabilities,
+and optional structured output. Output and capability contracts require authored
+instructions for their local machine boundary. Zod owns intrinsic validation; optional
+synchronous `validateFor(state, value)` callbacks own contextual application rules.
+Core runs contextual validation only after intrinsic validation succeeds and retains
+correction, acceptance, and application ordering. Each capability seals its own typed
+request contract while agents hold an opaque heterogeneous capability list. Those
+behaviors compile to one real C# `AgentBuilder`; capability acceptance concludes the
+visit, otherwise structured output correction and acceptance applies. Duplicate
+capability names are rejected.
+
+```ts
+const review = interaction({
+  id: "review",
+  requestSchema: ReviewRequest,
+  responseSchema: ReviewResponse,
+  request: createReviewRequest,
+  apply: recordReview,
+});
+
+const handlers = interactions().handle(review, async (request, { signal }) =>
+  askReviewer(request, signal),
+);
+
+await run(graph, initialState, { interactions: handlers, signal });
+```
 
 For local proxy diagnostics and shutdown, use exactly:
 
@@ -88,8 +114,9 @@ pnpm pack-consumer
 ```
 
 The clean packed-consumer gate installs all three locally packed Tandem tarballs into a
-temporary directory outside the repository, executes a stage-to-terminal pipeline
-through packaged CoreCLR/Tandem, and verifies its terminal SQLite row. It proves
+temporary directory outside the repository, executes a stage-to-interaction-to-terminal
+pipeline with a run-owned handler through packaged CoreCLR/Tandem, and verifies its
+terminal SQLite row. It proves
 the installed SDK-to-loader-to-RID topology and does no consumer-side .NET build
 or publish. npm cannot rewrite dependencies inside a tarball to sibling local
 tarballs, so the fixture must list all three as direct `file:` dependencies. This
@@ -174,14 +201,16 @@ does not flush or dispose CoreCLR.
 ## Automated Evidence
 
 The gates cover facade positive/negative compilation, runtime participant identity,
-registration rejection, reviewer model discovery and request progress, capability
-message transport, the deterministic function implementation/verification/review loop,
-sample-local verifier controls, package contents,
-local-tarball package-relative execution,
+registration rejection, opaque callback-reference uniqueness, reviewer model discovery
+and request progress, authored instruction transport, intrinsic/contextual correction
+ordering, capability message transport, the deterministic function
+implementation/verification/review loop, sample-local verifier controls, package
+contents, local-tarball package-relative execution,
 the exact SQLite native asset, accepted-value inspection, Ready/Failed/Faulted/
-Cancelled terminalization, propagated callback failure, cancellation observed inside
-JavaScript operations before post-cancel mutation, interaction chains, concurrent runs,
-repeated runs in one loaded host, explicit process exit, a bounded 25-run soak, and the live
+Cancelled terminalization, propagated callback failure, JSON-lossless boundary
+rejection, cancellation observed inside JavaScript operations before post-cancel
+mutation, interaction chains, run-owned handler isolation, concurrent runs, repeated
+runs in one loaded host, explicit process exit, a bounded 25-run soak, and the live
 OpenRouter plus `openai-oauth` dogfood. Long soak, abandonment,
 persistence-failure injection, and the full provider-failure/correction matrix
 remain deferred phase-8 work. Process-exit fixtures prove the documented CLI helper,

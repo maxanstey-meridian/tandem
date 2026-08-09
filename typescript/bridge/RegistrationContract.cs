@@ -9,7 +9,8 @@ internal sealed record RegisteredGraphContract(
     RegisteredNodeContract[]? Nodes,
     RegisteredRouteContract[]? Routes,
     string[]? Outputs,
-    string? LedgerPath
+    string? LedgerPath,
+    RegisteredInteractionHandlerContract[]? InteractionHandlers
 );
 
 internal sealed record RegisteredNodeContract(
@@ -18,7 +19,6 @@ internal sealed record RegisteredNodeContract(
     string? Instructions,
     string? RunCallback,
     string? RequestCallback,
-    string? HandleCallback,
     string? ApplyCallback,
     string? SummaryCallback,
     string? MessageCallback,
@@ -42,16 +42,20 @@ internal sealed record RegisteredChatClientContract(
 );
 
 internal sealed record RegisteredAgentOutputContract(
+    string? Instructions,
     string? JsonSchema,
     string? ValidateCallback,
+    string? ValidateForCallback,
     string? ApplyCallback,
     string? ValueType
 );
 
 internal sealed record RegisteredCapabilityContract(
     string? Name,
+    string? Instructions,
     string? JsonSchema,
     string? ValidateCallback,
+    string? ValidateForCallback,
     string? ApplyCallback,
     string? SummaryCallback,
     string? ValueType
@@ -63,4 +67,10 @@ internal sealed record RegisteredRouteContract(
     string? Label,
     string? PredicateCallback,
     string? Outcome
+);
+
+internal sealed record RegisteredInteractionHandlerContract(
+    string? Id,
+    string? Target,
+    string? HandleCallback
 );
