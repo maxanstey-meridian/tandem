@@ -11,28 +11,42 @@ const codeWriter = pipeline({
   state: State,
 
   // List everything that can take a turn or finish the run.
-  nodes: [implementer, verification, reviewer, done, failed],
+  nodes: [implementer, reviewer, done, failed],
   // The implementer receives the initial state first.
   start: implementer,
 
   routes: [
-    // Submitted code always goes through normal verification.
+    // Submitted code goes straight to review.
     route({
       from: implementer,
-      to: verification,
+      to: reviewer,
       outcome: "success",
     }),
-    // Passing code is ready for review.
+    // Accepted work finishes the run.
     route({
-      from: verification,
-      to: reviewer,
-      when: (state) => state.verification?.passed === true,
+      from: reviewer,
+      to: done,
+      outcome: "success",
+      when: (state) => state.review?.decision === "Accept",
     }),
-    // Failed checks send their evidence back to the implementer.
+    // Requested changes go back around with the same state.
     route({
-      from: verification,
+      from: reviewer,
       to: implementer,
-      when: (state) => state.verification?.passed === false,
+      outcome: "success",
+      when: (state) => state.review?.decision === "RequestChanges",
+    }),
+    // An implementer fault has no work to review.
+    route({
+      from: implementer,
+      to: failed,
+      outcome: "failed",
+    }),
+    // A reviewer fault is different from requesting changes.
+    route({
+      from: reviewer,
+      to: failed,
+      outcome: "failed",
     }),
   ],
 
