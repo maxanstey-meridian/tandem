@@ -1,6 +1,6 @@
 import { inspectAccepted, type ChatClient } from "@tandem/sdk";
 import { closeCli, runCli } from "@tandem/sdk/cli";
-import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 import { createPipeline } from "./pipeline.js";
 import type { State } from "./state.js";
 
@@ -41,7 +41,7 @@ if (!process.env.OPENROUTER_API_KEY) {
   process.stderr.write("OPENROUTER_API_KEY is required to run the Code Writer example.\n");
   closeCli(2);
 }
-const ledgerPath = process.env.TANDEM_LEDGER_PATH ?? `code-writer-${randomUUID()}.sqlite3`;
+const ledgerPath = resolve(process.env.TANDEM_LEDGER_PATH ?? "code-writer.sqlite3");
 await runCli(
   createPipeline({ implementer: openRouterDs4Client, reviewer: localSolClient }),
   initialState,

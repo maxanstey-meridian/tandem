@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using Tandem.Ledger;
+using Tandem.OpenAICompatible;
 using Tandem.Terminal;
 
 namespace Tandem.Examples.Hosting;
@@ -213,13 +214,13 @@ public static class ExampleHost
         return result?.Status == PipelineRunStatus.Succeeded ? 0 : 1;
     }
 
-    private static IChatClient CreateCompletionsClient(Uri endpoint, string model, string apiKey)
+    internal static IChatClient CreateCompletionsClient(Uri endpoint, string model, string apiKey)
     {
         var client = new OpenAIClient(
             new ApiKeyCredential(apiKey),
             new OpenAIClientOptions { Endpoint = endpoint }
         );
-        return client.GetChatClient(model).AsIChatClient();
+        return new OpenRouterReasoningChatClient(client.GetChatClient(model).AsIChatClient());
     }
 
 #pragma warning disable OPENAI001

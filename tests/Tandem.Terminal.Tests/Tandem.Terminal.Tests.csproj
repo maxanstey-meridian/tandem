@@ -21,6 +21,7 @@
         <ProjectReference Include="..\..\src\Tandem.Terminal\Tandem.Terminal.csproj" />
         <ProjectReference Include="..\..\examples\csharp-hosting\Tandem.Examples.Hosting.csproj" />
         <ProjectReference Include="..\..\src\Tandem.Ledger\Tandem.Ledger.csproj" />
+        <ProjectReference Include="..\..\src\Tandem.OpenAICompatible\Tandem.OpenAICompatible.csproj" />
     </ItemGroup>
 
     <ItemGroup>

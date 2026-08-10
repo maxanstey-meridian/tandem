@@ -146,6 +146,16 @@ Each command builds the experimental runtime, verifies the local Sol model, and 
 the selected example. Code Writer also requires Node.js to evaluate its generated
 JavaScript in a bounded child process.
 
+Code Writer stores accepted values in
+`examples/code-writer/typescript/code-writer.sqlite3` by default. Press `q` after
+completion to leave the terminal view and print the run ID and absolute ledger path.
+Inspect that run from the repository root with:
+
+```sh
+dotnet run --project src/Tandem.Tool -- inspect <run-id> \
+  --ledger examples/code-writer/typescript/code-writer.sqlite3 --accepted
+```
+
 ## Develop
 
 Run the complete TypeScript gate from this directory:

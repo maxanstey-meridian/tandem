@@ -1,12 +1,42 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Tandem.OpenAICompatible;
 using Xunit;
 
 namespace Tandem.NodeApiSpike;
 
 public sealed class OpenAiCompatibleChatClientsTests
 {
+    [Fact]
+    public async Task OpenRouterCompletionsUseReasoningAdapter()
+    {
+        const string environmentVariable = "TANDEM_TEST_OPENROUTER_KEY";
+        Environment.SetEnvironmentVariable(environmentVariable, "test-key");
+        try
+        {
+            using var client = await OpenAiCompatibleChatClients.CreateAsync(
+                new(
+                    "openai-compatible",
+                    1,
+                    "https://openrouter.ai/api/v1",
+                    "model",
+                    "completions",
+                    environmentVariable,
+                    null,
+                    false
+                ),
+                CancellationToken.None
+            );
+
+            Assert.IsType<OpenRouterReasoningChatClient>(client);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(environmentVariable, null);
+        }
+    }
+
     [Fact]
     public async Task ModelPreflightRequiresExactModelExposure()
     {

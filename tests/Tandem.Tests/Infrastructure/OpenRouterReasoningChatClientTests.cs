@@ -2,6 +2,7 @@ using System.ClientModel.Primitives;
 using System.Text;
 using FluentAssertions;
 using Tandem.Infrastructure;
+using Tandem.OpenAICompatible;
 
 namespace Tandem.Tests.Infrastructure;
 
@@ -9,6 +10,26 @@ namespace Tandem.Tests.Infrastructure;
 
 public sealed class OpenRouterReasoningChatClientTests
 {
+    [Fact]
+    public void ChatClientBuilderWrapsOpenRouterCompletions()
+    {
+        using var client = new ChatClientBuilder().Build(
+            new(
+                "openrouter",
+                "https://openrouter.ai/api/v1",
+                "model",
+                Tandem.Domain.WireApi.Completions,
+                null,
+                1_000,
+                100,
+                80
+            ),
+            "test-key"
+        );
+
+        client.Should().BeOfType<OpenRouterReasoningChatClient>();
+    }
+
     [Fact]
     public void TryExtractReasoning_ReadsOpenRouterReasoningDelta()
     {

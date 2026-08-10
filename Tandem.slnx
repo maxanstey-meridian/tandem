@@ -4,6 +4,7 @@
         <Project Path="src/Tandem.Generators/Tandem.Generators.csproj" />
         <Project Path="src/Tandem.Delivery/Tandem.Delivery.csproj" />
         <Project Path="src/Tandem.Ledger/Tandem.Ledger.csproj" />
+        <Project Path="src/Tandem.OpenAICompatible/Tandem.OpenAICompatible.csproj" />
         <Project Path="src/Tandem.Tool/Tandem.Tool.csproj" />
         <Project Path="src/Tandem.Terminal/Tandem.Terminal.csproj" />
         <Project Path="src/Tandem/Tandem.csproj" />

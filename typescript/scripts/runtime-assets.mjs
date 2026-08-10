@@ -41,6 +41,7 @@ export const runtimeAssets = [
   "Tandem.dll",
   "Tandem.Advanced.dll",
   "Tandem.Ledger.dll",
+  "Tandem.OpenAICompatible.dll",
   "Tandem.Terminal.dll",
   "Tandem.NodeApiSpike.Bridge.cjs",
   "Tandem.NodeApiSpike.Bridge.deps.json",

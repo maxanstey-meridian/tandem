@@ -2,6 +2,7 @@ using System.ClientModel;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using Tandem.Domain;
+using Tandem.OpenAICompatible;
 
 namespace Tandem.Infrastructure;
 

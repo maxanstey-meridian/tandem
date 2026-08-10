@@ -4,11 +4,11 @@ using System.Runtime.CompilerServices;
 using Microsoft.Extensions.AI;
 using StreamingChatCompletionUpdate = OpenAI.Chat.StreamingChatCompletionUpdate;
 
-namespace Tandem.Infrastructure;
+namespace Tandem.OpenAICompatible;
 
 #pragma warning disable SCME0001
 
-internal sealed class OpenRouterReasoningChatClient(IChatClient inner) : DelegatingChatClient(inner)
+public sealed class OpenRouterReasoningChatClient(IChatClient inner) : DelegatingChatClient(inner)
 {
     private static readonly PropertyInfo? _patchProperty =
         typeof(StreamingChatCompletionUpdate).GetProperty(

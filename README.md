@@ -203,7 +203,8 @@ var reviewer = Agent
         clients.Reviewer)
     // Build each visit from the latest accepted candidate and checks.
     .WithMessage(state =>
-        $"Exact source: {state.Implementation!.Source}\n"
+        $"Requirements: {JsonSerializer.Serialize(state.Requirements)}\n"
+        + $"Exact source: {state.Implementation!.Source}\n"
         + $"Passing verification evidence: {JsonSerializer.Serialize(state.Verification)}")
     .WithOutput(
         // This definition owns the response shape and validation.
@@ -212,9 +213,6 @@ var reviewer = Agent
         (state, review) => state.RecordReview(review))
     .Build();
 ```
-
-`continueSession: true` in TypeScript or `.ContinueSession()` in C# sets whether the agent session should be reused
-when the pipeline routes back to that agent
 
 ## Typed model output becomes application state
 
@@ -315,7 +313,8 @@ const submitImplementation = capability({
 });
 ```
 
-Attach it to the intended agent:
+Attach it to the intended agent. Agents start with a fresh session on each visit; the implementer keeps its session
+because verification or review can route work back to it:
 
 ```ts
 const implementer = agent<State>({
@@ -355,7 +354,7 @@ public sealed class SubmitImplementationCapability
 
     // Keep the accepted call readable in observations and the ledger.
     public string Summarize(SubmitImplementation request) =>
-        request.Rationale;
+        $"Implementation:\n{request.Implementation}\n\nRationale:\n{request.Rationale}";
 }
 ```
 
@@ -812,10 +811,13 @@ dotnet run --project src/Tandem.Tool -- inspect <run-id> --accepted --step revie
 
 # Emit JSON for another tool.
 dotnet run --project src/Tandem.Tool -- inspect <run-id> --accepted --json
+
+# Inspect an application-owned ledger at another path.
+dotnet run --project src/Tandem.Tool -- inspect <run-id> --ledger path/to/pipeline.sqlite3
 ```
 
-Applications using another ledger path can read accepted values through `inspectAccepted` in TypeScript or
-`SqliteLedgerStore` in C#.
+Applications can also read accepted values directly through `inspectAccepted` in TypeScript or `SqliteLedgerStore` in
+C#.
 
 ## Running a pipeline
 
@@ -845,11 +847,13 @@ console.log(result.state);
 
 ### C#
 
+For a pipeline that does not enable persistence:
+
 ```csharp
 var result =
     await new PipelineRunner().RunAsync(
         // Run this configured lifecycle...
-        codeWriter,
+        pipeline,
         // ...starting from these application facts...
         initialState,
         // ...until completion or caller cancellation.
@@ -859,8 +863,10 @@ Console.WriteLine(result.Status);
 Console.WriteLine(result.State);
 ```
 
-Persistent C# pipelines receive their persistence observer through `PipelineRunOptions`.
-The [Code Writer host](examples/code-writer/csharp/Program.cs) shows the complete setup and run terminalisation.
+Persistent C# pipelines receive their persistence observer through `PipelineRunOptions`; creating and terminalising
+that observer is host infrastructure, not pipeline authoring. The
+[example host](examples/csharp-hosting/ExampleHost.cs) shows the complete setup, and the
+[Code Writer entry point](examples/code-writer/csharp/Program.cs) uses it.
 
 ## C# and TypeScript
 
@@ -964,7 +970,14 @@ OPENROUTER_API_KEY=... \
   "A hopeful song about coming home"
 ```
 
-Code Writer also requires Node.js for its JavaScript verifier.
+Code Writer also requires Node.js for its JavaScript verifier. After the run finishes,
+press `q` to close the terminal view and print its run ID and absolute ledger path.
+Inspect that ledger directly with:
+
+```sh
+dotnet run --project src/Tandem.Tool -- inspect <run-id> \
+  --ledger <ledger-path> --accepted
+```
 
 ## Documentation
 

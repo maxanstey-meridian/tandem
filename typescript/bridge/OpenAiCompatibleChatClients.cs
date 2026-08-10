@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net.Http.Json;
 using Microsoft.Extensions.AI;
 using OpenAI;
+using Tandem.OpenAICompatible;
 
 namespace Tandem.NodeApiSpike;
 
@@ -60,6 +61,18 @@ internal static class OpenAiCompatibleChatClients
                 )
                 .Build();
         }
+
+        if (
+            descriptor.WireApi == "completions"
+            && (
+                endpoint.Host.Equals("openrouter.ai", StringComparison.OrdinalIgnoreCase)
+                || endpoint.Host.EndsWith(".openrouter.ai", StringComparison.OrdinalIgnoreCase)
+            )
+        )
+        {
+            chatClient = new OpenRouterReasoningChatClient(chatClient);
+        }
+
         return chatClient;
     }
 

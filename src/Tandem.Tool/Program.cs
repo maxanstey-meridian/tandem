@@ -43,6 +43,10 @@ var acceptedOption = new Option<bool>("--accepted") { Description = "Show accept
 var stepOption = new Option<string?>("--step") { Description = "Filter by semantic step ID." };
 var typeOption = new Option<string?>("--type") { Description = "Filter by value type." };
 var jsonOption = new Option<bool>("--json") { Description = "Write machine-readable JSON." };
+var ledgerOption = new Option<string?>("--ledger")
+{
+    Description = "Path to the SQLite ledger. Defaults to the Tandem.Tool ledger.",
+};
 var inspectCommand = new Command("inspect", "Inspect a persisted run timeline")
 {
     inspectRunIdArgument,
@@ -50,6 +54,7 @@ var inspectCommand = new Command("inspect", "Inspect a persisted run timeline")
     stepOption,
     typeOption,
     jsonOption,
+    ledgerOption,
 };
 
 var rootCommand = new RootCommand("Tandem — agentic pipeline runner")
@@ -119,6 +124,7 @@ inspectCommand.SetAction(
                 parseResult.GetValue(stepOption),
                 parseResult.GetValue(typeOption),
                 parseResult.GetValue(jsonOption),
+                parseResult.GetValue(ledgerOption),
                 cancellationToken
             );
         }
@@ -467,6 +473,7 @@ static async Task<int> InspectAsync(
     string? step,
     string? valueType,
     bool json,
+    string? ledgerPath,
     CancellationToken cancellationToken
 )
 {
@@ -475,7 +482,10 @@ static async Task<int> InspectAsync(
         throw new InvalidOperationException($"Invalid run ID '{runIdArg}'.");
     }
     var tandemHome = TandemHomeResolver.Resolve();
-    var store = new SqliteLedgerStore(Path.Combine(tandemHome, "ledger.sqlite3"));
+    var resolvedLedgerPath = Path.GetFullPath(
+        ledgerPath ?? Path.Combine(tandemHome, "ledger.sqlite3")
+    );
+    var store = new SqliteLedgerStore(resolvedLedgerPath);
     await store.InitializeAsync(cancellationToken);
     var inspection = await new RunInspector(store).InspectAsync(
         runId,

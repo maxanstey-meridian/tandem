@@ -2,11 +2,24 @@ using FluentAssertions;
 using Spectre.Console.Testing;
 using Tandem.Examples.Hosting;
 using Tandem.Ledger;
+using Tandem.OpenAICompatible;
 
 namespace Tandem.Terminal.Tests;
 
 public sealed class ExampleHostTests
 {
+    [Fact]
+    public void ExampleHostUsesOpenRouterReasoningAdapter()
+    {
+        using var client = ExampleHost.CreateCompletionsClient(
+            new Uri("https://openrouter.ai/api/v1"),
+            "model",
+            "test-key"
+        );
+
+        client.Should().BeOfType<OpenRouterReasoningChatClient>();
+    }
+
     [Fact]
     public async Task NonpersistentRun_ObservesPipelineAndPrintsSemanticResultOnce()
     {
