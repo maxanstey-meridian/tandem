@@ -46,7 +46,7 @@ try {
   const result = await run(
     createPipeline({ implementer: openRouterDs4Client, reviewer: localSolClient }),
     initialState,
-    { ledgerPath, signal: AbortSignal.timeout(180_000) },
+    { ledgerPath, signal: AbortSignal.timeout(600_000) },
   );
   const accepted = await inspectAccepted({ ledgerPath, runId: result.runId });
   console.log(JSON.stringify({ ...result, ledgerPath, accepted }, null, 2));

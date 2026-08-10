@@ -22,8 +22,9 @@ const localSolClient = {
   verifyModel: true,
 } as const satisfies ChatClient;
 
+const args = process.argv.slice(2);
 const question =
-  process.argv.slice(2).join(" ") ||
+  (args[0] === "--" ? args.slice(1) : args).join(" ") ||
   "Should cities replace most downtown parking with public space?";
 
 const initialState: State = {
@@ -46,7 +47,7 @@ try {
       judge: localSolClient,
     }),
     initialState,
-    { signal: AbortSignal.timeout(180_000) },
+    { signal: AbortSignal.timeout(600_000) },
   );
   console.log(JSON.stringify(result, null, 2));
   exitCode = result.succeeded ? 0 : 1;

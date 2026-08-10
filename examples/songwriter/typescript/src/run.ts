@@ -22,8 +22,11 @@ const localSolClient = {
   verifyModel: true,
 } as const satisfies ChatClient;
 
+const args = process.argv.slice(2);
 const initialState: State = {
-  brief: process.argv.slice(2).join(" ") || "Write a hopeful song about finding your way home.",
+  brief:
+    (args[0] === "--" ? args.slice(1) : args).join(" ") ||
+    "Write a hopeful song about finding your way home.",
   lyrics: null,
   lintFeedback: null,
   proofreaderFeedback: null,
@@ -39,7 +42,7 @@ try {
   const result = await run(
     createPipeline({ songwriter: openRouterDs4Client, proofreader: localSolClient }),
     initialState,
-    { signal: AbortSignal.timeout(180_000) },
+    { signal: AbortSignal.timeout(600_000) },
   );
   console.log(JSON.stringify(result, null, 2));
   exitCode = result.succeeded ? 0 : 1;
