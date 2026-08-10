@@ -39,7 +39,10 @@ public sealed class TerminalRendererTests
 
         new TerminalRenderer(console).Render(Model(("reviewer", "accepted")));
 
-        console.Output.Should().Contain("reviewer · model · running");
+        console
+            .Output.Should()
+            .Contain("reviewer · model · running")
+            .And.NotContain("reviewer  · model");
     }
 
     [Fact]

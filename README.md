@@ -1,5 +1,48 @@
 # Tandem
 
+Tandem is a typed SDK for building agentic applications as explicit pipelines. Define the lifecycle in code, then run
+and inspect it.
+
+```typescript
+const codeWriter = pipeline({
+  // Give the complete lifecycle one name in logs and the ledger.
+  name: "code-writer",
+  // Every node reads and returns this same state shape.
+  state: State,
+
+  // List everything that can take a turn or finish the run.
+  nodes: [implementer, verification, reviewer, done, failed],
+  // The implementer receives the initial state first.
+  start: implementer,
+
+  routes: [
+    // Submitted code always goes through normal verification.
+    route({
+      from: implementer,
+      to: verification,
+      outcome: "success",
+    }),
+    // Passing code is ready for review.
+    route({
+      from: verification,
+      to: reviewer,
+      when: (state) => state.verification?.passed === true,
+    }),
+    // Failed checks send their evidence back to the implementer.
+    route({
+      from: verification,
+      to: implementer,
+      when: (state) => state.verification?.passed === false,
+    }),
+  ],
+
+  // These are the only places the run may finish.
+  outputs: [done, failed],
+  // Keep accepted values so this run can be inspected later.
+  persist: true,
+});
+```
+
 <p align="center">
   <img
     src="./docs/assets/tui-screenshot.png"
@@ -7,8 +50,6 @@
     width="1200"
   />
 </p>
-
-Tandem is a typed SDK for building agentic applications as explicit pipelines.
 
 Define the facts your application knows, add participants that can act on those facts, and connect them with named
 routes. Participants can be model-backed agents, deterministic stages, or typed interactions with the outside world.
@@ -56,12 +97,17 @@ For our Code Writer example, the important facts are:
 import { z } from "zod";
 
 export const State = z.object({
+    // The job both agents are working towards.
     requirements: z.array(z.string().min(1)).min(1),
+    // Source and rationale accepted from the implementer.
     implementation: ImplementationCandidate.nullable(),
+    // Evidence produced by running normal verification code.
     verification: VerificationResult.nullable(),
+    // The reviewer's accepted decision.
     review: ReviewDecision.nullable(),
 });
 
+// The schema is also the single source of the TypeScript type.
 export type State = z.infer<typeof State>;
 ```
 
@@ -69,9 +115,13 @@ export type State = z.infer<typeof State>;
 
 ```csharp
 public sealed record CodeWriterState(
+    // The job both agents are working towards.
     IReadOnlyList<string> Requirements,
+    // Source and rationale accepted from the implementer.
     ImplementationCandidate? Implementation = null,
+    // Evidence produced by normal C# verification.
     VerificationResult? Verification = null,
+    // The reviewer's accepted decision.
     ReviewDecision? Review = null
 );
 ```
@@ -98,11 +148,15 @@ An agent has:
 
 ```ts
 const reviewer = agent<State, ReviewDecision>({
+    // Routes and ledger entries refer to this stable name.
     id: "reviewer",
+    // Keep the role narrow: judge the exact candidate and evidence.
     instructions:
         "Review the exact implementation against the requirements and passing verification evidence.",
+    // The host chooses which model performs this role.
     client: clients.reviewer,
 
+    // Build each visit from the latest facts, not hidden conversation state.
     message: (state) =>
         [
             `Requirements: ${JSON.stringify(state.requirements)}`,
@@ -111,9 +165,12 @@ const reviewer = agent<State, ReviewDecision>({
         ].join("\n"),
 
     output: {
+        // Ask for the decision the application needs, not arbitrary prose.
         instructions:
             "Return Accept or RequestChanges with a concise summary and concrete findings.",
+        // Tandem corrects anything that does not match this shape.
         schema: ReviewDecision,
+        // Only an accepted decision is allowed to update state.
         apply: recordReview,
     },
 });
@@ -124,14 +181,20 @@ const reviewer = agent<State, ReviewDecision>({
 ```csharp
 var reviewer = Agent
     .Create<CodeWriterState>(
+        // Routes and ledger entries refer to this stable name.
         "reviewer",
+        // Keep the role narrow: judge the exact candidate and evidence.
         "Review the exact implementation against the requirements and passing verification evidence.",
+        // The host chooses which model performs this role.
         clients.Reviewer)
+    // Build each visit from the latest accepted candidate and checks.
     .WithMessage(state =>
         $"Exact source: {state.Implementation!.Source}\n"
         + $"Passing verification evidence: {JsonSerializer.Serialize(state.Verification)}")
     .WithOutput(
+        // This definition owns the response shape and validation.
         new ReviewDecisionOutput(),
+        // Only an accepted decision is allowed to update state.
         (state, review) => state.RecordReview(review))
     .Build();
 ```
@@ -149,10 +212,14 @@ example, Code Writer does not ask the Reviewer for arbitrary prose and then ask 
 ```ts
 export const ReviewDecision = z
     .object({
+        // The graph only needs one of these two decisions.
         decision: z.enum(["Accept", "RequestChanges"]),
+        // Give the caller a concise account of the review.
         summary: z.string().min(1),
+        // Requested changes must say exactly what needs fixing.
         findings: z.array(z.string().min(1)),
     })
+    // Do not allow an empty RequestChanges response into state.
     .refine(
         (review) =>
             review.decision !== "RequestChanges" ||
@@ -169,13 +236,18 @@ export const ReviewDecision = z
 ```csharp
 public enum ReviewDisposition
 {
+    // The candidate may leave the graph successfully.
     Accept,
+    // The candidate needs another implementer turn.
     RequestChanges,
 }
 
 public sealed record ReviewDecision(
+    // Routes use this value to finish or loop.
     ReviewDisposition Decision,
+    // The caller can show this account directly.
     string Summary,
+    // Requested changes carry concrete work for the next turn.
     IReadOnlyList<string> Findings
 );
 ```
@@ -205,21 +277,26 @@ type, validation, a summary, and a state transition.
 
 ```ts
 const submitImplementation = capability({
+    // This becomes the function name exposed to the implementer.
     name: "submit_implementation",
+    // Tell the model what a complete call must contain.
     instructions:
         "Submit the complete JavaScript implementation and its rationale.",
 
+    // Reject empty source or rationale before application code sees it.
     schema: z.object({
         implementation: z.string().min(1),
         rationale: z.string().min(1),
     }),
 
+    // An accepted call records the new candidate and clears stale checks.
     apply: (state: State, submission) =>
         recordImplementation(state, {
             source: submission.implementation,
             rationale: submission.rationale,
         }),
 
+    // Keep the ledger entry useful without storing the whole prompt.
     summarize: (submission) => submission.rationale,
 });
 ```
@@ -228,11 +305,17 @@ Attach it to the intended agent:
 
 ```ts
 const implementer = agent<State>({
+    // This identity stays stable when the graph loops back.
     id: "implementer",
+    // These instructions remain the same on every visit.
     instructions: "Implement the requested function.",
+    // The host supplies the model used for implementation.
     client: clients.implementer,
+    // Each turn is grounded in the latest application state.
     message: implementerMessage,
+    // Submitting an implementation is the only action this agent may take.
     capabilities: [submitImplementation],
+    // Preserve its conversation when verification or review sends work back.
     continueSession: true,
 });
 ```
@@ -245,14 +328,18 @@ In C#, the capability definition owns its semantic contract:
 public sealed class SubmitImplementationCapability
     : IAgentCapabilityDefinition<CodeWriterState, SubmitImplementation>
 {
+    // This is the function name exposed to the model.
     public string ToolName => "submit_implementation";
 
+    // Tell the model what a complete call must contain.
     public string Instructions =>
         "Submit the complete JavaScript implementation and its rationale.";
 
+    // Reject invalid calls before application code sees them.
     public IValidator<SubmitImplementation> Validator { get; } =
         new SubmitImplementationValidator();
 
+    // Keep the accepted call readable in observations and the ledger.
     public string Summarize(SubmitImplementation request) =>
         request.Rationale;
 }
@@ -263,7 +350,9 @@ Then bind its accepted request to a typed state transition:
 ```csharp
 var submitImplementation =
     AgentCapabilities.Create<CodeWriterState, SubmitImplementation>(
+        // Reuse the function name, instructions, validation, and summary above.
         new SubmitImplementationCapability(),
+        // An accepted call records the candidate and clears stale checks.
         (state, submission) =>
             state.RecordImplementation(submission));
 ```
@@ -273,11 +362,17 @@ And attach it to the agent:
 ```csharp
 var implementer = Agent
     .Create<CodeWriterState>(
+        // This identity stays stable when the graph loops back.
         "implementer",
+        // These instructions remain the same on every visit.
         "Implement the requested function.",
+        // The host supplies the model used for implementation.
         clients.Implementer)
+    // Each turn is grounded in the latest application state.
     .WithMessage(ImplementerMessage)
+    // Submitting an implementation is the only action it may take.
     .WithCapability(submitImplementation)
+    // Preserve its conversation when the graph sends work back.
     .ContinueSession()
     .Build();
 ```
@@ -295,12 +390,13 @@ Code Writer's verification step is a stage because testing the submitted impleme
 
 ```ts
 const verification = stage<State>({
+    // Routes refer to this check by a stable name.
     id: "verification",
 
     execute: async (state) =>
         recordVerification(
             state,
-            // Some deterministic/non-LLM implementation assessment.
+            // Run ordinary code and put its evidence back into state.
             await assessImplementation(state.implementation!.source),
         ),
 });
@@ -312,20 +408,24 @@ const verification = stage<State>({
 [PipelineStage("verification")]
 public sealed partial class VerificationStage
 {
+    // The stage owns the normal C# service that performs the check.
     private readonly ImplementationAssessment _assessment = new();
 
     public async ValueTask<CodeWriterState> ExecuteAsync(
         CodeWriterState state,
         CancellationToken cancellationToken)
     {
+        // Verification cannot run until an implementation has been accepted.
         var source =
             state.Implementation?.Source
             ?? throw new InvalidOperationException(
                 "Verification requires an implementation.");
 
+        // Execute the check without involving another model.
         var verification =
             await _assessment.AssessAsync(source, cancellationToken);
 
+        // Return the same state with the new evidence recorded.
         return state.RecordVerification(verification);
     }
 }
@@ -351,12 +451,16 @@ const customerReply = interaction<
     CustomerQuestion,
     CustomerReply
 >({
+    // The graph pauses at this named handoff.
     id: "customer-reply",
+    // Validate both what leaves the pipeline and what comes back.
     requestSchema: CustomerQuestion,
     responseSchema: CustomerReply,
 
+    // Build the question from the latest support facts.
     request: (state) => state.createCustomerQuestion(),
 
+    // Turn the accepted reply back into application state.
     apply: (state, reply) =>
         state.recordCustomerReply(reply),
 });
@@ -367,10 +471,12 @@ A host supplies the handler separately:
 ```ts
 const handlers = interactions().handle(
     customerReply,
+    // The host decides how this request reaches the customer.
     async (question) => askCustomer(question),
 );
 
 const result = await run(support, initialState, {
+    // Bind this live channel only for this run.
     interactions: handlers,
 });
 ```
@@ -383,12 +489,15 @@ var customerReply =
         SupportState,
         CustomerQuestion,
         CustomerReply>(
+        // The graph pauses at this named handoff.
         "customer-reply",
+        // Build the question from the latest support facts.
         state => state.CreateCustomerQuestion(),
+        // Turn the accepted reply back into application state.
         (state, reply) => state.RecordCustomerReply(reply));
 ```
 
-Interactions are live and process-owned; they are not a durable workflow scheduler.
+Interactions are live and process-owned; they do not make stopped runs resumable.
 
 ## Routes are the control flow
 
@@ -411,9 +520,12 @@ such as `Approved`, `Rejected`, `ChangesRequested`, or `Escalated`.
 
 ```ts
 return pipeline({
+    // Give the whole lifecycle one name in logs and the ledger.
     name: "code-writer",
+    // Every node reads and returns this same state shape.
     state: State,
 
+    // List everything that can take a turn or finish the run.
     nodes: [
         implementer,
         verification,
@@ -422,9 +534,11 @@ return pipeline({
         failed,
     ],
 
+    // The implementer receives the initial state first.
     start: implementer,
 
     routes: [
+        // A completed capability call gives verification a candidate to check.
         route({
             from: implementer,
             to: verification,
@@ -432,6 +546,7 @@ return pipeline({
             label: "implementation submitted",
         }),
 
+        // If the implementer itself fails, there is no candidate to verify.
         route({
             from: implementer,
             to: failed,
@@ -439,6 +554,7 @@ return pipeline({
             label: "implementer failed",
         }),
 
+        // Passing checks move the exact candidate and evidence to review.
         route({
             from: verification,
             to: reviewer,
@@ -447,6 +563,7 @@ return pipeline({
             label: "verification passed",
         }),
 
+        // Failed checks send their evidence back to the same implementer.
         route({
             from: verification,
             to: implementer,
@@ -455,6 +572,7 @@ return pipeline({
             label: "verification failed",
         }),
 
+        // Requested changes are valid output, so they loop rather than fail.
         route({
             from: reviewer,
             to: implementer,
@@ -464,6 +582,7 @@ return pipeline({
             label: "changes requested",
         }),
 
+        // Accept is the application fact that finishes the work successfully.
         route({
             from: reviewer,
             to: done,
@@ -473,6 +592,7 @@ return pipeline({
             label: "accepted",
         }),
 
+        // A reviewer fault is different from a RequestChanges decision.
         route({
             from: reviewer,
             to: failed,
@@ -481,7 +601,9 @@ return pipeline({
         }),
     ],
 
+    // These are the only places the run may finish.
     outputs: [done, failed],
+    // Keep accepted values so this run can be inspected later.
     persist: true,
 });
 ```
@@ -491,22 +613,26 @@ return pipeline({
 ```csharp
 public Pipeline<CodeWriterState> Build() =>
     Pipeline
+        // Begin with the implementer and name the whole lifecycle.
         .Start(
             at: codeWriter.Implementer,
             name: "code-writer",
             description:
                 "Implement and verify a function until review accepts it."
         )
+        // A completed capability call gives verification a candidate to check.
         .Route(
             on: codeWriter.Implementer.Success,
             to: codeWriter.Verification,
             label: "implementation submitted"
         )
+        // If the implementer itself fails, there is no candidate to verify.
         .Route(
             on: codeWriter.Implementer.Failed,
             to: codeWriter.Failed,
             label: "implementer failed"
         )
+        // Passing checks move the exact candidate and evidence to review.
         .Route(
             from: codeWriter.Verification,
             when: state =>
@@ -514,6 +640,7 @@ public Pipeline<CodeWriterState> Build() =>
             to: codeWriter.Reviewer,
             label: "verification passed"
         )
+        // Failed checks send their evidence back to the same implementer.
         .Route(
             from: codeWriter.Verification,
             when: state =>
@@ -521,6 +648,7 @@ public Pipeline<CodeWriterState> Build() =>
             to: codeWriter.Implementer,
             label: "verification failed"
         )
+        // Requested changes are valid output, so they loop rather than fail.
         .Route(
             on: codeWriter.Reviewer.Success,
             when: state =>
@@ -529,6 +657,7 @@ public Pipeline<CodeWriterState> Build() =>
             to: codeWriter.Implementer,
             label: "changes requested"
         )
+        // Accept is the application fact that finishes the work successfully.
         .Route(
             on: codeWriter.Reviewer.Success,
             when: state =>
@@ -537,12 +666,15 @@ public Pipeline<CodeWriterState> Build() =>
             to: codeWriter.Complete,
             label: "accepted"
         )
+        // A reviewer fault is different from a RequestChanges decision.
         .Route(
             on: codeWriter.Reviewer.Failed,
             to: codeWriter.Failed,
             label: "reviewer failed"
         )
+        // Keep accepted values so this run can be inspected later.
         .Persist()
+        // A run can leave the graph only through these two outputs.
         .Build(
             codeWriter.Complete,
             codeWriter.Failed
@@ -575,13 +707,18 @@ A successful output and a failed output are distinct, inspectable destinations r
 
 ```ts
 const done = output<State>({
+    // Accepted reviews route to this successful endpoint.
     id: "done",
+    // Return the reviewer's own concise account to the caller.
     summary: (state) => state.review!.summary,
 });
 
 const failed = output<State>({
+    // Agent faults route to a separate endpoint.
     id: "failed",
+    // Tell the host that reaching this output means the run failed.
     failed: true,
+    // Give the caller a useful result without exposing runtime internals.
     summary: () =>
         "An agent failed before the code could be accepted.",
 });
@@ -590,11 +727,11 @@ const failed = output<State>({
 ### C#
 
 ```csharp
-var complete =
-    PipelineNodes.Complete(new CodeWriterComplete());
+// Accepted reviews finish here.
+var complete = PipelineNodes.Complete(new CodeWriterComplete());
 
-var failed =
-    PipelineNodes.Failed(new CodeWriterFailed());
+// Agent faults finish somewhere explicitly unsuccessful.
+var failed = PipelineNodes.Failed(new CodeWriterFailed());
 ```
 
 A pipeline explicitly declares the outputs through which a run may finish.
@@ -611,17 +748,21 @@ Persistent pipelines can record:
 * declared failures; and
 * state returned by persistent stages.
 
-Persistence is attached to the semantic boundary where a value becomes accepted.
+Tandem records a value when the stage, agent, capability, or interaction accepts it.
 
 For example:
 
 ```ts
 const recordResult = stage<State>({
+    // Use this name to find the accepted value later.
     id: "record-result",
+    // Record the state returned when this stage succeeds.
     persist: true,
 
     execute: (state) => ({
+        // Keep every fact already known by the application.
         ...state,
+        // Add the smaller result the caller cares about.
         result: {
             source: state.implementation?.source ?? null,
             accepted:
@@ -672,10 +813,14 @@ Your application owns the process and starts a pipeline with its initial state.
 import { run } from "@tandem/sdk";
 
 const result = await run(
+    // Run this configured lifecycle...
     codeWriter,
+    // ...starting from these application facts...
     initialState,
     {
+        // Let the caller cancel a run that takes too long.
         signal: AbortSignal.timeout(180_000),
+        // Supply a ledger only when this pipeline persists values.
         ledgerPath: "code-writer.sqlite3",
     },
 );
@@ -689,8 +834,11 @@ console.log(result.state);
 ```csharp
 var result =
     await new PipelineRunner().RunAsync(
+        // Run this configured lifecycle...
         codeWriter,
+        // ...starting from these application facts...
         initialState,
+        // ...until completion or caller cancellation.
         cancellationToken: cancellationToken);
 
 Console.WriteLine(result.Status);
@@ -716,7 +864,7 @@ Tandem has one execution model with two authoring surfaces.
 | **Runtime**           | Tandem + Microsoft Agent Framework in-process | The same Tandem/.NET engine           |
 
 
-TypeScript pplications import `@tandem/sdk`; they do not build or manually load .NET assemblies.
+TypeScript applications import `@tandem/sdk`; they do not build or manually load .NET assemblies.
 
 See [`typescript/README.md`](typescript/README.md) for TypeScript-specific runtime and packaging details.
 

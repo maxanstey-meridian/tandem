@@ -156,7 +156,7 @@ internal sealed class TerminalRenderer(
             : "waiting";
         var modelName = model.ModelName is null ? "" : $" · {Markup.Escape(model.ModelName)}";
         return new Panel(new Rows(visibleLines))
-            .Header($" {Markup.Escape(Center(title, stepWidth))}{modelName} · {state} ")
+            .Header($" {Markup.Escape(title)}{modelName} · {state} ")
             .Border(BoxBorder.Rounded)
             .Expand();
     }
