@@ -159,7 +159,8 @@ Use a semantic name followed by one role suffix: `Agent`, `Stage`, `Port`,
 second graph: composition still registers every route directly with MAF through
 Tandem. Keep the pipeline spine at the package root and group optional concerns
 under `Agents`, `Capabilities`, `Stages`, `Interactions`, `Observation`, and
-`Infrastructure` as described in `docs/pipeline-authoring.md`.
+`Infrastructure`. Add only the folders whose concepts exist; small pipelines may
+keep their authored parts beside the root spine.
 
 The generator infers pass-through, state-updating, or standard `Outcome<TState>`
 authoring from `ExecuteAsync`. Use only standard `Success` and `Failed` as step

@@ -954,12 +954,8 @@ Code Writer also requires Node.js for its JavaScript verifier.
 
 ## Documentation
 
-For the complete authoring model, see:
+For more detail, see:
 
-* [`docs/pipeline-authoring.md`](docs/pipeline-authoring.md) — pipeline state, stages, agents, routing, interactions,
-  persistence, and Advanced authoring;
-* [`docs/agent-authoring-decision.md`](docs/agent-authoring-decision.md) — the design and invariants behind agent
-  definitions and capabilities;
 * [`typescript/README.md`](typescript/README.md) — TypeScript SDK requirements, packages, chat clients, persistence, and
   development; and
 * [`CONTRIBUTING.md`](CONTRIBUTING.md) — architecture boundaries and invariants for contributors.
