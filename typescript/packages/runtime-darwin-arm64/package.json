@@ -1,6 +1,14 @@
 {
   "name": "@tandem/runtime-darwin-arm64",
   "version": "0.0.0-experiment",
+  "description": "macOS arm64 runtime host for the Tandem TypeScript SDK",
+  "homepage": "https://github.com/maxanstey-meridian/tandem#readme",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maxanstey-meridian/tandem.git",
+    "directory": "typescript/packages/runtime-darwin-arm64"
+  },
   "files": [
     "index.mjs",
     "index.d.ts",

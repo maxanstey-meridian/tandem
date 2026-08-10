@@ -38,10 +38,16 @@ try {
     ),
   );
   assert.deepEqual(loaderMeta.files.map((file) => file.path).sort(), [
+    "LICENSE",
+    "README.md",
     "index.d.ts",
     "index.mjs",
     "package.json",
   ]);
+  for (const metadata of [runtimeMeta, loaderMeta, sdkMeta]) {
+    assert(metadata.files.some((file) => file.path === "README.md"));
+    assert(metadata.files.some((file) => file.path === "LICENSE"));
+  }
   assert(
     !sdkMeta.files.some(
       (file) => file.path.includes("/src/") || file.path.endsWith(".tsbuildinfo"),

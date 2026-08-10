@@ -13,6 +13,9 @@
         <Description>Source generator for typed Tandem pipeline stages.</Description>
         <PackageTags>agents;ai;workflow;pipeline;analyzer</PackageTags>
         <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/maxanstey-meridian/tandem</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/maxanstey-meridian/tandem.git</RepositoryUrl>
         <PackageType>Analyzer</PackageType>
         <DevelopmentDependency>true</DevelopmentDependency>
         <IncludeBuildOutput>false</IncludeBuildOutput>

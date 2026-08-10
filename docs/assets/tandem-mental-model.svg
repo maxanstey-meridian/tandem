@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="860" viewBox="0 0 1440 860" role="img"
+     aria-labelledby="title desc">
+    <title id="title">The Tandem mental model</title>
+    <desc id="desc">
+        One typed state is shared by three participant types: agent, stage and interaction.
+        An agent may use typed capabilities. Explicit routes choose what runs next and lead
+        to complete or failed terminals.
+    </desc>
+
+    <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L8,4 L0,8 Z" fill="#475569"/>
+        </marker>
+        <style>
+            .bg { fill:#ffffff; }
+            .panel { fill:#ffffff; stroke:#cbd5e1; stroke-width:1.5; }
+            .subtle { fill:#f8fafc; stroke:#cbd5e1; stroke-width:1.25; }
+            .accent-panel { fill:#f8faff; stroke:#7c83e6; stroke-width:1.5; }
+            .label { font:600 15px -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif; letter-spacing:1.8px;
+            fill:#475569; }
+            .label-accent { font:600 15px -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;
+            letter-spacing:1.8px; fill:#5656c9; }
+            .title { font:700 31px -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif; fill:#0f172a; }
+            .subtitle { font:400 18px -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif; fill:#475569; }
+            .heading { font:650 23px -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif; fill:#0f172a; }
+            .body { font:400 17px -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif; fill:#475569; }
+            .small { font:400 15px -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif; fill:#64748b; }
+            .mono { font:400 16px ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+            fill:#1e293b; }
+            .edge { fill:none; stroke:#475569; stroke-width:1.8; marker-end:url(#arrow); }
+            .state-edge { fill:none; stroke:#94a3b8; stroke-width:1.5; stroke-dasharray:6 7; }
+            .divider { stroke:#e2e8f0; stroke-width:1; }
+            .edge-pill { fill:#ffffff; stroke:#cbd5e1; stroke-width:1; }
+            .edge-pill-text { font:400 14px -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif; fill:#64748b;
+            }
+        </style>
+    </defs>
+
+    <rect class="bg" width="1440" height="860"/>
+
+    <!-- Header -->
+    <text x="56" y="52" class="label">THE TANDEM MENTAL MODEL</text>
+    <text x="56" y="96" class="title">One typed state. Different participants. Explicit routes.</text>
+    <text x="56" y="130" class="subtitle">The graph is the lifecycle; an LLM is one kind of participant inside it.
+    </text>
+
+    <!-- State -->
+    <rect x="56" y="170" width="1328" height="170" rx="18" class="panel"/>
+    <text x="86" y="208" class="label-accent">STATE</text>
+    <text x="86" y="251" class="heading">Typed lifecycle facts</text>
+    <text x="86" y="282" class="body">A C# type or Zod schema shared by the pipeline.</text>
+    <text x="86" y="310" class="small">Application facts, not runtime bookkeeping.</text>
+
+    <rect x="782" y="194" width="560" height="134" rx="12" class="subtle"/>
+    <text x="810" y="225" class="mono">requirements: string[]</text>
+    <text x="810" y="253" class="mono">implementation: Candidate | null</text>
+    <text x="810" y="281" class="mono">verified: boolean</text>
+    <text x="810" y="309" class="mono">review: Decision | null</text>
+
+    <!-- Participants heading -->
+    <!-- State read/update connectors -->
+    <path d="M258 340 V420" class="state-edge"/>
+    <path d="M720 340 V420" class="state-edge"/>
+    <path d="M1182 340 V420" class="state-edge"/>
+
+    <g aria-label="read / update">
+        <rect x="193" y="361" width="130" height="28" rx="14" class="edge-pill"/>
+        <text x="250" y="380" class="edge-pill-text" text-anchor="end">read</text>
+        <text x="258" y="380" class="edge-pill-text" text-anchor="middle">/</text>
+        <text x="266" y="380" class="edge-pill-text" text-anchor="start">update</text>
+    </g>
+    <g aria-label="read / update">
+        <rect x="655" y="361" width="130" height="28" rx="14" class="edge-pill"/>
+        <text x="712" y="380" class="edge-pill-text" text-anchor="end">read</text>
+        <text x="720" y="380" class="edge-pill-text" text-anchor="middle">/</text>
+        <text x="728" y="380" class="edge-pill-text" text-anchor="start">update</text>
+    </g>
+    <g aria-label="read / update">
+        <rect x="1117" y="361" width="130" height="28" rx="14" class="edge-pill"/>
+        <text x="1174" y="380" class="edge-pill-text" text-anchor="end">read</text>
+        <text x="1182" y="380" class="edge-pill-text" text-anchor="middle">/</text>
+        <text x="1190" y="380" class="edge-pill-text" text-anchor="start">update</text>
+    </g>
+
+    <!-- Participant cards -->
+    <rect x="56" y="420" width="404" height="190" rx="16" class="panel"/>
+    <text x="86" y="458" class="label-accent">AGENT</text>
+    <text x="86" y="500" class="heading">Model-backed participant</text>
+    <text x="86" y="535" class="body">Receives instructions and current state,</text>
+    <text x="86" y="562" class="body">then acts through permitted capabilities.</text>
+    <line x1="86" y1="574" x2="430" y2="574" class="divider"/>
+    <text x="86" y="592" class="small">It does not own the workflow.</text>
+
+    <rect x="518" y="420" width="404" height="190" rx="16" class="panel"/>
+    <text x="548" y="458" class="label">STAGE</text>
+    <text x="548" y="500" class="heading">Deterministic participant</text>
+    <text x="548" y="535" class="body">Runs an operation over state:</text>
+    <text x="548" y="562" class="body">verify, transform, query, calculate.</text>
+    <line x1="548" y1="574" x2="892" y2="574" class="divider"/>
+    <text x="548" y="592" class="small">Same graph. Same state. No model required.</text>
+
+    <rect x="980" y="420" width="404" height="190" rx="16" class="panel"/>
+    <text x="1010" y="458" class="label">INTERACTION</text>
+    <text x="1010" y="500" class="heading">Typed external handoff</text>
+    <text x="1010" y="535" class="body">Pause for a request / response,</text>
+    <text x="1010" y="562" class="body">then continue with the typed answer.</text>
+    <line x1="1010" y1="574" x2="1354" y2="574" class="divider"/>
+    <text x="1010" y="592" class="small">Human, UI, CLI, or another system.</text>
+
+    <!-- Routes between participants -->
+    <path d="M460 515 H506" class="edge"/>
+    <path d="M922 515 H968" class="edge"/>
+
+    <!-- Capability -->
+    <path d="M258 610 V646" class="edge"/>
+    <rect x="96" y="658" width="324" height="108" rx="14" class="accent-panel"/>
+    <text x="120" y="687" class="label-accent">CAPABILITY</text>
+    <text x="120" y="718" class="body">A typed action this agent is</text>
+    <text x="120" y="744" class="body">explicitly allowed to take.</text>
+
+    <!-- Route -->
+    <rect x="518" y="658" width="466" height="108" rx="14" class="subtle"/>
+    <text x="544" y="687" class="label">ROUTE</text>
+    <text x="544" y="716" class="heading">Explicit decision edge</text>
+    <text x="544" y="744" class="body">Inspect outcome / state → choose what runs next.</text>
+
+    <!-- Terminals -->
+    <path d="M984 712 H1032" class="edge"/>
+    <path d="M1032 712 V689 H1064" class="edge"/>
+    <path d="M1032 712 V747 H1064" class="edge"/>
+
+    <rect x="1076" y="650" width="212" height="72" rx="13" class="panel"/>
+    <text x="1104" y="694" class="label">✓ COMPLETE</text>
+
+    <rect x="1076" y="730" width="212" height="72" rx="13" class="panel"/>
+    <text x="1104" y="774" class="label">× FAILED</text>
+
+    <!-- Footer -->
+    <line x1="56" y1="812" x2="1384" y2="812" class="divider"/>
+    <text x="56" y="840" class="small">
+        The graph is the lifecycle. No hidden coordinator decides what happens next.
+    </text>
+</svg>
+

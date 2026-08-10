@@ -1,6 +1,7 @@
 {
   "name": "tandem-node-api-productization",
   "private": true,
+  "license": "MIT",
   "workspaces": [
     "packages/*",
     "../examples/*/typescript"

@@ -13,6 +13,9 @@
         <Description>Typed durable product records for Tandem pipelines.</Description>
         <PackageTags>agents;ai;pipeline;sqlite</PackageTags>
         <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/maxanstey-meridian/tandem</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/maxanstey-meridian/tandem.git</RepositoryUrl>
     </PropertyGroup>
 
     <ItemGroup>
