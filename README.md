@@ -4,9 +4,9 @@ Tandem is a typed SDK for building agentic applications as explicit pipelines. D
 and inspect it.
 
 ```typescript
-const codeWriter = pipeline({
+const myPipeline = pipeline({
   // Give the complete lifecycle one name in logs and the ledger.
-  name: "code-writer",
+  name: "coder-pipeline",
   // Every node reads and returns this same state shape.
   state: State,
 
