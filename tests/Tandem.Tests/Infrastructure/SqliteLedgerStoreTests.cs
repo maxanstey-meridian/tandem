@@ -734,6 +734,89 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task SqliteRunOptions_OwnSuccessfulRunLifecycleAndComposeObserver()
+    {
+        var path = DatabasePath();
+        var observations = new List<PipelineObservation>();
+        var stage = new IncrementStage();
+        var pipeline = Pipeline.Start(stage, "sqlite-run").Persist().Build(stage);
+
+        var result = await new PipelineRunner().RunAsync(
+            pipeline,
+            new RunnerState(4),
+            new SqlitePipelineRunOptions(path, Observer: new RecordingObserver(observations))
+        );
+
+        result.Succeeded.Should().BeTrue();
+        observations.Should().ContainSingle(observation => observation is PipelineStepCompleted);
+        var reopened = await CreateStoreAsync(path);
+        (await reopened.GetRunAsync(result.RunId)).Status.Should().Be(LedgerRunStatus.Ready);
+        var accepted = await reopened.ReadLatestAcceptedAsync<RunnerState>(result.RunId, stage.Id);
+        accepted!.Value.Count.Should().Be(5);
+    }
+
+    [Fact]
+    public async Task SqliteRunOptions_MarkDeclaredFailureAsFailed()
+    {
+        var path = DatabasePath();
+        var runId = Guid.CreateVersion7();
+        var stage = new DeclaredFailureStage();
+        var pipeline = Pipeline.Start(stage, "sqlite-failed-run").Build(stage);
+
+        var result = await new PipelineRunner().RunAsync(
+            pipeline,
+            new RunnerState(4),
+            new SqlitePipelineRunOptions(path, runId)
+        );
+
+        result.Status.Should().Be(PipelineRunStatus.Failed);
+        var reopened = await CreateStoreAsync(path);
+        (await reopened.GetRunAsync(runId)).Status.Should().Be(LedgerRunStatus.Failed);
+    }
+
+    [Fact]
+    public async Task SqliteRunOptions_MarkExecutionExceptionAsFaulted()
+    {
+        var path = DatabasePath();
+        var runId = Guid.CreateVersion7();
+        var stage = new FaultStage();
+        var pipeline = Pipeline.Start(stage, "sqlite-faulted-run").Build(stage);
+
+        var act = async () =>
+            await new PipelineRunner().RunAsync(
+                pipeline,
+                new RunnerState(4),
+                new SqlitePipelineRunOptions(path, runId)
+            );
+
+        await act.Should().ThrowAsync<PipelineRunException>();
+        var reopened = await CreateStoreAsync(path);
+        (await reopened.GetRunAsync(runId)).Status.Should().Be(LedgerRunStatus.Faulted);
+    }
+
+    [Fact]
+    public async Task SqliteRunOptions_MarkCancellationAsCancelled()
+    {
+        var path = DatabasePath();
+        var runId = Guid.CreateVersion7();
+        var stage = new WaitForeverStage();
+        var pipeline = Pipeline.Start(stage, "sqlite-cancelled-run").Build(stage);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        var act = async () =>
+            await new PipelineRunner().RunAsync(
+                pipeline,
+                new RunnerState(4),
+                new SqlitePipelineRunOptions(path, runId),
+                cancellation.Token
+            );
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        var reopened = await CreateStoreAsync(path);
+        (await reopened.GetRunAsync(runId)).Status.Should().Be(LedgerRunStatus.Cancelled);
+    }
+
+    [Fact]
     public async Task PersistentStateStage_PersistsRuntimeStateType()
     {
         var path = DatabasePath();
@@ -1138,4 +1221,17 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     private sealed record ProcessEntry(string Value);
 
     private sealed record WorkerResult(int ExitCode, string Output, string Error);
+
+    private sealed class RecordingObserver(List<PipelineObservation> observations)
+        : IPipelineObserver
+    {
+        public ValueTask ObserveAsync(
+            PipelineObservation observation,
+            CancellationToken cancellationToken
+        )
+        {
+            observations.Add(observation);
+            return ValueTask.CompletedTask;
+        }
+    }
 }

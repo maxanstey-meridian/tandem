@@ -16,3 +16,5 @@ Tandem.Ledger.RuntimeJournalRecord
 Tandem.Ledger.SqliteLedgerOptions
 Tandem.Ledger.SqliteLedgerStore
 Tandem.Ledger.SqlitePipelineObserver
+Tandem.Ledger.SqlitePipelineRunnerExtensions
+Tandem.Ledger.SqlitePipelineRunOptions

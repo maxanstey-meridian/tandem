@@ -17,16 +17,15 @@ public sealed class PublicRuntimeTests
             var runId = Guid.CreateVersion7();
             var stage = new DurablePublicStage();
             var pipeline = Pipeline.Start(stage, "external-durable").Persist().Build(stage);
-            var store = new SqliteLedgerStore(path);
-            var observer = await store.CreateObserverAsync(runId, pipeline);
 
             await new PipelineRunner().RunAsync(
                 pipeline,
                 new DurablePublicState(3),
-                new PipelineRunOptions(runId, Observer: observer)
+                new SqlitePipelineRunOptions(path, runId)
             );
 
             var reopened = new SqliteLedgerStore(path);
+            (await reopened.GetRunAsync(runId)).Status.Should().Be(LedgerRunStatus.Ready);
             var accepted = await reopened.ReadLatestAcceptedAsync<DurablePublicState>(
                 runId,
                 stage.Id

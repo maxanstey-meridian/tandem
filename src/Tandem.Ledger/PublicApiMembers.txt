@@ -158,3 +158,17 @@ T Tandem.Ledger.SqlitePipelineObserver
 M System.Threading.Tasks.ValueTask ObserveAsync(Tandem.PipelineObservation observation, System.Threading.CancellationToken cancellationToken)
 M System.Threading.Tasks.ValueTask RecordRunCompletedAsync(System.String result, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask RecordRunStartedAsync(System.Threading.CancellationToken cancellationToken = default)
+T Tandem.Ledger.SqlitePipelineRunOptions
+C (System.String LedgerPath, System.Nullable<System.Guid>? RunId = default, Tandem.PipelineInteractionHandlers? Interactions = null, Tandem.IPipelineObserver? Observer = null)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Ledger.SqlitePipelineRunOptions? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String LedgerPath, out System.Nullable<System.Guid>? RunId, out Tandem.PipelineInteractionHandlers? Interactions, out Tandem.IPipelineObserver? Observer)
+M Tandem.Ledger.SqlitePipelineRunOptions <Clone>$()
+P System.Nullable<System.Guid>? RunId { get; set; }
+P System.String LedgerPath { get; set; }
+P Tandem.IPipelineObserver? Observer { get; set; }
+P Tandem.PipelineInteractionHandlers? Interactions { get; set; }
+T Tandem.Ledger.SqlitePipelineRunnerExtensions
+M static System.Threading.Tasks.Task<Tandem.PipelineRunResult<TState>> RunAsync<TState>(Tandem.PipelineRunner runner, Tandem.Pipeline<TState> pipeline, TState initialState, Tandem.Ledger.SqlitePipelineRunOptions options, System.Threading.CancellationToken cancellationToken = default)

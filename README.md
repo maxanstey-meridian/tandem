@@ -847,26 +847,24 @@ console.log(result.state);
 
 ### C#
 
-For a pipeline that does not enable persistence:
-
 ```csharp
 var result =
     await new PipelineRunner().RunAsync(
         // Run this configured lifecycle...
-        pipeline,
+        codeWriter,
         // ...starting from these application facts...
         initialState,
+        // Tandem owns the SQLite run and persistence observer lifecycle.
+        new SqlitePipelineRunOptions("code-writer.sqlite3"),
         // ...until completion or caller cancellation.
-        cancellationToken: cancellationToken);
+        cancellationToken);
 
 Console.WriteLine(result.Status);
 Console.WriteLine(result.State);
 ```
 
-Persistent C# pipelines receive their persistence observer through `PipelineRunOptions`; creating and terminalising
-that observer is host infrastructure, not pipeline authoring. The
-[example host](examples/csharp-hosting/ExampleHost.cs) shows the complete setup, and the
-[Code Writer entry point](examples/code-writer/csharp/Program.cs) uses it.
+`SqlitePipelineRunOptions` creates and terminalises the ledger run and supplies the persistence observer. Custom hosts
+can still compose observers directly through `PipelineRunOptions` when they need lower-level control.
 
 ## C# and TypeScript
 
