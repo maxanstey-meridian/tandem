@@ -15,6 +15,17 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     );
 
     [Fact]
+    public async Task Initialize_CreatesMissingDatabaseParentDirectory()
+    {
+        var path = Path.Combine(_directory, "nested", "ledger.sqlite3");
+        var store = new SqliteLedgerStore(path);
+
+        await store.InitializeAsync();
+
+        File.Exists(path).Should().BeTrue();
+    }
+
+    [Fact]
     public async Task Entries_AreOrderedIdempotentAndDurableAcrossStoreInstances()
     {
         var path = DatabasePath();

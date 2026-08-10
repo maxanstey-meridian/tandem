@@ -7,6 +7,7 @@ namespace Tandem.Ledger;
 public sealed class SqliteLedgerStore
 {
     private const int SchemaVersion = 1;
+    private readonly string _databasePath;
     private readonly string _connectionString;
     private readonly TimeProvider _timeProvider;
     private readonly JsonSerializerOptions _serializerOptions;
@@ -21,9 +22,10 @@ public sealed class SqliteLedgerStore
     )
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
+        _databasePath = Path.GetFullPath(databasePath);
         _connectionString = new SqliteConnectionStringBuilder
         {
-            DataSource = Path.GetFullPath(databasePath),
+            DataSource = _databasePath,
             Mode = SqliteOpenMode.ReadWriteCreate,
             Cache = SqliteCacheMode.Shared,
             Pooling = false,
@@ -70,6 +72,7 @@ public sealed class SqliteLedgerStore
 
     private async ValueTask InitializeCoreAsync(CancellationToken cancellationToken)
     {
+        Directory.CreateDirectory(Path.GetDirectoryName(_databasePath)!);
         await using var connection = await OpenAsync(cancellationToken);
         await ExecuteAsync(connection, "PRAGMA journal_mode = WAL;", cancellationToken);
         await ExecuteAsync(connection, "PRAGMA synchronous = FULL;", cancellationToken);
