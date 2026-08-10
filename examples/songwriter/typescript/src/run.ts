@@ -1,5 +1,5 @@
-import { run, type ChatClient } from "@tandem/sdk";
-import { closeCli } from "@tandem/sdk/cli";
+import { type ChatClient } from "@tandem/sdk";
+import { closeCli, runCli } from "@tandem/sdk/cli";
 import { createPipeline } from "./pipeline.js";
 import type { State } from "./state.js";
 
@@ -34,20 +34,15 @@ const initialState: State = {
   proofreaderAccepted: null,
 };
 
-let exitCode = 1;
-try {
-  if (!process.env.OPENROUTER_API_KEY) {
-    throw new Error("OPENROUTER_API_KEY is required to run the Songwriter example.");
-  }
-  const result = await run(
-    createPipeline({ songwriter: openRouterDs4Client, proofreader: localSolClient }),
-    initialState,
-    { signal: AbortSignal.timeout(600_000) },
-  );
-  console.log(JSON.stringify(result, null, 2));
-  exitCode = result.succeeded ? 0 : 1;
-} catch (error) {
-  console.error(error);
-} finally {
-  closeCli(exitCode);
+if (!process.env.OPENROUTER_API_KEY) {
+  process.stderr.write("OPENROUTER_API_KEY is required to run the Songwriter example.\n");
+  closeCli(2);
 }
+await runCli(
+  createPipeline({ songwriter: openRouterDs4Client, proofreader: localSolClient }),
+  initialState,
+  {
+    signal: AbortSignal.timeout(600_000),
+    formatResult: (result) => `Lyrics:\n${result.state.lyrics ?? ""}`,
+  },
+);

@@ -16,5 +16,6 @@
         <ProjectReference Include="../../src/Tandem/Tandem.csproj" />
         <ProjectReference Include="../../src/Tandem.Advanced/Tandem.Advanced.csproj" />
         <ProjectReference Include="../../src/Tandem.Ledger/Tandem.Ledger.csproj" />
+        <ProjectReference Include="../../src/Tandem.Terminal/Tandem.Terminal.csproj" />
     </ItemGroup>
 </Project>

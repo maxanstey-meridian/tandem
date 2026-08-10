@@ -22,7 +22,8 @@ public sealed class SubmitImplementationCapability
     public IValidator<SubmitImplementation> Validator { get; } =
         new SubmitImplementationValidator();
 
-    public string Summarize(SubmitImplementation request) => request.Rationale;
+    public string Summarize(SubmitImplementation request) =>
+        $"Implementation:\n{request.Implementation}\n\nRationale:\n{request.Rationale}";
 }
 
 public sealed class ReviewDecisionValidator : AbstractValidator<ReviewDecision>

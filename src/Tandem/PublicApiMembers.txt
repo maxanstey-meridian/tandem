@@ -341,19 +341,20 @@ P System.Int32 CurrentContextTokens { get; set; }
 P System.Int32 InputTokens { get; set; }
 P System.Int32 OutputTokens { get; set; }
 T Tandem.PipelineCapabilityAccepted
-C (System.Guid RunId, System.String StepId, System.String InvocationId, System.String CapabilityId, System.String CapabilityName, System.String AcceptedCallId, System.String? RequestType = null, System.Nullable<System.Text.Json.JsonElement>? Payload = default)
+C (System.Guid RunId, System.String StepId, System.String InvocationId, System.String CapabilityId, System.String CapabilityName, System.String AcceptedCallId, System.String Summary, System.String? RequestType = null, System.Nullable<System.Text.Json.JsonElement>? Payload = default)
 M System.Boolean Equals(System.Object? obj)
 M System.Boolean Equals(Tandem.PipelineCapabilityAccepted? other)
 M System.Boolean Equals(Tandem.PipelineObservation? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
-M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String InvocationId, out System.String CapabilityId, out System.String CapabilityName, out System.String AcceptedCallId, out System.String? RequestType, out System.Nullable<System.Text.Json.JsonElement>? Payload)
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String InvocationId, out System.String CapabilityId, out System.String CapabilityName, out System.String AcceptedCallId, out System.String Summary, out System.String? RequestType, out System.Nullable<System.Text.Json.JsonElement>? Payload)
 M Tandem.PipelineCapabilityAccepted <Clone>$()
 P System.Nullable<System.Text.Json.JsonElement>? Payload { get; set; }
 P System.String AcceptedCallId { get; set; }
 P System.String CapabilityId { get; set; }
 P System.String CapabilityName { get; set; }
 P System.String InvocationId { get; set; }
+P System.String Summary { get; set; }
 P System.String? RequestType { get; set; }
 T Tandem.PipelineCommandOutput
 C (System.Guid RunId, System.String StepId, System.String Command, System.String Output, System.Int32 ExitCode)

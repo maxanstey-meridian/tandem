@@ -1,5 +1,4 @@
 using System.CommandLine;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,9 +9,9 @@ using Tandem.Delivery;
 using Tandem.Domain;
 using Tandem.Git;
 using Tandem.Infrastructure;
-using Tandem.Infrastructure.Dashboard;
 using Tandem.Interfaces;
 using Tandem.Ledger;
+using Tandem.Terminal;
 using Tandem.Tool;
 using InfrastructureChatClientBuilder = Tandem.Infrastructure.ChatClientBuilder;
 
@@ -172,19 +171,14 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
     var chatClients = provider.GetRequiredService<TandemChatClients>();
     var composition = provider.GetRequiredService<DeliveryComposition>();
 
-    var renderer = new StreamRenderer();
-    var liveTranscript = new LiveTranscript();
     try
     {
         var interactive = !Console.IsInputRedirected && !Console.IsOutputRedirected;
-        var runObserver = new CompositePipelineObserver(
-            journalObserver,
-            liveTranscript,
-            new TerminalPipelineObserver(renderer, interactive)
-        );
         var pipeline = composition.Build();
 
         var implProfile = chatClients.ResolveProfile("implementation");
+        var planningProfile = chatClients.ResolveProfile("planning");
+        var reviewProfile = chatClients.ResolveProfile("review");
         if (!interactive)
         {
             Console.WriteLine($"Run:       {runPaths.RunId}");
@@ -197,10 +191,51 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
 
         using var runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var humanInteraction = new TerminalHumanInteraction();
+        var terminalContributions = new DeliveryTerminalContributions(ledgerStore, runPaths.RunId);
+        var ready = false;
+        await using var display = new TerminalPipelineDisplay(
+            pipeline.Inspect(),
+            runPaths.RunId,
+            new TerminalDisplayOptions
+            {
+                CancelAsync = _ =>
+                {
+                    runCts.Cancel();
+                    return ValueTask.CompletedTask;
+                },
+                FormatInteraction = DeliveryTerminalContributions.FormatInteraction,
+                SubmitTextAsync = (answer, _) =>
+                    new ValueTask(humanInteraction.SubmitAsync(runPaths.RunId, answer)),
+                CanSubmitText = () => humanInteraction.HasPending(runPaths.RunId),
+                ReadPipelineEntriesAsync = terminalContributions.ReadAsync,
+                ModelNames = new Dictionary<string, string>
+                {
+                    [DeliveryIds.Executor] = $"{implProfile.ProviderName}/{implProfile.Model}",
+                    [DeliveryIds.Planner] =
+                        $"{planningProfile.ProviderName}/{planningProfile.Model}",
+                    [DeliveryIds.Reviewer] = $"{reviewProfile.ProviderName}/{reviewProfile.Model}",
+                },
+                ContextWindowTokens = implProfile.ContextWindowTokens,
+                KeyActions =
+                [
+                    new(
+                        ConsoleKey.P,
+                        "publish",
+                        async ct =>
+                        {
+                            await PublishFromLedgerAsync(tandemHome, runPaths.RunId, null, ct);
+                        },
+                        () => Volatile.Read(ref ready)
+                    ),
+                ],
+            }
+        );
+        var runObserver = new CompositePipelineObserver(journalObserver, display.Observer);
         var interactions = new PipelineInteractionHandlers()
             .Handle(composition.PlannerHumanInput, humanInteraction.WaitAsync)
             .Handle(composition.ReviewerHumanInput, humanInteraction.WaitAsync);
         var runner = new PipelineRunner();
+        await display.StartAsync(cancellationToken);
         var completionTask = CompleteRunAsync();
 
         async Task<PipelineRunResult<DeliveryState>> CompleteRunAsync()
@@ -215,10 +250,6 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
                 ).WithAcceptanceUnitOfWork(new LedgerUnitOfWork(ledgerStore)),
                 runCts.Token
             );
-            if (!interactive)
-            {
-                renderer.RenderTerminalMessage(final);
-            }
             await PersistTerminalAsync(
                 runPaths.RunId,
                 final,
@@ -226,69 +257,37 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
                 journalObserver,
                 CancellationToken.None
             );
+            Volatile.Write(ref ready, final.Status == PipelineRunStatus.Succeeded);
+            try
+            {
+                if (Volatile.Read(ref ready))
+                {
+                    await display.SucceededAsync(final.Outcome?.Summary ?? "Delivery ready");
+                }
+                else
+                {
+                    await display.FailedAsync(final.Outcome?.Summary ?? "Delivery failed");
+                }
+            }
+            catch (Exception presentationFailure)
+            {
+                Console.Error.WriteLine(
+                    $"Warning: terminal presentation failed after run completion: {presentationFailure.Message}"
+                );
+            }
             return final;
         }
-
-        var dashboard = new DashboardLoop(
-            ledgerStore,
-            runPaths.RunId,
-            liveTranscript,
-            canSubmitAnswer: () => humanInteraction.HasPending(runPaths.RunId),
-            onAnswerSubmitted: answer => humanInteraction.SubmitAsync(runPaths.RunId, answer),
-            onPublishRequested: async () =>
-            {
-                await PublishFromLedgerAsync(tandemHome, runPaths.RunId, null, cancellationToken);
-            },
-            onCancel: () =>
-            {
-                if (!completionTask.IsCompleted)
-                {
-                    runCts.Cancel();
-                }
-                return Task.CompletedTask;
-            }
-        );
-        using var dashboardCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var dashboardTask = Task.Run(
-            () => dashboard.RunAsync(null, dashboardCts.Token),
-            CancellationToken.None
-        );
-        var firstCompleted = await Task.WhenAny(dashboardTask, completionTask);
-
-        if (firstCompleted == completionTask && completionTask.IsFaulted)
-        {
-            dashboardCts.Cancel();
-            try
-            {
-                await dashboardTask;
-            }
-            catch (OperationCanceledException)
-            {
-                /* close alternate screen before surfacing workflow failure */
-            }
-
-            await completionTask;
-        }
-
-        if (firstCompleted == dashboardTask && dashboardTask.IsFaulted)
-        {
-            runCts.Cancel();
-            try
-            {
-                await completionTask;
-            }
-            catch (OperationCanceledException) when (runCts.IsCancellationRequested) { }
-            await dashboardTask;
-        }
-
-        if (firstCompleted == dashboardTask && !completionTask.IsCompleted)
-        {
-            runCts.Cancel();
-        }
-
         await completionTask;
-
-        await dashboardTask;
+        try
+        {
+            await display.WaitForCleanupAsync();
+        }
+        catch (Exception presentationFailure)
+        {
+            Console.Error.WriteLine(
+                $"Warning: terminal presentation failed after run completion: {presentationFailure.Message}"
+            );
+        }
     }
     catch (OperationCanceledException)
     {
@@ -332,10 +331,9 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
         return exitCode;
     }
 
-    renderer.Flush();
     var recordedRun = await ledgerStore.GetRunAsync(runPaths.RunId, CancellationToken.None);
     var recordedDelivery = new DeliveryLedger(ledgerStore.ForRun(runPaths.RunId));
-    renderer.PrintTerminalResult(
+    PrintTerminalResult(
         recordedRun,
         await recordedDelivery.ReadPublicationCandidateAsync(CancellationToken.None),
         await ledgerStore
@@ -351,6 +349,29 @@ static async Task<int> RunAsync(string packetPath, bool debug, CancellationToken
         LedgerRunStatus.Failed => 3,
         _ => 4,
     };
+}
+
+static void PrintTerminalResult(
+    LedgerRun run,
+    PublicationCandidateDocument? candidate,
+    IReadOnlyList<AcceptedLedgerEntry<VerificationResultRecord>> verification
+)
+{
+    Console.WriteLine();
+    Console.WriteLine($"Status:       {run.Status}");
+    Console.WriteLine($"Run:          {run.RunId}");
+    if (candidate is not null)
+    {
+        Console.WriteLine($"Base:         {candidate.PinnedBaseSha}");
+        Console.WriteLine($"Candidate:    {candidate.CandidateSha}");
+        Console.WriteLine($"Workspace:    {candidate.WorkspacePath}");
+    }
+    var passed = verification.Count(entry => entry.Value.Result.ExitCode == 0);
+    var total = verification.Count;
+    if (total > 0)
+    {
+        Console.WriteLine($"Verification: {passed}/{total}");
+    }
 }
 
 static ServiceProvider BuildDeliveryServices(TandemConfig config, IDeliveryRecordSink records)
@@ -588,179 +609,5 @@ file sealed class ChatClientBuilderFactory(TandemConfig config)
 
         var apiKey = EnvironmentApiKeyReader.Read(providerConfig.ApiKeyEnvironmentVariable);
         return new ProfileResolver().Resolve(config, profileName, apiKey);
-    }
-}
-
-file sealed class StreamRenderer
-{
-    private readonly StringBuilder _agent = new();
-    private readonly StringBuilder _reasoning = new();
-    private readonly Dictionary<string, string> _toolNames = new();
-    private PipelineRunResult<DeliveryState>? _finalMessage;
-
-    public Tandem.Delivery.RunStatus? TerminalStatus =>
-        _finalMessage is null ? null
-        : _finalMessage.Status == PipelineRunStatus.Succeeded ? Tandem.Delivery.RunStatus.Ready
-        : Tandem.Delivery.RunStatus.Failed;
-
-    public void RenderTerminalMessage(PipelineRunResult<DeliveryState>? msg)
-    {
-        if (msg is null)
-        {
-            return;
-        }
-
-        RenderTerminalStepTransition(msg);
-    }
-
-    private void RenderTerminalStepTransition(PipelineRunResult<DeliveryState>? msg)
-    {
-        if (msg?.Outcome is { } outcome)
-        {
-            var durStr =
-                outcome.Duration.TotalSeconds >= 1
-                    ? $"{outcome.Duration.TotalSeconds:F1}s"
-                    : $"{outcome.Duration.TotalMilliseconds:F0}ms";
-            Console.WriteLine($"[step] {outcome.StepId} completed: {outcome.Kind} ({durStr})");
-        }
-        if (msg is not null)
-        {
-            _finalMessage = msg;
-        }
-    }
-
-    public void Flush()
-    {
-        FlushAgent();
-        FlushReasoning();
-    }
-
-    public void PrintTerminalResult(
-        LedgerRun run,
-        PublicationCandidateDocument? candidate,
-        IReadOnlyList<AcceptedLedgerEntry<VerificationResultRecord>> verification
-    )
-    {
-        Console.WriteLine();
-        Console.WriteLine($"Status:       {run.Status}");
-        Console.WriteLine($"Run:          {run.RunId}");
-        if (candidate is not null)
-        {
-            Console.WriteLine($"Base:         {candidate.PinnedBaseSha}");
-            Console.WriteLine($"Candidate:    {candidate.CandidateSha}");
-            Console.WriteLine($"Workspace:    {candidate.WorkspacePath}");
-        }
-        var passed = verification.Count(entry => entry.Value.Result.ExitCode == 0);
-        var total = verification.Count;
-        if (total > 0)
-        {
-            Console.WriteLine($"Verification: {passed}/{total}");
-        }
-    }
-
-    public void RenderUpdate(Tandem.AgentUpdate update)
-    {
-        var ts = DateTime.UtcNow.ToString("HH:mm:ss.fff");
-        switch (update)
-        {
-            case Tandem.AgentUpdate.Reasoning reasoning:
-                _reasoning.Append(reasoning.Value);
-                FlushReasoningOnNewline();
-                break;
-            case Tandem.AgentUpdate.Text text:
-                _agent.Append(text.Value);
-                FlushAgentOnNewline();
-                break;
-            case Tandem.AgentUpdate.ToolStarted call:
-                FlushAgent();
-                FlushReasoning();
-                _toolNames[call.CallId] = call.Name;
-                Console.WriteLine($"[{ts}] [tool] {call.Name}");
-                break;
-            case Tandem.AgentUpdate.ToolCompleted result:
-                FlushAgent();
-                FlushReasoning();
-                var name = _toolNames.GetValueOrDefault(result.CallId, result.CallId);
-                Console.WriteLine(
-                    result.Succeeded
-                        ? $"[{ts}] [tool] {name} done"
-                        : $"[{ts}] [tool] {name} failed: {result.Error}"
-                );
-                break;
-        }
-    }
-
-    private void FlushAgentOnNewline()
-    {
-        var text = _agent.ToString();
-        var nl = text.LastIndexOf('\n');
-        if (nl >= 0)
-        {
-            var line = text[..nl];
-            if (!string.IsNullOrWhiteSpace(line))
-            {
-                Console.WriteLine($"[agent] {line}");
-            }
-            _agent.Clear();
-            _agent.Append(text[(nl + 1)..]);
-        }
-    }
-
-    private void FlushReasoningOnNewline()
-    {
-        var text = _reasoning.ToString();
-        var nl = text.LastIndexOf('\n');
-        if (nl >= 0)
-        {
-            var line = text[..nl];
-            if (!string.IsNullOrWhiteSpace(line))
-            {
-                Console.WriteLine($"[reasoning] {line}");
-            }
-            _reasoning.Clear();
-            _reasoning.Append(text[(nl + 1)..]);
-        }
-    }
-
-    private void FlushAgent()
-    {
-        if (_agent.Length > 0)
-        {
-            var text = _agent.ToString().TrimEnd();
-            if (!string.IsNullOrWhiteSpace(text))
-            {
-                Console.WriteLine($"[agent] {text}");
-            }
-            _agent.Clear();
-        }
-    }
-
-    private void FlushReasoning()
-    {
-        if (_reasoning.Length > 0)
-        {
-            var text = _reasoning.ToString().TrimEnd();
-            if (!string.IsNullOrWhiteSpace(text))
-            {
-                Console.WriteLine($"[reasoning] {text}");
-            }
-            _reasoning.Clear();
-        }
-    }
-}
-
-file sealed class TerminalPipelineObserver(StreamRenderer renderer, bool interactive)
-    : IPipelineObserver
-{
-    public ValueTask ObserveAsync(
-        PipelineObservation observation,
-        CancellationToken cancellationToken
-    )
-    {
-        if (!interactive && observation is PipelineAgentUpdated update)
-        {
-            renderer.RenderUpdate(update.Update);
-        }
-        return ValueTask.CompletedTask;
     }
 }

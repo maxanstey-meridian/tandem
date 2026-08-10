@@ -805,6 +805,7 @@ export interface RunOptions {
   readonly ledgerPath?: string;
   readonly signal?: AbortSignal;
   readonly interactions?: InteractionHandlers;
+  readonly presentation?: "terminal";
 }
 const acceptedKinds = [
   "StructuredOutputAccepted",
@@ -929,12 +930,13 @@ export async function run<TState>(
     });
     const resultJson = await runRegisteredGraphAsync(
       JSON.stringify({
-        contractVersion: 3,
+        contractVersion: 4,
         name: graph.name,
         start: graph.start.id,
         initialState,
         persist: graph.persist,
         ledgerPath: options.ledgerPath,
+        presentation: options.presentation,
         nodes,
         routes,
         outputs: graph.outputs.map((item) => item.id),

@@ -364,6 +364,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             "capability:ask_planner",
             "ask_planner",
             "accepted-call-1",
+            "Inspect first.",
             typeof(AskPlannerRequest).FullName,
             JsonSerializer.SerializeToElement(request, JsonSerializerOptions.Web)
         );
@@ -514,6 +515,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
                 "capability:submit_report",
                 "submit_report",
                 "report-1",
+                "Report submitted.",
                 typeof(SubmitReportRequest).FullName,
                 JsonSerializer.SerializeToElement(report, JsonSerializerOptions.Web)
             ),
@@ -804,6 +806,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
                 "capability:submit_report",
                 "submit_report",
                 "report",
+                "Report submitted.",
                 typeof(SubmitReportRequest).FullName,
                 JsonSerializer.SerializeToElement(report, JsonSerializerOptions.Web)
             ),

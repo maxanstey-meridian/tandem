@@ -1,5 +1,5 @@
-import { inspectAccepted, run, type ChatClient } from "@tandem/sdk";
-import { closeCli } from "@tandem/sdk/cli";
+import { inspectAccepted, type ChatClient } from "@tandem/sdk";
+import { closeCli, runCli } from "@tandem/sdk/cli";
 import { randomUUID } from "node:crypto";
 import { createPipeline } from "./pipeline.js";
 import type { State } from "./state.js";
@@ -37,22 +37,25 @@ const initialState: State = {
   review: null,
 };
 
-let exitCode = 1;
-try {
-  if (!process.env.OPENROUTER_API_KEY) {
-    throw new Error("OPENROUTER_API_KEY is required to run the Code Writer example.");
-  }
-  const ledgerPath = process.env.TANDEM_LEDGER_PATH ?? `code-writer-${randomUUID()}.sqlite3`;
-  const result = await run(
-    createPipeline({ implementer: openRouterDs4Client, reviewer: localSolClient }),
-    initialState,
-    { ledgerPath, signal: AbortSignal.timeout(600_000) },
-  );
-  const accepted = await inspectAccepted({ ledgerPath, runId: result.runId });
-  console.log(JSON.stringify({ ...result, ledgerPath, accepted }, null, 2));
-  exitCode = result.succeeded ? 0 : 1;
-} catch (error) {
-  console.error(error);
-} finally {
-  closeCli(exitCode);
+if (!process.env.OPENROUTER_API_KEY) {
+  process.stderr.write("OPENROUTER_API_KEY is required to run the Code Writer example.\n");
+  closeCli(2);
 }
+const ledgerPath = process.env.TANDEM_LEDGER_PATH ?? `code-writer-${randomUUID()}.sqlite3`;
+await runCli(
+  createPipeline({ implementer: openRouterDs4Client, reviewer: localSolClient }),
+  initialState,
+  {
+    ledgerPath,
+    signal: AbortSignal.timeout(600_000),
+    formatResult: async (result) => {
+      const accepted = await inspectAccepted({ ledgerPath, runId: result.runId });
+      return [
+        `Implementation:\n${result.state.implementation?.source ?? ""}`,
+        `Ledger: ${ledgerPath}`,
+        `Run: ${result.runId}`,
+        `Accepted: ${accepted.length}`,
+      ].join("\n");
+    },
+  },
+);

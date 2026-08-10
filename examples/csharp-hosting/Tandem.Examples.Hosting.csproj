@@ -18,5 +18,7 @@
     <ItemGroup>
         <ProjectReference Include="../../src/Tandem/Tandem.csproj" />
         <ProjectReference Include="../../src/Tandem.Ledger/Tandem.Ledger.csproj" />
+        <ProjectReference Include="../../src/Tandem.Terminal/Tandem.Terminal.csproj" />
+        <InternalsVisibleTo Include="Tandem.Terminal.Tests" />
     </ItemGroup>
 </Project>

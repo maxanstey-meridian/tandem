@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AnalysisLevel>latest</AnalysisLevel>
+        <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <NoWarn>$(NoWarn);CS1591</NoWarn>
+        <PackageId>Tandem.Terminal</PackageId>
+        <Title>Tandem Terminal</Title>
+        <Description>Optional observation-driven terminal presentation for Tandem pipelines.</Description>
+        <PackageTags>agents;ai;workflow;pipeline;terminal</PackageTags>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/maxanstey-meridian/tandem</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/maxanstey-meridian/tandem.git</RepositoryUrl>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Spectre.Console" Version="0.57.2" />
+        <ProjectReference Include="..\Tandem\Tandem.csproj" />
+        <InternalsVisibleTo Include="Tandem.Terminal.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="../../README.md" Pack="true" PackagePath="/" />
+    </ItemGroup>
+</Project>

@@ -3,11 +3,13 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using Spectre.Console;
 using Spectre.Console.Rendering;
-using Tandem.Delivery;
 
-namespace Tandem.Infrastructure.Dashboard;
+namespace Tandem.Terminal;
 
-public sealed class DashboardRenderer(IAnsiConsole? console = null)
+internal sealed class TerminalRenderer(
+    IAnsiConsole console,
+    IReadOnlyList<TerminalKeyAction>? keyActions = null
+)
 {
     private const int NarrowWidth = 100;
     private const int MaxScrollbackLines = 2_000;
@@ -24,7 +26,6 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         "#61355C",
         "#465D28",
     ];
-    private readonly IAnsiConsole _console = console ?? AnsiConsole.Console;
     private int _lastWidth;
     private int _lastHeight;
     private int _scrollOffset;
@@ -32,12 +33,6 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
     private int _lastRenderedLineCount;
     private int _lastTranscriptCount;
     private int _viewportHeight = 1;
-
-    public int Width => _console.Profile.Width;
-
-    public int Height => _console.Profile.Height;
-
-    public void RunInAlternateScreen(Action action) => _console.AlternateScreen(action);
 
     public void ScrollLines(int lines) =>
         _scrollOffset = Math.Clamp(_scrollOffset + lines, 0, _maxScrollOffset);
@@ -48,14 +43,16 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
 
     public void ScrollEnd() => _scrollOffset = 0;
 
-    public void Render(DashboardModel model)
+    public void Render(
+        TerminalSnapshot model,
+        IReadOnlyList<TerminalPipelineEntry>? pipelineEntries = null
+    )
     {
-        var width = Math.Max(40, Width);
-        var height = Math.Max(12, Height);
-        var headerHeight = 3;
-        var footerHeight = 2;
+        var width = Math.Max(40, console.Profile.Width);
+        var height = Math.Max(12, console.Profile.Height);
+        const int headerHeight = 3;
+        const int footerHeight = 2;
         var bodyHeight = Math.Max(7, height - headerHeight - footerHeight);
-
         var root = new Layout("root").SplitRows(
             new Layout("header").Size(headerHeight),
             new Layout("body").Size(bodyHeight),
@@ -63,7 +60,6 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         );
 
         root["header"].Update(RenderHeader(model));
-
         if (width < NarrowWidth)
         {
             var workHeight = Math.Max(4, bodyHeight * 4 / 5);
@@ -75,7 +71,9 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
             root["body"]["work"].Update(RenderWork(model, workHeight, Math.Max(10, width - 4)));
             root["body"]
                 ["pipeline"]
-                .Update(RenderPipeline(model, Math.Max(3, bodyHeight - workHeight)));
+                .Update(
+                    RenderPipeline(model, Math.Max(3, bodyHeight - workHeight), pipelineEntries)
+                );
         }
         else
         {
@@ -83,38 +81,32 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
             root["body"]
                 ["work"]
                 .Update(RenderWork(model, bodyHeight, Math.Max(10, width * 3 / 4 - 4)));
-            root["body"]["pipeline"].Update(RenderPipeline(model, bodyHeight));
+            root["body"]["pipeline"].Update(RenderPipeline(model, bodyHeight, pipelineEntries));
         }
         root["footer"].Update(RenderFooter(model));
 
-        if (_lastWidth != Width || _lastHeight != Height)
+        if (_lastWidth != console.Profile.Width || _lastHeight != console.Profile.Height)
         {
-            _console.Clear();
-            _lastWidth = Width;
-            _lastHeight = Height;
+            console.Clear();
+            _lastWidth = console.Profile.Width;
+            _lastHeight = console.Profile.Height;
         }
-        _console.Cursor.SetPosition(0, 0);
-        _console.Write(root);
+        console.Cursor.SetPosition(0, 0);
+        console.Write(root);
     }
 
-    private static IRenderable RenderHeader(DashboardModel model)
+    private static IRenderable RenderHeader(TerminalSnapshot model)
     {
-        var elapsed = model.StartedAt.HasValue
-            ? (model.CompletedAt ?? DateTimeOffset.UtcNow) - model.StartedAt.Value
-            : TimeSpan.Zero;
-        var active = model.ActiveStepId ?? (model.IsTerminal ? "complete" : "waiting");
-        var runId = string.IsNullOrEmpty(model.RunId) ? "starting" : model.RunId;
+        var elapsed = (model.CompletedAt ?? DateTimeOffset.UtcNow) - model.StartedAt;
         var text = new Text(
-            $"{runId}  {model.Status}  {active}  {model.Model ?? ""}  {elapsed:hh\\:mm\\:ss}",
+            $"{model.RunId:N}  {model.Status}  {elapsed:hh\\:mm\\:ss}",
             StatusStyle(model.Status)
         ).Overflow(Overflow.Ellipsis);
-
         return new Panel(text).Border(BoxBorder.Rounded).Padding(1, 0, 1, 0);
     }
 
-    private IRenderable RenderWork(DashboardModel model, int paneHeight, int paneWidth)
+    private IRenderable RenderWork(TerminalSnapshot model, int paneHeight, int paneWidth)
     {
-        var activeStepId = model.ActiveStepId;
         var visibleCount = Math.Max(1, paneHeight - 2);
         _viewportHeight = visibleCount;
         var lines = new List<IRenderable>();
@@ -130,7 +122,7 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         )
         {
             var entry = model.Transcript[index];
-            var rendered = RenderLines(entry.Line, entry.StepId, stepWidth, paneWidth).ToList();
+            var rendered = RenderLines(entry, stepWidth, paneWidth).ToList();
             var remaining = MaxScrollbackLines - lines.Count;
             if (rendered.Count > remaining)
             {
@@ -138,12 +130,10 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
             }
             lines.InsertRange(0, rendered);
         }
-
         if (lines.Count == 0)
         {
             lines.Add(new Text("waiting for activity…", new Style(Color.Grey)));
         }
-
         if (_scrollOffset > 0 && model.Transcript.Count > _lastTranscriptCount)
         {
             _scrollOffset += Math.Max(0, lines.Count - _lastRenderedLineCount);
@@ -155,62 +145,51 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
 
         var start = Math.Max(0, lines.Count - visibleCount - _scrollOffset);
         var visibleLines = lines.Skip(start).Take(visibleCount).ToList();
-
-        var active =
-            model.Steps.FirstOrDefault(step => step.StepId == activeStepId)
-            ?? model.Steps.LastOrDefault();
-        var title = active?.StepId ?? "Work";
+        var title =
+            model.ActiveStep
+            ?? model.Transcript.LastOrDefault()?.StepId
+            ?? model.Visits.LastOrDefault()?.StepId
+            ?? "Work";
         var state =
-            active?.IsActive == true ? "running"
-            : model.Steps.Count > 0 ? "done"
+            model.ActiveStep is not null ? "running"
+            : model.Visits.Count > 0 ? "done"
             : "waiting";
+        var modelName = model.ModelName is null ? "" : $" · {Markup.Escape(model.ModelName)}";
         return new Panel(new Rows(visibleLines))
-            .Header($" {Markup.Escape(Center(title, stepWidth))} · {state} ")
+            .Header($" {Markup.Escape(Center(title, stepWidth))}{modelName} · {state} ")
             .Border(BoxBorder.Rounded)
             .Expand();
     }
 
     private static IEnumerable<IRenderable> RenderLines(
-        TranscriptLine line,
-        string stepId,
+        TranscriptEntry entry,
         int stepWidth,
         int width
     )
     {
-        var label = $"[{Center(stepId, stepWidth)}] ";
-        var prefix = line.Kind switch
-        {
-            TranscriptKinds.Reasoning => "· ",
-            _ => "  ",
-        };
-        var value = line.Text;
-        var background = StepBackground(stepId);
-        var jsonLines = TryRenderJson(value, label, prefix, background, width);
+        var label = $"[{Center(entry.StepId, stepWidth)}] ";
+        var prefix = entry.Kind == TranscriptKind.Reasoning ? "· " : "  ";
+        var background = StepBackground(entry.StepId);
+        var jsonLines = TryRenderJson(entry.Text, label, prefix, background, width);
         if (jsonLines is not null)
         {
-            foreach (var jsonLine in jsonLines)
+            foreach (var line in jsonLines)
             {
-                yield return jsonLine;
+                yield return line;
             }
             yield break;
         }
-        var contentColor = line.Kind switch
-        {
-            TranscriptKinds.Reasoning => "grey",
-            _ => null,
-        };
 
         var coloredGutterWidth = label.Length + prefix.Length;
-        var gutterWidth = coloredGutterWidth + 1;
-        var availableWidth = Math.Max(10, width - gutterWidth);
+        var availableWidth = Math.Max(10, width - coloredGutterWidth - 1);
         var first = true;
-        foreach (var wrapped in WrapVisibleText(value, availableWidth))
+        foreach (var wrapped in WrapVisibleText(entry.Text, availableWidth))
         {
             var gutter = first ? label + prefix : new string(' ', coloredGutterWidth);
             var content = Markup.Escape(wrapped);
-            if (contentColor is not null)
+            if (entry.Kind == TranscriptKind.Reasoning)
             {
-                content = $"[{contentColor}]{content}[/]";
+                content = $"[grey]{content}[/]";
             }
             yield return new Markup(
                 $"[white on {background}]{Markup.Escape(gutter)}[/] {content}"
@@ -246,7 +225,6 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
                 candidate = candidate[objectStart..];
             }
         }
-
         if (
             candidate.Length < 2
             || candidate[0] is not ('{' or '[')
@@ -265,7 +243,6 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         {
             return null;
         }
-
         var formattedDocuments = new List<string>(documents.Count);
         foreach (var json in documents)
         {
@@ -290,7 +267,6 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         }
 
         var formatted = string.Join('\n', formattedDocuments);
-
         var gutterWidth = label.Length + prefix.Length;
         var lines = preamble is null
             ? formatted.Split('\n')
@@ -300,11 +276,9 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         var rendered = new List<IRenderable>();
         for (var index = 0; index < lines.Length; index++)
         {
-            var fragments = WrapVisibleText(lines[index], availableWidth).ToArray();
-            if (fragments.Length == 0)
-            {
-                fragments = [""];
-            }
+            var fragments = WrapVisibleText(lines[index], availableWidth)
+                .DefaultIfEmpty("")
+                .ToArray();
             for (var fragmentIndex = 0; fragmentIndex < fragments.Length; fragmentIndex++)
             {
                 var firstVisualLine = rendered.Count == 0;
@@ -318,7 +292,6 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
                 {
                     markup.Append(Markup.Escape(gutter)).Append(' ');
                 }
-
                 var fragment = fragments[fragmentIndex];
                 if (index < jsonStartsAt)
                 {
@@ -356,7 +329,6 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
             {
                 throw new JsonException("Unexpected content between JSON documents.");
             }
-
             var start = offset;
             var depth = 0;
             var inString = false;
@@ -380,7 +352,6 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
                     }
                     continue;
                 }
-
                 if (character == '"')
                 {
                     inString = true;
@@ -400,13 +371,11 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
                     }
                 }
             }
-
             if (depth != 0 || inString)
             {
                 throw new JsonException("Incomplete JSON document.");
             }
         }
-
         if (documents.Count == 0)
         {
             throw new JsonException("No JSON documents found.");
@@ -470,8 +439,11 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
                 {
                     probe++;
                 }
-                var color = probe < line.Length && line[probe] == ':' ? "cyan" : "green";
-                AppendStyled(output, line[start..index], color);
+                AppendStyled(
+                    output,
+                    line[start..index],
+                    probe < line.Length && line[probe] == ':' ? "cyan" : "green"
+                );
             }
             else if (character == '-' || char.IsDigit(character))
             {
@@ -514,7 +486,6 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
             hash ^= character;
             hash *= 16777619;
         }
-
         return _stepBackgrounds[(int)(hash % _stepBackgrounds.Length)];
     }
 
@@ -535,7 +506,6 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
             {
                 continue;
             }
-
             var indentLength = content.Length - content.TrimStart().Length;
             var indent = content[..Math.Min(indentLength, Math.Max(0, width - 1))];
             var remaining = content[indentLength..];
@@ -550,7 +520,6 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
                 yield return indent + remaining[..breakAt].TrimEnd();
                 remaining = remaining[breakAt..].TrimStart();
             }
-
             if (remaining.Length > 0)
             {
                 yield return indent + remaining;
@@ -558,71 +527,101 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
         }
     }
 
-    private static IRenderable RenderPipeline(DashboardModel model, int paneHeight)
+    private IRenderable RenderPipeline(
+        TerminalSnapshot model,
+        int paneHeight,
+        IReadOnlyList<TerminalPipelineEntry>? pipelineEntries
+    )
     {
-        var rows = new List<IRenderable>();
-        foreach (var entry in model.PipelineHistory)
-        {
-            var duration =
-                entry.Duration.TotalSeconds >= 1
-                    ? $"{entry.Duration.TotalSeconds:F1}s"
-                    : $"{entry.Duration.TotalMilliseconds:F0}ms";
-            var icon = entry switch
-            {
-                { IsVerification: true, ExitCode: 0 } => "✓",
-                { IsVerification: true } => "✗",
-                { IsReview: true } => "✓",
-                _ => "·",
-            };
-            rows.Add(
-                new Text($"{icon} {entry.StepId}  {entry.Kind}  {duration}").Overflow(
-                    Overflow.Ellipsis
-                )
-            );
-        }
-
-        if (model.CandidateSha is { } sha)
-        {
-            rows.Add(new Text($"candidate  {sha[..Math.Min(12, sha.Length)]}"));
-        }
-        if (model.PublishedBranch is { } branch)
-        {
-            rows.Add(new Text($"published  {branch}", new Style(Color.Green)));
-        }
-        if (model.PendingHumanRequest is { } request)
+        var rows = model
+            .Visits.Select(visit => new TerminalPipelineEntry(
+                visit.StepId,
+                visit.Outcome ?? "running",
+                visit.Summary ?? "",
+                visit.Duration,
+                visit.Outcome switch
+                {
+                    StandardOutcomeKinds.Success => TerminalPipelineEntryStyle.Success,
+                    "faulted" or "cancelled" => TerminalPipelineEntryStyle.Failure,
+                    _ => TerminalPipelineEntryStyle.Information,
+                }
+            ))
+            .Concat(pipelineEntries ?? [])
+            .Select(RenderPipelineEntry)
+            .ToList();
+        if (model.Interaction is { } interaction)
         {
             rows.Add(
-                new Text(
-                    $"question [{request.InteractionId}] {request.Question}",
-                    new Style(Color.Yellow)
+                RenderPipelineEntry(
+                    new TerminalPipelineEntry(
+                        "question",
+                        "waiting",
+                        interaction.Prompt,
+                        Style: TerminalPipelineEntryStyle.Interaction
+                    )
                 )
             );
-            if (!string.IsNullOrWhiteSpace(request.Reason))
+            if (!string.IsNullOrWhiteSpace(interaction.Detail))
             {
-                rows.Add(new Text($"reason  {request.Reason}", new Style(Color.Grey)));
+                rows.Add(
+                    new Text(
+                        $"reason  {TerminalText.Sanitize(interaction.Detail)}",
+                        new Style(Color.Grey)
+                    ).Overflow(Overflow.Ellipsis)
+                );
             }
         }
         if (rows.Count == 0)
         {
             rows.Add(new Text("no pipeline history", new Style(Color.Grey)));
         }
-
-        var visible = rows.TakeLast(Math.Max(1, paneHeight - 2));
-        return new Panel(new Rows(visible)).Header(" Pipeline ").Border(BoxBorder.Rounded).Expand();
+        return new Panel(new Rows(rows.TakeLast(Math.Max(1, paneHeight - 2))))
+            .Header(" Pipeline ")
+            .Border(BoxBorder.Rounded)
+            .Expand();
     }
 
-    private IRenderable RenderFooter(DashboardModel model)
+    private static IRenderable RenderPipelineEntry(TerminalPipelineEntry entry)
+    {
+        var duration = entry.Duration switch
+        {
+            { TotalSeconds: >= 1 } value => $"  {value.TotalSeconds:F1}s",
+            { } value => $"  {value.TotalMilliseconds:F0}ms",
+            _ => "",
+        };
+        var icon = entry.Style switch
+        {
+            TerminalPipelineEntryStyle.Success => "✓",
+            TerminalPipelineEntryStyle.Failure => "✗",
+            TerminalPipelineEntryStyle.Interaction => "?",
+            _ => "·",
+        };
+        var color = entry.Style switch
+        {
+            TerminalPipelineEntryStyle.Success => Color.Green,
+            TerminalPipelineEntryStyle.Failure => Color.Red,
+            TerminalPipelineEntryStyle.Interaction => Color.Yellow,
+            _ => Color.Default,
+        };
+        var summary = string.IsNullOrWhiteSpace(entry.Summary) ? "" : $"  {entry.Summary}";
+        return new Text(
+            TerminalText.Sanitize($"{icon} {entry.Label}  {entry.Kind}{duration}{summary}"),
+            new Style(color)
+        ).Overflow(Overflow.Ellipsis);
+    }
+
+    private IRenderable RenderFooter(TerminalSnapshot model)
     {
         string text;
         Style style;
-        if (model.PendingHumanRequest is not null)
+        if (model.Interaction is { } interaction)
         {
-            text = $"> {model.DraftAnswer ?? ""}  Enter submit";
+            text = $"> {model.Draft}  Enter submit";
             style = new Style(Color.White);
         }
         else
         {
-            var current = model.CurrentContextTokens ?? 0;
+            var current = model.CurrentContextTokens;
             var window = model.ContextWindowTokens ?? 0;
             var fraction = window > 0 ? Math.Clamp((double)current / window, 0, 1) : 0;
             const int barWidth = 20;
@@ -630,32 +629,45 @@ public sealed class DashboardRenderer(IAnsiConsole? console = null)
             var bar = new string('▓', filled) + new string('░', barWidth - filled);
             var usage = window > 0 ? $"{current / 1000.0:F1}k/{window / 1000.0:F0}k" : "—/—";
             var scroll = _scrollOffset > 0 ? $"↑ {_scrollOffset} lines · End follow  " : "";
-            var keys = model.IsReady
-                ? "↑↓/Pg scroll  p publish  q detach"
-                : "↑↓/Pg scroll  q detach";
+            var actions = string.Join(
+                "  ",
+                (keyActions ?? [])
+                    .Where(action => action.IsAvailable?.Invoke() ?? true)
+                    .Select(action => $"{action.Key.ToString().ToLowerInvariant()} {action.Label}")
+            );
+            var quit = IsTerminal(model.Status) ? "q close" : "q cancel";
             text =
-                $"{scroll}ctx {bar} {usage}  steps {model.PipelineHistory.Count}  {model.ActiveStepId ?? model.Status.ToString()}  {keys}";
+                $"{scroll}ctx {bar} {usage}  steps {model.Visits.Count}  {model.ActiveStep ?? model.Status.ToString()}{(actions.Length == 0 ? "" : $"  {actions}")}  ↑↓/Pg/Home/End scroll  {quit}";
             style =
                 fraction > 0.85 ? new Style(Color.Red)
                 : fraction > 0.6 ? new Style(Color.Yellow)
                 : new Style(Color.Grey);
         }
-
-        return new Panel(new Text(text, style).Overflow(Overflow.Ellipsis))
+        return new Panel(new Text(TerminalText.Sanitize(text), style).Overflow(Overflow.Ellipsis))
             .Border(BoxBorder.None)
             .Padding(1, 0, 0, 0);
     }
 
-    private static Style StatusStyle(RunStatus status) =>
+    private static bool IsTerminal(TerminalPipelineStatus status) =>
+        status
+            is TerminalPipelineStatus.Succeeded
+                or TerminalPipelineStatus.Failed
+                or TerminalPipelineStatus.Faulted
+                or TerminalPipelineStatus.Cancelled;
+
+    private static Style StatusStyle(TerminalPipelineStatus status) =>
         status switch
         {
-            RunStatus.Ready => new Style(Color.Green, decoration: Decoration.Bold),
-            RunStatus.Failed or RunStatus.Faulted => new Style(
+            TerminalPipelineStatus.Succeeded => new Style(Color.Green, decoration: Decoration.Bold),
+            TerminalPipelineStatus.Failed or TerminalPipelineStatus.Faulted => new Style(
                 Color.Red,
                 decoration: Decoration.Bold
             ),
-            RunStatus.Cancelled => new Style(Color.Grey, decoration: Decoration.Bold),
-            RunStatus.WaitingForHuman => new Style(Color.Yellow, decoration: Decoration.Bold),
+            TerminalPipelineStatus.Cancelled => new Style(Color.Grey, decoration: Decoration.Bold),
+            TerminalPipelineStatus.WaitingForInteraction => new Style(
+                Color.Yellow,
+                decoration: Decoration.Bold
+            ),
             _ => new Style(Color.Cyan, decoration: Decoration.Bold),
         };
 }

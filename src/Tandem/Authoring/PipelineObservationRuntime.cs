@@ -146,6 +146,7 @@ public sealed record PipelineCapabilityAccepted(
     string CapabilityId,
     string CapabilityName,
     string AcceptedCallId,
+    string Summary,
     string? RequestType = null,
     JsonElement? Payload = null
 ) : PipelineObservation(RunId, StepId);

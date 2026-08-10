@@ -10,8 +10,9 @@ import {
   type AcceptedValue,
   type Capability,
   type Stage,
+  type RunOptions,
 } from "@tandem/sdk";
-import { closeCli } from "@tandem/sdk/cli";
+import { closeCli, runCli, type RunCliOptions } from "@tandem/sdk/cli";
 import { z } from "zod";
 const State = z.object({ count: z.number() });
 type State = z.infer<typeof State>;
@@ -28,6 +29,19 @@ pipeline({
   routes: [route({ from: increment, to: done, label: "done" })],
   outputs: [done],
 });
+const graph = pipeline({
+  name: "cli-positive",
+  state: State,
+  nodes: [increment, done],
+  start: increment,
+  routes: [route({ from: increment, to: done, label: "done" })],
+  outputs: [done],
+});
+const cliOptions: RunCliOptions<State> = {
+  signal: AbortSignal.timeout(1_000),
+  formatResult: async (result) => String(result.state.count),
+};
+void [runCli, graph, cliOptions];
 const record = capability<State, { amount: number }>({
   name: "record",
   instructions: "Record an amount.",
@@ -101,4 +115,6 @@ if (accepted.kind === "CapabilityAccepted") {
 }
 const opaqueStage: Stage<State> = increment;
 void opaqueStage;
+const terminalPresentation: RunOptions = { presentation: "terminal" };
+void terminalPresentation;
 void closeCli;

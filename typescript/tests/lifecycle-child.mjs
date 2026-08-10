@@ -386,7 +386,14 @@ try {
           })()
         : await Promise.all(
             Array.from({ length: count }, (_, i) =>
-              run(graph, { count: i, done: false }, { ledgerPath }),
+              run(
+                graph,
+                { count: i, done: false },
+                {
+                  ledgerPath,
+                  presentation: mode === "terminal" ? "terminal" : undefined,
+                },
+              ),
             ),
           );
     const db = new DatabaseSync(ledgerPath, { readOnly: true });

@@ -29,33 +29,34 @@ internal sealed class CallbackDispatcher(
             return Parse(invokeSync(callback, state, input));
         }
 
-        string? result = null;
-        Exception? failure = null;
-        using var completed = new ManualResetEventSlim();
+        var completed = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
         context.Post(
             _ =>
             {
+                if (completed.Task.IsCompleted)
+                    return;
                 try
                 {
-                    result = Parse(invokeSync(callback, state, input));
+                    completed.TrySetResult(Parse(invokeSync(callback, state, input)));
                 }
                 catch (Exception exception)
                 {
-                    failure = exception;
-                }
-                finally
-                {
-                    completed.Set();
+                    completed.TrySetException(exception);
                 }
             },
             null
         );
-        completed.Wait(runCancellationToken);
-        if (failure is not null)
+        try
         {
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            return completed.Task.WaitAsync(runCancellationToken).GetAwaiter().GetResult();
         }
-        return result!;
+        catch (OperationCanceledException) when (runCancellationToken.IsCancellationRequested)
+        {
+            completed.TrySetCanceled(runCancellationToken);
+            throw new OperationCanceledException(runCancellationToken);
+        }
     }
 
     private static async Task<string> InvokeResultAsync(Task<string> result) => Parse(await result);

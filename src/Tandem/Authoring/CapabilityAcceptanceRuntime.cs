@@ -42,6 +42,7 @@ internal static class CapabilityAcceptanceRuntime
                             capabilityId,
                             toolName,
                             $"{invocation.RunId:N}:{invocation.StepId}:{invocation.InvocationId}:{capabilityId}",
+                            summary,
                             requestType,
                             observedRunContext.ShouldPersist(invocation.StepId) ? payload : null
                         ),

@@ -34,6 +34,21 @@ test("runs package-relatively, persists accepted values, and terminalizes", asyn
   );
 });
 
+test("renders requested terminal presentation as plain redirected output", async () => {
+  const { stdout } = await exec(
+    process.execPath,
+    [new URL("lifecycle-child.mjs", import.meta.url).pathname, "terminal"],
+    { timeout: 15_000 },
+  );
+  assert.equal(stdout.includes(`${String.fromCharCode(27)}[`), false);
+  assert.match(stdout, /pipeline terminal run [0-9a-f]+ started/);
+  assert.match(stdout, /pipeline Succeeded: 1/);
+  const result = JSON.parse(stdout.trim().split("\n").at(-1));
+  assert.deepEqual(result.values, [1]);
+  assert.deepEqual(result.statuses, ["Ready"]);
+  assert.equal(result.terminalized, true);
+});
+
 test("preserves structured initial-state validation problems", async () => {
   const result = await child("invalid");
   assert.deepEqual(result.problems, [

@@ -1,0 +1,97 @@
+[terminal]
+T Tandem.Terminal.ITerminalKeyInput
+M System.Threading.Tasks.ValueTask<System.Nullable<System.ConsoleKeyInfo>?> ReadAsync(System.Threading.CancellationToken cancellationToken)
+T Tandem.Terminal.TerminalCapabilities
+C (System.Boolean IsInputTerminal, System.Boolean IsOutputTerminal)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Terminal.TerminalCapabilities? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Boolean IsInputTerminal, out System.Boolean IsOutputTerminal)
+M Tandem.Terminal.TerminalCapabilities <Clone>$()
+M static Tandem.Terminal.TerminalCapabilities Detect()
+P System.Boolean IsInputTerminal { get; set; }
+P System.Boolean IsInteractive { get; }
+P System.Boolean IsOutputTerminal { get; set; }
+T Tandem.Terminal.TerminalDisplayOptions
+C ()
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Terminal.TerminalDisplayOptions? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M Tandem.Terminal.TerminalDisplayOptions <Clone>$()
+P Spectre.Console.IAnsiConsole? Console { get; set; }
+P System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> ModelNames { get; set; }
+P System.Collections.Generic.IReadOnlyList<Tandem.Terminal.TerminalKeyAction> KeyActions { get; set; }
+P System.Func<System.Boolean>? CanSubmitText { get; set; }
+P System.Func<System.String,System.Threading.CancellationToken,System.Threading.Tasks.ValueTask>? SubmitTextAsync { get; set; }
+P System.Func<System.Threading.CancellationToken,System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Tandem.Terminal.TerminalPipelineEntry>>>? ReadPipelineEntriesAsync { get; set; }
+P System.Func<System.Threading.CancellationToken,System.Threading.Tasks.ValueTask>? CancelAsync { get; set; }
+P System.Func<Tandem.PipelineInteractionRequestedObservation,Tandem.Terminal.TerminalInteractionPrompt?>? FormatInteraction { get; set; }
+P System.Int32 TranscriptCharacterCapacity { get; set; }
+P System.Int32 TranscriptEntryCapacity { get; set; }
+P System.Nullable<System.Int32>? ContextWindowTokens { get; set; }
+P System.TimeProvider TimeProvider { get; set; }
+P System.TimeSpan RefreshInterval { get; set; }
+P Tandem.Terminal.ITerminalKeyInput? KeyInput { get; set; }
+P Tandem.Terminal.TerminalCapabilities Capabilities { get; set; }
+T Tandem.Terminal.TerminalInteractionPrompt
+C (System.String Prompt, System.String? Detail = null)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Terminal.TerminalInteractionPrompt? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Prompt, out System.String? Detail)
+M Tandem.Terminal.TerminalInteractionPrompt <Clone>$()
+P System.String Prompt { get; set; }
+P System.String? Detail { get; set; }
+T Tandem.Terminal.TerminalKeyAction
+C (System.ConsoleKey Key, System.String Label, System.Func<System.Threading.CancellationToken,System.Threading.Tasks.ValueTask> ExecuteAsync, System.Func<System.Boolean>? IsAvailable = null)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Terminal.TerminalKeyAction? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.ConsoleKey Key, out System.String Label, out System.Func<System.Threading.CancellationToken,System.Threading.Tasks.ValueTask> ExecuteAsync, out System.Func<System.Boolean>? IsAvailable)
+M Tandem.Terminal.TerminalKeyAction <Clone>$()
+P System.ConsoleKey Key { get; set; }
+P System.Func<System.Boolean>? IsAvailable { get; set; }
+P System.Func<System.Threading.CancellationToken,System.Threading.Tasks.ValueTask> ExecuteAsync { get; set; }
+P System.String Label { get; set; }
+T Tandem.Terminal.TerminalPipelineDisplay
+C (Tandem.PipelineInspection pipeline, System.Guid runId, Tandem.Terminal.TerminalDisplayOptions? options = null)
+M System.Threading.Tasks.Task StartAsync(System.Threading.CancellationToken cancellationToken = default)
+M System.Threading.Tasks.Task WaitForCleanupAsync(System.Threading.CancellationToken cancellationToken = default)
+M System.Threading.Tasks.ValueTask CancelledAsync(System.String summary)
+M System.Threading.Tasks.ValueTask DisposeAsync()
+M System.Threading.Tasks.ValueTask FailedAsync(System.String summary)
+M System.Threading.Tasks.ValueTask FaultedAsync(System.String summary)
+M System.Threading.Tasks.ValueTask SucceededAsync(System.String summary)
+P System.Boolean IsInteractive { get; }
+P Tandem.IPipelineObserver Observer { get; }
+T Tandem.Terminal.TerminalPipelineEntry
+C (System.String Label, System.String Kind, System.String Summary, System.Nullable<System.TimeSpan>? Duration = default, Tandem.Terminal.TerminalPipelineEntryStyle Style = Tandem.Terminal.TerminalPipelineEntryStyle.Information)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Terminal.TerminalPipelineEntry? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Label, out System.String Kind, out System.String Summary, out System.Nullable<System.TimeSpan>? Duration, out Tandem.Terminal.TerminalPipelineEntryStyle Style)
+M Tandem.Terminal.TerminalPipelineEntry <Clone>$()
+P System.Nullable<System.TimeSpan>? Duration { get; set; }
+P System.String Kind { get; set; }
+P System.String Label { get; set; }
+P System.String Summary { get; set; }
+P Tandem.Terminal.TerminalPipelineEntryStyle Style { get; set; }
+T Tandem.Terminal.TerminalPipelineEntryStyle
+F System.Int32 value__
+F static Tandem.Terminal.TerminalPipelineEntryStyle Failure
+F static Tandem.Terminal.TerminalPipelineEntryStyle Information
+F static Tandem.Terminal.TerminalPipelineEntryStyle Interaction
+F static Tandem.Terminal.TerminalPipelineEntryStyle Success
+T Tandem.Terminal.TerminalPipelineStatus
+F System.Int32 value__
+F static Tandem.Terminal.TerminalPipelineStatus Cancelled
+F static Tandem.Terminal.TerminalPipelineStatus Failed
+F static Tandem.Terminal.TerminalPipelineStatus Faulted
+F static Tandem.Terminal.TerminalPipelineStatus Running
+F static Tandem.Terminal.TerminalPipelineStatus Succeeded
+F static Tandem.Terminal.TerminalPipelineStatus WaitingForInteraction

@@ -1,0 +1,10 @@
+[terminal]
+Tandem.Terminal.ITerminalKeyInput
+Tandem.Terminal.TerminalCapabilities
+Tandem.Terminal.TerminalDisplayOptions
+Tandem.Terminal.TerminalInteractionPrompt
+Tandem.Terminal.TerminalKeyAction
+Tandem.Terminal.TerminalPipelineDisplay
+Tandem.Terminal.TerminalPipelineEntry
+Tandem.Terminal.TerminalPipelineEntryStyle
+Tandem.Terminal.TerminalPipelineStatus

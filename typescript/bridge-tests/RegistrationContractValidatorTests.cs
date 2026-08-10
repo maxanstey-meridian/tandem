@@ -6,11 +6,11 @@ namespace Tandem.NodeApiSpike;
 public sealed class RegistrationContractValidatorTests
 {
     [Fact]
-    public void AcceptsVersionThreeAgentWithOutputAndMultipleCapabilities()
+    public void AcceptsVersionFourAgentWithOutputAndMultipleCapabilities()
     {
         var contract = RegistrationContractValidator.ParseAndValidate(ValidContract());
 
-        Assert.Equal(3, contract.ContractVersion);
+        Assert.Equal(4, contract.ContractVersion);
         Assert.Equal(2, contract.Nodes![0].Capabilities!.Length);
         Assert.NotNull(contract.Nodes[0].Output);
     }
@@ -71,7 +71,7 @@ public sealed class RegistrationContractValidatorTests
             )
             .Message;
 
-        Assert.Contains("contractVersion must be 3", message);
+        Assert.Contains("contractVersion must be 4", message);
         Assert.Contains("object root with type 'object'", message);
     }
 
@@ -104,6 +104,36 @@ public sealed class RegistrationContractValidatorTests
             .Message;
 
         Assert.Contains("ledgerPath is required when persistence is enabled", message);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("terminal")]
+    public void AcceptsSupportedPresentation(string? presentation)
+    {
+        var value = ContractObject();
+        value["presentation"] = presentation;
+
+        var contract = RegistrationContractValidator.ParseAndValidate(
+            JsonSerializer.Serialize(value)
+        );
+
+        Assert.Equal(presentation, contract.Presentation);
+    }
+
+    [Fact]
+    public void RejectsUnsupportedPresentation()
+    {
+        var value = ContractObject();
+        value["presentation"] = "events";
+
+        var message = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
+            )
+            .Message;
+
+        Assert.Contains("presentation must be null or 'terminal'", message);
     }
 
     [Fact]
@@ -287,7 +317,7 @@ public sealed class RegistrationContractValidatorTests
     private static Dictionary<string, object?> ContractObject() =>
         new()
         {
-            ["contractVersion"] = 3,
+            ["contractVersion"] = 4,
             ["name"] = "test",
             ["start"] = "agent",
             ["initialState"] = "{}",
@@ -338,7 +368,7 @@ public sealed class RegistrationContractValidatorTests
     private static Dictionary<string, object?> InteractionContractObject() =>
         new()
         {
-            ["contractVersion"] = 3,
+            ["contractVersion"] = 4,
             ["name"] = "interaction-test",
             ["start"] = "review",
             ["initialState"] = "{}",

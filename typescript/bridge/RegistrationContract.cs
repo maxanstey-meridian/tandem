@@ -10,6 +10,7 @@ internal sealed record RegisteredGraphContract(
     RegisteredRouteContract[]? Routes,
     string[]? Outputs,
     string? LedgerPath,
+    string? Presentation,
     RegisteredInteractionHandlerContract[]? InteractionHandlers
 );
 

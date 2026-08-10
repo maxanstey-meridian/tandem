@@ -74,18 +74,27 @@ public static partial class NodePipelineBridge
                 "A JavaScript synchronization context is required."
             );
         var definition = RegistrationContractValidator.ParseAndValidate(definitionJson);
+        using var terminalCancellation =
+            definition.Presentation == "terminal"
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                : null;
+        var runCancellationToken = terminalCancellation?.Token ?? cancellationToken;
         var callbacks = new CallbackDispatcher(
             context,
             invokeSyncCallback,
             invokeAsyncCallback,
-            cancellationToken
+            runCancellationToken
         );
         var nodes = new Dictionary<string, RegisteredParticipant>(StringComparer.Ordinal);
         foreach (var node in definition.Nodes!)
         {
             nodes.Add(
                 node.Id!,
-                await RegisteredParticipantFactory.CreateAsync(node, callbacks, cancellationToken)
+                await RegisteredParticipantFactory.CreateAsync(
+                    node,
+                    callbacks,
+                    runCancellationToken
+                )
             );
         }
         var builder = RegisteredRouteRegistration.Start(nodes[definition.Start!], definition.Name!);
@@ -110,21 +119,42 @@ public static partial class NodePipelineBridge
         }
 
         var runId = Guid.CreateVersion7();
+        var modelNames = definition
+            .Nodes.Where(node => node.Kind == "agent")
+            .ToDictionary(node => node.Id!, node => node.Client!.Model!, StringComparer.Ordinal);
+        await using var presentation = terminalCancellation is null
+            ? null
+            : new TerminalRunPresentation(
+                pipeline.Inspect(),
+                runId,
+                terminalCancellation,
+                modelNames
+            );
         IPipelinePersistenceObserver? observer = null;
         SqliteLedgerStore? store = null;
         if (definition.LedgerPath is not null)
         {
             store = new SqliteLedgerStore(definition.LedgerPath);
-            observer = await store.CreateObserverAsync(runId, pipeline, cancellationToken);
+            observer = await store.CreateObserverAsync(runId, pipeline, runCancellationToken);
+        }
+        IPipelineObserver? runObserver = observer;
+        if (presentation is not null)
+        {
+            runObserver = presentation.ComposeObserver(observer);
         }
         LedgerRunStatus? terminalStatus = null;
+        string? terminalSummary = null;
         var preserveActiveFailure = false;
         try
         {
+            if (presentation is not null)
+            {
+                await presentation.StartAsync(runCancellationToken);
+            }
             var options = new PipelineRunOptions(
                 RunId: runId,
                 Interactions: handlers,
-                Observer: observer
+                Observer: runObserver
             );
             if (store is not null)
             {
@@ -134,9 +164,10 @@ public static partial class NodePipelineBridge
                 pipeline,
                 new JavaScriptState(definition.InitialState!),
                 options,
-                cancellationToken
+                runCancellationToken
             );
             terminalStatus = result.Succeeded ? LedgerRunStatus.Ready : LedgerRunStatus.Failed;
+            terminalSummary = result.Outcome?.Summary;
             return JsonSerializer.Serialize(
                 new
                 {
@@ -150,12 +181,14 @@ public static partial class NodePipelineBridge
         catch (CallbackContractException exception)
         {
             terminalStatus = LedgerRunStatus.Faulted;
+            terminalSummary = exception.Message;
             preserveActiveFailure = true;
             throw CallbackContractFailure(exception, exception);
         }
         catch (PipelineRunException exception)
         {
             terminalStatus = LedgerRunStatus.Faulted;
+            terminalSummary = exception.InnerException?.Message ?? exception.Message;
             preserveActiveFailure = true;
             if (FindCallbackContractException(exception) is { } contract)
             {
@@ -169,12 +202,14 @@ public static partial class NodePipelineBridge
         catch (OperationCanceledException)
         {
             terminalStatus = LedgerRunStatus.Cancelled;
+            terminalSummary = "Pipeline cancelled";
             preserveActiveFailure = true;
             throw;
         }
-        catch
+        catch (Exception exception)
         {
             terminalStatus = LedgerRunStatus.Faulted;
+            terminalSummary = exception.Message;
             preserveActiveFailure = true;
             throw;
         }
@@ -190,6 +225,14 @@ public static partial class NodePipelineBridge
                 {
                     // Preserve the active run failure when best-effort terminalization also fails.
                 }
+            }
+            if (presentation is not null && terminalStatus is { } presentationStatus)
+            {
+                await presentation.CompleteAsync(
+                    presentationStatus,
+                    terminalSummary,
+                    preserveActiveFailure
+                );
             }
         }
     }

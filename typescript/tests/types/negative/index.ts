@@ -1,4 +1,4 @@
-import { agent, capability, pipeline, route, stage, output } from "@tandem/sdk";
+import { agent, capability, pipeline, route, stage, output, type RunOptions } from "@tandem/sdk";
 import { z } from "zod";
 const A = z.object({ value: z.number() });
 type A = z.infer<typeof A>;
@@ -118,3 +118,6 @@ agent<A>({
 new Stage<A>();
 // @ts-expect-error CLI process exit is not exported from the root facade
 import("@tandem/sdk").then((sdk) => sdk.closeCli(0));
+// @ts-expect-error terminal is the only public presentation mode
+const badPresentation: RunOptions = { presentation: "json" };
+void badPresentation;

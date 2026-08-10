@@ -4,10 +4,18 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using Tandem.Ledger;
+using Tandem.Terminal;
 
 namespace Tandem.Examples.Hosting;
 
 public sealed record ExampleClients(IChatClient DeepSeek, IChatClient Sol);
+
+public sealed record ExampleRun<TState>(
+    Pipeline<TState> Pipeline,
+    TState InitialState,
+    Func<PipelineRunResult<TState>, string> FormatResult,
+    string? LedgerPath = null
+);
 
 public static class ExampleHost
 {
@@ -17,17 +25,19 @@ public static class ExampleHost
     private static readonly Uri _solEndpoint = new("http://127.0.0.1:10531/v1/");
     private static readonly TimeSpan _timeout = TimeSpan.FromMinutes(10);
 
-    public static async Task<int> RunAsync(
-        Func<ExampleClients, CancellationToken, Task<int>> run,
+    public static async Task<int> RunAsync<TState>(
+        Func<ExampleClients, ExampleRun<TState>> createRun,
         CancellationToken cancellationToken = default
     )
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(_timeout);
+        using var hostCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken
+        );
+        hostCancellation.CancelAfter(_timeout);
         ConsoleCancelEventHandler cancel = (_, eventArgs) =>
         {
             eventArgs.Cancel = true;
-            timeout.Cancel();
+            hostCancellation.Cancel();
         };
         Console.CancelKeyPress += cancel;
         try
@@ -39,16 +49,24 @@ public static class ExampleHost
                 return 2;
             }
 
-            await VerifySolAsync(timeout.Token);
+            await VerifySolAsync(hostCancellation.Token);
             using var deepSeek = CreateCompletionsClient(
                 _openRouterEndpoint,
                 DeepSeekModel,
                 apiKey
             );
             using var sol = CreateResponsesClient(_solEndpoint, SolModel);
-            return await run(new ExampleClients(deepSeek, sol), timeout.Token);
+            return await RunPipelineAsync(
+                createRun(new ExampleClients(deepSeek, sol)),
+                TerminalCapabilities.Detect(),
+                console: null,
+                keyInput: null,
+                Console.Out,
+                Console.Error,
+                hostCancellation.Token
+            );
         }
-        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        catch (OperationCanceledException) when (hostCancellation.IsCancellationRequested)
         {
             Console.Error.WriteLine("Run cancelled or timed out.");
             return 2;
@@ -64,64 +82,135 @@ public static class ExampleHost
         }
     }
 
-    public static int PrintResult<TState>(PipelineRunResult<TState> result, string output)
-    {
-        Console.WriteLine($"Status: {result.Status}");
-        Console.WriteLine(output);
-        return result.Status == PipelineRunStatus.Succeeded ? 0 : 1;
-    }
-
-    public static async Task<int> RunPersistentAsync<TState>(
-        Pipeline<TState> pipeline,
-        TState initialState,
-        string ledgerPath,
-        Func<PipelineRunResult<TState>, string> output,
-        CancellationToken cancellationToken
+    internal static async Task<int> RunPipelineAsync<TState>(
+        ExampleRun<TState> run,
+        TerminalCapabilities capabilities,
+        Spectre.Console.IAnsiConsole? console,
+        ITerminalKeyInput? keyInput,
+        TextWriter output,
+        TextWriter error,
+        CancellationToken cancellationToken = default
     )
     {
+        ArgumentNullException.ThrowIfNull(run);
         var runId = Guid.CreateVersion7();
-        var fullLedgerPath = Path.GetFullPath(ledgerPath);
-        var ledger = new SqliteLedgerStore(fullLedgerPath);
-        var observer = await ledger.CreateObserverAsync(runId, pipeline, cancellationToken);
+        using var runCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken
+        );
+        SqliteLedgerStore? ledger = null;
+        SqlitePipelineObserver? persistenceObserver = null;
+        string? ledgerPath = null;
+        if (run.LedgerPath is not null)
+        {
+            ledgerPath = Path.GetFullPath(run.LedgerPath);
+            ledger = new SqliteLedgerStore(ledgerPath);
+            persistenceObserver = await ledger.CreateObserverAsync(
+                runId,
+                run.Pipeline,
+                cancellationToken
+            );
+        }
+
+        await using var display = new TerminalPipelineDisplay(
+            run.Pipeline.Inspect(),
+            runId,
+            new TerminalDisplayOptions
+            {
+                Console = console,
+                Capabilities = capabilities,
+                KeyInput = keyInput,
+                CancelAsync = _ =>
+                {
+                    runCancellation.Cancel();
+                    return ValueTask.CompletedTask;
+                },
+            }
+        );
+        IPipelineObserver observer = persistenceObserver is null
+            ? display.Observer
+            : new PersistentCompositeObserver(persistenceObserver, display.Observer);
         PipelineRunResult<TState>? result = null;
-        Exception? originalFailure = null;
+        Exception? executionFailure = null;
+        Exception? terminalizationFailure = null;
+
+        await display.StartAsync();
         try
         {
             result = await new PipelineRunner().RunAsync(
-                pipeline,
-                initialState,
+                run.Pipeline,
+                run.InitialState,
                 new PipelineRunOptions(runId, Observer: observer),
-                cancellationToken
+                runCancellation.Token
             );
-            return PrintResult(result, output(result));
         }
         catch (Exception exception)
         {
-            originalFailure = exception;
-            throw;
+            executionFailure = exception;
         }
-        finally
+
+        if (ledger is not null)
         {
             var status = result?.Status switch
             {
                 PipelineRunStatus.Succeeded => LedgerRunStatus.Ready,
                 PipelineRunStatus.Failed => LedgerRunStatus.Failed,
-                _ when cancellationToken.IsCancellationRequested => LedgerRunStatus.Cancelled,
+                _ when runCancellation.IsCancellationRequested => LedgerRunStatus.Cancelled,
                 _ => LedgerRunStatus.Faulted,
             };
             try
             {
                 await ledger.CompleteRunAsync(runId, status, CancellationToken.None);
             }
-            catch (Exception terminalizationFailure) when (originalFailure is not null)
+            catch (Exception exception)
             {
-                Console.Error.WriteLine(
-                    $"Warning: ledger terminalization failed: {terminalizationFailure.Message}"
-                );
+                terminalizationFailure = exception;
             }
-            Console.WriteLine($"Ledger: {fullLedgerPath}");
-            Console.WriteLine($"Run: {runId:N}");
         }
+
+        var failure = executionFailure ?? terminalizationFailure;
+        if (result?.Status == PipelineRunStatus.Succeeded && failure is null)
+        {
+            await display.SucceededAsync(result.Outcome?.Summary ?? "Pipeline succeeded");
+        }
+        else if (result?.Status == PipelineRunStatus.Failed && failure is null)
+        {
+            await display.FailedAsync(result.Outcome?.Summary ?? "Pipeline failed");
+        }
+        else if (runCancellation.IsCancellationRequested)
+        {
+            await display.CancelledAsync("Run cancelled or timed out");
+        }
+        else
+        {
+            await display.FaultedAsync(failure?.Message ?? "Pipeline faulted");
+        }
+        await display.WaitForCleanupAsync();
+
+        if (terminalizationFailure is not null && executionFailure is not null)
+        {
+            await error.WriteLineAsync(
+                $"Warning: ledger terminalization failed: {terminalizationFailure.Message}"
+            );
+        }
+        if (result is not null)
+        {
+            await output.WriteLineAsync($"Status: {result.Status}");
+            await output.WriteLineAsync(run.FormatResult(result));
+        }
+        if (ledgerPath is not null)
+        {
+            await output.WriteLineAsync($"Ledger: {ledgerPath}");
+            await output.WriteLineAsync($"Run: {runId:N}");
+        }
+        if (failure is not null)
+        {
+            var message = runCancellation.IsCancellationRequested
+                ? "Run cancelled or timed out."
+                : $"Run faulted: {failure.Message}";
+            await error.WriteLineAsync(message);
+            return 2;
+        }
+        return result?.Status == PipelineRunStatus.Succeeded ? 0 : 1;
     }
 
     private static IChatClient CreateCompletionsClient(Uri endpoint, string model, string apiKey)
@@ -163,6 +252,21 @@ public static class ExampleHost
             throw new InvalidOperationException(
                 $"{_solEndpoint}models does not expose required model '{SolModel}'."
             );
+        }
+    }
+
+    private sealed class PersistentCompositeObserver(
+        IPipelinePersistenceObserver persistenceObserver,
+        IPipelineObserver displayObserver
+    ) : IPipelinePersistenceObserver
+    {
+        public async ValueTask ObserveAsync(
+            PipelineObservation observation,
+            CancellationToken cancellationToken
+        )
+        {
+            await persistenceObserver.ObserveAsync(observation, cancellationToken);
+            await displayObserver.ObserveAsync(observation, cancellationToken);
         }
     }
 

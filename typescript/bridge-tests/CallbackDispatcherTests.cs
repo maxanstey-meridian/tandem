@@ -97,12 +97,62 @@ public sealed class CallbackDispatcherTests
         );
     }
 
+    [Fact]
+    public async Task Invoke_CancelledBeforeDelayedDispatch_DoesNotFaultJavaScriptContext()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var context = new DelayedSynchronizationContext();
+        var callbackCalls = 0;
+        var dispatcher = new CallbackDispatcher(
+            context,
+            (_, _, _) =>
+            {
+                callbackCalls++;
+                return Success("late");
+            },
+            (_, _, _, _) => Task.FromResult(Success("unexpected")),
+            cancellation.Token
+        );
+        var invocation = Task.Run(() => dispatcher.Invoke("callback", "state", "input"));
+        await context.Posted.WaitAsync(TimeSpan.FromSeconds(5));
+
+        cancellation.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => invocation);
+
+        var dispatchFailure = Record.Exception(context.Dispatch);
+        Assert.Null(dispatchFailure);
+        Assert.Equal(0, callbackCalls);
+    }
+
     private static string Success(string value) =>
         System.Text.Json.JsonSerializer.Serialize(new { succeeded = true, value });
 
     private sealed class AbandonedSynchronizationContext : SynchronizationContext
     {
         public override void Post(SendOrPostCallback d, object? state) { }
+    }
+
+    private sealed class DelayedSynchronizationContext : SynchronizationContext
+    {
+        private (SendOrPostCallback Callback, object? State)? _pending;
+        private readonly TaskCompletionSource _posted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        public Task Posted => _posted.Task;
+
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+            _pending = (d, state);
+            _posted.TrySetResult();
+        }
+
+        public void Dispatch()
+        {
+            var pending =
+                _pending ?? throw new InvalidOperationException("No callback was posted.");
+            pending.Callback(pending.State);
+        }
     }
 
     private sealed class WorkerSynchronizationContext : SynchronizationContext, IDisposable

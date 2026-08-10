@@ -12,5 +12,6 @@ export const submitImplementation = () =>
         source: submission.implementation,
         rationale: submission.rationale,
       } satisfies ImplementationCandidate),
-    summarize: (submission) => submission.rationale,
+    summarize: (submission) =>
+      `Implementation:\n${submission.implementation}\n\nRationale:\n${submission.rationale}`,
   });

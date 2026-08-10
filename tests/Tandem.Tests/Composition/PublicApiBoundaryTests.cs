@@ -28,6 +28,11 @@ public sealed class PublicApiBoundaryTests
         "src/Tandem.Ledger/ExportedApi.txt",
         "src/Tandem.Ledger/PublicApiMembers.txt"
     )]
+    [InlineData(
+        typeof(Tandem.Terminal.TerminalPipelineDisplay),
+        "src/Tandem.Terminal/ExportedApi.txt",
+        "src/Tandem.Terminal/PublicApiMembers.txt"
+    )]
     public void PublicApi_MatchesReviewedManifest(
         Type assemblyMarker,
         string typeManifestPath,
