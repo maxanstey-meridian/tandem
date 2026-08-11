@@ -36,8 +36,8 @@ internal static partial class RegistrationContractValidator
             throw Invalid("registration must not be null.");
 
         var errors = new List<string>();
-        if (graph.ContractVersion != 7)
-            errors.Add($"contractVersion must be 7; received {graph.ContractVersion}.");
+        if (graph.ContractVersion != 8)
+            errors.Add($"contractVersion must be 8; received {graph.ContractVersion}.");
         Required(errors, "name", graph.Name);
         Required(errors, "start", graph.Start);
         Required(errors, "initialState", graph.InitialState);
@@ -332,6 +332,10 @@ internal static partial class RegistrationContractValidator
                 errors.Add($"{path}.capabilities is forbidden.");
             if (node.SkillDirectories is not null)
                 errors.Add($"{path}.skillDirectories is forbidden.");
+            if (node.Temperature is not null)
+                errors.Add($"{path}.temperature is forbidden.");
+            if (node.MaxOutputTokens is not null)
+                errors.Add($"{path}.maxOutputTokens is forbidden.");
             if (node.ContinueSession)
                 errors.Add($"{path}.continueSession is forbidden for kind '{node.Kind}'.");
             if (node.TimeoutMilliseconds is not null)
@@ -357,6 +361,13 @@ internal static partial class RegistrationContractValidator
         if (node.SkillDirectories is null)
             errors.Add($"{path}.skillDirectories is required and must not be null.");
         Unique(errors, $"{path}.skillDirectories", node.SkillDirectories);
+        if (
+            node.Temperature is { } temperature
+            && (!double.IsFinite(temperature) || temperature < 0 || temperature > 2)
+        )
+            errors.Add($"{path}.temperature must be a finite number between 0 and 2.");
+        if (node.MaxOutputTokens is <= 0)
+            errors.Add($"{path}.maxOutputTokens must be a positive integer.");
         if (node.Output is { } output)
         {
             Required(errors, $"{path}.output.instructions", output.Instructions);
@@ -506,9 +517,9 @@ internal static partial class RegistrationContractValidator
             errors.Add($"{path}.wireApi must be 'completions' or 'responses'.");
         if (
             client.ReasoningEffort is not null
-            && client.ReasoningEffort is not ("low" or "medium" or "high")
+            && client.ReasoningEffort is not ("none" or "low" or "medium" or "high")
         )
-            errors.Add($"{path}.reasoningEffort must be 'low', 'medium', or 'high'.");
+            errors.Add($"{path}.reasoningEffort must be 'none', 'low', 'medium', or 'high'.");
         if (
             client.ApiKeyEnvironmentVariable is not null
             && !EnvironmentVariableName().IsMatch(client.ApiKeyEnvironmentVariable)

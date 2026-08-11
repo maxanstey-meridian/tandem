@@ -103,6 +103,33 @@ MAF still advertises its approval-gated `run_skill_script` tool when no scripts 
 
 ## Chat Clients
 
+OpenAI-compatible clients can explicitly select or disable reasoning effort. Temperature and
+maximum output tokens are authored per agent:
+
+```ts
+const client = {
+  kind: "openai-compatible",
+  version: 1,
+  endpoint,
+  model,
+  wireApi: "completions",
+  reasoningEffort: "none",
+} as const;
+
+const worker = agent({
+  id: "worker",
+  instructions: "Return one result.",
+  client,
+  message: (state) => state.request,
+  temperature: 0,
+  maxOutputTokens: 4096,
+});
+```
+
+Reasoning effort accepts `"none"`, `"low"`, `"medium"`, or `"high"`. Omission means no
+preference. Temperature must be between `0` and `2`; maximum output tokens must be a positive
+32-bit integer. Tandem delegates provider-specific wire serialization to Microsoft Extensions AI.
+
 An agent receives a description of an OpenAI-compatible endpoint. TypeScript passes
 that description to the C# host; it never sends model requests itself.
 

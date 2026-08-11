@@ -87,6 +87,10 @@ const client = {
   model: "test",
   wireApi: "responses",
 } as const;
+const invalidReasoningClient = {
+  ...client,
+  reasoningEffort: "disabled",
+} as const;
 // @ts-expect-error skill directories are strings
 skill({ directory: 42 });
 const worker = agent<A>({
@@ -95,6 +99,17 @@ const worker = agent<A>({
   client,
   message: () => "work",
   capabilities: [action],
+});
+agent<A>({
+  id: "invalid-controls",
+  instructions: "Work.",
+  // @ts-expect-error reasoning effort is a closed set
+  client: invalidReasoningClient,
+  message: () => "work",
+  // @ts-expect-error temperature is numeric
+  temperature: "cold",
+  // @ts-expect-error maximum output tokens are numeric
+  maxOutputTokens: "many",
 });
 agent<A>({
   id: "wrong-capability-state",

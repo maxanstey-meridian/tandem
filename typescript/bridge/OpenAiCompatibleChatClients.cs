@@ -52,6 +52,7 @@ internal static class OpenAiCompatibleChatClients
                     {
                         Effort = effort switch
                         {
+                            "none" => ReasoningEffort.None,
                             "low" => ReasoningEffort.Low,
                             "medium" => ReasoningEffort.Medium,
                             "high" => ReasoningEffort.High,

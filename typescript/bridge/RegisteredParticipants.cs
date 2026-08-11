@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.Extensions.AI;
 
 namespace Tandem.NodeApiSpike;
 
@@ -122,12 +123,25 @@ internal static class RegisteredParticipantFactory
         CancellationToken cancellationToken
     )
     {
+        var chatClient = await OpenAiCompatibleChatClients.CreateAsync(
+            node.Client!,
+            cancellationToken
+        );
+        if (node.Temperature is not null || node.MaxOutputTokens is not null)
+        {
+            chatClient = chatClient
+                .AsBuilder()
+                .ConfigureOptions(options =>
+                {
+                    options.Temperature = node.Temperature is { } temperature
+                        ? (float)temperature
+                        : null;
+                    options.MaxOutputTokens = node.MaxOutputTokens;
+                })
+                .Build();
+        }
         var builder = Agent
-            .Create<JavaScriptState>(
-                node.Id!,
-                node.Instructions!,
-                await OpenAiCompatibleChatClients.CreateAsync(node.Client!, cancellationToken)
-            )
+            .Create<JavaScriptState>(node.Id!, node.Instructions!, chatClient)
             .WithMessage(state => callbacks.Invoke(node.MessageCallback!, state.Json, ""));
         foreach (var directory in node.SkillDirectories ?? [])
         {

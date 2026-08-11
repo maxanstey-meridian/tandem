@@ -221,6 +221,20 @@ test("planner preflight and model requests proceed through a local protocol fixt
   assert(result.urls.slice(1).every((url) => url === "/v1/responses"));
   assert(result.urls.length >= 2);
   assert.match(JSON.stringify(result.modelBody), /STATE MESSAGE: from-typescript-state/);
+  assert.equal(result.modelBody.reasoning.effort, "none");
+  assert.equal(result.modelBody.temperature, 0);
+  assert.equal(result.modelBody.max_output_tokens, 4096);
+  assert.equal(result.modelBody.text.format.type, "json_schema");
+  assert(result.modelBodies.length >= 2);
+  assert(
+    result.modelBodies.every(
+      (body) =>
+        body.reasoning.effort === "none" &&
+        body.temperature === 0 &&
+        body.max_output_tokens === 4096 &&
+        body.text.format.type === "json_schema",
+    ),
+  );
   assert.equal(result.contextualValidations, 2);
   assert.equal(result.applications, 1);
   assert(result.observations.some((event) => event.kind === "agentText"));
@@ -262,6 +276,30 @@ test("one agent composes its authored message, multiple capabilities, structured
   );
   assert.doesNotMatch(JSON.stringify(result.body), /Invoke (?:accept|reject)\./);
   assert.match(JSON.stringify(result.body.response_format), /json_schema/);
+  assert.equal(result.body.reasoning_effort, "none");
+  assert.equal(result.body.temperature, 0);
+  assert.equal(result.body.max_completion_tokens, 4096);
+  assert(
+    result.bodies.every(
+      (body) =>
+        body.reasoning_effort === "none" &&
+        body.temperature === 0 &&
+        body.max_completion_tokens === 4096,
+    ),
+  );
+});
+
+test("rejects invalid model request controls during authoring", async () => {
+  const { stdout } = await exec(
+    process.execPath,
+    [new URL("model-controls-validation-child.mjs", import.meta.url).pathname],
+    { timeout: 15_000 },
+  );
+  const errors = JSON.parse(stdout.trim());
+  assert.equal(errors.length, 8);
+  assert.match(errors[0], /reasoning effort/);
+  assert(errors.slice(1, 5).every((error) => /temperature/.test(error)));
+  assert(errors.slice(5).every((error) => /maxOutputTokens/.test(error)));
 });
 
 test("rolls back durable acceptance when JavaScript state application faults", async () => {

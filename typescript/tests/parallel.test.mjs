@@ -52,4 +52,7 @@ test("parallel isolates concurrent runs of one graph", async () => {
 test("parallel executes agent and stage branches through the packaged bridge", async () => {
   const result = await runChild("parallel-agent-child.mjs");
   assert.deepEqual(result.values, ["agent:42", "stage"]);
+  assert.equal(result.modelBody.reasoning.effort, "none");
+  assert.equal(result.modelBody.temperature, 0);
+  assert.equal(result.modelBody.max_output_tokens, 2048);
 });

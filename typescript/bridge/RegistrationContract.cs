@@ -28,6 +28,8 @@ internal sealed record RegisteredNodeContract(
     RegisteredAgentOutputContract? Output,
     RegisteredCapabilityContract[]? Capabilities,
     string[]? SkillDirectories,
+    double? Temperature,
+    int? MaxOutputTokens,
     bool ContinueSession,
     double? TimeoutMilliseconds,
     bool? Persist,

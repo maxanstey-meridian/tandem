@@ -53,8 +53,11 @@ const executor = agent({
     endpoint: `http://127.0.0.1:${port}/v1`,
     model: "fixture",
     wireApi: "completions",
+    reasoningEffort: "none",
   },
   message: (state) => `CAPABILITY STATE MESSAGE: ${state.prompt}`,
+  temperature: 0,
+  maxOutputTokens: 4096,
   capabilities: [accept, reject],
   output: {
     instructions: "Return whether the request was accepted.",

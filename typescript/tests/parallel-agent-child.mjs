@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -44,8 +44,11 @@ const worker = agent({
     endpoint: `http://127.0.0.1:${port}/v1`,
     model: "gpt-5.6-sol",
     wireApi: "responses",
+    reasoningEffort: "none",
   },
   message: () => "Return the answer.",
+  temperature: 0,
+  maxOutputTokens: 2048,
   output: {
     instructions: "Return the numeric answer.",
     schema: z.object({ answer: z.number() }),
@@ -75,7 +78,9 @@ const graph = pipeline({
 
 try {
   const result = await run(graph, { values: [] });
-  console.log(JSON.stringify({ values: result.state.values }));
+  const requests = readFileSync(logPath, "utf8").trim().split("\n").map(JSON.parse);
+  const modelBody = requests.find((item) => item.url === "/v1/responses")?.body;
+  console.log(JSON.stringify({ values: result.state.values, modelBody }));
 } finally {
   await cleanup();
 }

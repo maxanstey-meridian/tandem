@@ -93,6 +93,7 @@ const client = {
   endpoint: "http://localhost:10531/v1",
   model: "test",
   wireApi: "responses",
+  reasoningEffort: "none",
 } as const;
 const meridian = skill({ directory: "/skills/meridian" });
 const worker = agent<State, { amount: number }>({
@@ -102,6 +103,8 @@ const worker = agent<State, { amount: number }>({
   message: (state) => String(state.count),
   capabilities: granted,
   skills: [meridian],
+  temperature: 0,
+  maxOutputTokens: 4096,
   output: {
     instructions: "Return an amount.",
     schema: z.object({ amount: z.number() }),

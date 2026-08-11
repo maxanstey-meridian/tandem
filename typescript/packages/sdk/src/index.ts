@@ -588,7 +588,7 @@ export interface OpenAiCompatibleChatClient {
   readonly model: string;
   readonly wireApi: "completions" | "responses";
   readonly apiKeyEnvironmentVariable?: string;
-  readonly reasoningEffort?: "low" | "medium" | "high";
+  readonly reasoningEffort?: "none" | "low" | "medium" | "high";
   readonly verifyModel?: boolean;
 }
 export type ChatClient = OpenAiCompatibleChatClient;
@@ -614,6 +614,8 @@ export interface AgentDefinition<TState, TOutput = never> {
   };
   readonly capabilities?: readonly Capability<TState>[];
   readonly skills?: readonly AgentSkill[];
+  readonly temperature?: number;
+  readonly maxOutputTokens?: number;
   readonly continueSession?: boolean;
   readonly timeoutMs?: number;
   readonly persist?: boolean;
@@ -639,6 +641,8 @@ class AgentImplementation<TState, TOutput>
       | undefined,
     readonly granted: readonly Capability<TState>[],
     readonly skills: readonly AgentSkill[],
+    readonly temperature: number | undefined,
+    readonly maxOutputTokens: number | undefined,
     readonly continueSession: boolean,
     readonly timeoutMs?: number,
   ) {
@@ -649,6 +653,12 @@ export function agent<TState, TOutput = never>(
   definition: AgentDefinition<TState, TOutput>,
 ): Agent<TState> {
   requireInstructions(definition.instructions, `Agent '${definition.id}' instructions`);
+  if (
+    definition.client.reasoningEffort !== undefined &&
+    !["none", "low", "medium", "high"].includes(definition.client.reasoningEffort)
+  ) {
+    throw new TandemError(`Agent '${definition.id}' has an invalid reasoning effort.`);
+  }
   if (definition.output) {
     requireInstructions(
       definition.output.instructions,
@@ -676,6 +686,24 @@ export function agent<TState, TOutput = never>(
       );
     }
   }
+  if (
+    definition.temperature !== undefined &&
+    (!Number.isFinite(definition.temperature) ||
+      definition.temperature < 0 ||
+      definition.temperature > 2)
+  ) {
+    throw new TandemError(`Agent '${definition.id}' temperature must be between 0 and 2.`);
+  }
+  if (
+    definition.maxOutputTokens !== undefined &&
+    (!Number.isSafeInteger(definition.maxOutputTokens) ||
+      definition.maxOutputTokens <= 0 ||
+      definition.maxOutputTokens > 2_147_483_647)
+  ) {
+    throw new TandemError(
+      `Agent '${definition.id}' maxOutputTokens must be a positive 32-bit integer.`,
+    );
+  }
   return new AgentImplementation(
     definition.id,
     definition.persist,
@@ -685,6 +713,8 @@ export function agent<TState, TOutput = never>(
     definition.output,
     capabilities,
     skills,
+    definition.temperature,
+    definition.maxOutputTokens,
     definition.continueSession ?? false,
     definition.timeoutMs,
   );
@@ -1142,7 +1172,7 @@ export async function run<TState>(
       : undefined;
     const resultJson = await runRegisteredGraphAsync(
       JSON.stringify({
-        contractVersion: 7,
+        contractVersion: 8,
         name: graph.name,
         start: graph.start.id,
         initialState,
@@ -1295,6 +1325,8 @@ function compileNode<TState>(
       output,
       capabilities,
       skillDirectories: implementation.skills.map((item) => item.directory),
+      temperature: implementation.temperature ?? null,
+      maxOutputTokens: implementation.maxOutputTokens ?? null,
       continueSession: implementation.continueSession,
       timeoutMilliseconds: implementation.timeoutMs,
     };
