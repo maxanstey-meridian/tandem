@@ -110,6 +110,25 @@ Start that endpoint with
 npx --yes openai-oauth@latest
 ```
 
+## Runtime Observation
+
+Use the optional awaited observer for live lifecycle, agent text, reasoning, and normalized usage:
+
+```ts
+await run(graph, initialState, {
+  observe: async (event, { signal }) => {
+    if (event.kind === "agentUsage") {
+      console.log(event.stepId, event.inputTokens, event.outputTokens);
+    }
+    signal.throwIfAborted();
+  },
+});
+```
+
+Delivery is serial and run-scoped. A slow observer applies backpressure to its run. Observer failure
+faults an otherwise healthy run, while an existing execution failure or cancellation remains
+authoritative. Runtime observation is separate from durable accepted-value persistence.
+
 ## Persistence
 
 Set `persist: true` on a node or pipeline and provide a ledger path when running it:

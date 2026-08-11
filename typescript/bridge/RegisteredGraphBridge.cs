@@ -137,11 +137,14 @@ public static partial class NodePipelineBridge
             store = new SqliteLedgerStore(definition.LedgerPath);
             observer = await store.CreateObserverAsync(runId, pipeline, runCancellationToken);
         }
-        IPipelineObserver? runObserver = observer;
-        if (presentation is not null)
-        {
-            runObserver = presentation.ComposeObserver(observer);
-        }
+        var liveObserver = definition.ObservationCallback is null
+            ? null
+            : new RegisteredObservationObserver(callbacks, definition.ObservationCallback);
+        var runObserver = RegisteredRunObserver.Compose(
+            observer,
+            liveObserver,
+            presentation?.Observer
+        );
         LedgerRunStatus? terminalStatus = null;
         string? terminalSummary = null;
         var preserveActiveFailure = false;

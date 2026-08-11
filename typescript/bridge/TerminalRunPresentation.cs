@@ -32,10 +32,7 @@ internal sealed class TerminalRunPresentation : IAsyncDisposable
         _presentationObserver = new PresentationObserver(this);
     }
 
-    public IPipelineObserver ComposeObserver(IPipelinePersistenceObserver? persistenceObserver) =>
-        persistenceObserver is null
-            ? _presentationObserver
-            : new PersistenceFirstObserver(persistenceObserver, _presentationObserver);
+    public IPipelineObserver Observer => _presentationObserver;
 
     public Task StartAsync(CancellationToken cancellationToken) =>
         _display.StartAsync(cancellationToken);
@@ -98,21 +95,6 @@ internal sealed class TerminalRunPresentation : IAsyncDisposable
             {
                 owner._failure ??= exception;
             }
-        }
-    }
-
-    private sealed class PersistenceFirstObserver(
-        IPipelinePersistenceObserver persistenceObserver,
-        IPipelineObserver presentationObserver
-    ) : IPipelinePersistenceObserver
-    {
-        public async ValueTask ObserveAsync(
-            PipelineObservation observation,
-            CancellationToken cancellationToken
-        )
-        {
-            await persistenceObserver.ObserveAsync(observation, cancellationToken);
-            await presentationObserver.ObserveAsync(observation, cancellationToken);
         }
     }
 }

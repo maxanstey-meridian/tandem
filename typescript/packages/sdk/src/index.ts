@@ -167,8 +167,11 @@ function callbackContractFailure(error: unknown): CallbackFailure | null {
   }
 }
 
-function isCancellationError(error: unknown): boolean {
+function isCancellationError(error: unknown, signalAborted: boolean): boolean {
   if (!(error instanceof Error)) {
+    return false;
+  }
+  if (error.message.includes("JavaScript callback failed:") && !signalAborted) {
     return false;
   }
   return (
@@ -801,12 +804,91 @@ export interface RunResult<TState> {
   readonly state: TState;
   readonly summary: string | null;
 }
+export type RunObservation =
+  | { readonly version: 1; readonly kind: "stepStarted"; readonly stepId: string }
+  | { readonly version: 1; readonly kind: "stepCompleted"; readonly stepId: string }
+  | { readonly version: 1; readonly kind: "stepCancelled"; readonly stepId: string }
+  | {
+      readonly version: 1;
+      readonly kind: "stepFaulted";
+      readonly stepId: string;
+      readonly error: string;
+    }
+  | {
+      readonly version: 1;
+      readonly kind: "agentText";
+      readonly stepId: string;
+      readonly text: string;
+    }
+  | {
+      readonly version: 1;
+      readonly kind: "agentReasoning";
+      readonly stepId: string;
+      readonly text: string;
+    }
+  | {
+      readonly version: 1;
+      readonly kind: "agentUsage";
+      readonly stepId: string;
+      readonly inputTokens: number;
+      readonly outputTokens: number;
+      readonly currentContextTokens: number;
+    };
 export interface RunOptions {
   readonly ledgerPath?: string;
   readonly signal?: AbortSignal;
   readonly interactions?: InteractionHandlers;
   readonly presentation?: "terminal";
+  readonly observe?: (
+    event: RunObservation,
+    context: { readonly signal: AbortSignal },
+  ) => void | Promise<void>;
 }
+const runObservationSchema = z.discriminatedUnion("kind", [
+  z
+    .object({ version: z.literal(1), kind: z.literal("stepStarted"), stepId: z.string().min(1) })
+    .strict(),
+  z
+    .object({ version: z.literal(1), kind: z.literal("stepCompleted"), stepId: z.string().min(1) })
+    .strict(),
+  z
+    .object({ version: z.literal(1), kind: z.literal("stepCancelled"), stepId: z.string().min(1) })
+    .strict(),
+  z
+    .object({
+      version: z.literal(1),
+      kind: z.literal("stepFaulted"),
+      stepId: z.string().min(1),
+      error: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      version: z.literal(1),
+      kind: z.literal("agentText"),
+      stepId: z.string().min(1),
+      text: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      version: z.literal(1),
+      kind: z.literal("agentReasoning"),
+      stepId: z.string().min(1),
+      text: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      version: z.literal(1),
+      kind: z.literal("agentUsage"),
+      stepId: z.string().min(1),
+      inputTokens: z.number().int().nonnegative(),
+      outputTokens: z.number().int().nonnegative(),
+      currentContextTokens: z.number().int().nonnegative(),
+    })
+    .strict(),
+]);
 const acceptedKinds = [
   "StructuredOutputAccepted",
   "CapabilityAccepted",
@@ -928,15 +1010,29 @@ export async function run<TState>(
       });
       return { id: `h${index}`, target: entry.interaction.id, handleCallback };
     });
+    const observationCallback = options.observe
+      ? callbacks.registerAsync(async (_, input, signal) => {
+          const event = parseJson(runObservationSchema, input, "run observation");
+          const observationSignal =
+            options.signal?.aborted === true
+              ? AbortSignal.abort(options.signal.reason)
+              : event.kind === "stepCancelled" && !signal.aborted
+                ? AbortSignal.abort()
+                : signal;
+          await options.observe!(event, { signal: observationSignal });
+          return "";
+        })
+      : undefined;
     const resultJson = await runRegisteredGraphAsync(
       JSON.stringify({
-        contractVersion: 4,
+        contractVersion: 5,
         name: graph.name,
         start: graph.start.id,
         initialState,
         persist: graph.persist,
         ledgerPath: options.ledgerPath,
         presentation: options.presentation,
+        observationCallback,
         nodes,
         routes,
         outputs: graph.outputs.map((item) => item.id),
@@ -957,7 +1053,7 @@ export async function run<TState>(
     if (callbackFailure) {
       throw new ContractValidationError(callbackFailure.boundary, callbackFailure.problems);
     }
-    if (isCancellationError(error)) {
+    if (isCancellationError(error, options.signal?.aborted === true)) {
       throw new TandemCancellationError(error);
     }
     throw new TandemRuntimeError("run", error);

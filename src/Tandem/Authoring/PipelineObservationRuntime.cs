@@ -248,19 +248,34 @@ internal static class PipelineObservationPublisher
         }
         catch (OperationCanceledException)
         {
-            await runContext.ObserveAsync(
-                new PipelineStepCancelled(runContext.RunId, stepId),
-                CancellationToken.None
+            await ObserveTerminalFailureAsync(
+                runContext,
+                new PipelineStepCancelled(runContext.RunId, stepId)
             );
             throw;
         }
         catch (Exception ex)
         {
-            await runContext.ObserveAsync(
-                new PipelineStepFaulted(runContext.RunId, stepId, ex.Message),
-                CancellationToken.None
+            await ObserveTerminalFailureAsync(
+                runContext,
+                new PipelineStepFaulted(runContext.RunId, stepId, ex.Message)
             );
             throw;
+        }
+    }
+
+    private static async ValueTask ObserveTerminalFailureAsync(
+        PipelineRunContext runContext,
+        PipelineObservation observation
+    )
+    {
+        try
+        {
+            await runContext.ObserveAsync(observation, CancellationToken.None);
+        }
+        catch
+        {
+            // The execution failure or cancellation remains authoritative.
         }
     }
 

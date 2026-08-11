@@ -6,11 +6,11 @@ namespace Tandem.NodeApiSpike;
 public sealed class RegistrationContractValidatorTests
 {
     [Fact]
-    public void AcceptsVersionFourAgentWithOutputAndMultipleCapabilities()
+    public void AcceptsVersionFiveAgentWithOutputAndMultipleCapabilities()
     {
         var contract = RegistrationContractValidator.ParseAndValidate(ValidContract());
 
-        Assert.Equal(4, contract.ContractVersion);
+        Assert.Equal(5, contract.ContractVersion);
         Assert.Equal(2, contract.Nodes![0].Capabilities!.Length);
         Assert.NotNull(contract.Nodes[0].Output);
     }
@@ -71,7 +71,7 @@ public sealed class RegistrationContractValidatorTests
             )
             .Message;
 
-        Assert.Contains("contractVersion must be 4", message);
+        Assert.Contains("contractVersion must be 5", message);
         Assert.Contains("object root with type 'object'", message);
     }
 
@@ -119,6 +119,42 @@ public sealed class RegistrationContractValidatorTests
         );
 
         Assert.Equal(presentation, contract.Presentation);
+    }
+
+    [Fact]
+    public void AcceptsOptionalObservationCallback()
+    {
+        var value = ContractObject();
+        value["observationCallback"] = "c20";
+
+        var contract = RegistrationContractValidator.ParseAndValidate(
+            JsonSerializer.Serialize(value)
+        );
+
+        Assert.Equal("c20", contract.ObservationCallback);
+    }
+
+    [Fact]
+    public void RejectsBlankOrDuplicateObservationCallback()
+    {
+        var blank = ContractObject();
+        blank["observationCallback"] = " ";
+        var blankMessage = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(blank))
+            )
+            .Message;
+        Assert.Contains("observationCallback must be non-blank", blankMessage);
+
+        var duplicate = ContractObject();
+        duplicate["observationCallback"] = "agent.message";
+        var duplicateMessage = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(duplicate))
+            )
+            .Message;
+        Assert.Contains("duplicates callback reference 'agent.message'", duplicateMessage);
+        Assert.Contains("observationCallback", duplicateMessage);
     }
 
     [Fact]
@@ -317,7 +353,7 @@ public sealed class RegistrationContractValidatorTests
     private static Dictionary<string, object?> ContractObject() =>
         new()
         {
-            ["contractVersion"] = 4,
+            ["contractVersion"] = 5,
             ["name"] = "test",
             ["start"] = "agent",
             ["initialState"] = "{}",
@@ -368,7 +404,7 @@ public sealed class RegistrationContractValidatorTests
     private static Dictionary<string, object?> InteractionContractObject() =>
         new()
         {
-            ["contractVersion"] = 4,
+            ["contractVersion"] = 5,
             ["name"] = "interaction-test",
             ["start"] = "review",
             ["initialState"] = "{}",

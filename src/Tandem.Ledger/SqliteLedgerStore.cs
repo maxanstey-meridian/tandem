@@ -214,6 +214,9 @@ public sealed class SqliteLedgerStore
         CancellationToken cancellationToken = default
     )
     {
+        // TODO: This scans and deserializes the full journal. A bounded recent read could miss an
+        // older accepted value, so the proper fix is a schema version that indexes journal kind,
+        // step ID, accepted-value status, and value type for a targeted latest-value query.
         ArgumentException.ThrowIfNullOrWhiteSpace(stepId);
         await InitializeAsync(cancellationToken);
         IReadOnlyList<AcceptedLedgerEntry<RuntimeJournalRecord>> entries;

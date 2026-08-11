@@ -391,6 +391,58 @@ public sealed class InProcessPipelineRunnerTests
     }
 
     [Fact]
+    public async Task RunAsync_PreservesExecutionFaultWhenFaultObservationFails()
+    {
+        var fault = new FaultStage();
+        var pipeline = Pipeline.Start(fault, "in-process-fault-observation").Build(fault);
+        var observer = new InlinePipelineObserver(observation =>
+        {
+            if (observation is PipelineStepFaulted)
+            {
+                throw new IOException("observer failed");
+            }
+        });
+
+        var act = () =>
+            new InProcessPipelineRunner().RunAsync(
+                pipeline,
+                Guid.CreateVersion7(),
+                new RunnerState(0),
+                observer,
+                CancellationToken.None
+            );
+
+        var exception = await act.Should().ThrowAsync<PipelineRunException>();
+        exception.Which.InnerException.Should().BeOfType<ProbeException>();
+    }
+
+    [Fact]
+    public async Task RunAsync_ObserverFailureDuringSuccessfulExecutionFaultsTheRun()
+    {
+        var increment = new IncrementStage();
+        var pipeline = Pipeline.Start(increment, "in-process-observer-fault").Build(increment);
+        var observer = new InlinePipelineObserver(observation =>
+        {
+            if (observation is PipelineStepCompleted)
+            {
+                throw new IOException("observer failed");
+            }
+        });
+
+        var act = () =>
+            new InProcessPipelineRunner().RunAsync(
+                pipeline,
+                Guid.CreateVersion7(),
+                new RunnerState(0),
+                observer,
+                CancellationToken.None
+            );
+
+        var exception = await act.Should().ThrowAsync<PipelineRunException>();
+        exception.Which.InnerException.Should().BeOfType<IOException>();
+    }
+
+    [Fact]
     public async Task RunAsync_CancelsTheLiveWorkflow()
     {
         var waiting = new WaitForeverStage();
@@ -413,6 +465,34 @@ public sealed class InProcessPipelineRunnerTests
             .OfType<PipelineStepCancelled>()
             .Should()
             .ContainSingle(observation => observation.StepId == "runner-wait");
+    }
+
+    [Fact]
+    public async Task RunAsync_PreservesCancellationWhenCancellationObservationFails()
+    {
+        var waiting = new WaitForeverStage();
+        var pipeline = Pipeline
+            .Start(waiting, "in-process-cancellation-observation")
+            .Build(waiting);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        var observer = new InlinePipelineObserver(observation =>
+        {
+            if (observation is PipelineStepCancelled)
+            {
+                throw new IOException("observer failed");
+            }
+        });
+
+        var act = () =>
+            new InProcessPipelineRunner().RunAsync(
+                pipeline,
+                Guid.CreateVersion7(),
+                new RunnerState(0),
+                observer,
+                cancellation.Token
+            );
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     [Fact]

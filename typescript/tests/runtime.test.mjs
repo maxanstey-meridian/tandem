@@ -13,6 +13,15 @@ async function child(mode, timeout = 15_000) {
   return JSON.parse(stdout.trim());
 }
 
+async function observationChild(mode) {
+  const { stdout } = await exec(
+    process.execPath,
+    [new URL("observation-child.mjs", import.meta.url).pathname, mode],
+    { timeout: 15_000 },
+  );
+  return JSON.parse(stdout.trim());
+}
+
 test("runs package-relatively, persists accepted values, and terminalizes", async () => {
   const result = await child("single");
   assert.deepEqual(result.values, [1]);
@@ -72,7 +81,40 @@ test("translates callback failures and cancellation", async () => {
   assert.deepEqual(cancelled.statuses, ["Cancelled"]);
   assert.equal(cancelled.terminalized, true);
   assert.equal(cancelled.abortObserved, true);
+  assert.equal(cancelled.cancellationObservationAborted, true);
   assert.equal(cancelled.mutatedAfterAbort, false);
+});
+
+test("delivers live observations serially with persistence first", async () => {
+  const result = await observationChild("normal");
+  assert.deepEqual(result.kinds, ["stepStarted", "stepCompleted", "stepStarted", "stepCompleted"]);
+  assert.equal(result.maximumConcurrentObservers, 1);
+  assert.deepEqual(result.statuses, ["Ready"]);
+});
+
+test("faults on live observation failure without rolling back persisted completion", async () => {
+  const result = await observationChild("observer-failure");
+  assert.match(result.error, /observer failed/);
+  assert.deepEqual(result.statuses, ["Faulted"]);
+  assert.equal(result.persistedCompletion, true);
+});
+
+test("does not misclassify an observer AbortError as run cancellation", async () => {
+  const result = await observationChild("observer-abort-error");
+  assert.equal(result.name, "TandemRuntimeError");
+  assert.deepEqual(result.statuses, ["Faulted"]);
+});
+
+test("preserves an execution failure when fault observation also fails", async () => {
+  const result = await observationChild("execution-failure");
+  assert.match(result.error, /execution failed/);
+  assert.doesNotMatch(result.error, /observer failed/);
+  assert.deepEqual(result.statuses, ["Faulted"]);
+});
+
+test("isolates observers across concurrent runs", async () => {
+  const result = await observationChild("concurrent");
+  assert.deepEqual(result.counts, [4, 4]);
 });
 
 test("terminalizes declared pipeline failure", async () => {
@@ -166,6 +208,12 @@ test("planner preflight and model requests proceed through a local protocol fixt
   assert.match(JSON.stringify(result.modelBody), /STATE MESSAGE: from-typescript-state/);
   assert.equal(result.contextualValidations, 2);
   assert.equal(result.applications, 1);
+  assert(result.observations.some((event) => event.kind === "agentText"));
+  assert(result.observations.some((event) => event.kind === "agentUsage"));
+  const usage = result.observations.find((event) => event.kind === "agentUsage");
+  assert(Number.isInteger(usage.inputTokens));
+  assert(Number.isInteger(usage.outputTokens));
+  assert(Number.isInteger(usage.currentContextTokens));
 });
 
 test("one agent composes its authored message, multiple capabilities, structured output, and policies", async () => {

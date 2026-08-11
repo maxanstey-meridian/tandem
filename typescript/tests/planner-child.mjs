@@ -61,8 +61,19 @@ const graph = pipeline({
 try {
   let answer = null;
   let error = null;
+  const observations = [];
   try {
-    answer = (await run(graph, { prompt: "from-typescript-state", answer: null })).state.answer;
+    answer = (
+      await run(
+        graph,
+        { prompt: "from-typescript-state", answer: null },
+        {
+          observe: (event) => {
+            observations.push(event);
+          },
+        },
+      )
+    ).state.answer;
   } catch (caught) {
     error = String(caught);
   }
@@ -76,6 +87,7 @@ try {
       modelBody: modelRequests[0]?.body,
       contextualValidations,
       applications,
+      observations,
     }),
   );
   server.kill();

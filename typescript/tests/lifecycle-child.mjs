@@ -21,6 +21,8 @@ let abortObserved = false;
 let mutatedAfterAbort = false;
 let handlerCompleted = false;
 let interactionApplied = false;
+let cancellationObservationAborted = false;
+const cancellationObservationKinds = [];
 const make = (execute, name = mode) => {
   const work = stage({ id: "work", execute, persist: true });
   return pipeline({
@@ -76,7 +78,16 @@ try {
         return { ...state, done: true };
       }),
       { count: 0, done: false },
-      { ledgerPath: errorLedgerPath, signal: cancellation.signal },
+      {
+        ledgerPath: errorLedgerPath,
+        signal: cancellation.signal,
+        observe: (event, { signal }) => {
+          cancellationObservationKinds.push(event.kind);
+          if (signal.aborted) {
+            cancellationObservationAborted = signal.aborted;
+          }
+        },
+      },
     );
   } else if (mode === "interaction-handlers") {
     const ask = interaction({
@@ -441,6 +452,8 @@ try {
       mutatedAfterAbort,
       handlerCompleted,
       interactionApplied,
+      cancellationObservationAborted,
+      cancellationObservationKinds,
     }),
   );
   for (const suffix of ["", "-shm", "-wal"]) {

@@ -11,6 +11,7 @@ import {
   type Capability,
   type Stage,
   type RunOptions,
+  type RunObservation,
 } from "@tandem/sdk";
 import { closeCli, runCli, type RunCliOptions } from "@tandem/sdk/cli";
 import { z } from "zod";
@@ -117,4 +118,26 @@ const opaqueStage: Stage<State> = increment;
 void opaqueStage;
 const terminalPresentation: RunOptions = { presentation: "terminal" };
 void terminalPresentation;
+const observe = (event: RunObservation, { signal }: { readonly signal: AbortSignal }) => {
+  signal.throwIfAborted();
+  switch (event.kind) {
+    case "stepStarted":
+    case "stepCompleted":
+    case "stepCancelled":
+      void event.stepId;
+      break;
+    case "stepFaulted":
+      void event.error;
+      break;
+    case "agentText":
+    case "agentReasoning":
+      void event.text;
+      break;
+    case "agentUsage":
+      void (event.inputTokens + event.outputTokens + event.currentContextTokens);
+      break;
+  }
+};
+const observedRun: RunOptions = { observe };
+void observedRun;
 void closeCli;

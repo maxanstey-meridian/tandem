@@ -121,3 +121,8 @@ import("@tandem/sdk").then((sdk) => sdk.closeCli(0));
 // @ts-expect-error terminal is the only public presentation mode
 const badPresentation: RunOptions = { presentation: "json" };
 void badPresentation;
+const badObserver: RunOptions = {
+  // @ts-expect-error observer events are the closed RunObservation union
+  observe: (event: { kind: "accepted" }) => event.kind,
+};
+void badObserver;

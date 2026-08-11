@@ -1,9 +1,9 @@
 # TypeScript SDK Stabilization Plan
 
-Status: items A-D implemented. Stability verification is recorded by the repository
-test and package gates. Declared stage outcomes remain trigger-gated. Runtime
-observation and inspection are separate later designs, not part of the immediate
-authoring tranche.
+Status: items A-D and G implemented. Stability verification is recorded by the repository
+test and package gates. Declared stage outcomes remain trigger-gated. Graph and
+accepted-history inspection are separate later designs, not part of the immediate authoring
+tranche.
 
 ## Principles
 
@@ -351,7 +351,7 @@ When triggered, the work includes:
 Until the trigger exists, this remains design documentation rather than backlog
 implementation.
 
-## G. Later Runtime Observation Design
+## G. Runtime Observation
 
 ### Ownership
 
@@ -408,6 +408,12 @@ Live host observation after committed acceptance.
 ```
 
 This is a separate later design and runtime change.
+
+### Status
+
+Implemented for the initial event set. Live observation is projected after durable persistence,
+does not expose acceptance events, and preserves an existing execution failure or cancellation
+when terminal observation also fails.
 
 ## H. Later Graph Inspection Read Model
 
@@ -547,7 +553,6 @@ or timestamp pagination.
 ### Deferred Design Records
 
 - standard stage outcomes and their trigger;
-- live runtime observation;
 - graph inspection; and
 - accepted-history inspection.
 

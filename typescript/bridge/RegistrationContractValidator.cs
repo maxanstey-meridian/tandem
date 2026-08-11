@@ -36,8 +36,8 @@ internal static partial class RegistrationContractValidator
             throw Invalid("registration must not be null.");
 
         var errors = new List<string>();
-        if (graph.ContractVersion != 4)
-            errors.Add($"contractVersion must be 4; received {graph.ContractVersion}.");
+        if (graph.ContractVersion != 5)
+            errors.Add($"contractVersion must be 5; received {graph.ContractVersion}.");
         Required(errors, "name", graph.Name);
         Required(errors, "start", graph.Start);
         Required(errors, "initialState", graph.InitialState);
@@ -54,6 +54,7 @@ internal static partial class RegistrationContractValidator
             errors.Add("ledgerPath must be non-blank when provided.");
         if (graph.Presentation is not null && graph.Presentation != "terminal")
             errors.Add("presentation must be null or 'terminal'.");
+        OptionalCallback(errors, "observationCallback", graph.ObservationCallback);
         if (
             graph.LedgerPath is null
             && (graph.Persist || (graph.Nodes ?? []).Any(node => node?.Persist == true))
@@ -335,6 +336,8 @@ internal static partial class RegistrationContractValidator
             else
                 references.Add(reference, path);
         }
+
+        Add("observationCallback", graph.ObservationCallback);
 
         foreach (var (node, index) in (graph.Nodes ?? []).Select((value, index) => (value, index)))
         {

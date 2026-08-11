@@ -11,6 +11,7 @@ internal sealed record RegisteredGraphContract(
     string[]? Outputs,
     string? LedgerPath,
     string? Presentation,
+    string? ObservationCallback,
     RegisteredInteractionHandlerContract[]? InteractionHandlers
 );
 
