@@ -4,6 +4,7 @@ import {
   interaction,
   interactions,
   pipeline,
+  parallel,
   route,
   skill,
   stage,
@@ -23,6 +24,25 @@ const increment = stage<State>({
   execute: (state) => ({ count: state.count + 1 }),
 });
 const done = output<State>({ id: "done", summary: (state) => String(state.count) });
+const decrement = stage<State>({
+  id: "decrement",
+  execute: (state) => ({ count: state.count - 1 }),
+});
+const concurrent = parallel<State>()({
+  id: "concurrent",
+  branches: { increment, decrement },
+  merge: (baseline: State, results) => ({
+    count: baseline.count + results.increment.count + results.decrement.count,
+  }),
+});
+pipeline({
+  name: "parallel-positive",
+  state: State,
+  nodes: [concurrent, done],
+  start: concurrent,
+  routes: [route({ from: concurrent, outcome: "success", to: done, label: "done" })],
+  outputs: [done],
+});
 pipeline({
   name: "positive",
   state: State,

@@ -22,6 +22,7 @@ internal static class RegisteredParticipantFactory
             ),
             "interaction" => CreateInteraction(node, callbacks),
             "agent" => await CreateAgentAsync(node, callbacks, cancellationToken),
+            "parallel" => await CreateParallelAsync(node, callbacks, cancellationToken),
             "completion" => RegisteredParticipant.ForNode(
                 node,
                 PipelineNodes.Complete(
@@ -42,6 +43,65 @@ internal static class RegisteredParticipantFactory
             ),
             _ => throw new UnreachableException(),
         };
+
+    private static async Task<RegisteredParticipant> CreateParallelAsync(
+        RegisteredNodeContract node,
+        CallbackDispatcher callbacks,
+        CancellationToken cancellationToken
+    )
+    {
+        var owned = new List<RegisteredParticipant>();
+        var branches = new List<PipelineBranch<JavaScriptState>>();
+        foreach (var branch in node.Branches!)
+        {
+            var participant = await CreateAsync(branch.Participant!, callbacks, cancellationToken);
+            owned.Add(participant);
+            branches.Add(
+                participant switch
+                {
+                    RegisteredStage stage => PipelineBranch.Create(branch.Id!, stage.Stage),
+                    RegisteredStandard standard => PipelineBranch.Create(
+                        branch.Id!,
+                        standard.Standard
+                    ),
+                    _ => throw new UnreachableException(),
+                }
+            );
+        }
+        var parallel = PipelineNodes.Parallel(
+            node.Id!,
+            state => new JavaScriptState(state.Json),
+            branches,
+            results =>
+            {
+                var states = results.BranchIds.ToDictionary(
+                    id => id,
+                    id => ParseElement(results.State(id).Json),
+                    StringComparer.Ordinal
+                );
+                return new JavaScriptState(
+                    callbacks.Invoke(
+                        node.MergeCallback!,
+                        results.Baseline.Json,
+                        JsonSerializer.Serialize(states)
+                    )
+                );
+            }
+        );
+
+        static JsonElement ParseElement(string json)
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.Clone();
+        }
+        return RegisteredParticipant.ForStandard(
+            node,
+            parallel,
+            parallel.Success,
+            parallel.Failed,
+            owned
+        );
+    }
 
     private static RegisteredParticipant CreateInteraction(
         RegisteredNodeContract node,
@@ -204,8 +264,9 @@ internal abstract record RegisteredParticipant(RegisteredNodeContract Contract)
         RegisteredNodeContract c,
         IStandardOutcomePipelineStep<JavaScriptState> s,
         PipelineOutcomeSelector<JavaScriptState> success,
-        PipelineOutcomeSelector<JavaScriptState> failed
-    ) => new RegisteredStandard(c, s, success, failed);
+        PipelineOutcomeSelector<JavaScriptState> failed,
+        IReadOnlyList<RegisteredParticipant>? owned = null
+    ) => new RegisteredStandard(c, s, success, failed, owned ?? []);
 
     public static RegisteredParticipant ForInteraction(
         RegisteredNodeContract c,
@@ -227,7 +288,8 @@ internal sealed record RegisteredStandard(
     RegisteredNodeContract Contract,
     IStandardOutcomePipelineStep<JavaScriptState> Standard,
     PipelineOutcomeSelector<JavaScriptState> Success,
-    PipelineOutcomeSelector<JavaScriptState> Failed
+    PipelineOutcomeSelector<JavaScriptState> Failed,
+    IReadOnlyList<RegisteredParticipant> Owned
 ) : RegisteredParticipant(Contract);
 
 internal sealed record RegisteredInteraction(

@@ -380,6 +380,9 @@ export interface Interaction<TState, TRequest, TResponse> extends Participant<TS
 export interface Agent<TState> extends Participant<TState> {
   readonly kind: "agent";
 }
+export interface Parallel<TState> extends Participant<TState> {
+  readonly kind: "parallel";
+}
 export interface Terminal<TState> extends Participant<TState> {
   readonly kind: "terminal";
 }
@@ -387,6 +390,7 @@ type Node<TState> =
   | Stage<TState>
   | Interaction<TState, unknown, unknown>
   | Agent<TState>
+  | Parallel<TState>
   | Terminal<TState>;
 
 abstract class NodeImplementation<TState> implements Participant<TState> {
@@ -686,6 +690,72 @@ export function agent<TState, TOutput = never>(
   );
 }
 
+type ParallelBranches<TState> = Readonly<Record<string, Stage<TState> | Agent<TState>>>;
+type ParallelDefinition<TState, TBranches extends ParallelBranches<TState>> = {
+  readonly id: string;
+  readonly branches: TBranches;
+  readonly merge: (
+    baseline: TState,
+    results: { readonly [K in keyof TBranches]: TState },
+  ) => TState;
+  readonly persist?: boolean;
+};
+class ParallelImplementation<TState, TBranches extends ParallelBranches<TState>>
+  extends NodeImplementation<TState>
+  implements Parallel<TState>
+{
+  readonly kind = "parallel";
+  constructor(
+    id: string,
+    persist: boolean | undefined,
+    readonly branches: TBranches,
+    readonly merge: (
+      baseline: TState,
+      results: { readonly [K in keyof TBranches]: TState },
+    ) => TState,
+  ) {
+    super(id, persist);
+  }
+}
+export function parallel<TState>(): <const TBranches extends ParallelBranches<TState>>(
+  definition: ParallelDefinition<TState, TBranches>,
+) => Parallel<TState>;
+export function parallel<TState, const TBranches extends ParallelBranches<TState>>(
+  definition: ParallelDefinition<TState, TBranches>,
+): Parallel<TState>;
+export function parallel<TState>(
+  definition?: ParallelDefinition<TState, ParallelBranches<TState>>,
+):
+  | Parallel<TState>
+  | (<const TBranches extends ParallelBranches<TState>>(
+      value: ParallelDefinition<TState, TBranches>,
+    ) => Parallel<TState>) {
+  if (!definition) {
+    return (value) => createParallel(value);
+  }
+  return createParallel(definition);
+}
+function createParallel<TState, TBranches extends ParallelBranches<TState>>(
+  definition: ParallelDefinition<TState, TBranches>,
+): Parallel<TState> {
+  const entries = Object.entries(definition.branches);
+  if (entries.length < 2) {
+    throw new TandemError(`Parallel group '${definition.id}' requires at least two branches.`);
+  }
+  const participants = new Set(entries.map(([, participant]) => participant));
+  if (participants.size !== entries.length) {
+    throw new TandemError(
+      `Parallel group '${definition.id}' must own a distinct participant per branch.`,
+    );
+  }
+  return new ParallelImplementation(
+    definition.id,
+    definition.persist,
+    definition.branches,
+    definition.merge,
+  );
+}
+
 class TerminalImplementation<TState>
   extends NodeImplementation<TState>
   implements Terminal<TState>
@@ -721,16 +791,18 @@ export interface OrdinaryRoute<TState> {
   readonly outcome?: never;
   readonly when?: (state: TState) => boolean;
 }
-export interface AgentOutcomeRoute<TState> {
-  readonly from: Agent<TState>;
+export interface StandardOutcomeRoute<TState> {
+  readonly from: Agent<TState> | Parallel<TState>;
   readonly to: Node<TState>;
   readonly label: string;
   readonly outcome: "success" | "failed";
   readonly when?: (state: TState) => boolean;
 }
-export type Route<TState> = OrdinaryRoute<TState> | AgentOutcomeRoute<TState>;
+export type Route<TState> = OrdinaryRoute<TState> | StandardOutcomeRoute<TState>;
 export function route<TState>(definition: OrdinaryRoute<TState>): OrdinaryRoute<TState>;
-export function route<TState>(definition: AgentOutcomeRoute<TState>): AgentOutcomeRoute<TState>;
+export function route<TState>(
+  definition: StandardOutcomeRoute<TState>,
+): StandardOutcomeRoute<TState>;
 export function route<TState>(definition: Route<TState>): Route<TState> {
   return definition;
 }
@@ -761,6 +833,30 @@ export function pipeline<TState>(definition: {
   const ids = new Set(definition.nodes.map((node) => node.id));
   if (ids.size !== definition.nodes.length) {
     throw new Error("Pipeline node IDs must be unique.");
+  }
+  const ownedParticipants = new Set<Stage<TState> | Agent<TState>>();
+  for (const node of definition.nodes) {
+    if (node.kind !== "parallel") {
+      continue;
+    }
+    const parallelNode = node as ParallelImplementation<TState, ParallelBranches<TState>>;
+    for (const [branchId, participant] of Object.entries(parallelNode.branches)) {
+      if (branchId.trim().length === 0) {
+        throw new Error(`Parallel group '${node.id}' contains a blank branch ID.`);
+      }
+      if (members.has(participant)) {
+        throw new Error(
+          `Parallel branch participant '${participant.id}' cannot also be a parent pipeline node.`,
+        );
+      }
+      if (!ownedParticipants.add(participant)) {
+        throw new Error(`Parallel branch participant '${participant.id}' is owned more than once.`);
+      }
+      if (ids.has(participant.id)) {
+        throw new Error(`Pipeline participant ID '${participant.id}' must be globally unique.`);
+      }
+      ids.add(participant.id);
+    }
   }
   if (!members.has(definition.start)) {
     throw new Error(
@@ -984,10 +1080,7 @@ export async function run<TState>(
   options: RunOptions = {},
 ): Promise<RunResult<TState>> {
   const initialState = serializeBoundary(graph.state, initial, "initial state");
-  if (
-    (graph.persist || graph.nodes.some((node) => (node as NodeImplementation<TState>).persist)) &&
-    !options.ledgerPath
-  ) {
+  if ((graph.persist || graph.nodes.some(participantPersists)) && !options.ledgerPath) {
     throw new TandemError("ledgerPath is required when persistence is enabled.");
   }
   const callbacks = new CallbackRegistry();
@@ -1049,7 +1142,7 @@ export async function run<TState>(
       : undefined;
     const resultJson = await runRegisteredGraphAsync(
       JSON.stringify({
-        contractVersion: 6,
+        contractVersion: 7,
         name: graph.name,
         start: graph.start.id,
         initialState,
@@ -1084,6 +1177,18 @@ export async function run<TState>(
   } finally {
     callbacks.dispose();
   }
+}
+
+function participantPersists<TState>(node: Node<TState>): boolean {
+  const implementation = node as NodeImplementation<TState>;
+  if (implementation.persist) {
+    return true;
+  }
+  return implementation instanceof ParallelImplementation
+    ? Object.values(implementation.branches).some(
+        (branch) => (branch as NodeImplementation<TState>).persist === true,
+      )
+    : false;
 }
 
 function issues<T>(schema: z.ZodType<T>, input: string): string {
@@ -1192,6 +1297,55 @@ function compileNode<TState>(
       skillDirectories: implementation.skills.map((item) => item.directory),
       continueSession: implementation.continueSession,
       timeoutMilliseconds: implementation.timeoutMs,
+    };
+  }
+  if (implementation instanceof ParallelImplementation) {
+    const entries = Object.entries(implementation.branches) as [
+      string,
+      Stage<TState> | Agent<TState>,
+    ][];
+    const branchIds = entries.map(([branchId]) => branchId);
+    const mergeCallback = callbacks.registerSync((state, input) => {
+      const baseline = parseJson(stateSchema, state, `${node.id} merge baseline`);
+      let raw: unknown;
+      try {
+        raw = JSON.parse(input);
+      } catch {
+        throw new ContractValidationError(`${node.id} merge branches`, [
+          { path: "$", message: "Invalid JSON" },
+        ]);
+      }
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+        throw new ContractValidationError(`${node.id} merge branches`, [
+          { path: "$", message: "Expected a branch-state object." },
+        ]);
+      }
+      const values = raw as Record<string, unknown>;
+      if (!isDeepStrictEqual(Object.keys(values).sort(), [...branchIds].sort())) {
+        throw new ContractValidationError(`${node.id} merge branches`, [
+          { path: "$", message: "Branch-state keys do not match the authored branches." },
+        ]);
+      }
+      const parsed = Object.fromEntries(
+        branchIds.map((branchId) => [
+          branchId,
+          parse(stateSchema, values[branchId], `${node.id} branch '${branchId}' state`),
+        ]),
+      ) as { readonly [key: string]: TState };
+      return serializeBoundary(
+        stateSchema,
+        implementation.merge(baseline, parsed),
+        `${node.id} merged state`,
+      );
+    });
+    return {
+      ...base,
+      kind: "parallel",
+      branches: entries.map(([id, participant]) => ({
+        id,
+        participant: compileNode(participant, stateSchema, callbacks),
+      })),
+      mergeCallback,
     };
   }
   const terminal = implementation as TerminalImplementation<TState>;

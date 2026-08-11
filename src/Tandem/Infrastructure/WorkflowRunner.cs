@@ -245,6 +245,13 @@ internal sealed class InProcessPipelineRunner
 
         if (failure is not null)
         {
+            if (initialMessage.RunContext is { } runContext)
+            {
+                await runContext.TerminalizeActiveParallelAsync(
+                    cancellationToken.IsCancellationRequested || IsCancellation(failure),
+                    failure.Message
+                );
+            }
             runCancellation.Cancel();
             await CancelQuietlyAsync(run);
         }
@@ -275,6 +282,14 @@ internal sealed class InProcessPipelineRunner
                 "Workflow completed without producing a pipeline output."
             );
     }
+
+    private static bool IsCancellation(Exception exception) =>
+        exception is OperationCanceledException
+        || (
+            exception is AggregateException aggregate
+            && aggregate.InnerExceptions.Any(IsCancellation)
+        )
+        || (exception.InnerException is { } inner && IsCancellation(inner));
 
     private static async Task HandleRequestAsync(
         StreamingRun run,

@@ -61,6 +61,13 @@ public static class PipelineNodes
         Func<TState, TRequest> createRequest,
         Func<TState, TResponse, TState> applyResponse
     ) => new(id, createRequest, applyResponse);
+
+    public static PipelineParallel<TState> Parallel<TState>(
+        string id,
+        Func<TState, TState> clone,
+        IReadOnlyList<PipelineBranch<TState>> branches,
+        Func<PipelineParallelMerge<TState>, TState> merge
+    ) => new(id, clone, branches, merge);
 }
 
 internal sealed class DynamicStatePipelineStep<TState>(
@@ -221,6 +228,8 @@ public sealed class GeneratedPassThroughStepDescriptor<TState>(
 {
     internal override ExecutorBinding Bind() =>
         new GeneratedPassThroughStepExecutor<TState>(id, execute).Bind();
+
+    internal ExecutorBinding Bind(StandardOutcomeRouteAwareness<TState> _) => Bind();
 }
 
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -597,13 +606,17 @@ public sealed class Pipeline<TState>
     private readonly IReadOnlyList<PipelineRouteInspection> _routes;
     private readonly IReadOnlyList<PipelineInteractionInspection> _interactions;
     private readonly IReadOnlySet<string> _persistentStepIds;
+    private readonly IReadOnlyList<PipelineParallelInspection> _parallelGroups;
+    private readonly IReadOnlyDictionary<string, string> _physicalSemanticIds;
 
     internal Pipeline(
         Workflow workflow,
         IReadOnlyList<string> outputStepIds,
         IReadOnlyList<PipelineRouteInspection> routes,
         IReadOnlyList<PipelineInteractionInspection> interactions,
-        IReadOnlySet<string>? persistentStepIds = null
+        IReadOnlySet<string>? persistentStepIds = null,
+        IReadOnlyList<PipelineParallelInspection>? parallelGroups = null,
+        IReadOnlyDictionary<string, string>? physicalSemanticIds = null
     )
     {
         Workflow = workflow;
@@ -611,6 +624,9 @@ public sealed class Pipeline<TState>
         _routes = routes;
         _interactions = interactions;
         _persistentStepIds = persistentStepIds ?? new HashSet<string>(StringComparer.Ordinal);
+        _parallelGroups = parallelGroups ?? [];
+        _physicalSemanticIds =
+            physicalSemanticIds ?? new Dictionary<string, string>(StringComparer.Ordinal);
     }
 
     internal Workflow Workflow { get; }
@@ -640,6 +656,10 @@ public sealed class Pipeline<TState>
                     return interactionId;
                 }
             }
+            if (_physicalSemanticIds.TryGetValue(id, out var semanticId))
+            {
+                return semanticId;
+            }
             return id;
         }
 
@@ -662,6 +682,28 @@ public sealed class Pipeline<TState>
             .ThenBy(route => route.TargetId, StringComparer.Ordinal)
             .ThenBy(route => route.Conditional)
             .ToArray();
+        var renderedRoutes = semanticRoutes
+            .Concat(
+                _parallelGroups.SelectMany(group =>
+                    group.Branches.SelectMany(branch =>
+                        new[]
+                        {
+                            new PipelineRouteInspection(
+                                group.Id,
+                                branch.ParticipantId,
+                                Conditional: false,
+                                branch.Id
+                            ),
+                            new PipelineRouteInspection(
+                                branch.ParticipantId,
+                                group.Id,
+                                Conditional: false
+                            ),
+                        }
+                    )
+                )
+            )
+            .ToArray();
         var startStepId = SemanticId(Workflow.StartExecutorId);
         return new PipelineInspection(
             Workflow.Name ?? throw new InvalidOperationException("Pipeline name is unavailable."),
@@ -672,9 +714,12 @@ public sealed class Pipeline<TState>
             semanticRoutes,
             _outputStepIds,
             stepIds.Where(_persistentStepIds.Contains).ToArray(),
-            RenderMermaid(stepIds, semanticRoutes, startStepId, _outputStepIds),
-            RenderDot(stepIds, semanticRoutes, startStepId, _outputStepIds)
-        );
+            RenderMermaid(stepIds, renderedRoutes, startStepId, _outputStepIds),
+            RenderDot(stepIds, renderedRoutes, startStepId, _outputStepIds)
+        )
+        {
+            ParallelGroups = _parallelGroups,
+        };
     }
 
     private static string RenderMermaid(
@@ -771,7 +816,17 @@ public sealed record PipelineInspection(
     IReadOnlyList<string> PersistentStepIds,
     string Mermaid,
     string Dot
+)
+{
+    public IReadOnlyList<PipelineParallelInspection> ParallelGroups { get; init; } = [];
+}
+
+public sealed record PipelineParallelInspection(
+    string Id,
+    IReadOnlyList<PipelineParallelBranchInspection> Branches
 );
+
+public sealed record PipelineParallelBranchInspection(string Id, int Index, string ParticipantId);
 
 public sealed record PipelineRouteInspection(
     string SourceId,
@@ -812,6 +867,9 @@ public sealed class PipelineBuilder<TState>
     private readonly Dictionary<IPipelineNode, ExecutorBinding> _bindings = new(
         PipelineStepReferenceComparer.Instance
     );
+    private readonly Dictionary<IPipelineNode, ExecutorBinding> _inputBindings = new(
+        PipelineStepReferenceComparer.Instance
+    );
     private readonly Dictionary<IPipelineNode, PipelineNodeDescriptor> _descriptors = new(
         PipelineStepReferenceComparer.Instance
     );
@@ -833,6 +891,11 @@ public sealed class PipelineBuilder<TState>
     private readonly Dictionary<IPipelineNode, bool> _persistenceOverrides = new(
         PipelineStepReferenceComparer.Instance
     );
+    private readonly HashSet<IPipelineNode> _ownedParallelBranches = new(
+        PipelineStepReferenceComparer.Instance
+    );
+    private readonly List<PipelineParallelInspection> _parallelGroups = [];
+    private readonly Dictionary<string, string> _physicalSemanticIds = new(StringComparer.Ordinal);
     private readonly Dictionary<
         IPipelineInteractionDefinition,
         bool
@@ -852,6 +915,25 @@ public sealed class PipelineBuilder<TState>
     )
     {
         var descriptor = start.Descriptor;
+        if (descriptor is PipelineParallelDescriptor<TState> parallel)
+        {
+            var parallelAwareness = new StandardOutcomeRouteAwareness<TState>();
+            var graph = parallel.BindGraph(parallelAwareness);
+            var parallelWorkflowBuilder = new WorkflowBuilder(graph.Entry).WithName(name);
+            if (!string.IsNullOrWhiteSpace(description))
+            {
+                parallelWorkflowBuilder = parallelWorkflowBuilder.WithDescription(description);
+            }
+            graph.AddTo(parallelWorkflowBuilder);
+            var parallelResult = new PipelineBuilder<TState>(parallelWorkflowBuilder);
+            parallelResult._bindings.Add(start, graph.Exit);
+            parallelResult._inputBindings.Add(start, graph.Entry);
+            parallelResult._descriptors.Add(start, descriptor);
+            parallelResult._failureRouteAwareness.Add(start, parallelAwareness);
+            parallelResult.RegisterPhysicalIds(start.Id, graph.PhysicalIds);
+            parallelResult.RegisterParallelBranches(start, parallel);
+            return parallelResult;
+        }
         var awareness =
             descriptor is GeneratedOutcomeStepDescriptor<TState>
                 ? new StandardOutcomeRouteAwareness<TState>()
@@ -1072,6 +1154,10 @@ public sealed class PipelineBuilder<TState>
             throw new InvalidOperationException("A pipeline builder can build only once.");
         }
 
+        if (outputs.Any(output => output.Descriptor is PipelineParallelDescriptor<TState>))
+        {
+            throw new InvalidOperationException("A parallel group cannot be a pipeline output.");
+        }
         var outputBindings = outputs.Select(Bind).ToArray();
 
         foreach (var node in _bindings.Keys)
@@ -1093,7 +1179,7 @@ public sealed class PipelineBuilder<TState>
                     {
                         switchBuilder.AddCase<PipelineMessage<TState>>(
                             message => message is not null && route.Predicate(message),
-                            [Bind(route.Target)]
+                            [BindInput(route.Target)]
                         );
                     }
                 }
@@ -1122,7 +1208,9 @@ public sealed class PipelineBuilder<TState>
                 ))
                 .OrderBy(interaction => interaction.Id, StringComparer.Ordinal)
                 .ToArray(),
-            ResolvePersistentStepIds()
+            ResolvePersistentStepIds(),
+            _parallelGroups.ToArray(),
+            new Dictionary<string, string>(_physicalSemanticIds, StringComparer.Ordinal)
         );
         _built = true;
         return pipeline;
@@ -1151,7 +1239,7 @@ public sealed class PipelineBuilder<TState>
     {
         foreach (var step in _persistenceOverrides.Keys)
         {
-            if (!_bindings.ContainsKey(step))
+            if (!_bindings.ContainsKey(step) && !_ownedParallelBranches.Contains(step))
             {
                 throw new InvalidOperationException(
                     $"Persistence policy references unregistered step '{step.Id}'."
@@ -1177,7 +1265,7 @@ public sealed class PipelineBuilder<TState>
                 || id == $"{interactionId}--request"
                 || id == $"{interactionId}--resume"
             ) ?? id;
-        var policies = _bindings
+        var policies = _descriptors
             .Keys.Select(step => SemanticId(step.Id))
             .Distinct(StringComparer.Ordinal)
             .ToDictionary(id => id, _ => _persistByDefault, StringComparer.Ordinal);
@@ -1231,7 +1319,7 @@ public sealed class PipelineBuilder<TState>
     {
         EnsureNotBuilt();
         Bind(source);
-        Bind(target);
+        BindInput(target);
         if (!_routes.TryGetValue(source, out var routes))
         {
             routes = [];
@@ -1272,12 +1360,43 @@ public sealed class PipelineBuilder<TState>
 
     private ExecutorBinding Bind(IPipelineNode node)
     {
+        if (_ownedParallelBranches.Contains(node))
+        {
+            throw new InvalidOperationException(
+                $"Parallel branch participant '{node.Id}' cannot also be a parent pipeline node."
+            );
+        }
         if (_bindings.TryGetValue(node, out var binding))
         {
             return binding;
         }
+        if (
+            _descriptors.Keys.Any(existing =>
+                !ReferenceEquals(existing, node)
+                && string.Equals(existing.Id, node.Id, StringComparison.Ordinal)
+            ) || _physicalSemanticIds.ContainsKey(node.Id)
+        )
+        {
+            throw new InvalidOperationException(
+                $"Pipeline participant ID '{node.Id}' must be globally unique."
+            );
+        }
 
         var descriptor = node.Descriptor;
+        if (descriptor is PipelineParallelDescriptor<TState> parallel)
+        {
+            var awareness = new StandardOutcomeRouteAwareness<TState>();
+            var graph = parallel.BindGraph(awareness);
+            RegisterPhysicalIds(node.Id, graph.PhysicalIds);
+            graph.AddTo(_builder);
+            binding = graph.Exit;
+            _bindings.Add(node, binding);
+            _inputBindings.Add(node, graph.Entry);
+            _descriptors.Add(node, descriptor);
+            _failureRouteAwareness.Add(node, awareness);
+            RegisterParallelBranches(node, parallel);
+            return binding;
+        }
         if (descriptor is GeneratedOutcomeStepDescriptor<TState> outcomeDescriptor)
         {
             var awareness = new StandardOutcomeRouteAwareness<TState>();
@@ -1291,6 +1410,81 @@ public sealed class PipelineBuilder<TState>
         _bindings.Add(node, binding);
         _descriptors.Add(node, descriptor);
         return binding;
+    }
+
+    private ExecutorBinding BindInput(IPipelineNode node)
+    {
+        _ = Bind(node);
+        return _inputBindings.GetValueOrDefault(node) ?? _bindings[node];
+    }
+
+    private void RegisterParallelBranches(
+        IPipelineNode group,
+        PipelineParallelDescriptor<TState> descriptor
+    )
+    {
+        foreach (var branch in descriptor.Branches)
+        {
+            if (
+                _bindings.Keys.Any(node => ReferenceEquals(node, branch.Participant))
+                || !_ownedParallelBranches.Add(branch.Participant)
+            )
+            {
+                throw new InvalidOperationException(
+                    $"Parallel branch participant '{branch.Participant.Id}' cannot also be a parent pipeline node."
+                );
+            }
+            if (
+                _descriptors.Keys.Any(node =>
+                    string.Equals(node.Id, branch.Participant.Id, StringComparison.Ordinal)
+                ) || _physicalSemanticIds.ContainsKey(branch.Participant.Id)
+            )
+            {
+                throw new InvalidOperationException(
+                    $"Pipeline participant ID '{branch.Participant.Id}' must be globally unique."
+                );
+            }
+            _descriptors.Add(branch.Participant, branch.Participant.Descriptor);
+        }
+        _parallelGroups.Add(
+            new PipelineParallelInspection(
+                group.Id,
+                descriptor
+                    .Branches.Select(
+                        (branch, index) =>
+                            new PipelineParallelBranchInspection(
+                                branch.Id,
+                                index,
+                                branch.Participant.Id
+                            )
+                    )
+                    .ToArray()
+            )
+        );
+    }
+
+    private void RegisterPhysicalIds(string semanticId, IReadOnlySet<string> physicalIds)
+    {
+        foreach (var physicalId in physicalIds)
+        {
+            if (
+                physicalId != semanticId
+                && _descriptors.Keys.Any(node =>
+                    string.Equals(node.Id, physicalId, StringComparison.Ordinal)
+                )
+            )
+            {
+                throw new InvalidOperationException(
+                    $"Physical pipeline node ID '{physicalId}' conflicts with an authored participant ID."
+                );
+            }
+            if (!_physicalSemanticIds.TryAdd(physicalId, semanticId))
+            {
+                throw new InvalidOperationException(
+                    $"Physical pipeline node ID '{physicalId}' is already registered."
+                );
+            }
+        }
     }
 
     private void EnsureRouteMode(IPipelineNode source, RouteMode mode)

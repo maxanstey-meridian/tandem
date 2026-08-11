@@ -508,7 +508,7 @@ options if Tandem depends on constants not already protected by
 ### Bridge validation tests
 
 Update `typescript/bridge-tests/RegistrationContractValidatorTests.cs` for
-contract version 6 and cover:
+contract version 7 and cover:
 
 - valid empty and populated agent skill arrays;
 - null array rejection for agent nodes;
@@ -555,7 +555,7 @@ Document:
   directories for skills.
 
 Update TypeScript contract-version references and the stabilization plan to
-record version 6 and the new runtime fixture.
+record version 7 and the new runtime fixture.
 
 Suggested concise contract wording:
 
@@ -577,7 +577,7 @@ Suggested concise contract wording:
 6. Wire Advanced harness agents through the same explicit source policy.
 7. Add Core and Advanced real-filesystem integration tests.
 8. Add TypeScript `skill({ directory })` and `skills` authoring support.
-9. Increment the bridge registration contract to version 6.
+9. Increment the bridge registration contract to version 7 after integration with parallel composition.
 10. Add bridge validation and translate paths through the Core API.
 11. Add TypeScript type, runtime, and packed-consumer tests.
 12. Update C# and TypeScript documentation.
@@ -599,7 +599,7 @@ The feature is complete when:
   directory;
 - attaching a skill does not grant state mutation or lifecycle authority;
 - Core and Advanced use one internal source policy;
-- SDK/runtime contract version 6 rejects malformed registrations;
+- SDK/runtime contract version 7 rejects malformed registrations;
 - all C#, bridge, Node, type, package, and mechanical architecture gates pass.
 
 ## Known Implementation Risk

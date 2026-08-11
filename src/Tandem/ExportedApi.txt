@@ -18,11 +18,17 @@ Tandem.IPipelineNode`1
 Tandem.IPipelineCompletion`1
 Tandem.IPipelineFailure`1
 Tandem.PipelineBuilder`1
+Tandem.PipelineBranch
+Tandem.PipelineBranch`1
 Tandem.PipelineInspection
 Tandem.PipelineInteractionInspection
 Tandem.PipelineInteraction`3
 Tandem.PipelineNodes
 Tandem.PipelineOutcomeSelector`1
+Tandem.PipelineParallel`1
+Tandem.PipelineParallelBranchInspection
+Tandem.PipelineParallelInspection
+Tandem.PipelineParallelMerge`1
 Tandem.PipelineRouteInspection
 Tandem.PipelineStageAttribute
 Tandem.Pipeline

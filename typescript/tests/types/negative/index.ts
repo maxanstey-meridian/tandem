@@ -1,6 +1,7 @@
 import {
   agent,
   capability,
+  parallel,
   pipeline,
   route,
   skill,
@@ -20,6 +21,39 @@ const wrong = output<B>({ id: "wrong", summary: () => "wrong" });
 // @ts-expect-error routes cannot cross pipeline state types
 route({ from: start, to: wrong, label: "wrong" });
 const done = output<A>({ id: "done", summary: () => "done" });
+const second = stage<A>({ id: "second", execute: (state) => state });
+const wrongStateBranch = stage<B>({ id: "wrong-state", execute: (state) => state });
+const concurrent = parallel<A>()({
+  id: "concurrent",
+  branches: { start, second },
+  merge: (baseline: A, results) => ({ value: baseline.value + results.start.value }),
+});
+parallel<A>()({
+  id: "unknown-merge-key",
+  branches: { start, second },
+  // @ts-expect-error merge results expose only authored branch keys
+  merge: (baseline, results) => ({ value: baseline.value + results.missing.value }),
+});
+parallel<A>()({
+  id: "wrong-branch-state",
+  // @ts-expect-error parallel branches must preserve the group state type
+  branches: { start, wrongStateBranch },
+  merge: (baseline) => baseline,
+});
+// @ts-expect-error parallel routes must select success or failed
+route({ from: concurrent, to: done, label: "ambiguous" });
+parallel<A>()({
+  id: "async-merge",
+  branches: { start, second },
+  // @ts-expect-error parallel merge is synchronous
+  merge: async (baseline: A) => baseline,
+});
+parallel<A>()({
+  id: "terminal-branch",
+  // @ts-expect-error terminals cannot be parallel branches
+  branches: { start, done },
+  merge: (baseline: A) => baseline,
+});
 pipeline({
   name: "bad-initial-is-checked-at-run",
   state: A,
