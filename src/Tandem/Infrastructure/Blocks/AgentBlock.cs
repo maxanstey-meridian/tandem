@@ -22,7 +22,8 @@ internal sealed class AgentBlock<TState>(
         ValueTask<string?>
     >? toolInterceptor = null,
     Action<ChatOptions>? configureChatOptions = null,
-    Func<string, IChatClient>? chatClientFactory = null
+    Func<string, IChatClient>? chatClientFactory = null,
+    Action<ChatOptions>? configureModelRequestOptions = null
 )
     : Executor<PipelineMessage<TState>, PipelineMessage<TState>>(
         config.StepId,
@@ -30,6 +31,30 @@ internal sealed class AgentBlock<TState>(
         declareCrossRunShareable: true
     )
 {
+    private static readonly HashSet<string> _reservedWorkspaceToolNames =
+    [
+        "read_file",
+        "ls",
+        "grep",
+        "write_file",
+        "delete_file",
+        "replace",
+        "replace_lines",
+        "git:ro",
+        "shell",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_show",
+        "git_blame",
+        "git_changed_files",
+        "git_compare",
+        "run_shell",
+        AgentSkillsProvider.LoadSkillToolName,
+        AgentSkillsProvider.ReadSkillResourceToolName,
+        AgentSkillsProvider.RunSkillScriptToolName,
+    ];
+
     public override async ValueTask<PipelineMessage<TState>> HandleAsync(
         PipelineMessage<TState> message,
         IWorkflowContext context,
@@ -77,18 +102,6 @@ internal sealed class AgentBlock<TState>(
                 $"Agent '{config.StepId}' has a capability that collides with a skill tool."
             );
         }
-        if (
-            config.WorkspacePath is not null
-            && capabilityFunctions.Any(tool =>
-                tool.Name.StartsWith("file_access_", StringComparison.Ordinal)
-            )
-        )
-        {
-            throw new InvalidOperationException(
-                $"Agent '{config.StepId}' has a capability that collides with a Harness file tool."
-            );
-        }
-
         {
             var collector = new ToolOutcomeCollector();
 
@@ -172,7 +185,6 @@ internal sealed class AgentBlock<TState>(
             var policyExhausted = false;
             var structuredAttempt = 0;
             AgentStructuredOutputResult<TState>? structuredResult = null;
-            var structuredToolObservations = new HashSet<ToolObservationDescriptor>();
 
             while (true)
             {
@@ -232,11 +244,6 @@ internal sealed class AgentBlock<TState>(
                 );
                 message = message with { Runtime = runtime };
                 capabilityInvocation.ThrowIfApplicationFaulted();
-                foreach (var observation in collector.SuccessfulTools)
-                {
-                    structuredToolObservations.Add(observation);
-                }
-
                 if (capabilityInvocation.Accepted is not null)
                 {
                     break;
@@ -276,7 +283,7 @@ internal sealed class AgentBlock<TState>(
                         var problems = config.StructuredOutput.Accept(
                             message,
                             structuredResult,
-                            structuredToolObservations,
+                            collector.SuccessfulTools,
                             acceptedOutputId,
                             structuredAttempt
                         );
@@ -298,7 +305,7 @@ internal sealed class AgentBlock<TState>(
                                 await config.StructuredOutput.AcceptAsync(
                                     message,
                                     structuredResult,
-                                    structuredToolObservations,
+                                    collector.SuccessfulTools,
                                     acceptedOutputId,
                                     structuredAttempt,
                                     cancellationToken
@@ -631,6 +638,13 @@ internal sealed class AgentBlock<TState>(
                         }
                         throw;
                     }
+                    var isToolError =
+                        IsToolError(result)
+                        || (
+                            classified
+                            && semantics.Effect == ToolEffect.ProcessExecution
+                            && IsFailedProcessExecution(result)
+                        );
                     if (message.RunContext is { } completedRunContext)
                     {
                         await completedRunContext.ObserveAsync(
@@ -640,13 +654,14 @@ internal sealed class AgentBlock<TState>(
                                 message.Runtime.NextInvocationId(config.StepId),
                                 ficContext.Function.Name,
                                 effect,
-                                IsToolError(result) ? "Failed" : "Completed"
+                                isToolError ? "Failed" : "Completed"
                             ),
                             ct
                         );
                     }
-                    if (IsToolError(result))
+                    if (isToolError)
                     {
+                        collector.RecordFailedToolCall(ficContext.Function.Name);
                         return result;
                     }
 
@@ -683,6 +698,15 @@ internal sealed class AgentBlock<TState>(
                     && text.EndsWith("' not found.", StringComparison.Ordinal) => true,
             _ => IsFileNotFoundResult(result),
         };
+
+    private static bool IsFailedProcessExecution(object? result) =>
+        result is JsonElement { ValueKind: JsonValueKind.Object } element
+        && (
+            element.TryGetProperty("exitCode", out var exitCode)
+            || element.TryGetProperty("ExitCode", out exitCode)
+        )
+        && exitCode.TryGetInt32(out var value)
+        && value != 0;
 
     private static bool IsFileNotFoundResult(object? result)
     {
@@ -867,6 +891,7 @@ internal sealed class AgentBlock<TState>(
             Instructions = $"{GenericAgentInstructions.Value}\n\n{instructions}",
             Tools = tools.ToList(),
         };
+        configureModelRequestOptions?.Invoke(chatOptions);
         if (!string.IsNullOrWhiteSpace(requiredToolName))
         {
             chatOptions.ToolMode = ChatToolMode.RequireSpecific(requiredToolName);
@@ -887,15 +912,14 @@ internal sealed class AgentBlock<TState>(
         {
             toolEffects.Add(capabilityName, ToolEffect.LifecycleTransition);
         }
-        var allowMutation = config.AllowMutation?.Invoke(message.State) ?? false;
         var hasGates =
             (config.StateGuards?.Count ?? 0) > 0 || (config.LatchedGates?.Count ?? 0) > 0;
+        var workspace = ResolveWorkspace(message.State, boundCapabilityNames);
         var implementationContext = new AgentImplementationContext(
             config.StepId,
             selectedChatClient,
             chatOptions,
-            config.WorkspacePath?.Invoke(message.State),
-            allowMutation || toolInterceptor is not null || hasGates,
+            workspace,
             toolEffects,
             config.Skills ?? []
         );
@@ -932,6 +956,84 @@ internal sealed class AgentBlock<TState>(
             message,
             boundCapabilityNames,
             toolEffects
+        );
+    }
+
+    private ResolvedAgentWorkspace? ResolveWorkspace(
+        TState state,
+        IReadOnlySet<string> capabilityNames
+    )
+    {
+        if (config.Workspace is not { } authored)
+        {
+            return null;
+        }
+
+        var path = authored.Path(state);
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new InvalidOperationException(
+                $"Agent '{config.StepId}' resolved a blank workspace path."
+            );
+        }
+        var commands = authored.Commands(state);
+        var active = authored.ToolGroups.Where(group => group.IsAvailable(state)).ToArray();
+        var selections = active.SelectMany(group => group.Tools).ToArray();
+        var selectedNames = selections
+            .Where(selection => selection.Kind == AgentToolSelectionKind.BuiltIn)
+            .Select(selection => selection.Name!)
+            .ToHashSet(StringComparer.Ordinal);
+        var includeCommands = selections.Any(selection =>
+            selection.Kind == AgentToolSelectionKind.Commands
+        );
+        var selectedCommands = includeCommands ? commands : [];
+        var reservedNames = new HashSet<string>(
+            _reservedWorkspaceToolNames,
+            StringComparer.Ordinal
+        );
+        foreach (var command in selectedCommands)
+        {
+            if (!reservedNames.Add(command.Name) || capabilityNames.Contains(command.Name))
+            {
+                throw new InvalidOperationException(
+                    $"Agent '{config.StepId}' exposes more than one tool named '{command.Name}'."
+                );
+            }
+        }
+        var capabilityCollision = capabilityNames.FirstOrDefault(reservedNames.Contains);
+        if (capabilityCollision is not null)
+        {
+            throw new InvalidOperationException(
+                $"Agent '{config.StepId}' has a capability that collides with workspace tool '{capabilityCollision}'."
+            );
+        }
+
+        var fileTools = new HashSet<WorkspaceToolKind>();
+        foreach (var name in selectedNames)
+        {
+            var kind = name switch
+            {
+                "read_file" => WorkspaceToolKind.ReadFile,
+                "ls" => WorkspaceToolKind.ListFiles,
+                "grep" => WorkspaceToolKind.Grep,
+                "write_file" => WorkspaceToolKind.WriteFile,
+                "delete_file" => WorkspaceToolKind.DeleteFile,
+                "replace" => WorkspaceToolKind.Replace,
+                "replace_lines" => WorkspaceToolKind.ReplaceLines,
+                "git:ro" or "shell" => default,
+                _ => throw new InvalidOperationException($"Unknown workspace tool '{name}'."),
+            };
+            if (name is not "git:ro" and not "shell")
+            {
+                fileTools.Add(kind);
+            }
+        }
+        return new ResolvedAgentWorkspace(
+            Path.GetFullPath(path),
+            fileTools,
+            selectedNames.Contains("git:ro"),
+            selectedNames.Contains("shell"),
+            selectedCommands
         );
     }
 
@@ -1097,6 +1199,9 @@ internal sealed class ToolOutcomeCollector
 
     public void RecordSuccessfulToolCall(ToolObservationDescriptor observation) =>
         _successfulTools.Add(observation);
+
+    public void RecordFailedToolCall(string toolName) =>
+        _successfulTools.RemoveWhere(observation => observation.Name == toolName);
 
     public IReadOnlySet<ToolObservationDescriptor> SuccessfulTools => _successfulTools;
 

@@ -7,6 +7,9 @@ type AsyncCallback = (state: string, input: string, signal: AbortSignal) => Prom
 const participantBrand: unique symbol = Symbol("participant");
 const compileCapabilityBrand: unique symbol = Symbol("compileCapability");
 const interactionHandlersBrand: unique symbol = Symbol("interactionHandlers");
+const workspaceBrand: unique symbol = Symbol("workspace");
+const toolGroupBrand: unique symbol = Symbol("toolGroup");
+const commandSelectionBrand: unique symbol = Symbol("commandSelection");
 
 export class TandemError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -588,12 +591,132 @@ export interface OpenAiCompatibleChatClient {
   readonly model: string;
   readonly wireApi: "completions" | "responses";
   readonly apiKeyEnvironmentVariable?: string;
-  readonly reasoningEffort?: "low" | "medium" | "high";
+  readonly reasoningEffort?: "none" | "low" | "medium" | "high";
   readonly verifyModel?: boolean;
 }
 export type ChatClient = OpenAiCompatibleChatClient;
 export interface AgentSkill {
   readonly directory: string;
+}
+
+export type AgentToolName =
+  | "read_file"
+  | "ls"
+  | "grep"
+  | "write_file"
+  | "delete_file"
+  | "replace"
+  | "replace_lines"
+  | "git:ro"
+  | "shell";
+export interface AgentCommand {
+  readonly name: string;
+  readonly description: string;
+  readonly command: string;
+}
+interface AgentCommandSelection {
+  readonly [commandSelectionBrand]: object;
+}
+type AgentToolSelection = AgentToolName | AgentCommandSelection;
+export interface AgentToolGroup<TState> {
+  readonly [toolGroupBrand]: (state: TState) => boolean;
+}
+class AgentToolGroupImplementation<TState> implements AgentToolGroup<TState> {
+  readonly [toolGroupBrand]: (state: TState) => boolean;
+  constructor(
+    readonly predicate: ((state: TState) => boolean) | undefined,
+    readonly tools: readonly AgentToolSelection[],
+  ) {
+    this[toolGroupBrand] = predicate ?? (() => true);
+  }
+}
+function createToolGroup<TState>(
+  predicate: ((state: TState) => boolean) | undefined,
+  tools: readonly AgentToolSelection[],
+): AgentToolGroup<TState> {
+  if (tools.length === 0) {
+    throw new TandemError("An agent tool group cannot be empty.");
+  }
+  const seen = new Set<AgentToolSelection>();
+  for (const tool of tools) {
+    if (typeof tool !== "string" && !(commandSelectionBrand in tool)) {
+      throw new TandemError("Agent tools must be built-in names or workspace.commands.");
+    }
+    if (seen.has(tool)) {
+      throw new TandemError("An agent tool group cannot select a tool twice.");
+    }
+    seen.add(tool);
+  }
+  return new AgentToolGroupImplementation(predicate, tools);
+}
+export const agentTools = {
+  always: (...tools: readonly AgentToolSelection[]): AgentToolGroup<never> =>
+    createToolGroup(undefined, tools),
+  when: <TState>(
+    predicate: (state: TState) => boolean,
+    ...tools: readonly AgentToolSelection[]
+  ): AgentToolGroup<TState> => createToolGroup(predicate, tools),
+};
+export interface AgentWorkspaceConfiguration<TState> {
+  readonly [workspaceBrand]: (state: TState) => TState;
+}
+export interface AgentWorkspace<TState> {
+  readonly commands: AgentCommandSelection;
+  withTools(
+    groups: readonly (AgentToolGroup<TState> | AgentToolGroup<never>)[],
+  ): AgentWorkspaceConfiguration<TState>;
+}
+class AgentWorkspaceImplementation<TState> implements AgentWorkspace<TState> {
+  readonly commands: AgentCommandSelection;
+  readonly commandSource:
+    | readonly AgentCommand[]
+    | ((state: TState) => readonly AgentCommand[])
+    | undefined;
+  constructor(
+    readonly path: (state: TState) => string,
+    commandSource:
+      | readonly AgentCommand[]
+      | ((state: TState) => readonly AgentCommand[])
+      | undefined,
+  ) {
+    this.commandSource =
+      typeof commandSource === "function" || commandSource === undefined
+        ? commandSource
+        : commandSource.map((command) => ({ ...command }));
+    this.commands = { [commandSelectionBrand]: this };
+  }
+  withTools(
+    groups: readonly (AgentToolGroup<TState> | AgentToolGroup<never>)[],
+  ): AgentWorkspaceConfiguration<TState> {
+    if (groups.length === 0) {
+      throw new TandemError("An agent workspace requires tool groups.");
+    }
+    const implementations = groups.map((group) => {
+      if (!(group instanceof AgentToolGroupImplementation)) {
+        throw new TandemError("Agent tool groups must be created by agentTools.");
+      }
+      return group as AgentToolGroupImplementation<TState>;
+    });
+    return new AgentWorkspaceConfigurationImplementation(this, implementations);
+  }
+}
+class AgentWorkspaceConfigurationImplementation<
+  TState,
+> implements AgentWorkspaceConfiguration<TState> {
+  readonly [workspaceBrand]!: (state: TState) => TState;
+  constructor(
+    readonly workspace: AgentWorkspaceImplementation<TState>,
+    readonly groups: readonly AgentToolGroupImplementation<TState>[],
+  ) {}
+}
+export function agentWorkspace<TState>(definition: {
+  readonly path: (state: TState) => string;
+  readonly commands?: readonly AgentCommand[] | ((state: TState) => readonly AgentCommand[]);
+}): AgentWorkspace<TState> {
+  if (typeof definition.path !== "function") {
+    throw new TandemError("Workspace path is required.");
+  }
+  return new AgentWorkspaceImplementation(definition.path, definition.commands);
 }
 export function skill(definition: { readonly directory: string }): AgentSkill {
   if (typeof definition.directory !== "string" || definition.directory.trim().length === 0) {
@@ -614,6 +737,9 @@ export interface AgentDefinition<TState, TOutput = never> {
   };
   readonly capabilities?: readonly Capability<TState>[];
   readonly skills?: readonly AgentSkill[];
+  readonly workspace?: AgentWorkspaceConfiguration<TState>;
+  readonly temperature?: number;
+  readonly maxOutputTokens?: number;
   readonly continueSession?: boolean;
   readonly timeoutMs?: number;
   readonly persist?: boolean;
@@ -639,6 +765,9 @@ class AgentImplementation<TState, TOutput>
       | undefined,
     readonly granted: readonly Capability<TState>[],
     readonly skills: readonly AgentSkill[],
+    readonly workspace: AgentWorkspaceConfiguration<TState> | undefined,
+    readonly temperature: number | undefined,
+    readonly maxOutputTokens: number | undefined,
     readonly continueSession: boolean,
     readonly timeoutMs?: number,
   ) {
@@ -649,6 +778,12 @@ export function agent<TState, TOutput = never>(
   definition: AgentDefinition<TState, TOutput>,
 ): Agent<TState> {
   requireInstructions(definition.instructions, `Agent '${definition.id}' instructions`);
+  if (
+    definition.client.reasoningEffort !== undefined &&
+    !["none", "low", "medium", "high"].includes(definition.client.reasoningEffort)
+  ) {
+    throw new TandemError(`Agent '${definition.id}' has an invalid reasoning effort.`);
+  }
   if (definition.output) {
     requireInstructions(
       definition.output.instructions,
@@ -676,6 +811,24 @@ export function agent<TState, TOutput = never>(
       );
     }
   }
+  if (
+    definition.temperature !== undefined &&
+    (!Number.isFinite(definition.temperature) ||
+      definition.temperature < 0 ||
+      definition.temperature > 2)
+  ) {
+    throw new TandemError(`Agent '${definition.id}' temperature must be between 0 and 2.`);
+  }
+  if (
+    definition.maxOutputTokens !== undefined &&
+    (!Number.isSafeInteger(definition.maxOutputTokens) ||
+      definition.maxOutputTokens <= 0 ||
+      definition.maxOutputTokens > 2_147_483_647)
+  ) {
+    throw new TandemError(
+      `Agent '${definition.id}' maxOutputTokens must be a positive 32-bit integer.`,
+    );
+  }
   return new AgentImplementation(
     definition.id,
     definition.persist,
@@ -685,6 +838,9 @@ export function agent<TState, TOutput = never>(
     definition.output,
     capabilities,
     skills,
+    definition.workspace,
+    definition.temperature,
+    definition.maxOutputTokens,
     definition.continueSession ?? false,
     definition.timeoutMs,
   );
@@ -1142,7 +1298,7 @@ export async function run<TState>(
       : undefined;
     const resultJson = await runRegisteredGraphAsync(
       JSON.stringify({
-        contractVersion: 7,
+        contractVersion: 9,
         name: graph.name,
         start: graph.start.id,
         initialState,
@@ -1286,6 +1442,9 @@ function compileNode<TState>(
     const capabilities = implementation.granted.map((item) =>
       item[compileCapabilityBrand]({ id: node.id, stateSchema, callbacks }),
     );
+    const workspace = implementation.workspace
+      ? compileWorkspace(node.id, implementation.workspace, stateSchema, callbacks)
+      : undefined;
     return {
       ...base,
       kind: "agent",
@@ -1295,8 +1454,11 @@ function compileNode<TState>(
       output,
       capabilities,
       skillDirectories: implementation.skills.map((item) => item.directory),
+      temperature: implementation.temperature,
+      maxOutputTokens: implementation.maxOutputTokens,
       continueSession: implementation.continueSession,
       timeoutMilliseconds: implementation.timeoutMs,
+      workspace,
     };
   }
   if (implementation instanceof ParallelImplementation) {
@@ -1353,6 +1515,84 @@ function compileNode<TState>(
     terminal.summary(parseJson(stateSchema, state, `${node.id} state`)),
   );
   return { ...base, kind: terminal.failed ? "failure" : "completion", summaryCallback: summary };
+}
+
+function compileWorkspace<TState>(
+  id: string,
+  configuration: AgentWorkspaceConfiguration<TState>,
+  stateSchema: z.ZodType<TState>,
+  callbacks: CallbackRegistry,
+): object {
+  if (!(configuration instanceof AgentWorkspaceConfigurationImplementation)) {
+    throw new TandemError(
+      `Agent '${id}' workspace must be created by agentWorkspace().withTools().`,
+    );
+  }
+  const workspace = configuration.workspace;
+  const pathCallback = callbacks.registerSync((state) => {
+    const value = workspace.path(parseJson(stateSchema, state, `${id} workspace path state`));
+    if (typeof value !== "string" || value.trim().length === 0) {
+      throw new TandemError(`Agent '${id}' workspace path must be non-blank.`);
+    }
+    return value;
+  });
+  const commandsCallback = callbacks.registerSync((state) => {
+    const typedState = parseJson(stateSchema, state, `${id} workspace commands state`);
+    const value =
+      typeof workspace.commandSource === "function"
+        ? workspace.commandSource(typedState)
+        : (workspace.commandSource ?? []);
+    return serializeBoundary(
+      z.array(
+        z.object({ name: z.string(), description: z.string(), command: z.string() }).strict(),
+      ),
+      value,
+      `${id} workspace commands`,
+    );
+  });
+  const selected = new Set<AgentToolSelection>();
+  const toolGroups = configuration.groups.map((group, index) => {
+    let includeCommands = false;
+    const tools: AgentToolName[] = [];
+    for (const tool of group.tools) {
+      if (typeof tool === "string") {
+        if (selected.has(tool)) {
+          throw new TandemError(`Agent '${id}' selects '${tool}' more than once.`);
+        }
+        selected.add(tool);
+        tools.push(tool);
+      } else {
+        if (tool[commandSelectionBrand] !== workspace) {
+          throw new TandemError(`Agent '${id}' selects commands from another workspace.`);
+        }
+        if (workspace.commandSource === undefined) {
+          throw new TandemError(
+            `Agent '${id}' selects workspace commands without declaring a command catalogue.`,
+          );
+        }
+        if (selected.has(tool)) {
+          throw new TandemError(`Agent '${id}' selects workspace commands twice.`);
+        }
+        selected.add(tool);
+        includeCommands = true;
+      }
+    }
+    const whenCallback = group.predicate
+      ? callbacks.registerSync((state) => {
+          const value = group.predicate!(
+            parseJson(stateSchema, state, `${id} tool group ${index} state`),
+          );
+          if (typeof value !== "boolean") {
+            throw new TandemError(
+              `Agent '${id}' tool group ${index} predicate must return a boolean.`,
+            );
+          }
+          return String(value);
+        })
+      : undefined;
+    return { tools, includeCommands, whenCallback };
+  });
+  return { pathCallback, commandsCallback, toolGroups };
 }
 
 function compileAgentOutput<TState, TOutput>(

@@ -12,7 +12,7 @@ M static Tandem.AgentBuilder<TState> WithOutputAcceptance<TState,TOutput>(Tandem
 M static Tandem.AgentBuilder<TState> WithProfilePolicy<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.AgentProfilePolicy<TState> policy)
 M static Tandem.AgentBuilder<TState> WithStateGuard<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.AgentStateGuard<TState> guard)
 M static Tandem.AgentBuilder<TState> WithStructuredOutput<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.StructuredOutputParser<TState> parser, System.Action<Microsoft.Extensions.AI.ChatOptions>? configureChatOptions = null, Tandem.Advanced.StructuredOutputAcceptancePolicy<TState>? acceptancePolicy = null, System.String? correctionRequiredToolName = null)
-M static Tandem.AgentBuilder<TState> WithWorkspace<TState>(Tandem.AgentBuilder<TState> builder, System.Func<TState,System.String> path, System.Func<TState,System.Boolean> allowMutation, Tandem.Advanced.ToolInterceptor<TState>? toolInterceptor = null)
+M static Tandem.AgentBuilder<TState> WithWorkspace<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.AgentWorkspace<TState> workspace, System.Collections.Generic.IReadOnlyList<Tandem.Advanced.AgentToolGroup<TState>> tools, Tandem.Advanced.ToolInterceptor<TState>? toolInterceptor = null)
 T Tandem.Advanced.AdvancedAgentMessage<TState>
 C (System.Object object, System.IntPtr method)
 M System.IAsyncResult BeginInvoke(Tandem.Advanced.AgentMessageContext<TState> context, System.AsyncCallback callback, System.Object object)
@@ -48,6 +48,16 @@ M System.Void Deconstruct(out TState State, out System.Int32 CurrentContextToken
 M Tandem.Advanced.AgentCheckpointContext<TState> <Clone>$()
 P System.Int32 CurrentContextTokens { get; set; }
 P TState State { get; set; }
+T Tandem.Advanced.AgentCommand
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.AgentCommand? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M Tandem.Advanced.AgentCommand <Clone>$()
+M static Tandem.Advanced.AgentCommand Define(System.String name, System.String description, System.String command)
+P System.String Command { get; }
+P System.String Description { get; }
+P System.String Name { get; }
 T Tandem.Advanced.AgentConversationDecision
 C (Tandem.Advanced.AgentConversationRetention Retention)
 M System.Boolean Equals(System.Object? obj)
@@ -120,6 +130,11 @@ P System.Func<TState,System.Boolean> IsActive { get; set; }
 P System.String Id { get; set; }
 P System.String Message { get; set; }
 P Tandem.AgentCapability<TState>? Remediation { get; set; }
+T Tandem.Advanced.AgentToolGroup<TState>
+T Tandem.Advanced.AgentToolSelection
+T Tandem.Advanced.AgentTools
+M static Tandem.Advanced.AgentToolGroup<TState> Always<TState>(params Tandem.Advanced.AgentToolSelection[] tools)
+M static Tandem.Advanced.AgentToolGroup<TState> When<TState>(System.Func<TState,System.Boolean> predicate, params Tandem.Advanced.AgentToolSelection[] tools)
 T Tandem.Advanced.AgentTurnContinuationPolicy<TState>
 C (System.Object object, System.IntPtr method)
 M System.IAsyncResult BeginInvoke(Tandem.Advanced.AgentTurnObservation<TState> observation, System.Threading.CancellationToken cancellationToken, System.AsyncCallback callback, System.Object object)
@@ -157,6 +172,10 @@ M System.String ToString()
 M Tandem.Advanced.AgentTurnPolicy<TState> <Clone>$()
 P System.Int32 MaxContinuationAttempts { get; }
 P Tandem.Advanced.AgentTurnContinuationPolicy<TState> Continue { get; }
+T Tandem.Advanced.AgentWorkspace<TState>
+M static Tandem.Advanced.AgentWorkspace<TState> Define(System.Func<TState,System.String> path, System.Collections.Generic.IReadOnlyList<Tandem.Advanced.AgentCommand> commands)
+M static Tandem.Advanced.AgentWorkspace<TState> Define(System.Func<TState,System.String> path, System.Func<TState,System.Collections.Generic.IReadOnlyList<Tandem.Advanced.AgentCommand>> commands)
+P Tandem.Advanced.AgentToolSelection Commands { get; }
 T Tandem.Advanced.CheckpointPolicy<TState>
 C (System.Int32 ContextWindowTokens, System.Int32 MaxOutputTokens, System.Int32 CheckpointAtPercent, Tandem.AgentCapability<TState> Capability, System.String Instructions, System.Func<Tandem.Advanced.AgentCheckpointContext<TState>,System.String> UserMessage)
 M System.Boolean Equals(System.Object? obj)
@@ -297,6 +316,7 @@ P Tandem.Advanced.StructuredOutcome<TState>? Outcome { get; set; }
 T Tandem.Advanced.ToolEffect
 F System.Int32 value__
 F static Tandem.Advanced.ToolEffect LifecycleTransition
+F static Tandem.Advanced.ToolEffect ProcessExecution
 F static Tandem.Advanced.ToolEffect Read
 F static Tandem.Advanced.ToolEffect Unclassified
 F static Tandem.Advanced.ToolEffect WorkspaceMutation

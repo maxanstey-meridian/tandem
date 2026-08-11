@@ -1,5 +1,7 @@
 import {
   agent,
+  agentTools,
+  agentWorkspace,
   capability,
   parallel,
   pipeline,
@@ -87,6 +89,47 @@ const client = {
   model: "test",
   wireApi: "responses",
 } as const;
+agent<A>({
+  id: "bad-reasoning",
+  instructions: "Work.",
+  client: {
+    ...client,
+    // @ts-expect-error reasoning effort is a closed set
+    reasoningEffort: "minimal",
+  },
+  message: () => "work",
+});
+agent<A>({
+  id: "bad-temperature",
+  instructions: "Work.",
+  client,
+  message: () => "work",
+  // @ts-expect-error temperature must be numeric
+  temperature: "cold",
+});
+agent<A>({
+  id: "bad-output-limit",
+  instructions: "Work.",
+  client,
+  message: () => "work",
+  // @ts-expect-error output limit must be numeric
+  maxOutputTokens: "many",
+});
+const workspace = agentWorkspace<A>({
+  path: () => "/tmp",
+  commands: [
+    {
+      name: "run_tests",
+      description: "Run tests.",
+      // @ts-expect-error command text must be a string
+      command: 42,
+    },
+  ],
+});
+workspace.withTools([
+  // @ts-expect-error workspace tools are a closed catalogue
+  agentTools.always("unknown_tool"),
+]);
 // @ts-expect-error skill directories are strings
 skill({ directory: 42 });
 const worker = agent<A>({

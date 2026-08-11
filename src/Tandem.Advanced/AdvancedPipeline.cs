@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Tandem.Domain;
+using Tandem.Infrastructure;
 
 namespace Tandem.Advanced;
 
@@ -128,6 +129,7 @@ public enum ToolEffect
 {
     Read,
     WorkspaceMutation,
+    ProcessExecution,
     LifecycleTransition,
     Unclassified,
 }
@@ -211,6 +213,211 @@ public sealed record AgentStateGuard<TState>(
     AgentCapability<TState>? Remediation = null
 );
 
+public sealed record AgentCommand
+{
+    private AgentCommand(string name, string description, string command)
+    {
+        Name = name;
+        Description = description;
+        Command = command;
+    }
+
+    public string Name { get; }
+    public string Description { get; }
+    public string Command { get; }
+
+    public static AgentCommand Define(string name, string description, string command)
+    {
+        ValidateToolName(name, nameof(name));
+        ArgumentException.ThrowIfNullOrWhiteSpace(description);
+        ArgumentException.ThrowIfNullOrWhiteSpace(command);
+        return new AgentCommand(name, description, command);
+    }
+
+    internal AgentCommandDescriptor ToDescriptor() => new(Name, Description, Command);
+
+    internal static void ValidateToolName(string name, string parameterName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name, parameterName);
+        if (
+            name.Length > 64
+            || !(char.IsAsciiLetter(name[0]) || name[0] == '_')
+            || name.Any(character =>
+                !(char.IsAsciiLetterOrDigit(character) || character is '_' or '-')
+            )
+        )
+        {
+            throw new ArgumentException(
+                "Tool names must contain at most 64 ASCII letters, digits, underscores, or hyphens and start with a letter or underscore.",
+                parameterName
+            );
+        }
+    }
+}
+
+public sealed class AgentToolSelection
+{
+    internal AgentToolSelection(AgentToolSelectionDescriptor descriptor, object? owner = null)
+    {
+        Descriptor = descriptor;
+        Owner = owner;
+    }
+
+    internal AgentToolSelectionDescriptor Descriptor { get; }
+    internal object? Owner { get; }
+
+    public static implicit operator AgentToolSelection(string name) => AgentTools.Select(name);
+}
+
+public sealed class AgentToolGroup<TState>
+{
+    internal AgentToolGroup(
+        AgentToolGroupDescriptor<TState> descriptor,
+        IReadOnlyList<object?> owners
+    )
+    {
+        Descriptor = descriptor;
+        Owners = owners;
+    }
+
+    internal AgentToolGroupDescriptor<TState> Descriptor { get; }
+    internal IReadOnlyList<object?> Owners { get; }
+}
+
+public static class AgentTools
+{
+    private static readonly HashSet<string> _builtIns =
+    [
+        "read_file",
+        "ls",
+        "grep",
+        "write_file",
+        "delete_file",
+        "replace",
+        "replace_lines",
+        "git:ro",
+        "shell",
+    ];
+
+    public static AgentToolGroup<TState> Always<TState>(params AgentToolSelection[] tools) =>
+        Create<TState>(_ => true, tools);
+
+    public static AgentToolGroup<TState> When<TState>(
+        Func<TState, bool> predicate,
+        params AgentToolSelection[] tools
+    ) => Create(predicate, tools);
+
+    internal static AgentToolSelection Select(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        if (!_builtIns.Contains(name))
+        {
+            throw new ArgumentException($"Unknown agent workspace tool '{name}'.", nameof(name));
+        }
+        return new AgentToolSelection(
+            new AgentToolSelectionDescriptor(AgentToolSelectionKind.BuiltIn, name)
+        );
+    }
+
+    private static AgentToolGroup<TState> Create<TState>(
+        Func<TState, bool> predicate,
+        IReadOnlyList<AgentToolSelection> tools
+    )
+    {
+        ArgumentNullException.ThrowIfNull(predicate);
+        ArgumentNullException.ThrowIfNull(tools);
+        if (tools.Count == 0)
+        {
+            throw new ArgumentException(
+                "A tool group must select at least one tool.",
+                nameof(tools)
+            );
+        }
+        if (tools.Any(tool => tool is null))
+        {
+            throw new ArgumentException(
+                "A tool group cannot contain null selections.",
+                nameof(tools)
+            );
+        }
+        var descriptors = tools.Select(tool => tool.Descriptor).ToArray();
+        var duplicate = descriptors
+            .GroupBy(tool => (tool.Kind, tool.Name))
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicate is not null)
+        {
+            throw new ArgumentException(
+                "A tool group cannot select the same tool twice.",
+                nameof(tools)
+            );
+        }
+        return new AgentToolGroup<TState>(
+            new AgentToolGroupDescriptor<TState>(predicate, descriptors),
+            tools.Select(tool => tool.Owner).ToArray()
+        );
+    }
+}
+
+public sealed class AgentWorkspace<TState>
+{
+    private AgentWorkspace(
+        Func<TState, string> path,
+        Func<TState, IReadOnlyList<AgentCommand>> commands
+    )
+    {
+        Path = path;
+        CommandFactory = commands;
+        Commands = new AgentToolSelection(
+            new AgentToolSelectionDescriptor(AgentToolSelectionKind.Commands),
+            this
+        );
+    }
+
+    internal Func<TState, string> Path { get; }
+    internal Func<TState, IReadOnlyList<AgentCommand>> CommandFactory { get; }
+    public AgentToolSelection Commands { get; }
+
+    public static AgentWorkspace<TState> Define(
+        Func<TState, string> path,
+        IReadOnlyList<AgentCommand> commands
+    )
+    {
+        ArgumentNullException.ThrowIfNull(commands);
+        var snapshot = commands.ToArray();
+        ValidateCommands(snapshot);
+        return Define(path, _ => snapshot);
+    }
+
+    public static AgentWorkspace<TState> Define(
+        Func<TState, string> path,
+        Func<TState, IReadOnlyList<AgentCommand>> commands
+    )
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        ArgumentNullException.ThrowIfNull(commands);
+        return new AgentWorkspace<TState>(path, commands);
+    }
+
+    internal static void ValidateCommands(IReadOnlyList<AgentCommand> commands)
+    {
+        if (commands.Any(command => command is null))
+        {
+            throw new InvalidOperationException(
+                "A workspace command catalogue cannot contain null commands."
+            );
+        }
+        var duplicate = commands
+            .GroupBy(command => command.Name, StringComparer.Ordinal)
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicate is not null)
+        {
+            throw new InvalidOperationException(
+                $"Workspace command '{duplicate.Key}' is declared more than once."
+            );
+        }
+    }
+}
+
 public static class AgentProfiles
 {
     public static AgentBuilder<TState> Create<TState>(
@@ -249,13 +456,62 @@ public static class AdvancedAgentBuilderExtensions
 
     public static AgentBuilder<TState> WithWorkspace<TState>(
         this AgentBuilder<TState> builder,
-        Func<TState, string> path,
-        Func<TState, bool> allowMutation,
+        AgentWorkspace<TState> workspace,
+        IReadOnlyList<AgentToolGroup<TState>> tools,
         ToolInterceptor<TState>? toolInterceptor = null
-    ) =>
-        builder.ConfigureWorkspace(
-            path,
-            allowMutation,
+    )
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        ArgumentNullException.ThrowIfNull(tools);
+        if (tools.Count == 0)
+        {
+            throw new ArgumentException(
+                "A workspace requires at least one tool group.",
+                nameof(tools)
+            );
+        }
+        var groups = tools.Select(group => group?.Descriptor).ToArray();
+        if (groups.Any(group => group is null))
+        {
+            throw new ArgumentException(
+                "Workspace tool groups cannot contain null values.",
+                nameof(tools)
+            );
+        }
+        if (
+            tools
+                .SelectMany(group => group.Owners)
+                .Any(owner => owner is not null && !ReferenceEquals(owner, workspace))
+        )
+        {
+            throw new ArgumentException(
+                "A workspace cannot select commands from another workspace.",
+                nameof(tools)
+            );
+        }
+        var selections = groups.SelectMany(group => group!.Tools).ToArray();
+        var duplicate = selections
+            .GroupBy(selection => (selection.Kind, selection.Name))
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicate is not null)
+        {
+            throw new ArgumentException(
+                "A workspace cannot select the same effective tool in more than one group.",
+                nameof(tools)
+            );
+        }
+        return builder.ConfigureWorkspace(
+            new AgentWorkspaceDescriptor<TState>(
+                workspace.Path,
+                state =>
+                {
+                    var commands = workspace.CommandFactory(state);
+                    ArgumentNullException.ThrowIfNull(commands);
+                    AgentWorkspace<TState>.ValidateCommands(commands);
+                    return commands.Select(command => command.ToDescriptor()).ToArray();
+                },
+                groups!
+            ),
             toolInterceptor is null
                 ? null
                 : async (message, toolName, effect, cancellationToken) =>
@@ -269,6 +525,8 @@ public static class AdvancedAgentBuilderExtensions
                                 Infrastructure.ToolEffect.Read => ToolEffect.Read,
                                 Infrastructure.ToolEffect.WorkspaceMutation =>
                                     ToolEffect.WorkspaceMutation,
+                                Infrastructure.ToolEffect.ProcessExecution =>
+                                    ToolEffect.ProcessExecution,
                                 Infrastructure.ToolEffect.LifecycleTransition =>
                                     ToolEffect.LifecycleTransition,
                                 _ => ToolEffect.Unclassified,
@@ -281,6 +539,7 @@ public static class AdvancedAgentBuilderExtensions
                         : null;
                 }
         );
+    }
 
     public static AgentBuilder<TState> WithStructuredOutput<TState>(
         this AgentBuilder<TState> builder,
@@ -376,6 +635,7 @@ public static class AdvancedAgentBuilderExtensions
         {
             ToolEffect.Read => Infrastructure.ToolEffect.Read,
             ToolEffect.WorkspaceMutation => Infrastructure.ToolEffect.WorkspaceMutation,
+            ToolEffect.ProcessExecution => Infrastructure.ToolEffect.ProcessExecution,
             ToolEffect.LifecycleTransition => Infrastructure.ToolEffect.LifecycleTransition,
             _ => throw new ArgumentOutOfRangeException(nameof(effect)),
         };

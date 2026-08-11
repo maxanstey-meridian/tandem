@@ -6,22 +6,24 @@ namespace Tandem.NodeApiSpike;
 public sealed class RegistrationContractValidatorTests
 {
     [Fact]
-    public void AcceptsVersionSevenAgentWithOutputCapabilitiesAndSkills()
+    public void AcceptsVersionNineAgentWithOutputCapabilitiesSkillsAndModelRequestControls()
     {
         var contract = RegistrationContractValidator.ParseAndValidate(ValidContract());
 
-        Assert.Equal(7, contract.ContractVersion);
+        Assert.Equal(9, contract.ContractVersion);
         Assert.Equal(2, contract.Nodes![0].Capabilities!.Length);
         Assert.Single(contract.Nodes[0].SkillDirectories!);
         Assert.NotNull(contract.Nodes[0].Output);
+        Assert.Equal(0, contract.Nodes[0].Temperature);
+        Assert.Equal(4096, contract.Nodes[0].MaxOutputTokens);
     }
 
     [Fact]
-    public void AcceptsVersionSevenParallelGroupWithNestedStages()
+    public void AcceptsVersionNineParallelGroupWithNestedStages()
     {
         var value = new Dictionary<string, object?>
         {
-            ["contractVersion"] = 7,
+            ["contractVersion"] = 9,
             ["name"] = "parallel",
             ["start"] = "parallel",
             ["initialState"] = "{}",
@@ -201,8 +203,67 @@ public sealed class RegistrationContractValidatorTests
             )
             .Message;
 
-        Assert.Contains("contractVersion must be 7", message);
+        Assert.Contains("contractVersion must be 9", message);
         Assert.Contains("object root with type 'object'", message);
+    }
+
+    [Fact]
+    public void AcceptsVersionNineWorkspaceCallbacksAndConditionalTools()
+    {
+        var value = ContractObject();
+        var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        agent["workspace"] = WorkspaceContract();
+
+        var contract = RegistrationContractValidator.ParseAndValidate(
+            JsonSerializer.Serialize(value)
+        );
+
+        var workspace = contract.Nodes![0].Workspace!;
+        Assert.Equal("workspace.path", workspace.PathCallback);
+        Assert.Equal("workspace.commands", workspace.CommandsCallback);
+        Assert.Equal(2, workspace.ToolGroups!.Length);
+        Assert.True(workspace.ToolGroups[0].IncludeCommands);
+        Assert.Equal("workspace.can-mutate", workspace.ToolGroups[1].WhenCallback);
+    }
+
+    [Theory]
+    [InlineData("unknown", "unknown tool")]
+    [InlineData("duplicate", "in more than one group")]
+    [InlineData("commands-twice", "workspace commands more than once")]
+    [InlineData("empty", "must select at least one tool")]
+    public void RejectsMalformedVersionNineWorkspacePolicies(string scenario, string expected)
+    {
+        var value = ContractObject();
+        var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        var workspace = WorkspaceContract();
+        var groups = (object[])workspace["toolGroups"]!;
+        var first = (Dictionary<string, object?>)groups[0];
+        var second = (Dictionary<string, object?>)groups[1];
+        switch (scenario)
+        {
+            case "unknown":
+                first["tools"] = new[] { "unknown" };
+                break;
+            case "duplicate":
+                second["tools"] = new[] { "read_file" };
+                break;
+            case "commands-twice":
+                second["includeCommands"] = true;
+                break;
+            case "empty":
+                first["tools"] = Array.Empty<string>();
+                first["includeCommands"] = false;
+                break;
+        }
+        agent["workspace"] = workspace;
+
+        var message = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
+            )
+            .Message;
+
+        Assert.Contains(expected, message);
     }
 
     [Fact]
@@ -499,12 +560,51 @@ public sealed class RegistrationContractValidatorTests
         Assert.Contains("nodes[1].skillDirectories is forbidden", message);
     }
 
+    [Fact]
+    public void RejectsInvalidAndNonAgentModelRequestControls()
+    {
+        var value = ContractObject();
+        var nodes = (object[])value["nodes"]!;
+        var agent = (Dictionary<string, object?>)nodes[0];
+        var terminal = (Dictionary<string, object?>)nodes[1];
+        agent["temperature"] = 2.1;
+        agent["maxOutputTokens"] = 0;
+        terminal["temperature"] = 0;
+        terminal["maxOutputTokens"] = 1;
+
+        var message = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
+            )
+            .Message;
+
+        Assert.Contains("nodes[0].temperature must be a finite number between 0 and 2", message);
+        Assert.Contains("nodes[0].maxOutputTokens must be a positive integer", message);
+        Assert.Contains("nodes[1].temperature is forbidden", message);
+        Assert.Contains("nodes[1].maxOutputTokens is forbidden", message);
+    }
+
+    [Fact]
+    public void AcceptsExplicitReasoningDisable()
+    {
+        var value = ContractObject();
+        var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        var client = (Dictionary<string, object?>)agent["client"]!;
+        client["reasoningEffort"] = "none";
+
+        var contract = RegistrationContractValidator.ParseAndValidate(
+            JsonSerializer.Serialize(value)
+        );
+
+        Assert.Equal("none", contract.Nodes![0].Client!.ReasoningEffort);
+    }
+
     private static string ValidContract() => JsonSerializer.Serialize(ContractObject());
 
     private static Dictionary<string, object?> ParallelContractObject() =>
         new()
         {
-            ["contractVersion"] = 7,
+            ["contractVersion"] = 9,
             ["name"] = "parallel",
             ["start"] = "parallel",
             ["initialState"] = "{}",
@@ -563,7 +663,7 @@ public sealed class RegistrationContractValidatorTests
     private static Dictionary<string, object?> ContractObject() =>
         new()
         {
-            ["contractVersion"] = 7,
+            ["contractVersion"] = 9,
             ["name"] = "test",
             ["start"] = "agent",
             ["initialState"] = "{}",
@@ -591,6 +691,8 @@ public sealed class RegistrationContractValidatorTests
                         Capability("second", "agent.second.validate"),
                     },
                     ["skillDirectories"] = new[] { "/skills/meridian" },
+                    ["temperature"] = 0,
+                    ["maxOutputTokens"] = 4096,
                 },
                 new Dictionary<string, object?>
                 {
@@ -615,7 +717,7 @@ public sealed class RegistrationContractValidatorTests
     private static Dictionary<string, object?> InteractionContractObject() =>
         new()
         {
-            ["contractVersion"] = 7,
+            ["contractVersion"] = 9,
             ["name"] = "interaction-test",
             ["start"] = "review",
             ["initialState"] = "{}",
@@ -646,6 +748,27 @@ public sealed class RegistrationContractValidatorTests
                 },
             },
             ["outputs"] = new[] { "done" },
+        };
+
+    private static Dictionary<string, object?> WorkspaceContract() =>
+        new()
+        {
+            ["pathCallback"] = "workspace.path",
+            ["commandsCallback"] = "workspace.commands",
+            ["toolGroups"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["tools"] = new[] { "read_file", "git:ro" },
+                    ["includeCommands"] = true,
+                },
+                new Dictionary<string, object?>
+                {
+                    ["tools"] = new[] { "write_file" },
+                    ["includeCommands"] = false,
+                    ["whenCallback"] = "workspace.can-mutate",
+                },
+            },
         };
 
     private static Dictionary<string, object?> Client(string endpoint, string? keyName) =>

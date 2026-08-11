@@ -2,6 +2,7 @@ import { appendFileSync } from "node:fs";
 import { createServer } from "node:http";
 
 const logPath = process.argv[2];
+const mode = process.argv[3];
 const server = createServer(async (request, response) => {
   const chunks = [];
   for await (const chunk of request) {
@@ -113,6 +114,55 @@ const server = createServer(async (request, response) => {
   }
   if (request.url === "/v1/chat/completions") {
     response.setHeader("content-type", "text/event-stream");
+    if (mode === "workspace") {
+      const hasToolResult = body.messages.some((message) => message.role === "tool");
+      const chunk = {
+        id: "chat_workspace",
+        object: "chat.completion.chunk",
+        created: 1,
+        model: "fixture",
+        choices: [
+          {
+            index: 0,
+            finish_reason: null,
+            delta: hasToolResult
+              ? { content: "Complete." }
+              : {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "call_workspace",
+                      type: "function",
+                      function: { name: "run_tests", arguments: "{}" },
+                    },
+                  ],
+                },
+          },
+        ],
+      };
+      response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      response.write(
+        `data: ${JSON.stringify({
+          ...chunk,
+          choices: [
+            {
+              index: 0,
+              finish_reason: hasToolResult ? "stop" : "tool_calls",
+              delta: {},
+            },
+          ],
+        })}\n\n`,
+      );
+      response.write(
+        `data: ${JSON.stringify({
+          ...chunk,
+          choices: [],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        })}\n\n`,
+      );
+      response.end("data: [DONE]\n\n");
+      return;
+    }
     const chunk = {
       id: "chat_test",
       object: "chat.completion.chunk",

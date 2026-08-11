@@ -26,7 +26,6 @@
     <ItemGroup>
         <ProjectReference Include="..\Tandem\Tandem.csproj" />
         <InternalsVisibleTo Include="Tandem.Tests" />
-        <InternalsVisibleTo Include="Tandem.Tool" />
     </ItemGroup>
 
     <ItemGroup>

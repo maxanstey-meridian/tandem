@@ -84,6 +84,45 @@ public static class Agent
     ) => new(id, id, instructions, chatClient, chatClientFactory: null);
 }
 
+public enum AgentReasoningEffort
+{
+    None,
+    Low,
+    Medium,
+    High,
+}
+
+public sealed class AgentModelRequestOptions
+{
+    public AgentModelRequestOptions(
+        AgentReasoningEffort? reasoningEffort = null,
+        float? temperature = null,
+        int? maxOutputTokens = null
+    )
+    {
+        if (reasoningEffort is { } effort && !Enum.IsDefined(effort))
+        {
+            throw new ArgumentOutOfRangeException(nameof(reasoningEffort));
+        }
+        if (temperature is { } value && (!float.IsFinite(value) || value is < 0 or > 2))
+        {
+            throw new ArgumentOutOfRangeException(nameof(temperature));
+        }
+        if (maxOutputTokens is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxOutputTokens));
+        }
+
+        ReasoningEffort = reasoningEffort;
+        Temperature = temperature;
+        MaxOutputTokens = maxOutputTokens;
+    }
+
+    public AgentReasoningEffort? ReasoningEffort { get; }
+    public float? Temperature { get; }
+    public int? MaxOutputTokens { get; }
+}
+
 public sealed class AgentBuilder<TState>
 {
     private static readonly JsonSerializerOptions _structuredOutputJsonOptions = new(
@@ -100,8 +139,7 @@ public sealed class AgentBuilder<TState>
     private readonly Func<string, IChatClient>? _chatClientFactory;
     private Func<TState, string>? _message;
     private Func<PipelineMessage<TState>, string>? _contextMessage;
-    private Func<TState, string>? _workspacePath;
-    private Func<TState, bool>? _allowMutation;
+    private AgentWorkspaceDescriptor<TState>? _workspace;
     private AgentStructuredOutputDescriptor<TState>? _structuredOutput;
     private AgentCheckpointDescriptor<TState>? _checkpoint;
     private IReadOnlyList<
@@ -121,6 +159,7 @@ public sealed class AgentBuilder<TState>
         ValueTask<string?>
     >? _toolInterceptor;
     private Action<ChatOptions>? _configureChatOptions;
+    private AgentModelRequestOptions? _modelRequestOptions;
     private AgentImplementationFactory? _implementationFactory;
     private TimeSpan? _timeout;
     private IReadOnlyList<AgentStateGuardDescriptor<TState>> _stateGuards = [];
@@ -206,6 +245,13 @@ public sealed class AgentBuilder<TState>
         return this;
     }
 
+    public AgentBuilder<TState> WithModelRequestOptions(AgentModelRequestOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        _modelRequestOptions = options;
+        return this;
+    }
+
     internal AgentBuilder<TState> ConfigureImplementation(AgentImplementationFactory factory)
     {
         _implementationFactory = factory;
@@ -213,8 +259,7 @@ public sealed class AgentBuilder<TState>
     }
 
     internal AgentBuilder<TState> ConfigureWorkspace(
-        Func<TState, string> path,
-        Func<TState, bool> allowMutation,
+        AgentWorkspaceDescriptor<TState> workspace,
         Func<
             PipelineMessage<TState>,
             string,
@@ -224,8 +269,7 @@ public sealed class AgentBuilder<TState>
         >? toolInterceptor = null
     )
     {
-        _workspacePath = path;
-        _allowMutation = allowMutation;
+        _workspace = workspace;
         _toolInterceptor = toolInterceptor;
         return this;
     }
@@ -576,7 +620,7 @@ public sealed class AgentBuilder<TState>
         {
             throw new InvalidOperationException($"Agent '{_id}' must configure a user message.");
         }
-        if (_workspacePath is not null && _implementationFactory is null)
+        if (_workspace is not null && _implementationFactory is null)
         {
             throw new InvalidOperationException(
                 $"Agent '{_id}' configures a workspace, which requires explicit Harness execution. "
@@ -589,8 +633,7 @@ public sealed class AgentBuilder<TState>
             _instructions,
             _capabilities,
             _message,
-            _workspacePath,
-            _allowMutation,
+            _workspace,
             _structuredOutput,
             _checkpoint,
             _messageAugmentations,
@@ -615,9 +658,34 @@ public sealed class AgentBuilder<TState>
                     onUpdate: null,
                     _toolInterceptor,
                     _configureChatOptions,
-                    _chatClientFactory
+                    _chatClientFactory,
+                    ConfigureModelRequestOptions
                 )
             )
         );
+    }
+
+    private void ConfigureModelRequestOptions(ChatOptions options)
+    {
+        if (_modelRequestOptions is not { } request)
+        {
+            return;
+        }
+
+        options.Reasoning = request.ReasoningEffort is { } effort
+            ? new ReasoningOptions
+            {
+                Effort = effort switch
+                {
+                    AgentReasoningEffort.None => ReasoningEffort.None,
+                    AgentReasoningEffort.Low => ReasoningEffort.Low,
+                    AgentReasoningEffort.Medium => ReasoningEffort.Medium,
+                    AgentReasoningEffort.High => ReasoningEffort.High,
+                    _ => throw new InvalidOperationException("Unknown reasoning effort."),
+                },
+            }
+            : null;
+        options.Temperature = request.Temperature;
+        options.MaxOutputTokens = request.MaxOutputTokens;
     }
 }

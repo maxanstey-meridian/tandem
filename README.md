@@ -90,6 +90,7 @@ A Tandem application is built from a small set of pieces:
 | **Participant** | A box that gets a turn        | The common idea behind agents, stages, and interactions           |
 | **Agent**       | A model-backed participant    | Receives instructions and a message derived from current state    |
 | **Stage**       | A deterministic participant   | Runs a normal operation and may return updated state              |
+| **Parallel group** | Independent work joined together | Runs named agents or stages from isolated state, then explicitly merges their results |
 | **Capability**  | A typed action                | Something an agent is explicitly permitted to do                  |
 | **Interaction** | A typed handoff               | Waits for an external request/response before continuing          |
 | **Route**       | An arrow / `if`               | Explicitly decides which participant runs next                    |
@@ -154,6 +155,7 @@ An agent has:
 * instructions;
 * a model client;
 * a message derived from current state;
+* optional per-agent model request controls;
 * optional typed capabilities;
 * optional structured output; and
 * optional session continuation.
@@ -213,6 +215,135 @@ var reviewer = Agent
         (state, review) => state.RecordReview(review))
     .Build();
 ```
+
+### Model request controls
+
+Different agent roles can require different model behavior. A reviewer may need repeatable decisions and a bounded
+answer while another agent uses the model provider's defaults.
+
+Set those request controls where the role is defined.
+
+### TypeScript
+
+```ts
+const reviewer = agent<State, ReviewDecision>({
+    id: "reviewer",
+    instructions:
+        "Review the exact implementation against the requirements.",
+    client: {
+        ...clients.reviewer,
+        // Explicitly ask a compatible model not to spend tokens reasoning.
+        reasoningEffort: "none",
+    },
+    message: reviewerMessage,
+
+    // Prefer repeatable decisions for this role.
+    temperature: 0,
+    // Bound the complete response, including structured output.
+    maxOutputTokens: 4096,
+
+    output: {
+        instructions:
+            "Return Accept or RequestChanges with concrete findings.",
+        schema: ReviewDecision,
+        apply: recordReview,
+    },
+});
+```
+
+### C#
+
+```csharp
+var reviewer = Agent
+    .Create<State>(
+        "reviewer",
+        "Review the exact implementation against the requirements.",
+        clients.Reviewer)
+    // Keep one provider-neutral request policy attached to every model turn.
+    .WithModelRequestOptions(
+        new AgentModelRequestOptions(
+            reasoningEffort: AgentReasoningEffort.None,
+            // Prefer repeatable decisions for this role.
+            temperature: 0,
+            // Bound the complete response, including structured output.
+            maxOutputTokens: 4096))
+    .WithMessage(ReviewerMessage)
+    .WithOutput(
+        new ReviewDecisionOutput(),
+        (state, review) => state.RecordReview(review))
+    .Build();
+```
+
+Reasoning effort accepts `"none"`, `"low"`, `"medium"`, or `"high"`. Omitting it expresses no Tandem preference.
+Temperature must be between `0` and `2`, and maximum output tokens must be a positive 32-bit integer. These settings
+remain attached to the agent during capability calls and structured-output correction turns; the selected
+OpenAI-compatible endpoint still decides which settings it supports.
+
+These are model request settings, not application facts. They do not belong in state and do not affect routing. The
+TypeScript bridge translates its authoring shape into the same C# `AgentModelRequestOptions`; it does not own a second
+request-policy implementation.
+
+### Workspace tools
+
+Define a repository environment once, then give each Harness agent an explicit tool set:
+
+```csharp
+var repository = AgentWorkspace<State>.Define(
+    state => state.WorkspacePath,
+    [
+        AgentCommand.Define(
+            // The model chooses this tool name; the application owns the command text.
+            "run_tests",
+            "Run the complete test suite.",
+            "task test")
+    ]
+);
+
+var worker = Agent
+    .Create<State>("worker", "Implement and verify the requested change.", clients.Worker)
+    .UseHarness(harnessInstructions)
+    .WithWorkspace(
+        repository,
+        [
+            // Reads and application-declared commands are always available.
+            AgentTools.Always<State>(
+                "read_file",
+                "ls",
+                "grep",
+                "git:ro",
+                repository.Commands),
+            // File mutation follows application state, not model preference.
+            AgentTools.When<State>(
+                state => state.MutationAuthorized,
+                "write_file",
+                "delete_file",
+                "replace",
+                "replace_lines")
+        ])
+    .WithMessage(state => state.Request)
+    .Build();
+```
+
+Each agent receives only the groups passed to its own `WithWorkspace` call.
+`AgentTools.Always` exposes a group on every visit. `AgentTools.When` reevaluates its
+predicate from current state before each visit. `"git:ro"` expands to bounded status,
+diff, log, show, blame, changed-file, and exact-comparison tools.
+
+`repository.Commands` selects the complete fixed command catalogue. Each command is
+a parameterless model tool: the model can choose `run_tests`, but it cannot alter
+`task test` or append another argument. Successful command calls can be required by
+output acceptance as `ProcessExecution` observations. A later failed call of the same
+command invalidates its earlier successful observation.
+
+Fixed commands execute without approval and with the Tandem host process's filesystem
+and network authority. They are feedback and evidence for the agent visit; the
+application still decides which deterministic stage or route makes verification
+authoritative for its lifecycle.
+
+Selecting `"shell"` additionally lets the model author the command text. The workspace
+is only the starting directory for either form of process execution; it is not
+filesystem or network isolation. Omit `"shell"` when the agent should be limited to
+application-declared commands.
 
 ## Typed model output becomes application state
 
@@ -470,6 +601,115 @@ public sealed partial class VerificationStage
 A stage can perform whatever operation belongs at that point in the lifecycle: validation, calculation, database work,
 an API call, compilation, verification, transformation, or another deterministic application operation. It does not need
 to know who runs before or after it.
+
+## Parallel work
+
+When several operations depend on the same accepted facts but not on one another, a parallel group can run them together
+and explicitly combine what each learned.
+
+Every named branch receives isolated state. All branches run concurrently and must succeed before merge runs. Merge
+receives the original baseline and each branch's resulting state, so application code decides how the facts combine rather
+than allowing completion order to decide.
+
+### TypeScript
+
+```ts
+const classify = parallel({
+    // The parent graph routes through this one semantic participant.
+    id: "classify-framing",
+
+    // Each named participant receives an isolated copy of the same facts.
+    branches: {
+        world: worldClassifier,
+        epistemic: epistemicClassifier,
+        temporal: temporalClassifier,
+    },
+
+    // Combine application facts explicitly; completion order changes nothing.
+    merge: (baseline, results) => ({
+        ...baseline,
+        world: results.world.world,
+        epistemic: results.epistemic.epistemic,
+        temporal: results.temporal.temporal,
+    }),
+});
+
+const framing = pipeline({
+    name: "classify-framing",
+    state: FramingState,
+
+    // Branch participants belong to classify, so only the group is listed here.
+    nodes: [classify, done, failed],
+    start: classify,
+
+    routes: [
+        // Every branch succeeded and the merged state is ready.
+        route({
+            from: classify,
+            outcome: "success",
+            to: done,
+            label: "classification complete",
+        }),
+        // A declared branch failure skips merge.
+        route({
+            from: classify,
+            outcome: "failed",
+            to: failed,
+            label: "classification failed",
+        }),
+    ],
+    outputs: [done, failed],
+});
+```
+
+### C#
+
+```csharp
+var classify = PipelineNodes.Parallel(
+    // The parent graph routes through this one semantic participant.
+    id: "classify-framing",
+
+    // Give every branch its own application-state graph.
+    clone: state => state with
+    {
+        Findings = [.. state.Findings],
+    },
+
+    // Branch names describe their role inside this group.
+    branches:
+    [
+        PipelineBranch.Create("world", worldClassifier),
+        PipelineBranch.Create("epistemic", epistemicClassifier),
+        PipelineBranch.Create("temporal", temporalClassifier),
+    ],
+
+    // Merge by authored branch name, never by completion order.
+    merge: results =>
+        results.Baseline with
+        {
+            World = results.State("world").World,
+            Epistemic = results.State("epistemic").Epistemic,
+            Temporal = results.State("temporal").Temporal,
+        }
+);
+
+var pipeline = Pipeline
+    .Start(classify, "classify-framing")
+    // Continue only after every branch succeeds and merge completes.
+    .Route(classify.Success, done, "classification complete")
+    // A declared branch failure follows the normal failed outcome.
+    .Route(classify.Failed, failed, "classification failed")
+    .Build(done, failed);
+```
+
+Branches may be agents or stages. Terminals, interactions, nested parallel groups, and branch subgraphs are not supported.
+Branch participants belong to the group and cannot also appear elsewhere in the parent graph. Branch observations can
+arrive in any order, and external side effects are not rolled back if a sibling fails. Caller cancellation reaches active
+branches.
+
+C# clone logic must isolate every mutable application object that branch code can reach. TypeScript receives that
+isolation through its validated JSON boundary. When persistence is enabled, branch results remain accepted under the
+branch participant IDs and the merged state is accepted under the parallel group ID.
 
 ## Interactions
 
@@ -731,6 +971,9 @@ At runtime, the model is simple:
 6. Run the next participant.
 7. Repeat until the run completes, fails, is cancelled, or waits at an interaction.
 
+A parallel participant runs its named branches concurrently, merges successful branch states, and then returns one
+ordinary outcome to this same route cycle.
+
 There is no second application-level orchestration model behind the graph.
 
 The configured pipeline is the lifecycle.
@@ -812,35 +1055,9 @@ Once the stage succeeds, the state it returned is available in the ledger.
 
 ### Inspecting accepted values
 
-Runs created by `Tandem.Tool` use the Tool ledger, stored at:
-
-```text
-$TANDEM_HOME/ledger.sqlite3
-```
-
-when `TANDEM_HOME` is configured.
-
-Inspect a run by ID:
-
-```sh
-# Complete run timeline.
-dotnet run --project src/Tandem.Tool -- inspect <run-id>
-
-# Only values accepted into the run.
-dotnet run --project src/Tandem.Tool -- inspect <run-id> --accepted
-
-# Filter accepted values.
-dotnet run --project src/Tandem.Tool -- inspect <run-id> --accepted --step reviewer
-
-# Emit JSON for another tool.
-dotnet run --project src/Tandem.Tool -- inspect <run-id> --accepted --json
-
-# Inspect an application-owned ledger at another path.
-dotnet run --project src/Tandem.Tool -- inspect <run-id> --ledger path/to/pipeline.sqlite3
-```
-
-Applications can also read accepted values directly through `inspectAccepted` in TypeScript or `SqliteLedgerStore` in
-C#.
+Applications read accepted values through `inspectAccepted` in TypeScript or
+`SqliteLedgerStore` in C#. The application owns the ledger path and any operator-facing
+inspection interface.
 
 ## Running a pipeline
 
@@ -898,6 +1115,7 @@ Tandem has one execution model with two authoring surfaces.
 | **State**             | Normal typed application state                | Zod schema + inferred TypeScript type |
 | **Stages**            | Generated from `[PipelineStage]` classes      | `stage(...)`                          |
 | **Agents**            | `Agent.Create<TState>(...)`                   | `agent<TState>(...)`                  |
+| **Parallel groups**   | `PipelineNodes.Parallel(...)`                 | `parallel(...)`                       |
 | **Capabilities**      | Typed definitions + validators                | Zod request schemas                   |
 | **Structured output** | Typed output definitions + validators         | Zod output schemas                    |
 | **Interactions**      | `PipelineNodes.WaitFor<...>`                  | `interaction(...)`                    |
@@ -916,6 +1134,7 @@ Tandem owns the application-facing model:
 * typed state;
 * participants;
 * agent definitions;
+* named parallel branches and deterministic merge;
 * structured outputs;
 * capabilities;
 * interactions;
@@ -993,12 +1212,8 @@ OPENROUTER_API_KEY=... \
 
 Code Writer also requires Node.js for its JavaScript verifier. After the run finishes,
 press `q` to close the terminal view and print its run ID and absolute ledger path.
-Inspect that ledger directly with:
-
-```sh
-dotnet run --project src/Tandem.Tool -- inspect <run-id> \
-  --ledger <ledger-path> --accepted
-```
+TypeScript applications can inspect that ledger with `inspectAccepted`; C# applications
+can query it with `SqliteLedgerStore`.
 
 ## Documentation
 

@@ -1,5 +1,4 @@
 using System.ClientModel;
-using System.Diagnostics;
 using System.Net.Http.Json;
 using Microsoft.Extensions.AI;
 using OpenAI;
@@ -41,25 +40,6 @@ internal static class OpenAiCompatibleChatClients
         else
         {
             chatClient = client.GetChatClient(descriptor.Model!).AsIChatClient();
-        }
-
-        if (descriptor.ReasoningEffort is { } effort)
-        {
-            chatClient = chatClient
-                .AsBuilder()
-                .ConfigureOptions(options =>
-                    options.Reasoning = new ReasoningOptions
-                    {
-                        Effort = effort switch
-                        {
-                            "low" => ReasoningEffort.Low,
-                            "medium" => ReasoningEffort.Medium,
-                            "high" => ReasoningEffort.High,
-                            _ => throw new UnreachableException(),
-                        },
-                    }
-                )
-                .Build();
         }
 
         if (

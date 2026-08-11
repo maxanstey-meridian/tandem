@@ -28,11 +28,26 @@ internal sealed record RegisteredNodeContract(
     RegisteredAgentOutputContract? Output,
     RegisteredCapabilityContract[]? Capabilities,
     string[]? SkillDirectories,
+    double? Temperature,
+    int? MaxOutputTokens,
     bool ContinueSession,
     double? TimeoutMilliseconds,
     bool? Persist,
     RegisteredParallelBranchContract[]? Branches = null,
-    string? MergeCallback = null
+    string? MergeCallback = null,
+    RegisteredWorkspaceContract? Workspace = null
+);
+
+internal sealed record RegisteredWorkspaceContract(
+    string? PathCallback,
+    string? CommandsCallback,
+    RegisteredToolGroupContract[]? ToolGroups
+);
+
+internal sealed record RegisteredToolGroupContract(
+    string[]? Tools,
+    bool IncludeCommands,
+    string? WhenCallback
 );
 
 internal sealed record RegisteredParallelBranchContract(

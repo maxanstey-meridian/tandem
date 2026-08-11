@@ -8,8 +8,7 @@ internal sealed record AgentBlockConfig<TState>(
     string SystemInstructions,
     IReadOnlyList<AgentCapabilityDescriptor<TState>> Capabilities,
     Func<TState, string>? UserMessage,
-    Func<TState, string>? WorkspacePath,
-    Func<TState, bool>? AllowMutation,
+    AgentWorkspaceDescriptor<TState>? Workspace,
     AgentStructuredOutputDescriptor<TState>? StructuredOutput = null,
     AgentCheckpointDescriptor<TState>? Checkpoint = null,
     IReadOnlyList<
@@ -25,6 +24,28 @@ internal sealed record AgentBlockConfig<TState>(
     IReadOnlyList<AgentStateGuardDescriptor<TState>>? StateGuards = null,
     IReadOnlyList<AgentLatchedGateDescriptor>? LatchedGates = null,
     IReadOnlyList<AgentSkillDescriptor>? Skills = null
+);
+
+internal sealed record AgentWorkspaceDescriptor<TState>(
+    Func<TState, string> Path,
+    Func<TState, IReadOnlyList<AgentCommandDescriptor>> Commands,
+    IReadOnlyList<AgentToolGroupDescriptor<TState>> ToolGroups
+);
+
+internal sealed record AgentToolGroupDescriptor<TState>(
+    Func<TState, bool> IsAvailable,
+    IReadOnlyList<AgentToolSelectionDescriptor> Tools
+);
+
+internal enum AgentToolSelectionKind
+{
+    BuiltIn,
+    Commands,
+}
+
+internal sealed record AgentToolSelectionDescriptor(
+    AgentToolSelectionKind Kind,
+    string? Name = null
 );
 
 internal sealed record AgentStateGuardDescriptor<TState>(

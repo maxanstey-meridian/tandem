@@ -1,5 +1,7 @@
 import {
   agent,
+  agentTools,
+  agentWorkspace,
   capability,
   interaction,
   interactions,
@@ -93,13 +95,23 @@ const client = {
   endpoint: "http://localhost:10531/v1",
   model: "test",
   wireApi: "responses",
+  reasoningEffort: "none",
 } as const;
 const meridian = skill({ directory: "/skills/meridian" });
+type WorkspaceState = { workspacePath: string; mutationAuthorized: boolean };
+const repository = agentWorkspace<WorkspaceState>({
+  path: (state) => state.workspacePath,
+  commands: (state) => [
+    { name: "run_tests", description: `Test from ${state.workspacePath}`, command: "task test" },
+  ],
+});
 const worker = agent<State, { amount: number }>({
   id: "worker",
   instructions: "Work.",
   client,
   message: (state) => String(state.count),
+  temperature: 0,
+  maxOutputTokens: 2048,
   capabilities: granted,
   skills: [meridian],
   output: {
@@ -109,6 +121,16 @@ const worker = agent<State, { amount: number }>({
       value.amount >= state.count ? [] : [{ path: "$.amount", message: "too small" }],
     apply: (state, value) => ({ count: state.count + value.amount }),
   },
+});
+agent<WorkspaceState>({
+  id: "workspace-worker",
+  instructions: "Work in the repository.",
+  client,
+  message: (state) => state.workspacePath,
+  workspace: repository.withTools([
+    agentTools.always("read_file", "git:ro", repository.commands),
+    agentTools.when<WorkspaceState>((state) => state.mutationAuthorized, "write_file"),
+  ]),
 });
 agent({
   id: "transforming-worker",

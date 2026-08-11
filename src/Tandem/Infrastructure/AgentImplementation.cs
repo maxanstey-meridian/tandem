@@ -7,11 +7,31 @@ internal sealed record AgentImplementationContext(
     string Id,
     IChatClient ChatClient,
     ChatOptions ChatOptions,
-    string? WorkspacePath,
-    bool ExposeWorkspaceMutationTools,
+    ResolvedAgentWorkspace? Workspace,
     ToolEffectRegistry ToolEffects,
     IReadOnlyList<AgentSkillDescriptor> Skills
 );
+
+internal sealed record ResolvedAgentWorkspace(
+    string Path,
+    IReadOnlySet<WorkspaceToolKind> FileTools,
+    bool IncludeGitReadOnly,
+    bool IncludeShell,
+    IReadOnlyList<AgentCommandDescriptor> Commands
+);
+
+internal enum WorkspaceToolKind
+{
+    ReadFile,
+    ListFiles,
+    Grep,
+    WriteFile,
+    DeleteFile,
+    Replace,
+    ReplaceLines,
+}
+
+internal sealed record AgentCommandDescriptor(string Name, string Description, string Command);
 
 internal static class AgentSkillRuntime
 {
@@ -54,6 +74,7 @@ internal enum ToolEffect
 {
     Read,
     WorkspaceMutation,
+    ProcessExecution,
     LifecycleTransition,
 }
 

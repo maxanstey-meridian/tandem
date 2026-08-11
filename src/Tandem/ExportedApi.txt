@@ -5,7 +5,9 @@ Tandem.AgentCapability`1
 Tandem.AgentCapability`2
 Tandem.AgentDefinition`1
 Tandem.Agent
+Tandem.AgentModelRequestOptions
 Tandem.AgentOutputExample`1
+Tandem.AgentReasoningEffort
 Tandem.AgentSkill
 Tandem.FailureEvidence
 Tandem.IAgentCapabilityDefinition`2

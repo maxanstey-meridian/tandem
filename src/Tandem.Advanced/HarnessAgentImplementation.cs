@@ -1,5 +1,7 @@
 using System.Text;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Tools.Shell;
+using Microsoft.Extensions.AI;
 using Tandem.Infrastructure;
 
 #pragma warning disable MAAI001
@@ -10,12 +12,66 @@ internal static class HarnessAgentImplementation
 {
     internal static AIAgent Create(AgentImplementationContext context, string harnessInstructions)
     {
-        AgentFileStore? fileStore = context.WorkspacePath is null
+        var workspace = context.Workspace;
+        AgentFileStore? fileStore = workspace is null
             ? null
-            : new GitExcludedFileStore(new BomlessFileSystemAgentFileStore(context.WorkspacePath));
+            : new GitExcludedFileStore(new BomlessFileSystemAgentFileStore(workspace.Path));
+        var providers =
+            context.Skills.Count == 0
+                ? new List<AIContextProvider>()
+                : [AgentSkillRuntime.CreateProvider(context.Skills)];
         if (fileStore is not null)
         {
-            HarnessToolEffects.Register(context.ToolEffects, context.ExposeWorkspaceMutationTools);
+            var selectedFileToolNames = HarnessToolEffects.Register(
+                context.ToolEffects,
+                workspace!.FileTools
+            );
+            if (selectedFileToolNames.Count > 0)
+            {
+                providers.Add(
+                    new FilteringAIContextProvider(
+                        new FileAccessProvider(
+                            fileStore,
+                            new FileAccessProviderOptions
+                            {
+                                DisableWriteTools = !workspace.FileTools.Any(IsMutation),
+                                DisableReadOnlyToolApproval = true,
+                                DisableWriteToolApproval = true,
+                            }
+                        ),
+                        selectedFileToolNames
+                    )
+                );
+            }
+            if (workspace.IncludeGitReadOnly)
+            {
+                var existingToolCount = context.ChatOptions.Tools?.Count ?? 0;
+                ReadOnlyGitTools.Add(context.ChatOptions, workspace.Path, context.ToolEffects);
+                WorkspaceShellTools.Add(context.ChatOptions, workspace, context.ToolEffects);
+                var workspaceTools =
+                    context.ChatOptions.Tools?.Skip(existingToolCount).ToArray() ?? [];
+                if (workspaceTools.Length > 0)
+                {
+                    context.ChatOptions.Tools = context
+                        .ChatOptions.Tools?.Take(existingToolCount)
+                        .ToList();
+                    providers.Add(new StaticToolsAIContextProvider(workspaceTools));
+                }
+            }
+            else
+            {
+                var existingToolCount = context.ChatOptions.Tools?.Count ?? 0;
+                WorkspaceShellTools.Add(context.ChatOptions, workspace, context.ToolEffects);
+                var workspaceTools =
+                    context.ChatOptions.Tools?.Skip(existingToolCount).ToArray() ?? [];
+                if (workspaceTools.Length > 0)
+                {
+                    context.ChatOptions.Tools = context
+                        .ChatOptions.Tools?.Take(existingToolCount)
+                        .ToList();
+                    providers.Add(new StaticToolsAIContextProvider(workspaceTools));
+                }
+            }
         }
         return new HarnessAgent(
             context.ChatClient,
@@ -29,66 +85,190 @@ internal static class HarnessAgentImplementation
                 DisableTodoProvider = true,
                 DisableAgentModeProvider = true,
                 DisableAgentSkillsProvider = true,
-                AIContextProviders =
-                    context.Skills.Count == 0
-                        ? null
-                        : [AgentSkillRuntime.CreateProvider(context.Skills)],
+                AIContextProviders = providers.Count == 0 ? null : providers,
                 DisableWebSearch = true,
                 DisableToolAutoApproval = true,
                 DisableOpenTelemetry = true,
                 DisableCompaction = true,
                 MaximumIterationsPerRequest = 999,
-                FileAccessStore = fileStore,
-                FileAccessProviderOptions = fileStore is null
-                    ? null
-                    : new FileAccessProviderOptions
-                    {
-                        DisableWriteTools = !context.ExposeWorkspaceMutationTools,
-                        DisableReadOnlyToolApproval = true,
-                        DisableWriteToolApproval = true,
-                    },
+                FileAccessStore = null,
             }
         );
     }
+
+    private static bool IsMutation(WorkspaceToolKind kind) =>
+        kind
+            is WorkspaceToolKind.WriteFile
+                or WorkspaceToolKind.DeleteFile
+                or WorkspaceToolKind.Replace
+                or WorkspaceToolKind.ReplaceLines;
 }
 
 internal static class HarnessToolEffects
 {
-    internal static void Register(ToolEffectRegistry registry, bool includeMutations)
+    internal static IReadOnlySet<string> Register(
+        ToolEffectRegistry registry,
+        IReadOnlySet<WorkspaceToolKind> selected
+    )
     {
-        registry.Add(
-            FileAccessProvider.ReadFileToolName,
-            Infrastructure.ToolEffect.Read,
-            Infrastructure.ToolEvidence.RepositoryInspection
-        );
-        registry.Add(
-            FileAccessProvider.LsToolName,
-            Infrastructure.ToolEffect.Read,
-            Infrastructure.ToolEvidence.RepositoryInspection
-        );
-        registry.Add(
-            FileAccessProvider.GrepToolName,
-            Infrastructure.ToolEffect.Read,
-            Infrastructure.ToolEvidence.RepositoryInspection
-        );
-        if (!includeMutations)
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var kind in selected)
         {
-            return;
+            var (name, effect, evidence) = kind switch
+            {
+                WorkspaceToolKind.ReadFile => (
+                    FileAccessProvider.ReadFileToolName,
+                    Infrastructure.ToolEffect.Read,
+                    Infrastructure.ToolEvidence.RepositoryInspection
+                ),
+                WorkspaceToolKind.ListFiles => (
+                    FileAccessProvider.LsToolName,
+                    Infrastructure.ToolEffect.Read,
+                    Infrastructure.ToolEvidence.RepositoryInspection
+                ),
+                WorkspaceToolKind.Grep => (
+                    FileAccessProvider.GrepToolName,
+                    Infrastructure.ToolEffect.Read,
+                    Infrastructure.ToolEvidence.RepositoryInspection
+                ),
+                WorkspaceToolKind.WriteFile => (
+                    FileAccessProvider.WriteToolName,
+                    Infrastructure.ToolEffect.WorkspaceMutation,
+                    Infrastructure.ToolEvidence.None
+                ),
+                WorkspaceToolKind.DeleteFile => (
+                    FileAccessProvider.DeleteFileToolName,
+                    Infrastructure.ToolEffect.WorkspaceMutation,
+                    Infrastructure.ToolEvidence.None
+                ),
+                WorkspaceToolKind.Replace => (
+                    FileAccessProvider.ReplaceToolName,
+                    Infrastructure.ToolEffect.WorkspaceMutation,
+                    Infrastructure.ToolEvidence.None
+                ),
+                WorkspaceToolKind.ReplaceLines => (
+                    FileAccessProvider.ReplaceLinesToolName,
+                    Infrastructure.ToolEffect.WorkspaceMutation,
+                    Infrastructure.ToolEvidence.None
+                ),
+                _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+            };
+            registry.Add(name, effect, evidence);
+            names.Add(name);
         }
-        registry.Add(FileAccessProvider.WriteToolName, Infrastructure.ToolEffect.WorkspaceMutation);
-        registry.Add(
-            FileAccessProvider.DeleteFileToolName,
-            Infrastructure.ToolEffect.WorkspaceMutation
-        );
-        registry.Add(
-            FileAccessProvider.ReplaceToolName,
-            Infrastructure.ToolEffect.WorkspaceMutation
-        );
-        registry.Add(
-            FileAccessProvider.ReplaceLinesToolName,
-            Infrastructure.ToolEffect.WorkspaceMutation
-        );
+        return names;
     }
+}
+
+internal sealed class FilteringAIContextProvider(
+    AIContextProvider inner,
+    IReadOnlySet<string> selectedToolNames
+) : AIContextProvider
+{
+    protected override async ValueTask<AIContext> InvokingCoreAsync(
+        InvokingContext context,
+        CancellationToken cancellationToken
+    )
+    {
+        var existingTools = context.AIContext.Tools?.ToArray() ?? [];
+        var result = await inner.InvokingAsync(context, cancellationToken);
+        result.Tools =
+        [
+            .. existingTools,
+            .. (result.Tools ?? []).Where(tool =>
+                selectedToolNames.Contains(tool.Name)
+                && existingTools.All(existing => existing.Name != tool.Name)
+            ),
+        ];
+        return result;
+    }
+
+    protected override ValueTask InvokedCoreAsync(
+        InvokedContext context,
+        CancellationToken cancellationToken
+    ) => inner.InvokedAsync(context, cancellationToken);
+}
+
+internal sealed class StaticToolsAIContextProvider(IReadOnlyList<AITool> tools) : AIContextProvider
+{
+    protected override ValueTask<AIContext> InvokingCoreAsync(
+        InvokingContext context,
+        CancellationToken cancellationToken
+    )
+    {
+        context.AIContext.Tools = [.. context.AIContext.Tools ?? [], .. tools];
+        return ValueTask.FromResult(context.AIContext);
+    }
+}
+
+internal static class WorkspaceShellTools
+{
+    internal static void Add(
+        ChatOptions options,
+        ResolvedAgentWorkspace workspace,
+        ToolEffectRegistry effects,
+        TimeSpan? timeout = null,
+        int maxOutputBytes = 64 * 1024
+    )
+    {
+        var tools = options.Tools?.ToList() ?? [];
+        foreach (var command in workspace.Commands)
+        {
+            var authoredCommand = command.Command;
+            tools.Add(
+                AIFunctionFactory.Create(
+                    async (CancellationToken cancellationToken) =>
+                    {
+                        await using var shell = CreateExecutor(
+                            workspace.Path,
+                            acknowledgeUnsafe: false,
+                            timeout,
+                            maxOutputBytes
+                        );
+                        return await shell.RunAsync(authoredCommand, cancellationToken);
+                    },
+                    command.Name,
+                    command.Description
+                )
+            );
+            effects.Add(command.Name, Infrastructure.ToolEffect.ProcessExecution);
+        }
+        if (workspace.IncludeShell)
+        {
+            var tool = CreateExecutor(
+                    workspace.Path,
+                    acknowledgeUnsafe: true,
+                    timeout,
+                    maxOutputBytes
+                )
+                .AsAIFunction(
+                    "run_shell",
+                    "Run a model-authored command in the configured workspace without approval.",
+                    requireApproval: false
+                );
+            tools.Add(tool);
+            effects.Add(tool.Name, Infrastructure.ToolEffect.ProcessExecution);
+        }
+        options.Tools = tools;
+    }
+
+    private static LocalShellExecutor CreateExecutor(
+        string workspacePath,
+        bool acknowledgeUnsafe,
+        TimeSpan? timeout,
+        int maxOutputBytes
+    ) =>
+        new(
+            new LocalShellExecutorOptions
+            {
+                Mode = ShellMode.Stateless,
+                WorkingDirectory = workspacePath,
+                ConfineWorkingDirectory = true,
+                Timeout = timeout ?? TimeSpan.FromMinutes(10),
+                MaxOutputBytes = maxOutputBytes,
+                AcknowledgeUnsafe = acknowledgeUnsafe,
+            }
+        );
 }
 
 internal sealed class BomlessFileSystemAgentFileStore(string rootPath) : AgentFileStore
@@ -165,7 +345,7 @@ internal sealed class GitExcludedFileStore(AgentFileStore inner) : AgentFileStor
         CancellationToken cancellationToken
     ) =>
         (await inner.ListChildrenAsync(directory, cancellationToken))
-            .Where(entry => entry.Name != ".git")
+            .Where(entry => !string.Equals(entry.Name, ".git", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
     public override Task<bool> FileExistsAsync(string path, CancellationToken cancellationToken)
@@ -210,7 +390,7 @@ internal sealed class GitExcludedFileStore(AgentFileStore inner) : AgentFileStor
     private static bool ContainsGitSegment(string path) =>
         path.Replace('\\', '/')
             .Split('/', StringSplitOptions.RemoveEmptyEntries)
-            .Any(segment => segment == ".git");
+            .Any(segment => string.Equals(segment, ".git", StringComparison.OrdinalIgnoreCase));
 }
 
 #pragma warning restore MAAI001

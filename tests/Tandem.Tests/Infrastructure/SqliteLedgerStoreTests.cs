@@ -3,7 +3,6 @@ using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Tandem.Ledger;
-using Tandem.Tool;
 
 namespace Tandem.Tests.Infrastructure;
 
@@ -328,19 +327,14 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var runId = Guid.CreateVersion7();
         await store.CreateRunAsync(runId, "delivery");
         var observer = new SqlitePipelineObserver(store.ForRun(runId));
-        var decision = new PlannerDecision(
-            PlannerDecisionValue.Proceed,
-            "Proceed.",
-            [],
-            ["README.md"]
-        );
+        var decision = new ProbeDecision("Proceed.", ["README.md"]);
 
         var observation = new PipelineStructuredOutputAccepted(
             runId,
-            DeliveryIds.Planner,
+            "planner",
             "planner-output-1",
             StandardOutcomeKinds.Success,
-            typeof(PlannerDecision).FullName,
+            typeof(ProbeDecision).FullName,
             JsonSerializer.SerializeToElement(decision, JsonSerializerOptions.Web)
         );
         await observer.ObserveAsync(observation, CancellationToken.None);
@@ -354,7 +348,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         records.Should().ContainSingle();
         records[0].EntryId.Should().Be("accepted-output--planner-output-1");
         records[0]
-            .Value.Payload!.Value.Deserialize<PlannerDecision>(JsonSerializerOptions.Web)
+            .Value.Payload!.Value.Deserialize<ProbeDecision>(JsonSerializerOptions.Web)
             .Should()
             .BeEquivalentTo(decision);
     }
@@ -366,7 +360,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var runId = Guid.CreateVersion7();
         await store.CreateRunAsync(runId, "delivery");
         var observer = new SqlitePipelineObserver(store.ForRun(runId));
-        var request = new AskPlannerRequest("What next?", "Inspect first.", ["README.md"]);
+        var request = new ProbeRequest("What next?", "Inspect first.", ["README.md"]);
 
         var observation = new PipelineCapabilityAccepted(
             runId,
@@ -376,7 +370,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             "ask_planner",
             "accepted-call-1",
             "Inspect first.",
-            typeof(AskPlannerRequest).FullName,
+            typeof(ProbeRequest).FullName,
             JsonSerializer.SerializeToElement(request, JsonSerializerOptions.Web)
         );
         await observer.ObserveAsync(observation, CancellationToken.None);
@@ -390,194 +384,9 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         records.Should().ContainSingle();
         records[0].EntryId.Should().Be("accepted-capability--accepted-call-1");
         records[0]
-            .Value.Payload!.Value.Deserialize<AskPlannerRequest>(JsonSerializerOptions.Web)
+            .Value.Payload!.Value.Deserialize<ProbeRequest>(JsonSerializerOptions.Web)
             .Should()
             .BeEquivalentTo(request);
-    }
-
-    [Fact]
-    public async Task DeliveryAdapter_PersistsHumanAndVerificationAcceptanceFacts()
-    {
-        var store = await CreateStoreAsync(DatabasePath());
-        var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "delivery");
-        var adapter = new DeliveryLedger(store.ForRun(runId));
-        var observer = new SqlitePipelineObserver(store.ForRun(runId));
-        var question = new HumanQuestion("Which behavior?", "Decision required.");
-        var answer = new HumanAnswer("Use strict behavior.");
-        var verification = new VerificationResult(
-            0,
-            "task check",
-            0,
-            "passed",
-            "",
-            TimeSpan.FromSeconds(2),
-            false
-        );
-
-        var requested = new PipelineInteractionRequested<HumanQuestion>(
-            runId,
-            "PlannerHumanInput",
-            "request-1",
-            question,
-            JsonSerializer.SerializeToElement(question, JsonSerializerOptions.Web)
-        );
-        var answered = new PipelineInteractionAnswered<HumanAnswer>(
-            runId,
-            "PlannerHumanInput",
-            "request-1",
-            answer,
-            JsonSerializer.SerializeToElement(answer, JsonSerializerOptions.Web)
-        );
-        await observer.ObserveAsync(requested, CancellationToken.None);
-        await observer.ObserveAsync(requested, CancellationToken.None);
-        await observer.ObserveAsync(answered, CancellationToken.None);
-        await observer.ObserveAsync(answered, CancellationToken.None);
-        await adapter.AcceptVerificationResultAsync(
-            $"{runId:N}--verify--1",
-            verification,
-            CancellationToken.None
-        );
-
-        var ledger = store.ForRun(runId);
-        var verificationResults = await ledger.ReadAsync(
-            new LedgerStream<VerificationResultRecord>(
-                "delivery.verification-results",
-                "delivery.verification-result"
-            )
-        );
-        var context = await adapter.ReadContextAsync(
-            DeliveryLedgerRole.Reviewer,
-            CancellationToken.None
-        );
-        context.HumanAnswers.Should().ContainSingle().Which.Answer.Should().Be(answer);
-        (await ledger.ReadAsync(PipelineJournal.Stream)).Should().HaveCount(2);
-        verificationResults.Should().ContainSingle();
-        verificationResults[0].Value.Result.Should().Be(verification);
-
-        var conflictingAnswer = async () =>
-            await observer.ObserveAsync(
-                new PipelineInteractionAnswered<HumanAnswer>(
-                    runId,
-                    "PlannerHumanInput",
-                    "request-1",
-                    new HumanAnswer("Use permissive behavior."),
-                    JsonSerializer.SerializeToElement(
-                        new HumanAnswer("Use permissive behavior."),
-                        JsonSerializerOptions.Web
-                    )
-                ),
-                CancellationToken.None
-            );
-        await conflictingAnswer.Should().ThrowAsync<LedgerConflictException>();
-    }
-
-    [Fact]
-    public async Task DeliveryAdapter_PersistsCheckpointsAndOwnsCurrentDocuments()
-    {
-        var store = await CreateStoreAsync(DatabasePath());
-        var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "delivery");
-        var adapter = new DeliveryLedger(store.ForRun(runId));
-        var observer = new SqlitePipelineObserver(store.ForRun(runId));
-        var packet = new Packet(
-            "Packet",
-            "file:///repo",
-            "main",
-            [new Outcome("outcome", "Deliver it")],
-            [],
-            [],
-            ""
-        );
-        await adapter.InitializeAsync(packet, CancellationToken.None);
-        var checkpoint = new ProgressCheckpointRecord(
-            "Progress",
-            ["Implemented"],
-            [new OutcomeProgress("outcome", "Deliver it", false, [])],
-            ["src/File.cs"],
-            ["README.md"],
-            ["Keep API typed"],
-            [],
-            "Verify"
-        );
-        var report = new SubmitReportRequest("Complete", ["outcome"], ["src/File.cs"]);
-        var review = new ReviewDecision(
-            ReviewDecisionValue.Accept,
-            "Accepted",
-            [new ReviewOutcomeAssessment("outcome", true, ["src/File.cs"])],
-            []
-        );
-        var candidate = new PublicationCandidateDocument(
-            "candidate-1",
-            packet.Repository,
-            "/workspace",
-            packet.Title,
-            "base",
-            "candidate"
-        );
-
-        await adapter.AcceptCheckpointAsync("checkpoint-1", checkpoint, CancellationToken.None);
-        await adapter.AcceptCheckpointAsync("checkpoint-1", checkpoint, CancellationToken.None);
-        await observer.ObserveAsync(
-            new PipelineCapabilityAccepted(
-                runId,
-                "executor",
-                "invocation-1",
-                "capability:submit_report",
-                "submit_report",
-                "report-1",
-                "Report submitted.",
-                typeof(SubmitReportRequest).FullName,
-                JsonSerializer.SerializeToElement(report, JsonSerializerOptions.Web)
-            ),
-            CancellationToken.None
-        );
-        await observer.ObserveAsync(
-            new PipelineStructuredOutputAccepted(
-                runId,
-                DeliveryIds.Reviewer,
-                "review-1",
-                StandardOutcomeKinds.Success,
-                typeof(ReviewDecision).FullName,
-                JsonSerializer.SerializeToElement(review, JsonSerializerOptions.Web)
-            ),
-            CancellationToken.None
-        );
-        await adapter.AcceptPublicationCandidateAsync(
-            "candidate-1",
-            candidate,
-            CancellationToken.None
-        );
-        await adapter.AcceptPublicationCandidateAsync(
-            "candidate-1",
-            candidate,
-            CancellationToken.None
-        );
-        var ledger = store.ForRun(runId);
-        (
-            await ledger.ReadAsync(
-                new LedgerStream<ProgressCheckpointRecord>(
-                    "delivery.progress-checkpoints",
-                    "delivery.progress-checkpoint"
-                )
-            )
-        )
-            .Should()
-            .ContainSingle();
-        var context = await adapter.ReadContextAsync(
-            DeliveryLedgerRole.Reviewer,
-            CancellationToken.None
-        );
-        context.Outcomes!.Outcomes.Should().ContainSingle().Which.Delivered.Should().BeTrue();
-        context.Outcomes.AcceptedDecisionId.Should().Be("review-1");
-        context.Report.Should().BeEquivalentTo(report);
-        var acceptedCandidate = await ledger.ReadDocumentAsync(
-            new LedgerDocument<PublicationCandidateDocument>(
-                "delivery.publication-candidate",
-                "delivery.publication-candidate"
-            )
-        );
-        acceptedCandidate!.Value.Should().BeEquivalentTo(candidate);
     }
 
     [Fact]
@@ -849,82 +658,6 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             .Single(record => record.Kind == RuntimeJournalKind.StepCompleted);
         completed.ValueType.Should().Be(typeof(RunnerDerivedState).FullName);
         completed.Payload!.Value.GetProperty("detail").GetString().Should().Be("persisted");
-    }
-
-    [Fact]
-    public async Task DeliveryContext_IsRoleSpecificRecentAndExplicitlyTruncated()
-    {
-        var store = await CreateStoreAsync(DatabasePath());
-        var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "delivery");
-        var adapter = new DeliveryLedger(store.ForRun(runId));
-        var observer = new SqlitePipelineObserver(store.ForRun(runId));
-        await adapter.InitializeAsync(
-            new Packet(
-                "Packet",
-                "file:///repo",
-                "main",
-                [new Outcome("outcome", "Deliver")],
-                [],
-                [],
-                ""
-            ),
-            CancellationToken.None
-        );
-        for (var index = 0; index < 7; index++)
-        {
-            var decision = new PlannerDecision(
-                PlannerDecisionValue.Proceed,
-                $"Decision {index}",
-                [],
-                ["README.md"]
-            );
-            await observer.ObserveAsync(
-                new PipelineStructuredOutputAccepted(
-                    runId,
-                    DeliveryIds.Planner,
-                    $"planner-{index}",
-                    StandardOutcomeKinds.Success,
-                    typeof(PlannerDecision).FullName,
-                    JsonSerializer.SerializeToElement(decision, JsonSerializerOptions.Web)
-                ),
-                CancellationToken.None
-            );
-        }
-        var report = new SubmitReportRequest(new string('x', 9_000), ["outcome"], ["README.md"]);
-        await observer.ObserveAsync(
-            new PipelineCapabilityAccepted(
-                runId,
-                "executor",
-                "invocation",
-                "capability:submit_report",
-                "submit_report",
-                "report",
-                "Report submitted.",
-                typeof(SubmitReportRequest).FullName,
-                JsonSerializer.SerializeToElement(report, JsonSerializerOptions.Web)
-            ),
-            CancellationToken.None
-        );
-
-        var executor = await adapter.ReadContextAsync(
-            DeliveryLedgerRole.Executor,
-            CancellationToken.None
-        );
-        var reviewer = await adapter.ReadContextAsync(
-            DeliveryLedgerRole.Reviewer,
-            CancellationToken.None
-        );
-
-        executor
-            .PlannerDecisions.Select(decision => decision.Rationale)
-            .Should()
-            .Equal("Decision 2", "Decision 3", "Decision 4", "Decision 5", "Decision 6");
-        executor.Report.Should().BeNull();
-        reviewer.Report.Should().NotBeNull();
-        var formatted = DeliveryLedgerContextFormatter.Format(reviewer);
-        formatted.Should().HaveLength(8_000);
-        formatted.Should().EndWith("[durable context truncated]\n</durable-delivery-context>");
     }
 
     [Fact]
@@ -1228,6 +961,14 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     private sealed record ProbeEntry(string Name, int Count);
+
+    private sealed record ProbeDecision(string Rationale, IReadOnlyList<string> Evidence);
+
+    private sealed record ProbeRequest(
+        string Question,
+        string ProposedApproach,
+        IReadOnlyList<string> Evidence
+    );
 
     private sealed record ProcessEntry(string Value);
 

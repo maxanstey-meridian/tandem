@@ -3,11 +3,9 @@ using FluentAssertions;
 using FluentValidation;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.DependencyInjection;
 using Tandem.Domain;
 using Tandem.Infrastructure.Blocks;
 using Tandem.Ledger;
-using Tandem.Tool;
 
 namespace Tandem.Tests.Infrastructure;
 
@@ -322,80 +320,6 @@ public sealed class LocalCapabilityTests
     }
 
     [Fact]
-    public async Task DeliveryCapabilities_ApplyTypedTransitionsInProcess()
-    {
-        var records = new FakeDeliveryRecordSink();
-        var services = new ServiceCollection();
-        services.AddDelivery(
-            new DeliveryOptions(
-                _ => throw new InvalidOperationException("Model execution is not required."),
-                _ => new DeliveryAgentProfile(1000, 100, 80),
-                records
-            )
-        );
-        using var provider = services.BuildServiceProvider();
-        var capabilitySet = provider.GetRequiredService<DeliveryCapabilitySet>();
-        var capabilities = new[]
-        {
-            capabilitySet.AskPlanner,
-            capabilitySet.SubmitReport,
-            capabilitySet.WriteCheckpoint,
-        }.ToDictionary(capability => capability.ToolName, StringComparer.Ordinal);
-        var initial = DeliveryState.Create(
-            new Packet(
-                "Capability test",
-                "file:///repository",
-                "main",
-                [new Outcome("outcome", "Complete the change.")],
-                [],
-                [],
-                ""
-            ),
-            "abc123",
-            Path.GetTempPath()
-        );
-
-        var planner = await RunBlockAsync(
-            CreateDeliveryBlock(
-                new ScriptedChatClient(
-                    ToolCall(
-                        "planner",
-                        "ask_planner",
-                        new Dictionary<string, object?>
-                        {
-                            ["question"] = "May I proceed?",
-                            ["proposedApproach"] = "Apply the focused change.",
-                            ["evidence"] = new[] { "README.md" },
-                        }
-                    )
-                ),
-                capabilities["ask_planner"]
-            ),
-            initial
-        );
-        var report = await RunBlockAsync(
-            CreateDeliveryBlock(
-                new ScriptedChatClient(
-                    ToolCall(
-                        "report",
-                        "submit_report",
-                        new Dictionary<string, object?>
-                        {
-                            ["summary"] = "Implemented.",
-                            ["outcomes"] = new[] { "outcome" },
-                            ["evidence"] = new[] { "src/File.cs" },
-                        }
-                    )
-                ),
-                capabilities["submit_report"]
-            ),
-            initial
-        );
-        planner.State.ExecutorTransition.Should().BeOfType<ExecutorTransition.PlannerRequested>();
-        report.State.ExecutorTransition.Should().BeOfType<ExecutorTransition.ReportSubmitted>();
-    }
-
-    [Fact]
     public async Task ConcurrentCalls_ExecuteOneAcceptanceAndReturnOneConflict()
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -594,7 +518,6 @@ public sealed class LocalCapabilityTests
                 [CreateCapability().Descriptor, checkpoint.Descriptor],
                 _ => "Normal turn.",
                 null,
-                null,
                 StructuredOutput: new AgentStructuredOutputDescriptor<TestState>(
                     (_, _) => throw new InvalidOperationException("Checkpoint turn parsed output."),
                     Examples: _ =>
@@ -773,24 +696,6 @@ public sealed class LocalCapabilityTests
             ),
             client,
             onUpdate
-        );
-
-    private static AgentBlock<DeliveryState> CreateDeliveryBlock(
-        IChatClient client,
-        AgentCapability<DeliveryState> capability
-    ) =>
-        new(
-            new AgentBlockConfig<DeliveryState>(
-                "executor",
-                "test",
-                "Call the attached capability.",
-                [capability.Descriptor],
-                _ => "Call the attached capability.",
-                null,
-                null,
-                ContinueSession: true
-            ),
-            client
         );
 
     private static async Task<PipelineMessage<TestState>> RunBlockAsync(

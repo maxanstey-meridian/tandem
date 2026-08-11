@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -31,10 +31,18 @@ const port = await new Promise((resolve, reject) => {
   server.once("error", reject);
   server.stdout.once("data", (data) => resolve(Number(data.toString().trim())));
 });
-const { agent, output, parallel, pipeline, route, run, stage } =
+const { agent, agentTools, agentWorkspace, output, parallel, pipeline, route, run, stage } =
   await import("../packages/sdk/dist/index.js");
 
-const State = z.object({ values: z.array(z.string()) });
+const State = z.object({
+  values: z.array(z.string()),
+  workspacePath: z.string(),
+  mutationAuthorized: z.boolean(),
+});
+const workspace = agentWorkspace({
+  path: (state) => state.workspacePath,
+  commands: [{ name: "run_tests", description: "Run tests.", command: "printf tested" }],
+});
 const worker = agent({
   id: "worker",
   instructions: "Return the numeric answer.",
@@ -44,22 +52,30 @@ const worker = agent({
     endpoint: `http://127.0.0.1:${port}/v1`,
     model: "gpt-5.6-sol",
     wireApi: "responses",
+    reasoningEffort: "none",
   },
   message: () => "Return the answer.",
+  temperature: 0,
+  maxOutputTokens: 2048,
+  workspace: workspace.withTools([
+    agentTools.always("read_file", "git:ro", workspace.commands),
+    agentTools.when((state) => state.mutationAuthorized, "write_file"),
+  ]),
   output: {
     instructions: "Return the numeric answer.",
     schema: z.object({ answer: z.number() }),
-    apply: (state, value) => ({ values: [...state.values, `agent:${value.answer}`] }),
+    apply: (state, value) => ({ ...state, values: [...state.values, `agent:${value.answer}`] }),
   },
 });
 const local = stage({
   id: "local",
-  execute: (state) => ({ values: [...state.values, "stage"] }),
+  execute: (state) => ({ ...state, values: [...state.values, "stage"] }),
 });
 const concurrent = parallel({
   id: "concurrent",
   branches: { worker, local },
   merge: (baseline, results) => ({
+    ...baseline,
     values: [...baseline.values, ...results.worker.values, ...results.local.values],
   }),
 });
@@ -74,8 +90,23 @@ const graph = pipeline({
 });
 
 try {
-  const result = await run(graph, { values: [] });
-  console.log(JSON.stringify({ values: result.state.values }));
+  const result = await run(graph, {
+    values: [],
+    workspacePath: directory,
+    mutationAuthorized: false,
+  });
+  const requests = readFileSync(logPath, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const modelRequest = requests.find((request) => request.url === "/v1/responses");
+  console.log(
+    JSON.stringify({
+      values: result.state.values,
+      modelBody: modelRequest.body,
+      tools: modelRequest.body.tools.map((tool) => tool.name ?? tool.function?.name),
+    }),
+  );
 } finally {
   await cleanup();
 }

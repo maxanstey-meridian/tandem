@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Text.Json;
 using System.Xml.Linq;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,38 +7,16 @@ namespace Tandem.Tests.Composition;
 
 public sealed class ProjectBoundaryTests
 {
-    [Fact]
-    public void DeliveryState_ContainsApplicationFactsRatherThanExecutionStatus()
-    {
-        var properties = typeof(DeliveryState).GetProperties();
-
-        properties.Should().NotContain(property => property.Name == "Status");
-        properties
-            .Single(property => property.Name == nameof(DeliveryState.ExecutorTransition))
-            .PropertyType.Should()
-            .Be(typeof(ExecutorTransition));
-    }
-
-    [Fact]
-    public void DeliveryState_DoesNotUseJsonAsAnApplicationFact()
-    {
-        var properties = typeof(DeliveryState).GetProperties();
-
-        properties.Should().NotContain(property => property.PropertyType == typeof(JsonElement));
-    }
-
     private static readonly string _root = System.IO.Path.GetFullPath(
         System.IO.Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..")
     );
 
     [Fact]
-    public void ProjectReferences_KeepDeliveryOutOfTandemAndInTheHost()
+    public void ProjectReferences_PreserveSdkLayering()
     {
         var tandem = ProjectReferences("src/Tandem/Tandem.csproj");
         var advanced = ProjectReferences("src/Tandem.Advanced/Tandem.Advanced.csproj");
-        var delivery = ProjectReferences("src/Tandem.Delivery/Tandem.Delivery.csproj");
         var ledger = ProjectReferences("src/Tandem.Ledger/Tandem.Ledger.csproj");
-        var tool = ProjectReferences("src/Tandem.Tool/Tandem.Tool.csproj");
         var debate = ProjectReferences("examples/debate/csharp/Tandem.Sample.Debate.csproj");
         var codeWriter = ProjectReferences(
             "examples/code-writer/csharp/Tandem.Sample.CodeWriter.csproj"
@@ -51,12 +28,7 @@ public sealed class ProjectBoundaryTests
         tandem.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
         tandem.Should().NotContain(reference => reference.Contains("Tandem.Advanced"));
         advanced.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
-        delivery.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
-        delivery.Should().Contain(reference => reference.EndsWith("Tandem.Advanced.csproj"));
         ledger.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
-        tool.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
-        tool.Should().Contain(reference => reference.EndsWith("Tandem.Delivery.csproj"));
-        tool.Should().Contain(reference => reference.EndsWith("Tandem.Ledger.csproj"));
         debate.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         debate.Should().Contain(reference => reference.EndsWith("Tandem.Advanced.csproj"));
         debate.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
@@ -144,37 +116,14 @@ public sealed class ProjectBoundaryTests
     {
         var source = Directory
             .EnumerateFiles(Path("src/Tandem"), "*.cs", SearchOption.AllDirectories)
-            .Concat(
-                Directory.EnumerateFiles(
-                    Path("src/Tandem.Tool"),
-                    "*.cs",
-                    SearchOption.AllDirectories
-                )
-            )
             .SelectMany(File.ReadLines);
         source.Should().NotContain(line => line.Contains("Debate", StringComparison.Ordinal));
     }
 
     [Fact]
-    public void Delivery_HasNoDirectMafReferenceOrNamespaceImport()
-    {
-        var project = File.ReadAllText(Path("src/Tandem.Delivery/Tandem.Delivery.csproj"));
-        project.Should().NotContain("Microsoft.Agents");
-
-        var source = Directory
-            .EnumerateFiles(Path("src/Tandem.Delivery"), "*.cs", SearchOption.AllDirectories)
-            .SelectMany(File.ReadLines)
-            .ToArray();
-        source.Should().NotContain(line => line.Contains("using Microsoft.Agents"));
-        source.Should().NotContain(line => line.Contains("using Tandem.Infrastructure"));
-        source.Should().NotContain(line => line.Contains("namespace Tandem.Infrastructure"));
-    }
-
-    [Fact]
     public void ConsumerProjects_ImportNoMafNamespaces()
     {
-        SourceLines("src/Tandem.Delivery")
-            .Concat(SourceLines("examples/debate/csharp"))
+        SourceLines("examples/debate/csharp")
             .Concat(SourceLines("examples/code-writer/csharp"))
             .Concat(SourceLines("examples/songwriter/csharp"))
             .Should()
@@ -200,7 +149,6 @@ public sealed class ProjectBoundaryTests
         foreach (
             var root in new[]
             {
-                "src/Tandem.Delivery",
                 "examples/debate/csharp",
                 "examples/code-writer/csharp",
                 "examples/songwriter/csharp",
@@ -234,14 +182,6 @@ public sealed class ProjectBoundaryTests
         generator.Should().NotContain("GeneratedCustomStepDescriptor");
         generator.Should().NotContain("GetMembers(\"Runtime\")");
         generator.Should().NotContain("GetMembers(\"Outcome\")");
-
-        var deliveryParticipants = File.ReadAllText(
-            Path("src/Tandem.Delivery/DeliveryParticipants.cs")
-        );
-        deliveryParticipants.Should().Contain("IPipelineNode<DeliveryState> CompleteRun");
-        deliveryParticipants.Should().Contain("IPipelineNode<DeliveryState> FailRun");
-        deliveryParticipants.Should().NotContain("IRawPipelineNode");
-        deliveryParticipants.Should().NotContain("AdvancedPipelineNodes.Stage");
     }
 
     [Fact]
@@ -272,20 +212,20 @@ public sealed class ProjectBoundaryTests
             .Select(parameter => parameter.ParameterType)
             .Should()
             .NotContain(typeof(IServiceCollection));
-        typeof(IGeneratedPipelineStep<DeliveryState, string>)
+        typeof(IGeneratedPipelineStep<BoundaryState, string>)
             .GetInterfaces()
             .Should()
-            .Contain(typeof(IPipelineNode<DeliveryState>));
+            .Contain(typeof(IPipelineNode<BoundaryState>));
 
-        var pipelineMethods = typeof(PipelineBuilder<DeliveryState>).GetMethods(
+        var pipelineMethods = typeof(PipelineBuilder<BoundaryState>).GetMethods(
             BindingFlags.Public | BindingFlags.Instance
         );
         pipelineMethods
-            .Single(method => method.Name == nameof(PipelineBuilder<DeliveryState>.Build))
+            .Single(method => method.Name == nameof(PipelineBuilder<BoundaryState>.Build))
             .GetParameters()
             .Single()
             .ParameterType.Should()
-            .Be(typeof(IPipelineNode<DeliveryState>[]));
+            .Be(typeof(IPipelineNode<BoundaryState>[]));
         var ordinaryMethods = typeof(AgentBuilder<>).GetMethods(
             BindingFlags.Public | BindingFlags.Instance
         );
@@ -305,14 +245,6 @@ public sealed class ProjectBoundaryTests
     [Fact]
     public void SessionContinuation_IsExplicitAndOrdinaryAgentsDefaultFresh()
     {
-        var source = string.Join(
-            '\n',
-            File.ReadAllText(Path("src/Tandem.Delivery/Agents/Executor/ExecutorAgent.cs")),
-            File.ReadAllText(Path("src/Tandem.Delivery/Agents/Planner/PlannerAgent.cs"))
-        );
-        source.Should().Contain(".ContinueSession()");
-        source.Should().NotContain("WithSessionPolicy");
-
         var debate = string.Join('\n', SourceLines("examples/debate/csharp"));
         debate.Should().Contain(".ContinueSession()");
         debate.Should().NotContain("WithSessionPolicy");
@@ -329,9 +261,6 @@ public sealed class ProjectBoundaryTests
     {
         var source = new[]
         {
-            "src/Tandem.Delivery/Stages/Workspace/PrepareWorkspaceStage.cs",
-            "src/Tandem.Delivery/Stages/Candidate/CaptureCandidateStage.cs",
-            "src/Tandem.Delivery/Stages/Verification/VerificationStage.cs",
             "examples/debate/csharp/DebateParticipants.cs",
             "examples/code-writer/csharp/CodeWriterParticipants.cs",
             "examples/songwriter/csharp/SongwriterParticipants.cs",
@@ -375,32 +304,6 @@ public sealed class ProjectBoundaryTests
             .ToArray();
 
         leaks.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void Tool_UsesOneProcessOwnedRuntimeAndSQLiteSemanticAuthority()
-    {
-        var source = File.ReadAllText(Path("src/Tandem.Tool/Program.cs"));
-        var persistence = source.IndexOf(
-            "ledgerStore.CreateObserverAsync(",
-            StringComparison.Ordinal
-        );
-        var publication = source.IndexOf(
-            "Console.WriteLine($\"Run:       {runPaths.RunId}\")",
-            StringComparison.Ordinal
-        );
-
-        persistence.Should().BeGreaterThan(-1);
-        publication.Should().BeGreaterThan(persistence);
-        source.Should().Contain("new PipelineRunner()");
-        source.Should().NotContain("RunProjectionStore");
-        source.Should().NotContain("run.json");
-        source.Should().NotContain("InProcessPipelineRunner");
-        source.Should().NotContain("PendingExternalRequest");
-        source.Should().NotContain("ExternalRequestAnswer");
-        source.Should().NotContain("attachCommand");
-        source.Should().NotContain("DurableTask");
-        source.Should().NotContain("TaskHub");
     }
 
     private static IReadOnlyList<string> ProjectReferences(string relativePath) =>
@@ -524,4 +427,6 @@ public sealed class ProjectBoundaryTests
             }
         }
     }
+
+    private sealed record BoundaryState(string Value);
 }

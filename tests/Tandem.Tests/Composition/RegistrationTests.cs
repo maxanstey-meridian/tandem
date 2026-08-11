@@ -1,19 +1,12 @@
-using System.Collections;
 using System.Reflection;
 using FluentAssertions;
 using FluentValidation;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Tandem.Tests.Composition;
 
-public sealed class RegistrationTests : IDisposable
+public sealed class RegistrationTests
 {
-    private readonly string _home = Path.Combine(
-        Path.GetTempPath(),
-        "tandem-registration-" + Guid.NewGuid().ToString("N")
-    );
-
     [Fact]
     public void AgentTimeout_RejectsUnsupportedDurations()
     {
@@ -24,24 +17,6 @@ public sealed class RegistrationTests : IDisposable
         var tooLong = () => builder.WithTimeout(TimeSpan.MaxValue);
 
         tooLong.Should().Throw<ArgumentOutOfRangeException>();
-    }
-
-    [Fact]
-    public void PublicRegistrations_ResolveDelivery()
-    {
-        Directory.CreateDirectory(_home);
-        var services = new ServiceCollection();
-        var clients = new FakeChatClients();
-        services.AddDelivery(
-            new DeliveryOptions(clients.Build, clients.ResolveProfile, new FakeDeliveryRecordSink())
-        );
-
-        using var provider = services.BuildServiceProvider(
-            new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true }
-        );
-
-        provider.GetRequiredService<DeliveryComposition>().Should().NotBeNull();
-        provider.GetServices<AgentCapability<DeliveryState>>().Should().BeEmpty();
     }
 
     [Fact]
@@ -144,65 +119,6 @@ public sealed class RegistrationTests : IDisposable
         inspection.Routes.Should().HaveCount(2);
     }
 
-    [Fact]
-    public async Task ConcurrentBuilds_CaptureNoRunObserver()
-    {
-        Directory.CreateDirectory(_home);
-        var clients = new FakeChatClients();
-        var services = new ServiceCollection();
-        services.AddDelivery(
-            new DeliveryOptions(clients.Build, clients.ResolveProfile, new FakeDeliveryRecordSink())
-        );
-
-        using var provider = services.BuildServiceProvider(
-            new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true }
-        );
-        var composition = provider.GetRequiredService<DeliveryComposition>();
-        var firstObserver = new RecordingObserver();
-        var secondObserver = new RecordingObserver();
-
-        var builds = await Task.WhenAll(Task.Run(composition.Build), Task.Run(composition.Build));
-
-        ContainsReference(builds[0], firstObserver).Should().BeFalse();
-        ContainsReference(builds[0], secondObserver).Should().BeFalse();
-        ContainsReference(builds[1], firstObserver).Should().BeFalse();
-        ContainsReference(builds[1], secondObserver).Should().BeFalse();
-        ContainsReference(builds[1], firstObserver).Should().BeFalse();
-
-        foreach (var client in clients.Instances)
-        {
-            ContainsReference(builds[0], client).Should().BeTrue();
-            ContainsReference(builds[1], client).Should().BeTrue();
-        }
-    }
-
-    public void Dispose()
-    {
-        if (Directory.Exists(_home))
-        {
-            Directory.Delete(_home, recursive: true);
-        }
-    }
-
-    private sealed class FakeChatClients
-    {
-        private readonly IReadOnlyDictionary<string, FakeChatClient> _instances = new Dictionary<
-            string,
-            FakeChatClient
-        >
-        {
-            ["implementation"] = new(),
-            ["planning"] = new(),
-            ["review"] = new(),
-        };
-
-        public IEnumerable<FakeChatClient> Instances => _instances.Values;
-
-        public IChatClient Build(string profileName) => _instances[profileName];
-
-        public DeliveryAgentProfile ResolveProfile(string _) => new(1000, 100, 80);
-    }
-
     private sealed class FakeChatClient : IChatClient
     {
         public Task<ChatResponse> GetResponseAsync(
@@ -271,68 +187,5 @@ public sealed class RegistrationTests : IDisposable
     private static class FirstScope
     {
         public sealed record SharedState(int Count);
-    }
-
-    private sealed class RecordingObserver : IPipelineObserver
-    {
-        public ValueTask ObserveAsync(
-            PipelineObservation observation,
-            CancellationToken cancellationToken
-        ) => ValueTask.CompletedTask;
-    }
-
-    private static bool ContainsReference(object root, object expected)
-    {
-        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
-        return Visit(root, 0);
-
-        bool Visit(object? value, int depth)
-        {
-            if (value is null || depth > 12 || !visited.Add(value))
-            {
-                return false;
-            }
-
-            if (ReferenceEquals(value, expected))
-            {
-                return true;
-            }
-
-            var type = value.GetType();
-            if (type.IsPrimitive || type.IsEnum || value is string or Type)
-            {
-                return false;
-            }
-
-            if (value is IEnumerable sequence)
-            {
-                foreach (var item in sequence)
-                {
-                    if (Visit(item, depth + 1))
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            for (var current = type; current is not null; current = current.BaseType)
-            {
-                if (
-                    current
-                        .GetFields(
-                            BindingFlags.Instance
-                                | BindingFlags.Public
-                                | BindingFlags.NonPublic
-                                | BindingFlags.DeclaredOnly
-                        )
-                        .Any(field => Visit(field.GetValue(value), depth + 1))
-                )
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
     }
 }

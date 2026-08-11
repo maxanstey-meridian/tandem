@@ -357,6 +357,7 @@ internal static class StructuredOutputDescriptors
             {
                 Infrastructure.ToolEffect.Read => ToolEffect.Read,
                 Infrastructure.ToolEffect.WorkspaceMutation => ToolEffect.WorkspaceMutation,
+                Infrastructure.ToolEffect.ProcessExecution => ToolEffect.ProcessExecution,
                 Infrastructure.ToolEffect.LifecycleTransition => ToolEffect.LifecycleTransition,
                 _ => ToolEffect.Unclassified,
             },

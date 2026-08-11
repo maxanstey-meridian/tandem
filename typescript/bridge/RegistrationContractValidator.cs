@@ -36,8 +36,8 @@ internal static partial class RegistrationContractValidator
             throw Invalid("registration must not be null.");
 
         var errors = new List<string>();
-        if (graph.ContractVersion != 7)
-            errors.Add($"contractVersion must be 7; received {graph.ContractVersion}.");
+        if (graph.ContractVersion != 9)
+            errors.Add($"contractVersion must be 9; received {graph.ContractVersion}.");
         Required(errors, "name", graph.Name);
         Required(errors, "start", graph.Start);
         Required(errors, "initialState", graph.InitialState);
@@ -324,6 +324,8 @@ internal static partial class RegistrationContractValidator
             ValidateAgent(errors, node, path);
         else
         {
+            if (node.Workspace is not null)
+                errors.Add($"{path}.workspace is forbidden.");
             if (node.Client is not null)
                 errors.Add($"{path}.client is forbidden.");
             if (node.Output is not null)
@@ -332,6 +334,10 @@ internal static partial class RegistrationContractValidator
                 errors.Add($"{path}.capabilities is forbidden.");
             if (node.SkillDirectories is not null)
                 errors.Add($"{path}.skillDirectories is forbidden.");
+            if (node.Temperature is not null)
+                errors.Add($"{path}.temperature is forbidden.");
+            if (node.MaxOutputTokens is not null)
+                errors.Add($"{path}.maxOutputTokens is forbidden.");
             if (node.ContinueSession)
                 errors.Add($"{path}.continueSession is forbidden for kind '{node.Kind}'.");
             if (node.TimeoutMilliseconds is not null)
@@ -357,6 +363,15 @@ internal static partial class RegistrationContractValidator
         if (node.SkillDirectories is null)
             errors.Add($"{path}.skillDirectories is required and must not be null.");
         Unique(errors, $"{path}.skillDirectories", node.SkillDirectories);
+        if (
+            node.Temperature is { } temperature
+            && (!double.IsFinite(temperature) || temperature < 0 || temperature > 2)
+        )
+            errors.Add($"{path}.temperature must be a finite number between 0 and 2.");
+        if (node.MaxOutputTokens is <= 0)
+            errors.Add($"{path}.maxOutputTokens must be a positive integer.");
+        if (node.Workspace is { } workspace)
+            ValidateWorkspace(errors, workspace, $"{path}.workspace");
         if (node.Output is { } output)
         {
             Required(errors, $"{path}.output.instructions", output.Instructions);
@@ -400,6 +415,66 @@ internal static partial class RegistrationContractValidator
         }
     }
 
+    private static void ValidateWorkspace(
+        List<string> errors,
+        RegisteredWorkspaceContract workspace,
+        string path
+    )
+    {
+        Required(errors, $"{path}.pathCallback", workspace.PathCallback);
+        Required(errors, $"{path}.commandsCallback", workspace.CommandsCallback);
+        if (workspace.ToolGroups is null)
+        {
+            errors.Add($"{path}.toolGroups is required and must not be null.");
+            return;
+        }
+        if (workspace.ToolGroups.Length == 0)
+            errors.Add($"{path}.toolGroups must contain at least one group.");
+        var effective = new HashSet<string>(StringComparer.Ordinal);
+        var commandsSelected = false;
+        var allowed = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "read_file",
+            "ls",
+            "grep",
+            "write_file",
+            "delete_file",
+            "replace",
+            "replace_lines",
+            "git:ro",
+            "shell",
+        };
+        foreach (
+            var (group, index) in workspace.ToolGroups.Select((value, index) => (value, index))
+        )
+        {
+            var groupPath = $"{path}.toolGroups[{index}]";
+            if (group is null)
+            {
+                errors.Add($"{groupPath} must not be null.");
+                continue;
+            }
+            if (group.Tools is null)
+                errors.Add($"{groupPath}.tools is required and must not be null.");
+            if ((group.Tools?.Length ?? 0) == 0 && !group.IncludeCommands)
+                errors.Add($"{groupPath} must select at least one tool.");
+            OptionalCallback(errors, $"{groupPath}.whenCallback", group.WhenCallback);
+            var local = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var tool in group.Tools ?? [])
+            {
+                if (!allowed.Contains(tool))
+                    errors.Add($"{groupPath}.tools contains unknown tool '{tool}'.");
+                if (!local.Add(tool))
+                    errors.Add($"{groupPath}.tools duplicates '{tool}'.");
+                if (!effective.Add(tool))
+                    errors.Add($"{groupPath}.tools selects '{tool}' in more than one group.");
+            }
+            if (group.IncludeCommands && commandsSelected)
+                errors.Add($"{groupPath} selects workspace commands more than once.");
+            commandsSelected |= group.IncludeCommands;
+        }
+    }
+
     private static void ValidateCallbackReferences(
         List<string> errors,
         RegisteredGraphContract graph
@@ -426,6 +501,17 @@ internal static partial class RegistrationContractValidator
             Add($"{path}.summaryCallback", node.SummaryCallback);
             Add($"{path}.messageCallback", node.MessageCallback);
             Add($"{path}.mergeCallback", node.MergeCallback);
+            if (node.Workspace is { } workspace)
+            {
+                Add($"{path}.workspace.pathCallback", workspace.PathCallback);
+                Add($"{path}.workspace.commandsCallback", workspace.CommandsCallback);
+                foreach (
+                    var (group, index) in (workspace.ToolGroups ?? []).Select(
+                        (value, index) => (value, index)
+                    )
+                )
+                    Add($"{path}.workspace.toolGroups[{index}].whenCallback", group?.WhenCallback);
+            }
             if (node.Output is { } output)
             {
                 Add($"{path}.output.validateCallback", output.ValidateCallback);
@@ -506,9 +592,9 @@ internal static partial class RegistrationContractValidator
             errors.Add($"{path}.wireApi must be 'completions' or 'responses'.");
         if (
             client.ReasoningEffort is not null
-            && client.ReasoningEffort is not ("low" or "medium" or "high")
+            && client.ReasoningEffort is not ("none" or "low" or "medium" or "high")
         )
-            errors.Add($"{path}.reasoningEffort must be 'low', 'medium', or 'high'.");
+            errors.Add($"{path}.reasoningEffort must be 'none', 'low', 'medium', or 'high'.");
         if (
             client.ApiKeyEnvironmentVariable is not null
             && !EnvironmentVariableName().IsMatch(client.ApiKeyEnvironmentVariable)

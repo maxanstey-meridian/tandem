@@ -37,6 +37,58 @@ test("loads application-selected Agent Skills and read-only resources through MA
   assert.equal(result.exposedScript, false);
 });
 
+test("rejects invalid model request controls while authoring", async () => {
+  const { stdout } = await exec(
+    process.execPath,
+    [new URL("model-controls-validation-child.mjs", import.meta.url).pathname],
+    { timeout: 15_000 },
+  );
+  const errors = JSON.parse(stdout.trim());
+  assert.equal(errors.length, 7);
+  assert(errors.every((error) => error.name === "TandemError"));
+  assert(errors.some((error) => /reasoning effort/.test(error.message)));
+  assert(errors.filter((error) => /temperature/.test(error.message)).length >= 3);
+  assert(errors.filter((error) => /maxOutputTokens/.test(error.message)).length >= 3);
+});
+
+test("executes a fixed workspace command through the packed MAF shell runtime", async () => {
+  const { stdout } = await exec(
+    process.execPath,
+    [new URL("workspace-runtime-child.mjs", import.meta.url).pathname],
+    { timeout: 15_000 },
+  );
+  assert.equal(JSON.parse(stdout.trim()).commandRan, true);
+});
+
+test("snapshots static workspace command catalogues", async () => {
+  const { stdout } = await exec(
+    process.execPath,
+    [new URL("workspace-runtime-child.mjs", import.meta.url).pathname, "mutated-catalogue"],
+    { timeout: 30_000 },
+  );
+  const result = JSON.parse(stdout.trim());
+  assert.equal(result.commandRan, true);
+  assert.equal(result.mutatedCommandRan, false);
+});
+
+test("rejects workspace command selection without a declared catalogue", async () => {
+  const { stdout } = await exec(
+    process.execPath,
+    [new URL("workspace-runtime-child.mjs", import.meta.url).pathname, "missing-catalogue"],
+    { timeout: 15_000 },
+  );
+  assert.match(JSON.parse(stdout.trim()).error, /without declaring a command catalogue/);
+});
+
+test("rejects non-boolean conditional authority callbacks", async () => {
+  const { stdout } = await exec(
+    process.execPath,
+    [new URL("workspace-runtime-child.mjs", import.meta.url).pathname, "invalid-predicate"],
+    { timeout: 15_000 },
+  );
+  assert.match(JSON.parse(stdout.trim()).error, /predicate must return a boolean/);
+});
+
 test("runs package-relatively, persists accepted values, and terminalizes", async () => {
   const result = await child("single");
   assert.deepEqual(result.values, [1]);
@@ -221,6 +273,20 @@ test("planner preflight and model requests proceed through a local protocol fixt
   assert(result.urls.slice(1).every((url) => url === "/v1/responses"));
   assert(result.urls.length >= 2);
   assert.match(JSON.stringify(result.modelBody), /STATE MESSAGE: from-typescript-state/);
+  assert.equal(result.modelBody.reasoning.effort, "none");
+  assert.equal(result.modelBody.temperature, 0);
+  assert.equal(result.modelBody.max_output_tokens, 4096);
+  assert.equal(result.modelBody.text.format.type, "json_schema");
+  assert(result.modelBodies.length >= 2);
+  assert(
+    result.modelBodies.every(
+      (body) =>
+        body.reasoning.effort === "none" &&
+        body.temperature === 0 &&
+        body.max_output_tokens === 4096 &&
+        body.text.format.type === "json_schema",
+    ),
+  );
   assert.equal(result.contextualValidations, 2);
   assert.equal(result.applications, 1);
   assert(result.observations.some((event) => event.kind === "agentText"));
@@ -262,6 +328,15 @@ test("one agent composes its authored message, multiple capabilities, structured
   );
   assert.doesNotMatch(JSON.stringify(result.body), /Invoke (?:accept|reject)\./);
   assert.match(JSON.stringify(result.body.response_format), /json_schema/);
+  assert(
+    result.bodies.every(
+      (body) =>
+        body.reasoning_effort === "none" &&
+        body.temperature === 0 &&
+        body.max_completion_tokens === 1024 &&
+        body.response_format?.type === "json_schema",
+    ),
+  );
 });
 
 test("rolls back durable acceptance when JavaScript state application faults", async () => {

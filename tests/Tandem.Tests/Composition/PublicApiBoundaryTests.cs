@@ -365,9 +365,7 @@ public sealed class PublicApiBoundaryTests
             || assembly.StartsWith("Spectre.Console", StringComparison.Ordinal)
             || assembly.StartsWith("YamlDotNet", StringComparison.Ordinal)
             || assembly.StartsWith("System.CommandLine", StringComparison.Ordinal)
-            || assembly is "OpenAI" or "Microsoft.Extensions.AI.OpenAI"
-            || ns.StartsWith("Tandem.Tool", StringComparison.Ordinal)
-            || ns.StartsWith("Tandem.Delivery", StringComparison.Ordinal);
+            || assembly is "OpenAI" or "Microsoft.Extensions.AI.OpenAI";
     }
 
     private static bool IsInfrastructureNamespace(string? value) =>

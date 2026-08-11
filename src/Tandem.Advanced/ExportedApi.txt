@@ -5,6 +5,7 @@ Tandem.Advanced.AdvancedAgentMessage`1
 Tandem.Advanced.AgentCapabilityAcceptanceContext`2
 Tandem.Advanced.AgentCapabilityAcceptanceExtensions
 Tandem.Advanced.AgentCheckpointContext`1
+Tandem.Advanced.AgentCommand
 Tandem.Advanced.AgentConversationDecision
 Tandem.Advanced.AgentConversationPolicy`1
 Tandem.Advanced.AgentConversationRetention
@@ -14,11 +15,15 @@ Tandem.Advanced.AgentProfileDecision
 Tandem.Advanced.AgentProfilePolicy`1
 Tandem.Advanced.AgentProfiles
 Tandem.Advanced.AgentStateGuard`1
+Tandem.Advanced.AgentToolGroup`1
+Tandem.Advanced.AgentToolSelection
+Tandem.Advanced.AgentTools
 Tandem.Advanced.AgentTurnContinuationPolicy`1
 Tandem.Advanced.AgentTurnDirective
 Tandem.Advanced.AgentTurnObservation`1
 Tandem.Advanced.IPipelineAcceptanceUnitOfWork
 Tandem.Advanced.AgentTurnPolicy`1
+Tandem.Advanced.AgentWorkspace`1
 Tandem.Advanced.CheckpointPolicy`1
 Tandem.Advanced.MessageAugmentation`1
 Tandem.Advanced.OperationOutcome

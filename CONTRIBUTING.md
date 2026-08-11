@@ -2,9 +2,9 @@
 
 ## Architecture
 
-Tandem is a typed agentic pipeline SDK over MAF's live execution engine. Delivery
-is the flagship first-party pipeline, and custom pipelines are equally
-unprivileged consumers. The runtime vocabulary is:
+Tandem is a typed agentic pipeline SDK over MAF's live execution engine.
+Applications consume Tandem through the same public package boundary. The runtime
+vocabulary is:
 
 - **Step**: one executable pipeline operation.
 - **Stage**: one deterministic step.
@@ -71,10 +71,10 @@ parsing, string outcome kinds, runtime envelopes, node identities, or
 transport-specific concepts, assume the abstraction is at the wrong level and
 redesign the seam rather than teaching users the machinery.
 
-Delivery obeys the same rules. It is a real application built with Tandem, not a
-privileged second framework. Its complexity reduces to typed Delivery state,
-agent nodes, capabilities, ordinary stages, explicit routes, and typed human
-waits. Only genuinely operational concerns cross into Advanced.
+Application pipelines obey the same rules. They are consumers built with Tandem,
+not privileged second frameworks. Their complexity reduces to typed application
+state, agent nodes, capabilities, ordinary stages, explicit routes, and typed
+human waits. Only genuinely operational concerns cross into Advanced.
 
 The shorthand is:
 
@@ -108,14 +108,12 @@ Keep these ownership boundaries explicit:
 - Pipeline state records facts; it does not hide routing logic.
 - Microsoft Agent Framework owns workflow execution, sessions,
   model loops, tool dispatch, and workflow events.
-- Delivery owns its composition, participants, conditions, policies, Git and
-  verification operations, dashboard projection, and operator interfaces.
-- Planner and reviewer agents have read-only workspace access.
-- Executor mutation is available only after the pipeline establishes mutation
-  authority.
-- Each run operates in an isolated clone pinned to the resolved base commit.
-- Review is grounded in the exact candidate captured and verified by the
-  pipeline.
+- An application owns its composition, participants, conditions, policies,
+  infrastructure operations, and operator interfaces.
+- Applications decide which agents receive read-only repository inspection,
+  fixed commands, unrestricted shell access, or conditional mutation tools.
+- Application state and routes establish semantic authority; Advanced workspace
+  policy enforces the corresponding runtime tool boundary.
 
 Do not introduce a second orchestration engine, imperative lifecycle coordinator,
 or application-level agent loop. A lifecycle change belongs in workflow
@@ -202,6 +200,13 @@ The runtime executes it in the initiating process.
 Prefer the maintained framework or SDK for commodity behavior and add only the
 machinery required by Tandem's product boundary. Keep changes small and prove
 behavior through public interfaces and end-to-end execution paths.
+
+The ordinary C# authoring API is the semantic source of truth for the TypeScript
+authoring layer. TypeScript may adapt syntax, validation, and transport across the
+bridge, but it must not own application-facing pipeline or agent semantics that a
+native C# application cannot express through Tandem's public API. CLR dependency
+descriptors needed only to construct an adapter, such as an OpenAI-compatible
+client endpoint, remain transport concerns rather than authoring semantics.
 
 Run the repository checks before submitting changes:
 

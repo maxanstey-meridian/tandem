@@ -6,6 +6,7 @@ M Tandem.AgentBuilder<TState> ContinueSession()
 M Tandem.AgentBuilder<TState> WithCapability(Tandem.AgentCapability<TState> capability)
 M Tandem.AgentBuilder<TState> WithJsonOutput(Tandem.AgentJsonOutputDefinition<TState> output, System.Func<TState,System.Text.Json.JsonElement,TState> apply)
 M Tandem.AgentBuilder<TState> WithMessage(System.Func<TState,System.String> message)
+M Tandem.AgentBuilder<TState> WithModelRequestOptions(Tandem.AgentModelRequestOptions options)
 M Tandem.AgentBuilder<TState> WithOutput<TOutput>(Tandem.IAgentOutputDefinition<TState,TOutput> output, System.Func<TState,TOutput,TState> apply)
 M Tandem.AgentBuilder<TState> WithSkill(Tandem.AgentSkill skill)
 M Tandem.AgentBuilder<TState> WithSkills(params Tandem.AgentSkill[] skills)
@@ -21,6 +22,11 @@ P System.String Id { get; }
 P Tandem.PipelineNodeDescriptor Descriptor { get; }
 P Tandem.PipelineOutcomeSelector<TState> Failed { get; }
 P Tandem.PipelineOutcomeSelector<TState> Success { get; }
+T Tandem.AgentModelRequestOptions
+C (System.Nullable<Tandem.AgentReasoningEffort>? reasoningEffort = default, System.Nullable<System.Single>? temperature = default, System.Nullable<System.Int32>? maxOutputTokens = default)
+P System.Nullable<System.Int32>? MaxOutputTokens { get; }
+P System.Nullable<System.Single>? Temperature { get; }
+P System.Nullable<Tandem.AgentReasoningEffort>? ReasoningEffort { get; }
 T Tandem.AgentOutputExample<TOutput>
 C (System.String Input, TOutput Output)
 M System.Boolean Equals(System.Object? obj)
@@ -31,6 +37,12 @@ M System.Void Deconstruct(out System.String Input, out TOutput Output)
 M Tandem.AgentOutputExample<TOutput> <Clone>$()
 P System.String Input { get; set; }
 P TOutput Output { get; set; }
+T Tandem.AgentReasoningEffort
+F System.Int32 value__
+F static Tandem.AgentReasoningEffort High
+F static Tandem.AgentReasoningEffort Low
+F static Tandem.AgentReasoningEffort Medium
+F static Tandem.AgentReasoningEffort None
 T Tandem.AgentSkill
 M static Tandem.AgentSkill FromDirectory(System.String directoryPath)
 P System.String DirectoryPath { get; }
