@@ -59,10 +59,21 @@ public sealed class AgentCommandObservationTests
         observations.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task SuccessfulObservation_SurvivesAnEarlierRejectedOutput()
+    {
+        var observations = await RunAsync(SuccessCommand(), rejectFirstOutput: true);
+
+        observations
+            .Should()
+            .ContainSingle(observation => observation.Name == "run_verification_1");
+    }
+
     private static async Task<IReadOnlySet<ToolObservation>> RunAsync(
         string command,
         ToolInterceptor<TestState>? interceptor = null,
-        bool invokeTwice = false
+        bool invokeTwice = false,
+        bool rejectFirstOutput = false
     )
     {
         var path = Path.Combine(
@@ -73,7 +84,12 @@ public sealed class AgentCommandObservationTests
         try
         {
             IReadOnlySet<ToolObservation>? observations = null;
-            var responses = new List<ChatResponse> { ToolCall("run_verification_1") };
+            var responses = new List<ChatResponse>();
+            if (rejectFirstOutput)
+            {
+                responses.Add(TextResponse());
+            }
+            responses.Add(ToolCall("run_verification_1"));
             if (invokeTwice)
             {
                 responses.Add(ToolCall("run_verification_1"));
@@ -85,6 +101,7 @@ public sealed class AgentCommandObservationTests
                 }
             );
             var client = new ScriptedChatClient([.. responses]);
+            var acceptanceAttempt = 0;
             var workspace = AgentWorkspace<TestState>.Define(
                 _ => path,
                 [AgentCommand.Define("run_verification_1", "Run verification.", command)]
@@ -118,6 +135,11 @@ public sealed class AgentCommandObservationTests
                         return ValueTask.CompletedTask;
                     }
                 )
+                .RequireOutputAcceptance<TestState, AcceptedOutput>(_ =>
+                    rejectFirstOutput && acceptanceAttempt++ == 0
+                        ? [new StructuredOutputProblem("$", "Use the verification tool first.")]
+                        : []
+                )
                 .Build();
             var complete = PipelineNodes.Complete(new TestCompletion<TestState>("complete"));
             var pipeline = Pipeline
@@ -144,6 +166,12 @@ public sealed class AgentCommandObservationTests
         )
         {
             FinishReason = ChatFinishReason.ToolCalls,
+        };
+
+    private static ChatResponse TextResponse() =>
+        new(new ChatMessage(ChatRole.Assistant, "accepted"))
+        {
+            FinishReason = ChatFinishReason.Stop,
         };
 
     private static JsonElement Json(string value) => JsonDocument.Parse(value).RootElement.Clone();

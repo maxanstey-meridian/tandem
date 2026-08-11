@@ -185,6 +185,7 @@ internal sealed class AgentBlock<TState>(
             var policyExhausted = false;
             var structuredAttempt = 0;
             AgentStructuredOutputResult<TState>? structuredResult = null;
+            var structuredToolObservations = new HashSet<ToolObservationDescriptor>();
 
             while (true)
             {
@@ -227,6 +228,8 @@ internal sealed class AgentBlock<TState>(
                 cumulativeInputTokens += turnInputTokens ?? 0;
                 cumulativeOutputTokens += turnOutputTokens ?? 0;
                 lastModelCallDuration += turnSw.Elapsed;
+                structuredToolObservations.Clear();
+                structuredToolObservations.UnionWith(collector.SuccessfulTools);
                 var latestTurnUsage = ResolveUsage(
                     turnInputTokens,
                     turnOutputTokens,
@@ -283,7 +286,7 @@ internal sealed class AgentBlock<TState>(
                         var problems = config.StructuredOutput.Accept(
                             message,
                             structuredResult,
-                            collector.SuccessfulTools,
+                            structuredToolObservations,
                             acceptedOutputId,
                             structuredAttempt
                         );
@@ -305,7 +308,7 @@ internal sealed class AgentBlock<TState>(
                                 await config.StructuredOutput.AcceptAsync(
                                     message,
                                     structuredResult,
-                                    collector.SuccessfulTools,
+                                    structuredToolObservations,
                                     acceptedOutputId,
                                     structuredAttempt,
                                     cancellationToken
