@@ -6,13 +6,142 @@ namespace Tandem.NodeApiSpike;
 public sealed class RegistrationContractValidatorTests
 {
     [Fact]
-    public void AcceptsVersionFiveAgentWithOutputAndMultipleCapabilities()
+    public void AcceptsVersionSixAgentWithOutputAndMultipleCapabilities()
     {
         var contract = RegistrationContractValidator.ParseAndValidate(ValidContract());
 
-        Assert.Equal(5, contract.ContractVersion);
+        Assert.Equal(6, contract.ContractVersion);
         Assert.Equal(2, contract.Nodes![0].Capabilities!.Length);
         Assert.NotNull(contract.Nodes[0].Output);
+    }
+
+    [Fact]
+    public void AcceptsVersionSixParallelGroupWithNestedStages()
+    {
+        var value = new Dictionary<string, object?>
+        {
+            ["contractVersion"] = 6,
+            ["name"] = "parallel",
+            ["start"] = "parallel",
+            ["initialState"] = "{}",
+            ["persist"] = false,
+            ["nodes"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["id"] = "parallel",
+                    ["kind"] = "parallel",
+                    ["mergeCallback"] = "merge",
+                    ["branches"] = new object[]
+                    {
+                        new
+                        {
+                            id = "one",
+                            participant = new
+                            {
+                                id = "first",
+                                kind = "stage",
+                                runCallback = "first.run",
+                            },
+                        },
+                        new
+                        {
+                            id = "two",
+                            participant = new
+                            {
+                                id = "second",
+                                kind = "stage",
+                                runCallback = "second.run",
+                            },
+                        },
+                    },
+                },
+                new Dictionary<string, object?>
+                {
+                    ["id"] = "done",
+                    ["kind"] = "completion",
+                    ["summaryCallback"] = "done.summary",
+                },
+            },
+            ["routes"] = new[]
+            {
+                new
+                {
+                    source = "parallel",
+                    target = "done",
+                    label = "done",
+                    outcome = "success",
+                },
+            },
+            ["outputs"] = new[] { "done" },
+        };
+
+        var contract = RegistrationContractValidator.ParseAndValidate(
+            JsonSerializer.Serialize(value)
+        );
+
+        Assert.Equal("parallel", contract.Nodes![0].Kind);
+        Assert.Equal(2, contract.Nodes[0].Branches!.Length);
+    }
+
+    [Theory]
+    [InlineData("one-branch", "branches must contain at least two branches")]
+    [InlineData("duplicate-branch", "duplicates branch ID 'one'")]
+    [InlineData("duplicate-participant", "duplicates participant ID 'first'")]
+    [InlineData("nested-parallel", "kind 'parallel' is unsupported in a parallel branch")]
+    [InlineData("duplicate-callback", "duplicates callback reference 'merge'")]
+    [InlineData("nested-route-target", "target references unknown node 'first'")]
+    [InlineData("nested-persistence", "ledgerPath is required when persistence is enabled")]
+    [InlineData("parallel-field-on-stage", "branches is forbidden")]
+    public void RejectsInvalidParallelContracts(string scenario, string expected)
+    {
+        var value = ParallelContractObject();
+        var nodes = (object[])value["nodes"]!;
+        var parallel = (Dictionary<string, object?>)nodes[0];
+        var branches = (object[])parallel["branches"]!;
+        var firstBranch = (Dictionary<string, object?>)branches[0];
+        var secondBranch = (Dictionary<string, object?>)branches[1];
+        var firstParticipant = (Dictionary<string, object?>)firstBranch["participant"]!;
+        var secondParticipant = (Dictionary<string, object?>)secondBranch["participant"]!;
+
+        switch (scenario)
+        {
+            case "one-branch":
+                parallel["branches"] = new[] { firstBranch };
+                break;
+            case "duplicate-branch":
+                secondBranch["id"] = "one";
+                break;
+            case "duplicate-participant":
+                secondParticipant["id"] = "first";
+                break;
+            case "nested-parallel":
+                firstParticipant["kind"] = "parallel";
+                firstParticipant.Remove("runCallback");
+                break;
+            case "duplicate-callback":
+                firstParticipant["runCallback"] = "merge";
+                break;
+            case "nested-route-target":
+                ((Dictionary<string, object?>)((object[])value["routes"]!)[0])["target"] = "first";
+                break;
+            case "nested-persistence":
+                firstParticipant["persist"] = true;
+                break;
+            case "parallel-field-on-stage":
+                firstParticipant["branches"] = Array.Empty<object>();
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(scenario));
+        }
+
+        var message = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
+            )
+            .Message;
+
+        Assert.Contains(expected, message);
     }
 
     [Fact]
@@ -71,7 +200,7 @@ public sealed class RegistrationContractValidatorTests
             )
             .Message;
 
-        Assert.Contains("contractVersion must be 5", message);
+        Assert.Contains("contractVersion must be 6", message);
         Assert.Contains("object root with type 'object'", message);
     }
 
@@ -350,10 +479,69 @@ public sealed class RegistrationContractValidatorTests
 
     private static string ValidContract() => JsonSerializer.Serialize(ContractObject());
 
+    private static Dictionary<string, object?> ParallelContractObject() =>
+        new()
+        {
+            ["contractVersion"] = 6,
+            ["name"] = "parallel",
+            ["start"] = "parallel",
+            ["initialState"] = "{}",
+            ["persist"] = false,
+            ["nodes"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["id"] = "parallel",
+                    ["kind"] = "parallel",
+                    ["mergeCallback"] = "merge",
+                    ["branches"] = new object[]
+                    {
+                        new Dictionary<string, object?>
+                        {
+                            ["id"] = "one",
+                            ["participant"] = new Dictionary<string, object?>
+                            {
+                                ["id"] = "first",
+                                ["kind"] = "stage",
+                                ["runCallback"] = "first.run",
+                            },
+                        },
+                        new Dictionary<string, object?>
+                        {
+                            ["id"] = "two",
+                            ["participant"] = new Dictionary<string, object?>
+                            {
+                                ["id"] = "second",
+                                ["kind"] = "stage",
+                                ["runCallback"] = "second.run",
+                            },
+                        },
+                    },
+                },
+                new Dictionary<string, object?>
+                {
+                    ["id"] = "done",
+                    ["kind"] = "completion",
+                    ["summaryCallback"] = "done.summary",
+                },
+            },
+            ["routes"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["source"] = "parallel",
+                    ["target"] = "done",
+                    ["label"] = "done",
+                    ["outcome"] = "success",
+                },
+            },
+            ["outputs"] = new[] { "done" },
+        };
+
     private static Dictionary<string, object?> ContractObject() =>
         new()
         {
-            ["contractVersion"] = 5,
+            ["contractVersion"] = 6,
             ["name"] = "test",
             ["start"] = "agent",
             ["initialState"] = "{}",
@@ -404,7 +592,7 @@ public sealed class RegistrationContractValidatorTests
     private static Dictionary<string, object?> InteractionContractObject() =>
         new()
         {
-            ["contractVersion"] = 5,
+            ["contractVersion"] = 6,
             ["name"] = "interaction-test",
             ["start"] = "review",
             ["initialState"] = "{}",

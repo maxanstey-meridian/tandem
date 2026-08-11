@@ -120,7 +120,8 @@ public static partial class NodePipelineBridge
 
         var runId = Guid.CreateVersion7();
         var modelNames = definition
-            .Nodes.Where(node => node.Kind == "agent")
+            .Nodes.SelectMany(EnumerateNodeContracts)
+            .Where(node => node.Kind == "agent")
             .ToDictionary(node => node.Id!, node => node.Client!.Model!, StringComparer.Ordinal);
         await using var presentation = terminalCancellation is null
             ? null
@@ -283,7 +284,10 @@ public static partial class NodePipelineBridge
             builder.Persist();
         }
 
-        foreach (var participant in participants.Where(node => node.Contract.Persist is not null))
+        foreach (
+            var participant in Flatten(participants)
+                .Where(node => node.Contract.Persist is not null)
+        )
         {
             if (participant is RegisteredInteraction interaction)
             {
@@ -303,6 +307,35 @@ public static partial class NodePipelineBridge
             else
             {
                 builder.DoNotPersist(PersistableNode(participant));
+            }
+        }
+    }
+
+    private static IEnumerable<RegisteredParticipant> Flatten(
+        IEnumerable<RegisteredParticipant> participants
+    )
+    {
+        foreach (var participant in participants)
+        {
+            yield return participant;
+            if (participant is RegisteredStandard standard)
+            {
+                foreach (var owned in Flatten(standard.Owned))
+                    yield return owned;
+            }
+        }
+    }
+
+    private static IEnumerable<RegisteredNodeContract> EnumerateNodeContracts(
+        RegisteredNodeContract node
+    )
+    {
+        yield return node;
+        foreach (var branch in node.Branches ?? [])
+        {
+            if (branch.Participant is not null)
+            {
+                yield return branch.Participant;
             }
         }
     }

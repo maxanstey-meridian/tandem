@@ -29,7 +29,14 @@ internal sealed record RegisteredNodeContract(
     RegisteredCapabilityContract[]? Capabilities,
     bool ContinueSession,
     double? TimeoutMilliseconds,
-    bool? Persist
+    bool? Persist,
+    RegisteredParallelBranchContract[]? Branches = null,
+    string? MergeCallback = null
+);
+
+internal sealed record RegisteredParallelBranchContract(
+    string? Id,
+    RegisteredNodeContract? Participant
 );
 
 internal sealed record RegisteredChatClientContract(

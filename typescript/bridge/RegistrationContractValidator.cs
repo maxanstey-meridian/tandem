@@ -36,8 +36,8 @@ internal static partial class RegistrationContractValidator
             throw Invalid("registration must not be null.");
 
         var errors = new List<string>();
-        if (graph.ContractVersion != 5)
-            errors.Add($"contractVersion must be 5; received {graph.ContractVersion}.");
+        if (graph.ContractVersion != 6)
+            errors.Add($"contractVersion must be 6; received {graph.ContractVersion}.");
         Required(errors, "name", graph.Name);
         Required(errors, "start", graph.Start);
         Required(errors, "initialState", graph.InitialState);
@@ -57,11 +57,12 @@ internal static partial class RegistrationContractValidator
         OptionalCallback(errors, "observationCallback", graph.ObservationCallback);
         if (
             graph.LedgerPath is null
-            && (graph.Persist || (graph.Nodes ?? []).Any(node => node?.Persist == true))
+            && (graph.Persist || EnumerateNodes(graph.Nodes).Any(node => node.Persist == true))
         )
             errors.Add("ledgerPath is required when persistence is enabled.");
 
         var nodes = new Dictionary<string, RegisteredNodeContract>(StringComparer.Ordinal);
+        var authoredIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (node, index) in (graph.Nodes ?? []).Select((value, index) => (value, index)))
         {
             var path = $"nodes[{index}]";
@@ -72,9 +73,14 @@ internal static partial class RegistrationContractValidator
             }
             Required(errors, $"{path}.id", node.Id);
             Required(errors, $"{path}.kind", node.Kind);
-            if (!string.IsNullOrWhiteSpace(node.Id) && !nodes.TryAdd(node.Id, node))
-                errors.Add($"{path}.id duplicates node ID '{node.Id}'.");
-            ValidateNode(errors, node, path);
+            if (!string.IsNullOrWhiteSpace(node.Id))
+            {
+                if (!nodes.TryAdd(node.Id, node))
+                    errors.Add($"{path}.id duplicates node ID '{node.Id}'.");
+                if (!authoredIds.Add(node.Id))
+                    errors.Add($"{path}.id duplicates authored participant ID '{node.Id}'.");
+            }
+            ValidateNode(errors, node, path, nested: false, authoredIds);
         }
         if (!string.IsNullOrWhiteSpace(graph.Start) && !nodes.ContainsKey(graph.Start))
             errors.Add($"start references unknown node '{graph.Start}'.");
@@ -118,9 +124,11 @@ internal static partial class RegistrationContractValidator
                 && nodes.TryGetValue(route.Source, out var source)
             )
             {
-                if (source.Kind == "agent" && route.Outcome is null)
-                    errors.Add($"{path}.outcome is required for agent source '{route.Source}'.");
-                if (source.Kind != "agent" && route.Outcome is not null)
+                if (source.Kind is "agent" or "parallel" && route.Outcome is null)
+                    errors.Add(
+                        $"{path}.outcome is required for {source.Kind} source '{route.Source}'."
+                    );
+                if (source.Kind is not ("agent" or "parallel") && route.Outcome is not null)
                     errors.Add(
                         $"{path}.outcome is forbidden for {source.Kind} source '{route.Source}'."
                     );
@@ -223,13 +231,79 @@ internal static partial class RegistrationContractValidator
         }
     }
 
-    private static void ValidateNode(List<string> errors, RegisteredNodeContract node, string path)
+    private static void ValidateNode(
+        List<string> errors,
+        RegisteredNodeContract node,
+        string path,
+        bool nested,
+        HashSet<string> authoredIds
+    )
     {
-        if (node.Kind is not ("stage" or "interaction" or "agent" or "completion" or "failure"))
+        if (
+            node.Kind
+            is not ("stage" or "interaction" or "agent" or "completion" or "failure" or "parallel")
+        )
         {
             if (!string.IsNullOrWhiteSpace(node.Kind))
                 errors.Add($"{path}.kind '{node.Kind}' is unsupported.");
             return;
+        }
+        if (nested && node.Kind is not ("stage" or "agent"))
+            errors.Add($"{path}.kind '{node.Kind}' is unsupported in a parallel branch.");
+        if (node.Kind == "parallel")
+        {
+            if (nested)
+                return;
+            if (node.Branches is null)
+                errors.Add($"{path}.branches is required and must not be null.");
+            else if (node.Branches.Length < 2)
+                errors.Add($"{path}.branches must contain at least two branches.");
+            Required(errors, $"{path}.mergeCallback", node.MergeCallback);
+            var branchIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (
+                var (branch, index) in (node.Branches ?? []).Select(
+                    (value, index) => (value, index)
+                )
+            )
+            {
+                var branchPath = $"{path}.branches[{index}]";
+                if (branch is null)
+                {
+                    errors.Add($"{branchPath} must not be null.");
+                    continue;
+                }
+                Required(errors, $"{branchPath}.id", branch.Id);
+                if (!string.IsNullOrWhiteSpace(branch.Id) && !branchIds.Add(branch.Id))
+                    errors.Add($"{branchPath}.id duplicates branch ID '{branch.Id}'.");
+                if (branch.Participant is null)
+                {
+                    errors.Add($"{branchPath}.participant is required and must not be null.");
+                    continue;
+                }
+                Required(errors, $"{branchPath}.participant.id", branch.Participant.Id);
+                Required(errors, $"{branchPath}.participant.kind", branch.Participant.Kind);
+                if (
+                    !string.IsNullOrWhiteSpace(branch.Participant.Id)
+                    && !authoredIds.Add(branch.Participant.Id)
+                )
+                    errors.Add(
+                        $"{branchPath}.participant.id duplicates participant ID '{branch.Participant.Id}'."
+                    );
+                ValidateNode(
+                    errors,
+                    branch.Participant,
+                    $"{branchPath}.participant",
+                    nested: true,
+                    authoredIds
+                );
+            }
+        }
+        else
+        {
+            if (node.Branches is not null)
+                errors.Add($"{path}.branches is forbidden.");
+            if (node.MergeCallback is not null)
+                errors.Add($"{path}.mergeCallback is forbidden.");
         }
         Field(errors, path, "runCallback", node.RunCallback, node.Kind == "stage");
         Field(errors, path, "requestCallback", node.RequestCallback, node.Kind == "interaction");
@@ -339,16 +413,14 @@ internal static partial class RegistrationContractValidator
 
         Add("observationCallback", graph.ObservationCallback);
 
-        foreach (var (node, index) in (graph.Nodes ?? []).Select((value, index) => (value, index)))
+        void AddNode(RegisteredNodeContract node, string path)
         {
-            if (node is null)
-                continue;
-            var path = $"nodes[{index}]";
             Add($"{path}.runCallback", node.RunCallback);
             Add($"{path}.requestCallback", node.RequestCallback);
             Add($"{path}.applyCallback", node.ApplyCallback);
             Add($"{path}.summaryCallback", node.SummaryCallback);
             Add($"{path}.messageCallback", node.MessageCallback);
+            Add($"{path}.mergeCallback", node.MergeCallback);
             if (node.Output is { } output)
             {
                 Add($"{path}.output.validateCallback", output.ValidateCallback);
@@ -369,6 +441,20 @@ internal static partial class RegistrationContractValidator
                 Add($"{capabilityPath}.applyCallback", capability.ApplyCallback);
                 Add($"{capabilityPath}.summaryCallback", capability.SummaryCallback);
             }
+            foreach (
+                var (branch, index) in (node.Branches ?? []).Select(
+                    (value, index) => (value, index)
+                )
+            )
+            {
+                if (branch?.Participant is not null)
+                    AddNode(branch.Participant, $"{path}.branches[{index}].participant");
+            }
+        }
+        foreach (var (node, index) in (graph.Nodes ?? []).Select((value, index) => (value, index)))
+        {
+            if (node is not null)
+                AddNode(node, $"nodes[{index}]");
         }
         foreach (
             var (route, index) in (graph.Routes ?? []).Select((value, index) => (value, index))
@@ -380,6 +466,23 @@ internal static partial class RegistrationContractValidator
             )
         )
             Add($"interactionHandlers[{index}].handleCallback", binding?.HandleCallback);
+    }
+
+    private static IEnumerable<RegisteredNodeContract> EnumerateNodes(
+        RegisteredNodeContract[]? nodes
+    )
+    {
+        foreach (var node in nodes ?? [])
+        {
+            if (node is null)
+                continue;
+            yield return node;
+            foreach (var branch in node.Branches ?? [])
+            {
+                if (branch?.Participant is not null)
+                    yield return branch.Participant;
+            }
+        }
     }
 
     private static void ValidateClient(

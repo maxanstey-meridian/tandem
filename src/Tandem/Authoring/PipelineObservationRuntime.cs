@@ -158,19 +158,92 @@ internal sealed class PipelineRunContext(
     IReadOnlySet<string>? persistentStepIds = null
 )
 {
+    private readonly SemaphoreSlim _observationGate = new(1, 1);
+    private readonly SemaphoreSlim _unitOfWorkGate = new(1, 1);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<
+        string,
+        byte
+    > _activeParallelGroups = new(StringComparer.Ordinal);
     public Guid RunId { get; } = runId;
 
     public bool ShouldPersist(string stepId) => persistentStepIds?.Contains(stepId) is true;
 
-    public ValueTask ObserveAsync(
+    public async ValueTask BeginParallelAsync(string stepId, CancellationToken cancellationToken)
+    {
+        if (!_activeParallelGroups.TryAdd(stepId, 0))
+        {
+            throw new InvalidOperationException(
+                $"Parallel group '{stepId}' cannot start another occurrence before the active occurrence completes."
+            );
+        }
+        await ObserveAsync(new PipelineStepStarted(RunId, stepId), cancellationToken);
+    }
+
+    public void CompleteParallel(string stepId) => _activeParallelGroups.TryRemove(stepId, out _);
+
+    public async ValueTask TerminalizeActiveParallelAsync(bool cancelled, string error)
+    {
+        foreach (var stepId in _activeParallelGroups.Keys.Order(StringComparer.Ordinal))
+        {
+            if (!_activeParallelGroups.TryRemove(stepId, out _))
+            {
+                continue;
+            }
+            try
+            {
+                await ObserveAsync(
+                    cancelled
+                        ? new PipelineStepCancelled(RunId, stepId)
+                        : new PipelineStepFaulted(RunId, stepId, error),
+                    CancellationToken.None
+                );
+            }
+            catch
+            {
+                // The execution failure or cancellation remains authoritative.
+            }
+        }
+    }
+
+    public async ValueTask ObserveAsync(
         PipelineObservation observation,
         CancellationToken cancellationToken
-    ) => observer?.ObserveAsync(observation, cancellationToken) ?? ValueTask.CompletedTask;
+    )
+    {
+        if (observer is null)
+        {
+            return;
+        }
+        await _observationGate.WaitAsync(cancellationToken);
+        try
+        {
+            await observer.ObserveAsync(observation, cancellationToken);
+        }
+        finally
+        {
+            _observationGate.Release();
+        }
+    }
 
-    public ValueTask<T> ExecuteAsync<T>(
+    public async ValueTask<T> ExecuteAsync<T>(
         Func<CancellationToken, ValueTask<T>> operation,
         CancellationToken cancellationToken
-    ) => unitOfWork?.ExecuteAsync(operation, cancellationToken) ?? operation(cancellationToken);
+    )
+    {
+        if (unitOfWork is null)
+        {
+            return await operation(cancellationToken);
+        }
+        await _unitOfWorkGate.WaitAsync(cancellationToken);
+        try
+        {
+            return await unitOfWork.ExecuteAsync(operation, cancellationToken);
+        }
+        finally
+        {
+            _unitOfWorkGate.Release();
+        }
+    }
 }
 
 internal interface IPipelineAcceptanceUnitOfWork

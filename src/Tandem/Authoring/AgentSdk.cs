@@ -36,6 +36,11 @@ internal sealed class AgentOperation<TState>
         using var operation = PipelineExecutionEnvelope.BeginOperation<TState>();
         var pipeline = PipelineExecutionEnvelope.Get(state);
         var result = await _execute(pipeline, cancellationToken);
+        result = result with
+        {
+            RunContext = pipeline.RunContext,
+            ParallelContext = pipeline.ParallelContext,
+        };
         PipelineExecutionEnvelope.Set(result);
         return result.LatestOutcome?.Kind is StandardOutcomeKinds.Failed or AgentFailedOutcome
             ? new Outcome<TState>.Failed(result.State, ToFailure(result.LatestOutcome))

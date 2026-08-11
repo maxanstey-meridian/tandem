@@ -269,6 +269,81 @@ public sealed class MafBindingCharacterizationTests
     }
 
     [Fact]
+    public async Task FanOut_BroadcastsTheSamePayloadReferenceAndRunsTargetsConcurrently()
+    {
+        var input = new ReferenceProbe();
+        var entered = 0;
+        var bothEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var start = new PlainStepExecutor<ReferenceProbe, ReferenceProbe>(
+            "start",
+            new PlainStep<ReferenceProbe, ReferenceProbe>(value => value)
+        ).BindExecutor();
+        var first = new ConcurrentReferenceExecutor(
+            "first",
+            input,
+            () =>
+            {
+                if (Interlocked.Increment(ref entered) == 2)
+                {
+                    bothEntered.SetResult();
+                }
+                return bothEntered.Task;
+            }
+        ).BindExecutor();
+        var second = new ConcurrentReferenceExecutor(
+            "second",
+            input,
+            () =>
+            {
+                if (Interlocked.Increment(ref entered) == 2)
+                {
+                    bothEntered.SetResult();
+                }
+                return bothEntered.Task;
+            }
+        ).BindExecutor();
+        var workflow = new WorkflowBuilder(start)
+            .WithName("fan-out-reference")
+            .AddFanOutEdge(start, [first, second])
+            .WithOutputFrom(first, second)
+            .Build();
+
+        var outputs = await RunAllAsync<ReferenceProbe, bool>(workflow, input, "fan-out-reference");
+
+        outputs.Should().Equal(true, true);
+    }
+
+    [Fact]
+    public async Task FanInBarrier_ReleasesSeparateMessagesAsOneDeliveryBatch()
+    {
+        var start = new PlainStepExecutor<int, int>(
+            "start",
+            new PlainStep<int, int>(value => value)
+        ).BindExecutor();
+        var first = new PlainStepExecutor<int, string>(
+            "first",
+            new PlainStep<int, string>(_ => "first")
+        ).BindExecutor();
+        var second = new PlainStepExecutor<int, string>(
+            "second",
+            new PlainStep<int, string>(_ => "second")
+        ).BindExecutor();
+        var collector = new BatchCollector("collector").BindExecutor();
+        var workflow = new WorkflowBuilder(start)
+            .WithName("fan-in-batch")
+            .AddFanOutEdge(start, [first, second])
+            .AddFanInBarrierEdge([first, second], collector)
+            .WithOutputFrom(collector)
+            .Build();
+
+        var output = await RunAsync<int, string[]>(workflow, 1, "fan-in-batch");
+
+        output.Should().BeEquivalentTo("first", "second");
+    }
+
+    [Fact]
     public void DuplicateUnconditionalEdges_AreAcceptedDuringConstruction()
     {
         var start = new PlainStepExecutor<int, int>(
@@ -490,7 +565,61 @@ public sealed class MafBindingCharacterizationTests
         ) => step.ExecuteAsync(input, cancellationToken);
     }
 
+    private sealed class BatchCollector(string id) : Executor<string, string[]?>(id)
+    {
+        private const string ValuesKey = "values";
+
+        protected override ValueTask OnMessageDeliveryStartingAsync(
+            IWorkflowContext context,
+            CancellationToken cancellationToken = default
+        ) => context.QueueStateUpdateAsync(ValuesKey, new List<string>(), cancellationToken);
+
+        public override async ValueTask<string[]?> HandleAsync(
+            string message,
+            IWorkflowContext context,
+            CancellationToken cancellationToken = default
+        )
+        {
+            var values = await context.ReadOrInitStateAsync(
+                ValuesKey,
+                static () => new List<string>(),
+                cancellationToken
+            );
+            values.Add(message);
+            await context.QueueStateUpdateAsync(ValuesKey, values, cancellationToken);
+            return null;
+        }
+
+        protected override async ValueTask OnMessageDeliveryFinishedAsync(
+            IWorkflowContext context,
+            CancellationToken cancellationToken = default
+        )
+        {
+            var values = await context.ReadStateAsync<List<string>>(ValuesKey, cancellationToken);
+            await context.YieldOutputAsync(values?.ToArray() ?? [], cancellationToken);
+        }
+    }
+
+    private sealed class ConcurrentReferenceExecutor(
+        string id,
+        ReferenceProbe expected,
+        Func<Task> waitForBoth
+    ) : Executor<ReferenceProbe, bool>(id)
+    {
+        public override async ValueTask<bool> HandleAsync(
+            ReferenceProbe message,
+            IWorkflowContext context,
+            CancellationToken cancellationToken = default
+        )
+        {
+            await waitForBoth().WaitAsync(cancellationToken);
+            return ReferenceEquals(message, expected);
+        }
+    }
+
     private sealed record ProbeMessage(int Count);
+
+    private sealed class ReferenceProbe;
 
     private sealed record HumanQuestion(string Value);
 

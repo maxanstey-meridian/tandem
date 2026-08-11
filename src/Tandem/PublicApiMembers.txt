@@ -93,6 +93,11 @@ P TState State { get; set; }
 T Tandem.Pipeline
 M static Tandem.PipelineBuilder<TState> Start<TState,TRequest,TResponse>(Tandem.PipelineInteraction<TState,TRequest,TResponse> at, System.String name, System.String? description = null)
 M static Tandem.PipelineBuilder<TState> Start<TState,TResult>(Tandem.IGeneratedPipelineStep<TState,TResult> at, System.String name, System.String? description = null)
+T Tandem.PipelineBranch
+M static Tandem.PipelineBranch<TState> Create<TState,TResult>(System.String id, Tandem.IGeneratedPipelineStep<TState,TResult> participant)
+T Tandem.PipelineBranch<TState>
+P System.String Id { get; }
+P Tandem.IPipelineNode<TState> Participant { get; }
 T Tandem.PipelineBuilder<TState>
 M Tandem.Pipeline<TState> Build(params Tandem.IPipelineNode<TState>[] outputs)
 M Tandem.PipelineBuilder<TState> DoNotPersist()
@@ -125,6 +130,7 @@ P System.Collections.Generic.IReadOnlyList<System.String> OutputStepIds { get; s
 P System.Collections.Generic.IReadOnlyList<System.String> PersistentStepIds { get; set; }
 P System.Collections.Generic.IReadOnlyList<System.String> StepIds { get; set; }
 P System.Collections.Generic.IReadOnlyList<Tandem.PipelineInteractionInspection> Interactions { get; set; }
+P System.Collections.Generic.IReadOnlyList<Tandem.PipelineParallelInspection> ParallelGroups { get; set; }
 P System.Collections.Generic.IReadOnlyList<Tandem.PipelineRouteInspection> Routes { get; set; }
 P System.String Dot { get; set; }
 P System.String Mermaid { get; set; }
@@ -149,8 +155,39 @@ M static Tandem.IGeneratedPipelineStep<TState,Tandem.GeneratedStepCompletion> St
 M static Tandem.IPipelineNode<TState> Complete<TState>(Tandem.IPipelineCompletion<TState> completion)
 M static Tandem.IPipelineNode<TState> Failed<TState>(Tandem.IPipelineFailure<TState> failure)
 M static Tandem.PipelineInteraction<TState,TRequest,TResponse> WaitFor<TState,TRequest,TResponse>(System.String id, System.Func<TState,TRequest> createRequest, System.Func<TState,TResponse,TState> applyResponse)
+M static Tandem.PipelineParallel<TState> Parallel<TState>(System.String id, System.Func<TState,TState> clone, System.Collections.Generic.IReadOnlyList<Tandem.PipelineBranch<TState>> branches, System.Func<Tandem.PipelineParallelMerge<TState>,TState> merge)
 T Tandem.PipelineOutcomeSelector<TState>
 C (Tandem.IStandardOutcomePipelineStep<TState> source, System.Boolean failed)
+T Tandem.PipelineParallelBranchInspection
+C (System.String Id, System.Int32 Index, System.String ParticipantId)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineParallelBranchInspection? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Id, out System.Int32 Index, out System.String ParticipantId)
+M Tandem.PipelineParallelBranchInspection <Clone>$()
+P System.Int32 Index { get; set; }
+P System.String Id { get; set; }
+P System.String ParticipantId { get; set; }
+T Tandem.PipelineParallelInspection
+C (System.String Id, System.Collections.Generic.IReadOnlyList<Tandem.PipelineParallelBranchInspection> Branches)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineParallelInspection? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Id, out System.Collections.Generic.IReadOnlyList<Tandem.PipelineParallelBranchInspection> Branches)
+M Tandem.PipelineParallelInspection <Clone>$()
+P System.Collections.Generic.IReadOnlyList<Tandem.PipelineParallelBranchInspection> Branches { get; set; }
+P System.String Id { get; set; }
+T Tandem.PipelineParallelMerge<TState>
+M TState State(System.String branchId)
+P System.Collections.Generic.IReadOnlyList<System.String> BranchIds { get; }
+P TState Baseline { get; }
+T Tandem.PipelineParallel<TState>
+P System.String Id { get; }
+P Tandem.PipelineNodeDescriptor Descriptor { get; }
+P Tandem.PipelineOutcomeSelector<TState> Failed { get; }
+P Tandem.PipelineOutcomeSelector<TState> Success { get; }
 T Tandem.PipelineRouteInspection
 C (System.String SourceId, System.String TargetId, System.Boolean Conditional, System.String? Label = null)
 M System.Boolean Equals(System.Object? obj)
