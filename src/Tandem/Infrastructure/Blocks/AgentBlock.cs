@@ -64,6 +64,20 @@ internal sealed class AgentBlock<TState>(
             .Capabilities.Select(capability => capability.Bind(capabilityInvocation))
             .ToArray();
         if (
+            (config.Skills?.Count ?? 0) > 0
+            && capabilityFunctions.Any(tool =>
+                tool.Name
+                    is AgentSkillsProvider.LoadSkillToolName
+                        or AgentSkillsProvider.ReadSkillResourceToolName
+                        or AgentSkillsProvider.RunSkillScriptToolName
+            )
+        )
+        {
+            throw new InvalidOperationException(
+                $"Agent '{config.StepId}' has a capability that collides with a skill tool."
+            );
+        }
+        if (
             config.WorkspacePath is not null
             && capabilityFunctions.Any(tool =>
                 tool.Name.StartsWith("file_access_", StringComparison.Ordinal)
@@ -882,7 +896,8 @@ internal sealed class AgentBlock<TState>(
             chatOptions,
             config.WorkspacePath?.Invoke(message.State),
             allowMutation || toolInterceptor is not null || hasGates,
-            toolEffects
+            toolEffects,
+            config.Skills ?? []
         );
         var agent = config.ImplementationFactory is null
             ? new ChatClientAgent(
@@ -892,6 +907,9 @@ internal sealed class AgentBlock<TState>(
                     Id = config.StepId,
                     Name = config.StepId,
                     ChatOptions = chatOptions,
+                    AIContextProviders = config.Skills is { Count: > 0 } skills
+                        ? [AgentSkillRuntime.CreateProvider(skills)]
+                        : null,
                 }
             )
             : config.ImplementationFactory(implementationContext);

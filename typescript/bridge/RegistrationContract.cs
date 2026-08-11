@@ -27,6 +27,7 @@ internal sealed record RegisteredNodeContract(
     RegisteredChatClientContract? Client,
     RegisteredAgentOutputContract? Output,
     RegisteredCapabilityContract[]? Capabilities,
+    string[]? SkillDirectories,
     bool ContinueSession,
     double? TimeoutMilliseconds,
     bool? Persist

@@ -5,6 +5,7 @@ import {
   interactions,
   pipeline,
   route,
+  skill,
   stage,
   output,
   type AcceptedValue,
@@ -73,12 +74,14 @@ const client = {
   model: "test",
   wireApi: "responses",
 } as const;
+const meridian = skill({ directory: "/skills/meridian" });
 const worker = agent<State, { amount: number }>({
   id: "worker",
   instructions: "Work.",
   client,
   message: (state) => String(state.count),
   capabilities: granted,
+  skills: [meridian],
   output: {
     instructions: "Return an amount.",
     schema: z.object({ amount: z.number() }),

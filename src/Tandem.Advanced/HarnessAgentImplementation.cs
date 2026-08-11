@@ -29,6 +29,10 @@ internal static class HarnessAgentImplementation
                 DisableTodoProvider = true,
                 DisableAgentModeProvider = true,
                 DisableAgentSkillsProvider = true,
+                AIContextProviders =
+                    context.Skills.Count == 0
+                        ? null
+                        : [AgentSkillRuntime.CreateProvider(context.Skills)],
                 DisableWebSearch = true,
                 DisableToolAutoApproval = true,
                 DisableOpenTelemetry = true,

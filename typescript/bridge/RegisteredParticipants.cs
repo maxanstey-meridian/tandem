@@ -69,6 +69,10 @@ internal static class RegisteredParticipantFactory
                 await OpenAiCompatibleChatClients.CreateAsync(node.Client!, cancellationToken)
             )
             .WithMessage(state => callbacks.Invoke(node.MessageCallback!, state.Json, ""));
+        foreach (var directory in node.SkillDirectories ?? [])
+        {
+            builder.WithSkill(AgentSkill.FromDirectory(directory));
+        }
         if (node.Output is { } outputContract)
         {
             using var schema = JsonDocument.Parse(outputContract.JsonSchema!);

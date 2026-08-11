@@ -588,6 +588,15 @@ export interface OpenAiCompatibleChatClient {
   readonly verifyModel?: boolean;
 }
 export type ChatClient = OpenAiCompatibleChatClient;
+export interface AgentSkill {
+  readonly directory: string;
+}
+export function skill(definition: { readonly directory: string }): AgentSkill {
+  if (typeof definition.directory !== "string" || definition.directory.trim().length === 0) {
+    throw new TandemError("Skill directory must be a non-blank string.");
+  }
+  return { directory: definition.directory };
+}
 export interface AgentDefinition<TState, TOutput = never> {
   readonly id: string;
   readonly instructions: string;
@@ -600,6 +609,7 @@ export interface AgentDefinition<TState, TOutput = never> {
     readonly apply: (state: TState, output: TOutput) => TState;
   };
   readonly capabilities?: readonly Capability<TState>[];
+  readonly skills?: readonly AgentSkill[];
   readonly continueSession?: boolean;
   readonly timeoutMs?: number;
   readonly persist?: boolean;
@@ -624,6 +634,7 @@ class AgentImplementation<TState, TOutput>
         }
       | undefined,
     readonly granted: readonly Capability<TState>[],
+    readonly skills: readonly AgentSkill[],
     readonly continueSession: boolean,
     readonly timeoutMs?: number,
   ) {
@@ -649,6 +660,18 @@ export function agent<TState, TOutput = never>(
       names.add(item.name);
     }
   }
+  const skills = definition.skills ?? [];
+  const skillDirectories = new Set<string>();
+  for (const item of skills) {
+    if (typeof item?.directory !== "string" || item.directory.trim().length === 0) {
+      throw new TandemError(`Agent '${definition.id}' has a skill with an invalid directory.`);
+    }
+    if (!skillDirectories.add(item.directory)) {
+      throw new TandemError(
+        `Agent '${definition.id}' has the skill directory '${item.directory}' more than once.`,
+      );
+    }
+  }
   return new AgentImplementation(
     definition.id,
     definition.persist,
@@ -657,6 +680,7 @@ export function agent<TState, TOutput = never>(
     definition.message,
     definition.output,
     capabilities,
+    skills,
     definition.continueSession ?? false,
     definition.timeoutMs,
   );
@@ -1025,7 +1049,7 @@ export async function run<TState>(
       : undefined;
     const resultJson = await runRegisteredGraphAsync(
       JSON.stringify({
-        contractVersion: 5,
+        contractVersion: 6,
         name: graph.name,
         start: graph.start.id,
         initialState,
@@ -1165,6 +1189,7 @@ function compileNode<TState>(
       messageCallback: message,
       output,
       capabilities,
+      skillDirectories: implementation.skills.map((item) => item.directory),
       continueSession: implementation.continueSession,
       timeoutMilliseconds: implementation.timeoutMs,
     };

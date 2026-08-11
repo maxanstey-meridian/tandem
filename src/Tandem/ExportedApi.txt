@@ -6,6 +6,7 @@ Tandem.AgentCapability`2
 Tandem.AgentDefinition`1
 Tandem.Agent
 Tandem.AgentOutputExample`1
+Tandem.AgentSkill
 Tandem.FailureEvidence
 Tandem.IAgentCapabilityDefinition`2
 Tandem.IAgentOutputDefinition`2

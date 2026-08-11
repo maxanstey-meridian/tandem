@@ -1,4 +1,13 @@
-import { agent, capability, pipeline, route, stage, output, type RunOptions } from "@tandem/sdk";
+import {
+  agent,
+  capability,
+  pipeline,
+  route,
+  skill,
+  stage,
+  output,
+  type RunOptions,
+} from "@tandem/sdk";
 import { z } from "zod";
 const A = z.object({ value: z.number() });
 type A = z.infer<typeof A>;
@@ -44,6 +53,8 @@ const client = {
   model: "test",
   wireApi: "responses",
 } as const;
+// @ts-expect-error skill directories are strings
+skill({ directory: 42 });
 const worker = agent<A>({
   id: "worker",
   instructions: "Work.",

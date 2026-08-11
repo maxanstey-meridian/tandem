@@ -23,7 +23,8 @@ internal sealed record AgentBlockConfig<TState>(
     AgentImplementationFactory? ImplementationFactory = null,
     TimeSpan? Timeout = null,
     IReadOnlyList<AgentStateGuardDescriptor<TState>>? StateGuards = null,
-    IReadOnlyList<AgentLatchedGateDescriptor>? LatchedGates = null
+    IReadOnlyList<AgentLatchedGateDescriptor>? LatchedGates = null,
+    IReadOnlyList<AgentSkillDescriptor>? Skills = null
 );
 
 internal sealed record AgentStateGuardDescriptor<TState>(

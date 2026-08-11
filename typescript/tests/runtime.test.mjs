@@ -22,6 +22,21 @@ async function observationChild(mode) {
   return JSON.parse(stdout.trim());
 }
 
+test("loads application-selected Agent Skills and read-only resources through MAF", async () => {
+  const { stdout } = await exec(
+    process.execPath,
+    [new URL("skill-child.mjs", import.meta.url).pathname],
+    { timeout: 15_000 },
+  );
+  const result = JSON.parse(stdout.trim());
+  assert.equal(result.succeeded, true);
+  assert(result.tools.includes("load_skill"));
+  assert(result.tools.includes("read_skill_resource"));
+  assert.equal(result.loadedSkill, true);
+  assert.equal(result.loadedResource, true);
+  assert.equal(result.exposedScript, false);
+});
+
 test("runs package-relatively, persists accepted values, and terminalizes", async () => {
   const result = await child("single");
   assert.deepEqual(result.values, [1]);

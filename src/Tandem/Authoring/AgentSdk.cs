@@ -104,6 +104,7 @@ public sealed class AgentBuilder<TState>
     > _messageAugmentations = [];
     private AgentTurnDescriptor<TState>? _turnPolicy;
     private IReadOnlyList<AgentCapabilityDescriptor<TState>> _capabilities = [];
+    private IReadOnlyList<AgentSkillDescriptor> _skills = [];
     private bool _continueSession;
     private Func<TState, AgentProfileSelection>? _profilePolicy;
     private Func<PipelineMessage<TState>, BlockOutcome, bool>? _retainConversation;
@@ -163,6 +164,30 @@ public sealed class AgentBuilder<TState>
     public AgentBuilder<TState> ContinueSession()
     {
         _continueSession = true;
+        return this;
+    }
+
+    public AgentBuilder<TState> WithSkill(AgentSkill skill)
+    {
+        ArgumentNullException.ThrowIfNull(skill);
+        if (_skills.Any(existing => existing.DirectoryPath == skill.DirectoryPath))
+        {
+            throw new InvalidOperationException(
+                $"Agent '{_id}' has the skill directory '{skill.DirectoryPath}' more than once."
+            );
+        }
+
+        _skills = [.. _skills, skill.Descriptor];
+        return this;
+    }
+
+    public AgentBuilder<TState> WithSkills(params AgentSkill[] skills)
+    {
+        ArgumentNullException.ThrowIfNull(skills);
+        foreach (var skill in skills)
+        {
+            WithSkill(skill);
+        }
         return this;
     }
 
@@ -572,7 +597,8 @@ public sealed class AgentBuilder<TState>
             _implementationFactory,
             _timeout,
             _stateGuards,
-            _latchedGates
+            _latchedGates,
+            _skills
         );
 
         return new AgentDefinition<TState>(

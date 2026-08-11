@@ -6,12 +6,13 @@ namespace Tandem.NodeApiSpike;
 public sealed class RegistrationContractValidatorTests
 {
     [Fact]
-    public void AcceptsVersionFiveAgentWithOutputAndMultipleCapabilities()
+    public void AcceptsVersionSixAgentWithOutputCapabilitiesAndSkills()
     {
         var contract = RegistrationContractValidator.ParseAndValidate(ValidContract());
 
-        Assert.Equal(5, contract.ContractVersion);
+        Assert.Equal(6, contract.ContractVersion);
         Assert.Equal(2, contract.Nodes![0].Capabilities!.Length);
+        Assert.Single(contract.Nodes[0].SkillDirectories!);
         Assert.NotNull(contract.Nodes[0].Output);
     }
 
@@ -71,7 +72,7 @@ public sealed class RegistrationContractValidatorTests
             )
             .Message;
 
-        Assert.Contains("contractVersion must be 5", message);
+        Assert.Contains("contractVersion must be 6", message);
         Assert.Contains("object root with type 'object'", message);
     }
 
@@ -348,12 +349,33 @@ public sealed class RegistrationContractValidatorTests
         Assert.Contains("capabilities[0].instructions is required and must be non-blank", message);
     }
 
+    [Fact]
+    public void RejectsMissingDuplicateAndNonAgentSkillDirectories()
+    {
+        var value = ContractObject();
+        var nodes = (object[])value["nodes"]!;
+        var agent = (Dictionary<string, object?>)nodes[0];
+        var terminal = (Dictionary<string, object?>)nodes[1];
+        agent["skillDirectories"] = new[] { "/skills/one", "/skills/one", " " };
+        terminal["skillDirectories"] = Array.Empty<string>();
+
+        var message = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
+            )
+            .Message;
+
+        Assert.Contains("skillDirectories[1] duplicates '/skills/one'", message);
+        Assert.Contains("skillDirectories[2] must be non-blank", message);
+        Assert.Contains("nodes[1].skillDirectories is forbidden", message);
+    }
+
     private static string ValidContract() => JsonSerializer.Serialize(ContractObject());
 
     private static Dictionary<string, object?> ContractObject() =>
         new()
         {
-            ["contractVersion"] = 5,
+            ["contractVersion"] = 6,
             ["name"] = "test",
             ["start"] = "agent",
             ["initialState"] = "{}",
@@ -380,6 +402,7 @@ public sealed class RegistrationContractValidatorTests
                         Capability("first", "agent.first.validate"),
                         Capability("second", "agent.second.validate"),
                     },
+                    ["skillDirectories"] = new[] { "/skills/meridian" },
                 },
                 new Dictionary<string, object?>
                 {
@@ -404,7 +427,7 @@ public sealed class RegistrationContractValidatorTests
     private static Dictionary<string, object?> InteractionContractObject() =>
         new()
         {
-            ["contractVersion"] = 5,
+            ["contractVersion"] = 6,
             ["name"] = "interaction-test",
             ["start"] = "review",
             ["initialState"] = "{}",

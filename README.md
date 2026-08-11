@@ -393,6 +393,29 @@ var implementer = Agent
 An accepted capability call concludes that agent visit. The updated state is then handed back to the pipeline, which
 evaluates the configured routes.
 
+### Agent Skills
+
+Applications can attach an existing Agent Skills or OpenCode skill directory to a specific agent:
+
+```csharp
+var meridian = AgentSkill.FromDirectory(
+    "/Users/max/.claude/skills/meridian");
+
+var reviewer = Agent
+    .Create<ReviewState>("reviewer", "Use the meridian skill to review the design.", client)
+    .WithSkill(meridian)
+    .WithMessage(state => state.Request)
+    .Build();
+```
+
+The selected directory must contain `SKILL.md`. Microsoft Agent Framework owns progressive disclosure,
+`load_skill`, and read-only resource access such as `references/*.md`. Tandem never scans the current working
+directory, an agent workspace, OpenCode configuration, or home directories for skills.
+
+Skills are instruction packages, not capabilities: attaching one grants no state transition, lifecycle action,
+or workspace mutation authority. File scripts are filtered from the source and cannot execute. MAF currently
+advertises its approval-gated `run_skill_script` tool even when no scripts are available.
+
 ## Stages
 
 Stages use the same state as agents and are routed in exactly the same graph.

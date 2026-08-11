@@ -7,6 +7,8 @@ M Tandem.AgentBuilder<TState> WithCapability(Tandem.AgentCapability<TState> capa
 M Tandem.AgentBuilder<TState> WithJsonOutput(Tandem.AgentJsonOutputDefinition<TState> output, System.Func<TState,System.Text.Json.JsonElement,TState> apply)
 M Tandem.AgentBuilder<TState> WithMessage(System.Func<TState,System.String> message)
 M Tandem.AgentBuilder<TState> WithOutput<TOutput>(Tandem.IAgentOutputDefinition<TState,TOutput> output, System.Func<TState,TOutput,TState> apply)
+M Tandem.AgentBuilder<TState> WithSkill(Tandem.AgentSkill skill)
+M Tandem.AgentBuilder<TState> WithSkills(params Tandem.AgentSkill[] skills)
 M Tandem.AgentBuilder<TState> WithTimeout(System.TimeSpan timeout)
 M Tandem.AgentDefinition<TState> Build()
 T Tandem.AgentCapabilities
@@ -29,6 +31,9 @@ M System.Void Deconstruct(out System.String Input, out TOutput Output)
 M Tandem.AgentOutputExample<TOutput> <Clone>$()
 P System.String Input { get; set; }
 P TOutput Output { get; set; }
+T Tandem.AgentSkill
+M static Tandem.AgentSkill FromDirectory(System.String directoryPath)
+P System.String DirectoryPath { get; }
 T Tandem.FailureEvidence
 C (System.String Code, System.String Summary, System.String? Detail = null)
 M System.Boolean Equals(System.Object? obj)

@@ -9,8 +9,46 @@ internal sealed record AgentImplementationContext(
     ChatOptions ChatOptions,
     string? WorkspacePath,
     bool ExposeWorkspaceMutationTools,
-    ToolEffectRegistry ToolEffects
+    ToolEffectRegistry ToolEffects,
+    IReadOnlyList<AgentSkillDescriptor> Skills
 );
+
+internal static class AgentSkillRuntime
+{
+    internal static AgentSkillsSource CreateSource(IReadOnlyList<AgentSkillDescriptor> skills)
+    {
+        var allowedDirectories = skills
+            .Select(skill => skill.DirectoryPath)
+            .ToHashSet(StringComparer.Ordinal);
+        var source = new AgentFileSkillsSource(
+            skills.Select(skill => skill.DirectoryPath),
+            scriptRunner: null,
+            new AgentFileSkillsSourceOptions { ScriptFilter = _ => false }
+        );
+        return new FilteringAgentSkillsSource(
+            source,
+            (candidate, _) =>
+                candidate is AgentFileSkill fileSkill
+                && allowedDirectories.Contains(
+                    Path.TrimEndingDirectorySeparator(Path.GetFullPath(fileSkill.Path))
+                )
+        );
+    }
+
+    internal static AgentSkillsProvider CreateProvider(
+        IReadOnlyList<AgentSkillDescriptor> skills
+    ) =>
+        new(
+            CreateSource(skills),
+            new AgentSkillsProviderOptions
+            {
+                DisableLoadSkillApproval = true,
+                DisableReadSkillResourceApproval = true,
+                DisableRunSkillScriptApproval = false,
+            },
+            ownsSource: true
+        );
+}
 
 internal enum ToolEffect
 {

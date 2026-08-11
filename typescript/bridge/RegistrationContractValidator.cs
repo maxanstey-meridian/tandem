@@ -36,8 +36,8 @@ internal static partial class RegistrationContractValidator
             throw Invalid("registration must not be null.");
 
         var errors = new List<string>();
-        if (graph.ContractVersion != 5)
-            errors.Add($"contractVersion must be 5; received {graph.ContractVersion}.");
+        if (graph.ContractVersion != 6)
+            errors.Add($"contractVersion must be 6; received {graph.ContractVersion}.");
         Required(errors, "name", graph.Name);
         Required(errors, "start", graph.Start);
         Required(errors, "initialState", graph.InitialState);
@@ -256,6 +256,8 @@ internal static partial class RegistrationContractValidator
                 errors.Add($"{path}.output is forbidden.");
             if (node.Capabilities is not null)
                 errors.Add($"{path}.capabilities is forbidden.");
+            if (node.SkillDirectories is not null)
+                errors.Add($"{path}.skillDirectories is forbidden.");
             if (node.ContinueSession)
                 errors.Add($"{path}.continueSession is forbidden for kind '{node.Kind}'.");
             if (node.TimeoutMilliseconds is not null)
@@ -278,6 +280,9 @@ internal static partial class RegistrationContractValidator
             ValidateClient(errors, node.Client, $"{path}.client");
         if (node.Capabilities is null)
             errors.Add($"{path}.capabilities is required and must not be null.");
+        if (node.SkillDirectories is null)
+            errors.Add($"{path}.skillDirectories is required and must not be null.");
+        Unique(errors, $"{path}.skillDirectories", node.SkillDirectories);
         if (node.Output is { } output)
         {
             Required(errors, $"{path}.output.instructions", output.Instructions);

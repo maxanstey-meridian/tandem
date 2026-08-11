@@ -76,6 +76,31 @@ capabilities or structured output. See the complete
 [Debate](../examples/debate/typescript), and
 [Songwriter](../examples/songwriter/typescript) examples.
 
+## Agent Skills
+
+Attach an explicitly selected existing Agent Skills or OpenCode directory:
+
+```ts
+const meridian = skill({
+  directory: "/Users/max/.claude/skills/meridian",
+});
+
+const reviewer = agent({
+  id: "reviewer",
+  instructions: "Use the meridian skill to review the design.",
+  client,
+  message: (state) => state.request,
+  skills: [meridian],
+});
+```
+
+The runtime requires `SKILL.md` in the selected directory and delegates progressive disclosure,
+`load_skill`, and read-only resource access to Microsoft Agent Framework. Tandem does not scan the
+current working directory, an agent workspace, OpenCode configuration, or home directories.
+
+Skills grant no state-transition or workspace authority. File scripts are filtered and cannot execute;
+MAF still advertises its approval-gated `run_skill_script` tool when no scripts are available.
+
 ## Chat Clients
 
 An agent receives a description of an OpenAI-compatible endpoint. TypeScript passes
