@@ -192,6 +192,37 @@ P System.String Instructions { get; set; }
 P Tandem.AgentCapability<TState> Capability { get; set; }
 T Tandem.Advanced.IPipelineAcceptanceUnitOfWork
 M System.Threading.Tasks.ValueTask<T> ExecuteAsync<T>(System.Func<System.Threading.CancellationToken,System.Threading.Tasks.ValueTask<T>> operation, System.Threading.CancellationToken cancellationToken)
+T Tandem.Advanced.LocalProcess
+M static System.Threading.Tasks.Task<Tandem.Advanced.LocalProcessResult> RunAsync(Tandem.Advanced.LocalProcessRequest request, System.Threading.CancellationToken cancellationToken = default)
+T Tandem.Advanced.LocalProcessRequest
+C (System.String FileName, System.Collections.Generic.IReadOnlyList<System.String> Arguments, System.String? WorkingDirectory = null, System.Nullable<System.TimeSpan>? Timeout = default, System.Int32 MaximumOutputBytesPerStream = 65536, System.Collections.Generic.IReadOnlyDictionary<System.String,System.String>? Environment = null)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.LocalProcessRequest? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String FileName, out System.Collections.Generic.IReadOnlyList<System.String> Arguments, out System.String? WorkingDirectory, out System.Nullable<System.TimeSpan>? Timeout, out System.Int32 MaximumOutputBytesPerStream, out System.Collections.Generic.IReadOnlyDictionary<System.String,System.String>? Environment)
+M Tandem.Advanced.LocalProcessRequest <Clone>$()
+P System.Collections.Generic.IReadOnlyDictionary<System.String,System.String>? Environment { get; set; }
+P System.Collections.Generic.IReadOnlyList<System.String> Arguments { get; set; }
+P System.Int32 MaximumOutputBytesPerStream { get; set; }
+P System.Nullable<System.TimeSpan>? Timeout { get; set; }
+P System.String FileName { get; set; }
+P System.String? WorkingDirectory { get; set; }
+T Tandem.Advanced.LocalProcessResult
+C (System.Int32 ExitCode, System.String Stdout, System.String Stderr, System.TimeSpan Duration, System.Boolean TimedOut, System.Boolean StdoutTruncated, System.Boolean StderrTruncated)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.LocalProcessResult? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Int32 ExitCode, out System.String Stdout, out System.String Stderr, out System.TimeSpan Duration, out System.Boolean TimedOut, out System.Boolean StdoutTruncated, out System.Boolean StderrTruncated)
+M Tandem.Advanced.LocalProcessResult <Clone>$()
+P System.Boolean StderrTruncated { get; set; }
+P System.Boolean StdoutTruncated { get; set; }
+P System.Boolean TimedOut { get; set; }
+P System.Int32 ExitCode { get; set; }
+P System.String Stderr { get; set; }
+P System.String Stdout { get; set; }
+P System.TimeSpan Duration { get; set; }
 T Tandem.Advanced.MessageAugmentation<TState>
 C (System.Object object, System.IntPtr method)
 M System.IAsyncResult BeginInvoke(Tandem.Advanced.AgentMessageContext<TState> context, System.Threading.CancellationToken cancellationToken, System.AsyncCallback callback, System.Object object)
@@ -221,13 +252,14 @@ M Tandem.Advanced.OperationResult<TState> <Clone>$()
 P TState State { get; set; }
 P Tandem.Advanced.OperationOutcome Outcome { get; set; }
 T Tandem.Advanced.OutputAcceptanceObservation<TState,TOutput>
-C (Tandem.Advanced.AgentMessageContext<TState> Context, System.String AcceptedOutputId, TOutput Output, System.Collections.Generic.IReadOnlySet<Tandem.Advanced.ToolObservation> Tools, System.Int32 Attempt)
+C (Tandem.Advanced.AgentMessageContext<TState> Context, System.String AcceptedOutputId, TOutput Output, System.Collections.Generic.IReadOnlySet<Tandem.Advanced.ToolObservation> Tools, System.Collections.Generic.IReadOnlyList<Tandem.Advanced.ToolInvocationObservation> ToolInvocations, System.Int32 Attempt)
 M System.Boolean Equals(System.Object? obj)
 M System.Boolean Equals(Tandem.Advanced.OutputAcceptanceObservation<TState,TOutput>? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
-M System.Void Deconstruct(out Tandem.Advanced.AgentMessageContext<TState> Context, out System.String AcceptedOutputId, out TOutput Output, out System.Collections.Generic.IReadOnlySet<Tandem.Advanced.ToolObservation> Tools, out System.Int32 Attempt)
+M System.Void Deconstruct(out Tandem.Advanced.AgentMessageContext<TState> Context, out System.String AcceptedOutputId, out TOutput Output, out System.Collections.Generic.IReadOnlySet<Tandem.Advanced.ToolObservation> Tools, out System.Collections.Generic.IReadOnlyList<Tandem.Advanced.ToolInvocationObservation> ToolInvocations, out System.Int32 Attempt)
 M Tandem.Advanced.OutputAcceptanceObservation<TState,TOutput> <Clone>$()
+P System.Collections.Generic.IReadOnlyList<Tandem.Advanced.ToolInvocationObservation> ToolInvocations { get; set; }
 P System.Collections.Generic.IReadOnlySet<Tandem.Advanced.ToolObservation> Tools { get; set; }
 P System.Int32 Attempt { get; set; }
 P System.String AcceptedOutputId { get; set; }
@@ -346,15 +378,35 @@ M System.IAsyncResult BeginInvoke(Tandem.Advanced.AgentMessageContext<TState> co
 M System.Threading.Tasks.ValueTask<Tandem.Advanced.ToolInterceptionResult?> EndInvoke(System.IAsyncResult result)
 M System.Threading.Tasks.ValueTask<Tandem.Advanced.ToolInterceptionResult?> Invoke(Tandem.Advanced.AgentMessageContext<TState> context, Tandem.Advanced.ToolInvocation invocation, System.Threading.CancellationToken cancellationToken)
 T Tandem.Advanced.ToolInvocation
-C (System.String Name, Tandem.Advanced.ToolEffect Effect)
+C (System.String Name, Tandem.Advanced.ToolEffect Effect, System.Text.Json.JsonElement Arguments)
 M System.Boolean Equals(System.Object? obj)
 M System.Boolean Equals(Tandem.Advanced.ToolInvocation? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
-M System.Void Deconstruct(out System.String Name, out Tandem.Advanced.ToolEffect Effect)
+M System.Void Deconstruct(out System.String Name, out Tandem.Advanced.ToolEffect Effect, out System.Text.Json.JsonElement Arguments)
 M Tandem.Advanced.ToolInvocation <Clone>$()
 P System.String Name { get; set; }
+P System.Text.Json.JsonElement Arguments { get; set; }
 P Tandem.Advanced.ToolEffect Effect { get; set; }
+T Tandem.Advanced.ToolInvocationObservation
+C (System.String Name, Tandem.Advanced.ToolEffect Effect, System.Text.Json.JsonElement Arguments, Tandem.Advanced.ToolInvocationStatus Status, Tandem.Advanced.ToolResultEvidence? Result)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.ToolInvocationObservation? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Name, out Tandem.Advanced.ToolEffect Effect, out System.Text.Json.JsonElement Arguments, out Tandem.Advanced.ToolInvocationStatus Status, out Tandem.Advanced.ToolResultEvidence? Result)
+M Tandem.Advanced.ToolInvocationObservation <Clone>$()
+P System.String Name { get; set; }
+P System.Text.Json.JsonElement Arguments { get; set; }
+P Tandem.Advanced.ToolEffect Effect { get; set; }
+P Tandem.Advanced.ToolInvocationStatus Status { get; set; }
+P Tandem.Advanced.ToolResultEvidence? Result { get; set; }
+T Tandem.Advanced.ToolInvocationStatus
+F System.Int32 value__
+F static Tandem.Advanced.ToolInvocationStatus Blocked
+F static Tandem.Advanced.ToolInvocationStatus Completed
+F static Tandem.Advanced.ToolInvocationStatus Failed
+F static Tandem.Advanced.ToolInvocationStatus Faulted
 T Tandem.Advanced.ToolObservation
 C (System.String Name, Tandem.Advanced.ToolEffect Effect, Tandem.Advanced.ToolEvidence Evidence)
 M System.Boolean Equals(System.Object? obj)
@@ -366,3 +418,24 @@ M Tandem.Advanced.ToolObservation <Clone>$()
 P System.String Name { get; set; }
 P Tandem.Advanced.ToolEffect Effect { get; set; }
 P Tandem.Advanced.ToolEvidence Evidence { get; set; }
+T Tandem.Advanced.ToolResultEvidence
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.ToolResultEvidence? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M Tandem.Advanced.ToolResultEvidence <Clone>$()
+T Tandem.Advanced.ToolResultEvidence+Process
+C (System.Int32 ExitCode, System.String Stdout, System.String Stderr, System.TimeSpan Duration, System.Boolean TimedOut, System.Boolean Truncated)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.ToolResultEvidence+Process? other)
+M System.Boolean Equals(Tandem.Advanced.ToolResultEvidence? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Int32 ExitCode, out System.String Stdout, out System.String Stderr, out System.TimeSpan Duration, out System.Boolean TimedOut, out System.Boolean Truncated)
+M Tandem.Advanced.ToolResultEvidence+Process <Clone>$()
+P System.Boolean TimedOut { get; set; }
+P System.Boolean Truncated { get; set; }
+P System.Int32 ExitCode { get; set; }
+P System.String Stderr { get; set; }
+P System.String Stdout { get; set; }
+P System.TimeSpan Duration { get; set; }

@@ -73,6 +73,7 @@ internal sealed record AgentStructuredOutputDescriptor<TState>(
         PipelineMessage<TState>,
         AgentStructuredOutputResult<TState>,
         IReadOnlySet<ToolObservationDescriptor>,
+        IReadOnlyList<ToolInvocationObservationDescriptor>,
         string,
         int,
         IReadOnlyList<AgentStructuredOutputProblem>
@@ -81,6 +82,7 @@ internal sealed record AgentStructuredOutputDescriptor<TState>(
         PipelineMessage<TState>,
         AgentStructuredOutputResult<TState>,
         IReadOnlySet<ToolObservationDescriptor>,
+        IReadOnlyList<ToolInvocationObservationDescriptor>,
         string,
         int,
         CancellationToken,

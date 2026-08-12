@@ -18,6 +18,7 @@ internal sealed class AgentBlock<TState>(
         PipelineMessage<TState>,
         string,
         ToolEffect?,
+        JsonElement,
         CancellationToken,
         ValueTask<string?>
     >? toolInterceptor = null,
@@ -287,6 +288,7 @@ internal sealed class AgentBlock<TState>(
                             message,
                             structuredResult,
                             structuredToolObservations,
+                            collector.ToolInvocations,
                             acceptedOutputId,
                             structuredAttempt
                         );
@@ -309,6 +311,7 @@ internal sealed class AgentBlock<TState>(
                                     message,
                                     structuredResult,
                                     structuredToolObservations,
+                                    collector.ToolInvocations,
                                     acceptedOutputId,
                                     structuredAttempt,
                                     cancellationToken
@@ -535,24 +538,65 @@ internal sealed class AgentBlock<TState>(
             .Use(
                 async (_, ficContext, next, ct) =>
                 {
+                    var reservation = collector.ReserveToolInvocation();
                     var isLifecycle = boundCapabilityNames.Contains(ficContext.Function.Name);
                     var classified = toolEffects.TryGet(
                         ficContext.Function.Name,
                         out var semantics
                     );
                     var effect = classified ? semantics.Effect.ToString() : "Unclassified";
+                    var actionInvocationId =
+                        $"{message.Runtime.NextInvocationId(config.StepId)}--action-{reservation.Ordinal + 1}";
                     if (message.RunContext is { } actionRunContext)
                     {
                         await actionRunContext.ObserveAsync(
                             new PipelineActionAttempted(
                                 message.Runtime.RunId,
                                 config.StepId,
-                                message.Runtime.NextInvocationId(config.StepId),
+                                actionInvocationId,
                                 ficContext.Function.Name,
                                 effect
                             ),
                             ct
                         );
+                    }
+
+                    JsonElement arguments;
+                    try
+                    {
+                        arguments = JsonSerializer.SerializeToElement(
+                            ficContext.Arguments,
+                            JsonSerializerOptions.Web
+                        );
+                    }
+                    catch
+                    {
+                        collector.CompleteToolInvocation(
+                            reservation,
+                            new ToolInvocationObservationDescriptor(
+                                ficContext.Function.Name,
+                                classified ? semantics : null,
+                                JsonSerializer.SerializeToElement(new { }),
+                                ToolInvocationStatus.Faulted,
+                                null
+                            )
+                        );
+                        collector.RecordFailedToolCall(reservation, ficContext.Function.Name);
+                        if (message.RunContext is { } serializationFailedRunContext)
+                        {
+                            await serializationFailedRunContext.ObserveAsync(
+                                new PipelineActionCompleted(
+                                    message.Runtime.RunId,
+                                    config.StepId,
+                                    actionInvocationId,
+                                    ficContext.Function.Name,
+                                    effect,
+                                    "Faulted"
+                                ),
+                                CancellationToken.None
+                            );
+                        }
+                        throw;
                     }
 
                     var activeGates = ResolveActiveGates(message);
@@ -566,13 +610,24 @@ internal sealed class AgentBlock<TState>(
                     );
                     if (gate is not null)
                     {
+                        collector.CompleteToolInvocation(
+                            reservation,
+                            new ToolInvocationObservationDescriptor(
+                                ficContext.Function.Name,
+                                classified ? semantics : null,
+                                arguments,
+                                ToolInvocationStatus.Blocked,
+                                null
+                            )
+                        );
+                        collector.RecordFailedToolCall(reservation, ficContext.Function.Name);
                         if (message.RunContext is { } gatedRunContext)
                         {
                             await gatedRunContext.ObserveAsync(
                                 new PipelineActionCompleted(
                                     message.Runtime.RunId,
                                     config.StepId,
-                                    message.Runtime.NextInvocationId(config.StepId),
+                                    actionInvocationId,
                                     ficContext.Function.Name,
                                     effect,
                                     "Blocked"
@@ -592,21 +647,66 @@ internal sealed class AgentBlock<TState>(
 
                     if (toolInterceptor is not null)
                     {
-                        var blockedMessage = await toolInterceptor(
-                            message,
-                            ficContext.Function.Name,
-                            classified ? semantics.Effect : null,
-                            ct
-                        );
+                        string? blockedMessage;
+                        try
+                        {
+                            blockedMessage = await toolInterceptor(
+                                message,
+                                ficContext.Function.Name,
+                                classified ? semantics.Effect : null,
+                                arguments,
+                                ct
+                            );
+                        }
+                        catch
+                        {
+                            collector.CompleteToolInvocation(
+                                reservation,
+                                new ToolInvocationObservationDescriptor(
+                                    ficContext.Function.Name,
+                                    classified ? semantics : null,
+                                    arguments,
+                                    ToolInvocationStatus.Faulted,
+                                    null
+                                )
+                            );
+                            collector.RecordFailedToolCall(reservation, ficContext.Function.Name);
+                            if (message.RunContext is { } interceptorFailedRunContext)
+                            {
+                                await interceptorFailedRunContext.ObserveAsync(
+                                    new PipelineActionCompleted(
+                                        message.Runtime.RunId,
+                                        config.StepId,
+                                        actionInvocationId,
+                                        ficContext.Function.Name,
+                                        effect,
+                                        "Faulted"
+                                    ),
+                                    CancellationToken.None
+                                );
+                            }
+                            throw;
+                        }
                         if (blockedMessage is not null)
                         {
+                            collector.CompleteToolInvocation(
+                                reservation,
+                                new ToolInvocationObservationDescriptor(
+                                    ficContext.Function.Name,
+                                    classified ? semantics : null,
+                                    arguments,
+                                    ToolInvocationStatus.Blocked,
+                                    null
+                                )
+                            );
+                            collector.RecordFailedToolCall(reservation, ficContext.Function.Name);
                             if (message.RunContext is { } blockedRunContext)
                             {
                                 await blockedRunContext.ObserveAsync(
                                     new PipelineActionCompleted(
                                         message.Runtime.RunId,
                                         config.StepId,
-                                        message.Runtime.NextInvocationId(config.StepId),
+                                        actionInvocationId,
                                         ficContext.Function.Name,
                                         effect,
                                         "Blocked"
@@ -625,13 +725,24 @@ internal sealed class AgentBlock<TState>(
                     }
                     catch
                     {
+                        collector.CompleteToolInvocation(
+                            reservation,
+                            new ToolInvocationObservationDescriptor(
+                                ficContext.Function.Name,
+                                classified ? semantics : null,
+                                arguments,
+                                ToolInvocationStatus.Faulted,
+                                null
+                            )
+                        );
+                        collector.RecordFailedToolCall(reservation, ficContext.Function.Name);
                         if (message.RunContext is { } failedRunContext)
                         {
                             await failedRunContext.ObserveAsync(
                                 new PipelineActionCompleted(
                                     message.Runtime.RunId,
                                     config.StepId,
-                                    message.Runtime.NextInvocationId(config.StepId),
+                                    actionInvocationId,
                                     ficContext.Function.Name,
                                     effect,
                                     "Faulted"
@@ -648,13 +759,61 @@ internal sealed class AgentBlock<TState>(
                             && semantics.Effect == ToolEffect.ProcessExecution
                             && IsFailedProcessExecution(result)
                         );
+                    ToolResultEvidenceDescriptor? resultEvidence;
+                    try
+                    {
+                        resultEvidence = classified
+                            ? semantics.ResultEvidence?.Invoke(result)
+                            : null;
+                    }
+                    catch
+                    {
+                        collector.CompleteToolInvocation(
+                            reservation,
+                            new ToolInvocationObservationDescriptor(
+                                ficContext.Function.Name,
+                                classified ? semantics : null,
+                                arguments,
+                                ToolInvocationStatus.Faulted,
+                                null
+                            )
+                        );
+                        collector.RecordFailedToolCall(reservation, ficContext.Function.Name);
+                        if (message.RunContext is { } evidenceFailedRunContext)
+                        {
+                            await evidenceFailedRunContext.ObserveAsync(
+                                new PipelineActionCompleted(
+                                    message.Runtime.RunId,
+                                    config.StepId,
+                                    actionInvocationId,
+                                    ficContext.Function.Name,
+                                    effect,
+                                    "Faulted"
+                                ),
+                                CancellationToken.None
+                            );
+                        }
+                        throw;
+                    }
+                    collector.CompleteToolInvocation(
+                        reservation,
+                        new ToolInvocationObservationDescriptor(
+                            ficContext.Function.Name,
+                            classified ? semantics : null,
+                            arguments,
+                            isToolError
+                                ? ToolInvocationStatus.Failed
+                                : ToolInvocationStatus.Completed,
+                            resultEvidence
+                        )
+                    );
                     if (message.RunContext is { } completedRunContext)
                     {
                         await completedRunContext.ObserveAsync(
                             new PipelineActionCompleted(
                                 message.Runtime.RunId,
                                 config.StepId,
-                                message.Runtime.NextInvocationId(config.StepId),
+                                actionInvocationId,
                                 ficContext.Function.Name,
                                 effect,
                                 isToolError ? "Failed" : "Completed"
@@ -664,7 +823,7 @@ internal sealed class AgentBlock<TState>(
                     }
                     if (isToolError)
                     {
-                        collector.RecordFailedToolCall(ficContext.Function.Name);
+                        collector.RecordFailedToolCall(reservation, ficContext.Function.Name);
                         return result;
                     }
 
@@ -676,6 +835,7 @@ internal sealed class AgentBlock<TState>(
                     else
                     {
                         collector.RecordSuccessfulToolCall(
+                            reservation,
                             new ToolObservationDescriptor(
                                 ficContext.Function.Name,
                                 classified ? semantics : null
@@ -1193,22 +1353,129 @@ internal sealed class AgentBlock<TState>(
 
 internal sealed class ToolOutcomeCollector
 {
+    internal readonly record struct ToolInvocationReservation(int Ordinal);
+
+    private readonly object _sync = new();
     private string? _lifecycleToolName;
-    private readonly HashSet<ToolObservationDescriptor> _successfulTools = [];
+    private readonly Dictionary<
+        string,
+        (int Ordinal, ToolObservationDescriptor? Observation)
+    > _latestToolOutcomes = [];
+    private readonly List<ToolInvocationObservationDescriptor?> _toolInvocations = [];
 
-    public bool HasLifecycleCall => _lifecycleToolName is not null;
+    public bool HasLifecycleCall
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _lifecycleToolName is not null;
+            }
+        }
+    }
 
-    public void RecordLifecycleCall(string toolName) => _lifecycleToolName ??= toolName;
+    public void RecordLifecycleCall(string toolName)
+    {
+        lock (_sync)
+        {
+            _lifecycleToolName ??= toolName;
+        }
+    }
 
-    public void RecordSuccessfulToolCall(ToolObservationDescriptor observation) =>
-        _successfulTools.Add(observation);
+    public void RecordSuccessfulToolCall(
+        ToolInvocationReservation reservation,
+        ToolObservationDescriptor observation
+    )
+    {
+        lock (_sync)
+        {
+            RecordToolOutcome(reservation, observation.Name, observation);
+        }
+    }
 
-    public void RecordFailedToolCall(string toolName) =>
-        _successfulTools.RemoveWhere(observation => observation.Name == toolName);
+    public void RecordFailedToolCall(ToolInvocationReservation reservation, string toolName)
+    {
+        lock (_sync)
+        {
+            RecordToolOutcome(reservation, toolName, null);
+        }
+    }
 
-    public IReadOnlySet<ToolObservationDescriptor> SuccessfulTools => _successfulTools;
+    private void RecordToolOutcome(
+        ToolInvocationReservation reservation,
+        string toolName,
+        ToolObservationDescriptor? observation
+    )
+    {
+        if (
+            !_latestToolOutcomes.TryGetValue(toolName, out var latest)
+            || reservation.Ordinal > latest.Ordinal
+        )
+        {
+            _latestToolOutcomes[toolName] = (reservation.Ordinal, observation);
+        }
+    }
 
-    public string? LifecycleToolName => _lifecycleToolName;
+    public ToolInvocationReservation ReserveToolInvocation()
+    {
+        lock (_sync)
+        {
+            var reservation = new ToolInvocationReservation(_toolInvocations.Count);
+            _toolInvocations.Add(null);
+            return reservation;
+        }
+    }
+
+    public void CompleteToolInvocation(
+        ToolInvocationReservation reservation,
+        ToolInvocationObservationDescriptor observation
+    )
+    {
+        lock (_sync)
+        {
+            _toolInvocations[reservation.Ordinal] = observation;
+        }
+    }
+
+    public IReadOnlySet<ToolObservationDescriptor> SuccessfulTools
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _latestToolOutcomes
+                    .Values.Select(value => value.Observation)
+                    .Where(observation => observation is not null)
+                    .Select(observation => observation!)
+                    .ToHashSet();
+            }
+        }
+    }
+
+    public IReadOnlyList<ToolInvocationObservationDescriptor> ToolInvocations
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _toolInvocations
+                    .Where(observation => observation is not null)
+                    .Select(observation => observation!)
+                    .ToArray();
+            }
+        }
+    }
+
+    public string? LifecycleToolName
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _lifecycleToolName;
+            }
+        }
+    }
 }
 
 #pragma warning restore MAAI001

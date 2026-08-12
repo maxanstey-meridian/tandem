@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Diagnostics;
 using System.Text;
 using Microsoft.Extensions.AI;
 using Tandem.Infrastructure;
@@ -81,7 +80,7 @@ internal static class ReadOnlyGitTools
 internal sealed class ReadOnlyGitRepository(string workspacePath)
 {
     private static readonly TimeSpan _timeout = TimeSpan.FromSeconds(30);
-    private const int MaximumCapturedCharacters = 1024 * 1024;
+    private const int MaximumOutputBytesPerStream = 16 * 1024 * 1024;
     private readonly string _workspacePath = Path.GetFullPath(workspacePath);
 
     internal async Task<string> StatusAsync(CancellationToken cancellationToken = default) =>
@@ -319,75 +318,39 @@ internal sealed class ReadOnlyGitRepository(string workspacePath)
         CancellationToken cancellationToken
     )
     {
-        var startInfo = new ProcessStartInfo
+        var result = await LocalProcess.RunAsync(
+            new LocalProcessRequest(
+                "git",
+                ["-c", "core.fsmonitor=false", .. arguments],
+                _workspacePath,
+                _timeout,
+                MaximumOutputBytesPerStream,
+                new Dictionary<string, string>
+                {
+                    ["GIT_PAGER"] = "cat",
+                    ["GIT_TERMINAL_PROMPT"] = "0",
+                    ["GIT_OPTIONAL_LOCKS"] = "0",
+                }
+            ),
+            cancellationToken
+        );
+        if (result.TimedOut)
         {
-            FileName = "git",
-            WorkingDirectory = _workspacePath,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-        startInfo.Environment["GIT_PAGER"] = "cat";
-        startInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        startInfo.Environment["GIT_OPTIONAL_LOCKS"] = "0";
-        startInfo.ArgumentList.Add("-c");
-        startInfo.ArgumentList.Add("core.fsmonitor=false");
-        foreach (var argument in arguments)
-        {
-            startInfo.ArgumentList.Add(argument);
+            throw new TimeoutException();
         }
-
-        using var process = new Process { StartInfo = startInfo };
-        process.Start();
-        var stdout = ReadBoundedAsync(process.StandardOutput, cancellationToken);
-        var stderr = ReadBoundedAsync(process.StandardError, cancellationToken);
-        try
-        {
-            await process
-                .WaitForExitAsync(cancellationToken)
-                .WaitAsync(_timeout, cancellationToken);
-        }
-        catch
-        {
-            try
-            {
-                process.Kill(entireProcessTree: true);
-            }
-            catch { }
-            throw;
-        }
-        if (process.ExitCode != 0)
+        if (result.StdoutTruncated || result.StderrTruncated)
         {
             throw new InvalidOperationException(
-                $"Read-only Git inspection failed: {(await stderr).Trim()}"
+                "Read-only Git inspection exceeded the complete-output capture limit."
             );
         }
-        return await stdout;
-    }
-
-    private static async Task<string> ReadBoundedAsync(
-        StreamReader reader,
-        CancellationToken cancellationToken
-    )
-    {
-        var captured = new StringBuilder();
-        var buffer = new char[8192];
-        var truncated = false;
-        while (await reader.ReadAsync(buffer, cancellationToken) is var read and > 0)
+        if (result.ExitCode != 0)
         {
-            var remaining = MaximumCapturedCharacters - captured.Length;
-            if (remaining > 0)
-            {
-                captured.Append(buffer, 0, Math.Min(read, remaining));
-            }
-            truncated |= read > remaining;
+            throw new InvalidOperationException(
+                $"Read-only Git inspection failed: {result.Stderr.Trim()}"
+            );
         }
-        if (truncated)
-        {
-            captured.AppendLine().Append("[output truncated during capture]");
-        }
-        return captured.ToString();
+        return result.Stdout;
     }
 
     private static string Page(

@@ -60,23 +60,26 @@ public sealed class ReadOnlyGitToolsTests
     }
 
     [Fact]
-    public async Task Git_capture_is_bounded_before_pagination()
+    public async Task Git_capture_fails_closed_before_pagination()
     {
         using var repository = TestRepository.Create();
         File.WriteAllText(Path.Combine(repository.Path, "large.txt"), "base\n");
         repository.Commit("base");
         var baseSha = repository.Head();
-        File.WriteAllText(Path.Combine(repository.Path, "large.txt"), new string('x', 2_000_000));
+        File.WriteAllText(Path.Combine(repository.Path, "large.txt"), new string('x', 17_000_000));
         repository.Commit("large");
 
-        var output = await new ReadOnlyGitRepository(repository.Path).CompareAsync(
-            baseSha,
-            repository.Head(),
-            "large.txt"
-        );
+        var inspect = async () =>
+            await new ReadOnlyGitRepository(repository.Path).CompareAsync(
+                baseSha,
+                repository.Head(),
+                "large.txt"
+            );
 
-        output.Should().Contain("[output truncated during capture]");
-        output.Length.Should().BeLessThan(1_100_000);
+        await inspect
+            .Should()
+            .ThrowAsync<InvalidOperationException>()
+            .WithMessage("*complete-output capture limit*");
     }
 
     [Fact]

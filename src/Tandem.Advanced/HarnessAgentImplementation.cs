@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Tools.Shell;
 using Microsoft.Extensions.AI;
@@ -231,7 +232,11 @@ internal static class WorkspaceShellTools
                     command.Description
                 )
             );
-            effects.Add(command.Name, Infrastructure.ToolEffect.ProcessExecution);
+            effects.Add(
+                command.Name,
+                Infrastructure.ToolEffect.ProcessExecution,
+                resultEvidence: ToProcessEvidence
+            );
         }
         if (workspace.IncludeShell)
         {
@@ -251,6 +256,53 @@ internal static class WorkspaceShellTools
         }
         options.Tools = tools;
     }
+
+    private static ToolResultEvidenceDescriptor.Process? ToProcessEvidence(object? result)
+    {
+        if (result is ShellResult shellResult)
+        {
+            return new ToolResultEvidenceDescriptor.Process(
+                shellResult.ExitCode,
+                shellResult.Stdout,
+                shellResult.Stderr,
+                shellResult.Duration,
+                shellResult.TimedOut,
+                shellResult.Truncated
+            );
+        }
+        if (result is not JsonElement { ValueKind: JsonValueKind.Object } element)
+        {
+            return null;
+        }
+
+        try
+        {
+            var evidence = element.Deserialize<ShellResultEvidence>(JsonSerializerOptions.Web);
+            return evidence is null
+                ? null
+                : new ToolResultEvidenceDescriptor.Process(
+                    evidence.ExitCode,
+                    evidence.Stdout ?? string.Empty,
+                    evidence.Stderr ?? string.Empty,
+                    evidence.Duration,
+                    evidence.TimedOut,
+                    evidence.Truncated
+                );
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private sealed record ShellResultEvidence(
+        int ExitCode,
+        string? Stdout,
+        string? Stderr,
+        TimeSpan Duration,
+        bool TimedOut,
+        bool Truncated
+    );
 
     private static LocalShellExecutor CreateExecutor(
         string workspacePath,

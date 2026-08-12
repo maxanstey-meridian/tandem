@@ -44,8 +44,12 @@ public sealed record OutputAcceptanceObservation<TState, TOutput>(
     string AcceptedOutputId,
     TOutput Output,
     IReadOnlySet<ToolObservation> Tools,
+    IReadOnlyList<ToolInvocationObservation> ToolInvocations,
     int Attempt
 );
+
+// Output acceptance receives model-authored arguments and process output. Policies should
+// avoid persisting observations that may contain credentials or other sensitive values.
 
 public delegate IReadOnlyList<StructuredOutputProblem> OutputAcceptancePolicy<TState, TOutput>(
     OutputAcceptanceObservation<TState, TOutput> observation
@@ -215,7 +219,7 @@ internal static class StructuredOutputDescriptors
             (response, state) => ToCore(parser(response, state)),
             Accept: acceptancePolicy is null
                 ? null
-                : (message, result, tools, _, attempt) =>
+                : (message, result, tools, _, _, attempt) =>
                     acceptancePolicy(
                             new StructuredOutputAcceptanceObservation<TState>(
                                 ToContext(message),
@@ -236,11 +240,12 @@ internal static class StructuredOutputDescriptors
         PipelineMessage<TState>,
         AgentStructuredOutputResult<TState>,
         IReadOnlySet<Infrastructure.ToolObservationDescriptor>,
+        IReadOnlyList<Infrastructure.ToolInvocationObservationDescriptor>,
         string,
         int,
         IReadOnlyList<AgentStructuredOutputProblem>
     > Accept<TState, TOutput>(OutputAcceptancePolicy<TState, TOutput> acceptance) =>
-        (message, result, tools, acceptedOutputId, attempt) =>
+        (message, result, tools, toolInvocations, acceptedOutputId, attempt) =>
             result.Candidate is null ? []
             : result.Candidate is not TOutput output
                 ?
@@ -257,6 +262,7 @@ internal static class StructuredOutputDescriptors
                         acceptedOutputId,
                         output,
                         tools.Select(ToPublic).ToHashSet(),
+                        toolInvocations.Select(ToPublic).ToArray(),
                         attempt
                     )
                 )
@@ -267,12 +273,13 @@ internal static class StructuredOutputDescriptors
         PipelineMessage<TState>,
         AgentStructuredOutputResult<TState>,
         IReadOnlySet<Infrastructure.ToolObservationDescriptor>,
+        IReadOnlyList<Infrastructure.ToolInvocationObservationDescriptor>,
         string,
         int,
         CancellationToken,
         ValueTask
     > AcceptAsync<TState, TOutput>(OutputAcceptance<TState, TOutput> acceptance) =>
-        (message, result, tools, acceptedOutputId, attempt, cancellationToken) =>
+        (message, result, tools, toolInvocations, acceptedOutputId, attempt, cancellationToken) =>
             result.Candidate is TOutput output
                 ? acceptance(
                     new OutputAcceptanceObservation<TState, TOutput>(
@@ -280,6 +287,7 @@ internal static class StructuredOutputDescriptors
                         acceptedOutputId,
                         output,
                         tools.Select(ToPublic).ToHashSet(),
+                        toolInvocations.Select(ToPublic).ToArray(),
                         attempt
                     ),
                     cancellationToken
@@ -365,4 +373,40 @@ internal static class StructuredOutputDescriptors
                 ? ToolEvidence.RepositoryInspection
                 : ToolEvidence.None
         );
+
+    private static ToolInvocationObservation ToPublic(
+        Infrastructure.ToolInvocationObservationDescriptor observation
+    ) =>
+        new(
+            observation.Name,
+            ToPublic(observation.Semantics?.Effect),
+            observation.Arguments.Clone(),
+            observation.Status switch
+            {
+                Infrastructure.ToolInvocationStatus.Completed => ToolInvocationStatus.Completed,
+                Infrastructure.ToolInvocationStatus.Failed => ToolInvocationStatus.Failed,
+                Infrastructure.ToolInvocationStatus.Blocked => ToolInvocationStatus.Blocked,
+                _ => ToolInvocationStatus.Faulted,
+            },
+            observation.Result is Infrastructure.ToolResultEvidenceDescriptor.Process process
+                ? new ToolResultEvidence.Process(
+                    process.ExitCode,
+                    process.Stdout,
+                    process.Stderr,
+                    process.Duration,
+                    process.TimedOut,
+                    process.Truncated
+                )
+                : null
+        );
+
+    private static ToolEffect ToPublic(Infrastructure.ToolEffect? effect) =>
+        effect switch
+        {
+            Infrastructure.ToolEffect.Read => ToolEffect.Read,
+            Infrastructure.ToolEffect.WorkspaceMutation => ToolEffect.WorkspaceMutation,
+            Infrastructure.ToolEffect.ProcessExecution => ToolEffect.ProcessExecution,
+            Infrastructure.ToolEffect.LifecycleTransition => ToolEffect.LifecycleTransition,
+            _ => ToolEffect.Unclassified,
+        };
 }

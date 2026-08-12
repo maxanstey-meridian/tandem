@@ -155,6 +155,7 @@ public sealed class AgentBuilder<TState>
         PipelineMessage<TState>,
         string,
         ToolEffect?,
+        JsonElement,
         CancellationToken,
         ValueTask<string?>
     >? _toolInterceptor;
@@ -264,6 +265,7 @@ public sealed class AgentBuilder<TState>
             PipelineMessage<TState>,
             string,
             ToolEffect?,
+            JsonElement,
             CancellationToken,
             ValueTask<string?>
         >? toolInterceptor = null
@@ -460,6 +462,7 @@ public sealed class AgentBuilder<TState>
             PipelineMessage<TState>,
             AgentStructuredOutputResult<TState>,
             IReadOnlySet<ToolObservationDescriptor>,
+            IReadOnlyList<ToolInvocationObservationDescriptor>,
             string,
             int,
             IReadOnlyList<AgentStructuredOutputProblem>
@@ -493,6 +496,7 @@ public sealed class AgentBuilder<TState>
             PipelineMessage<TState>,
             AgentStructuredOutputResult<TState>,
             IReadOnlySet<ToolObservationDescriptor>,
+            IReadOnlyList<ToolInvocationObservationDescriptor>,
             string,
             int,
             CancellationToken,

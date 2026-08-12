@@ -17,7 +17,7 @@
     "format:check": "oxfmt --check . && pnpm --filter '../examples/**' exec oxfmt -c \"$PWD/.oxfmtrc.json\" --check src package.json",
     "check": "pnpm build && pnpm typecheck && pnpm lint && pnpm format:check",
     "test:bridge": "dotnet test bridge-tests/Tandem.NodeApiSpike.Bridge.Tests.csproj",
-    "test": "pnpm check && pnpm test:bridge && node --import tsx --test tests/*.test.mjs && pnpm pack-consumer",
+    "test": "pnpm check && pnpm test:bridge && node --import tsx --test --test-concurrency=1 tests/*.test.mjs && pnpm pack-consumer",
     "pack-consumer": "node scripts/pack-consumer.mjs",
     "run:code-writer": "pnpm build && pnpm --filter tandem-code-writer-example run run",
     "run:debate": "pnpm build && pnpm --filter tandem-debate-example run run",

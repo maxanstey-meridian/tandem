@@ -134,7 +134,35 @@ public enum ToolEffect
     Unclassified,
 }
 
-public sealed record ToolInvocation(string Name, ToolEffect Effect);
+public sealed record ToolInvocation(string Name, ToolEffect Effect, JsonElement Arguments);
+
+public enum ToolInvocationStatus
+{
+    Completed,
+    Failed,
+    Blocked,
+    Faulted,
+}
+
+public abstract record ToolResultEvidence
+{
+    public sealed record Process(
+        int ExitCode,
+        string Stdout,
+        string Stderr,
+        TimeSpan Duration,
+        bool TimedOut,
+        bool Truncated
+    ) : ToolResultEvidence;
+}
+
+public sealed record ToolInvocationObservation(
+    string Name,
+    ToolEffect Effect,
+    JsonElement Arguments,
+    ToolInvocationStatus Status,
+    ToolResultEvidence? Result
+);
 
 public enum ToolEvidence
 {
@@ -514,7 +542,7 @@ public static class AdvancedAgentBuilderExtensions
             ),
             toolInterceptor is null
                 ? null
-                : async (message, toolName, effect, cancellationToken) =>
+                : async (message, toolName, effect, arguments, cancellationToken) =>
                 {
                     var result = await toolInterceptor(
                         ToContext(message),
@@ -530,7 +558,8 @@ public static class AdvancedAgentBuilderExtensions
                                 Infrastructure.ToolEffect.LifecycleTransition =>
                                     ToolEffect.LifecycleTransition,
                                 _ => ToolEffect.Unclassified,
-                            }
+                            },
+                            arguments.Clone()
                         ),
                         cancellationToken
                     );

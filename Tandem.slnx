@@ -14,6 +14,7 @@
     </Folder>
     <Folder Name="/tests/">
         <Project Path="tests/Tandem.Ledger.TestWorker/Tandem.Ledger.TestWorker.csproj" />
+        <Project Path="tests/Tandem.Process.TestChild/Tandem.Process.TestChild.csproj" />
         <Project Path="tests/Tandem.ExternalConsumer.Tests/Tandem.ExternalConsumer.Tests.csproj" />
         <Project Path="tests/Tandem.Tests/Tandem.Tests.csproj" />
         <Project Path="tests/Tandem.Terminal.Tests/Tandem.Terminal.Tests.csproj" />

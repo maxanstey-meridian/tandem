@@ -44,6 +44,10 @@
             Include="..\Tandem.Ledger.TestWorker\Tandem.Ledger.TestWorker.csproj"
             ReferenceOutputAssembly="false"
         />
+        <ProjectReference
+            Include="..\Tandem.Process.TestChild\Tandem.Process.TestChild.csproj"
+            ReferenceOutputAssembly="false"
+        />
         <ProjectReference Include="..\..\examples\code-writer\csharp\Tandem.Sample.CodeWriter.csproj" />
         <ProjectReference Include="..\..\examples\debate\csharp\Tandem.Sample.Debate.csproj" />
         <ProjectReference Include="..\..\examples\songwriter\csharp\Tandem.Sample.Songwriter.csproj" />

@@ -22,6 +22,9 @@ Tandem.Advanced.AgentTurnContinuationPolicy`1
 Tandem.Advanced.AgentTurnDirective
 Tandem.Advanced.AgentTurnObservation`1
 Tandem.Advanced.IPipelineAcceptanceUnitOfWork
+Tandem.Advanced.LocalProcess
+Tandem.Advanced.LocalProcessRequest
+Tandem.Advanced.LocalProcessResult
 Tandem.Advanced.AgentTurnPolicy`1
 Tandem.Advanced.AgentWorkspace`1
 Tandem.Advanced.CheckpointPolicy`1
@@ -48,4 +51,8 @@ Tandem.Advanced.ToolInterceptionResult
 Tandem.Advanced.ToolInterceptionResult+Blocked
 Tandem.Advanced.ToolInterceptor`1
 Tandem.Advanced.ToolInvocation
+Tandem.Advanced.ToolInvocationObservation
+Tandem.Advanced.ToolInvocationStatus
 Tandem.Advanced.ToolObservation
+Tandem.Advanced.ToolResultEvidence
+Tandem.Advanced.ToolResultEvidence+Process

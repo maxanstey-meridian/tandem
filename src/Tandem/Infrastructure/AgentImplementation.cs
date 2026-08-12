@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -84,17 +85,54 @@ internal enum ToolEvidence
     RepositoryInspection,
 }
 
-internal sealed record ToolSemantics(ToolEffect Effect, ToolEvidence Evidence = ToolEvidence.None);
+internal sealed record ToolSemantics(
+    ToolEffect Effect,
+    ToolEvidence Evidence = ToolEvidence.None,
+    Func<object?, ToolResultEvidenceDescriptor?>? ResultEvidence = null
+);
 
 internal sealed record ToolObservationDescriptor(string Name, ToolSemantics? Semantics);
+
+internal enum ToolInvocationStatus
+{
+    Completed,
+    Failed,
+    Blocked,
+    Faulted,
+}
+
+internal abstract record ToolResultEvidenceDescriptor
+{
+    internal sealed record Process(
+        int ExitCode,
+        string Stdout,
+        string Stderr,
+        TimeSpan Duration,
+        bool TimedOut,
+        bool Truncated
+    ) : ToolResultEvidenceDescriptor;
+}
+
+internal sealed record ToolInvocationObservationDescriptor(
+    string Name,
+    ToolSemantics? Semantics,
+    JsonElement Arguments,
+    ToolInvocationStatus Status,
+    ToolResultEvidenceDescriptor? Result
+);
 
 internal sealed class ToolEffectRegistry
 {
     private readonly Dictionary<string, ToolSemantics> _semantics = new(StringComparer.Ordinal);
 
-    internal void Add(string name, ToolEffect effect, ToolEvidence evidence = ToolEvidence.None)
+    internal void Add(
+        string name,
+        ToolEffect effect,
+        ToolEvidence evidence = ToolEvidence.None,
+        Func<object?, ToolResultEvidenceDescriptor?>? resultEvidence = null
+    )
     {
-        if (!_semantics.TryAdd(name, new ToolSemantics(effect, evidence)))
+        if (!_semantics.TryAdd(name, new ToolSemantics(effect, evidence, resultEvidence)))
         {
             throw new InvalidOperationException(
                 $"Tool '{name}' has more than one authority classification."
