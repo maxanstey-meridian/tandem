@@ -1,0 +1,47 @@
+[packets]
+T Tandem.Packets.PacketFile
+M static System.Threading.Tasks.ValueTask<Tandem.Packets.PacketFile<T>> ReadAsync<T>(System.String path, FluentValidation.IValidator<T> validator, System.Threading.CancellationToken cancellationToken = default)
+M static System.Threading.Tasks.ValueTask<Tandem.Packets.PacketFile<T>> ReadAsync<T>(System.String path, System.Threading.CancellationToken cancellationToken = default)
+M static Tandem.Packets.PacketFile<T> Parse<T>(System.String content, FluentValidation.IValidator<T> validator, System.String? sourceName = null)
+M static Tandem.Packets.PacketFile<T> Parse<T>(System.String content, System.String? sourceName = null)
+M static Tandem.Packets.PacketFile<T> Read<T>(System.String path)
+M static Tandem.Packets.PacketFile<T> Read<T>(System.String path, FluentValidation.IValidator<T> validator)
+T Tandem.Packets.PacketFileException
+C (System.String message, System.String? sourceName, System.Collections.Generic.IReadOnlyList<Tandem.Packets.PacketProblem> problems, System.Exception? innerException = null)
+P System.Collections.Generic.IReadOnlyList<Tandem.Packets.PacketProblem> Problems { get; }
+P System.String? SourceName { get; }
+T Tandem.Packets.PacketFile<T>
+C (T Value, System.String Context, Tandem.Packets.PacketSource Source)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Packets.PacketFile<T>? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out T Value, out System.String Context, out Tandem.Packets.PacketSource Source)
+M Tandem.Packets.PacketFile<T> <Clone>$()
+P System.String Context { get; set; }
+P T Value { get; set; }
+P Tandem.Packets.PacketSource Source { get; set; }
+T Tandem.Packets.PacketProblem
+C (System.String Path, System.String Message, System.Nullable<System.Int32>? Line = default, System.Nullable<System.Int32>? Column = default)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Packets.PacketProblem? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Path, out System.String Message, out System.Nullable<System.Int32>? Line, out System.Nullable<System.Int32>? Column)
+M Tandem.Packets.PacketProblem <Clone>$()
+P System.Nullable<System.Int32>? Column { get; set; }
+P System.Nullable<System.Int32>? Line { get; set; }
+P System.String Message { get; set; }
+P System.String Path { get; set; }
+T Tandem.Packets.PacketSource
+C (System.String? Name, System.String? FullPath, System.String? Directory)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Packets.PacketSource? other)
+M System.Int32 GetHashCode()
+M System.String ResolvePath(System.String path)
+M System.String ToString()
+M System.Void Deconstruct(out System.String? Name, out System.String? FullPath, out System.String? Directory)
+M Tandem.Packets.PacketSource <Clone>$()
+P System.String? Directory { get; set; }
+P System.String? FullPath { get; set; }
+P System.String? Name { get; set; }

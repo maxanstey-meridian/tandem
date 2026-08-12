@@ -1130,6 +1130,30 @@ TypeScript applications import `@tandem/sdk`; they do not build or manually load
 
 See [`typescript/README.md`](typescript/README.md) for TypeScript-specific runtime and packaging details.
 
+## Packet files
+
+The optional packet packages decode Markdown plus YAML frontmatter at the application boundary. The application owns the packet type, validation, and explicit conversion into state; reading a packet does not configure or start a pipeline.
+
+```csharp
+using Tandem.Packets;
+
+var input = PacketFile.Read<WorkPacket>(path);
+var state = WorkState.Create(input.Value, input.Context, input.Source);
+```
+
+```ts
+import { readPacketFile } from "@tandem/packets";
+
+const input = await readPacketFile(path, WorkPacket.strict());
+const state = createWorkState(input.value, input.context, input.source);
+```
+
+```text
+packet file -> validated application packet -> application state -> pipeline run
+```
+
+In TypeScript, the caller-owned Zod schema controls unknown-field rejection; use a strict object schema when packet frontmatter must reject unknown fields.
+
 ## Microsoft Agent Framework
 
 Tandem owns the application-facing model:

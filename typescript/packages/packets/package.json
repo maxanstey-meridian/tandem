@@ -1,0 +1,28 @@
+{
+  "name": "@tandem/packets",
+  "version": "0.0.0-experiment",
+  "description": "Typed Markdown and YAML packet file parsing for Tandem applications",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "zod": "^4.3.6"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

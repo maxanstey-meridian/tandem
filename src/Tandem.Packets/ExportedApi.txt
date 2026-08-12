@@ -1,0 +1,6 @@
+[packets]
+Tandem.Packets.PacketFile
+Tandem.Packets.PacketFile`1
+Tandem.Packets.PacketFileException
+Tandem.Packets.PacketProblem
+Tandem.Packets.PacketSource

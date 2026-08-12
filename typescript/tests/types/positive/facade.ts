@@ -1,3 +1,4 @@
+import { parsePacketFile, type PacketFile } from "@tandem/packets";
 import {
   agent,
   agentTools,
@@ -19,6 +20,9 @@ import {
 } from "@tandem/sdk";
 import { closeCli, runCli, type RunCliOptions } from "@tandem/sdk/cli";
 import { z } from "zod";
+const PacketSchema = z.object({ count: z.string().transform(Number) });
+const packet: PacketFile<{ count: number }> = parsePacketFile("---\ncount: '2'\n---", PacketSchema);
+packet.value.count satisfies number;
 const State = z.object({ count: z.number() });
 type State = z.infer<typeof State>;
 const increment = stage<State>({

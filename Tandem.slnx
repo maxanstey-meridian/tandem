@@ -4,6 +4,7 @@
         <Project Path="src/Tandem.Generators/Tandem.Generators.csproj" />
         <Project Path="src/Tandem.Ledger/Tandem.Ledger.csproj" />
         <Project Path="src/Tandem.OpenAICompatible/Tandem.OpenAICompatible.csproj" />
+        <Project Path="src/Tandem.Packets/Tandem.Packets.csproj" />
         <Project Path="src/Tandem.Terminal/Tandem.Terminal.csproj" />
         <Project Path="src/Tandem/Tandem.csproj" />
     </Folder>
@@ -16,6 +17,7 @@
         <Project Path="tests/Tandem.Ledger.TestWorker/Tandem.Ledger.TestWorker.csproj" />
         <Project Path="tests/Tandem.Process.TestChild/Tandem.Process.TestChild.csproj" />
         <Project Path="tests/Tandem.ExternalConsumer.Tests/Tandem.ExternalConsumer.Tests.csproj" />
+        <Project Path="tests/Tandem.Packets.Tests/Tandem.Packets.Tests.csproj" />
         <Project Path="tests/Tandem.Tests/Tandem.Tests.csproj" />
         <Project Path="tests/Tandem.Terminal.Tests/Tandem.Terminal.Tests.csproj" />
     </Folder>

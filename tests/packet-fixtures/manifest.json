@@ -1,0 +1,15 @@
+[
+  { "file": "valid-nested.md", "valid": true },
+  { "file": "valid-empty.md", "valid": true },
+  { "file": "invalid-envelope.md", "valid": false, "path": "$" },
+  { "file": "invalid-duplicate.md", "valid": false, "path": "$" },
+  { "file": "invalid-alias.md", "valid": false, "path": "$" },
+  { "file": "invalid-tag.md", "valid": false, "path": "$.title" },
+  { "file": "invalid-root.md", "valid": false, "path": "$" },
+  { "file": "invalid-type.md", "valid": false, "path": "$.outcomes" },
+  { "file": "invalid-null.md", "valid": false, "path": "$.title" },
+  { "file": "invalid-enum-number.md", "valid": false, "path": "$.mode" },
+  { "file": "invalid-key.md", "valid": false, "path": "$" },
+  { "file": "invalid-unknown.md", "valid": false, "path": "$" },
+  { "file": "invalid-multidoc.md", "valid": false, "path": "$" }
+]

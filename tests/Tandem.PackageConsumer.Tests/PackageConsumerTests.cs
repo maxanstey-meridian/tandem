@@ -28,6 +28,7 @@ public sealed class PackageConsumerTests
             await PackAsync("src/Tandem/Tandem.csproj", feed, version);
             await PackAsync("src/Tandem.Advanced/Tandem.Advanced.csproj", feed, version);
             await PackAsync("src/Tandem.Ledger/Tandem.Ledger.csproj", feed, version);
+            await PackAsync("src/Tandem.Packets/Tandem.Packets.csproj", feed, version);
             var config = WriteNuGetConfig(temp, feed);
 
             await ProveConsumerAsync(
@@ -61,6 +62,7 @@ public sealed class PackageConsumerTests
                 DebateProgram
             );
             await ProveLedgerConsumerAsync(temp, packages, config, version);
+            await ProvePacketsConsumerAsync(temp, packages, config, version);
         }
         finally
         {
@@ -69,6 +71,71 @@ public sealed class PackageConsumerTests
                 Directory.Delete(temp, recursive: true);
             }
         }
+    }
+
+    private static async Task ProvePacketsConsumerAsync(
+        string temp,
+        string packages,
+        string config,
+        string version
+    )
+    {
+        var directory = Path.Combine(temp, "Packets");
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(
+            Path.Combine(directory, "Packets.csproj"),
+            $"""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+              <ItemGroup><PackageReference Include="Tandem.Packets" Version="{version}" /></ItemGroup>
+            </Project>
+            """
+        );
+        await File.WriteAllTextAsync(
+            Path.Combine(directory, "Program.cs"),
+            """
+            using Tandem.Packets;
+            var input = PacketFile.Parse<Input>("---\ntitle: Packed\nitems: []\n---\nContext");
+            if (input.Value.Title != "Packed" || input.Context != "Context") throw new Exception("Packet proof failed.");
+            sealed record Input(string Title, IReadOnlyList<string> Items);
+            """
+        );
+        var project = Path.Combine(directory, "Packets.csproj");
+        await RunAsync(
+            directory,
+            "dotnet",
+            "restore",
+            project,
+            "--configfile",
+            config,
+            "--packages",
+            packages,
+            "--force",
+            "--no-cache"
+        );
+        await RunAsync(
+            directory,
+            "dotnet",
+            "run",
+            "--project",
+            project,
+            "--configuration",
+            "Release",
+            "--no-restore"
+        );
+        using var assets = JsonDocument.Parse(
+            await File.ReadAllTextAsync(Path.Combine(directory, "obj", "project.assets.json"))
+        );
+        var libraries = assets
+            .RootElement.GetProperty("libraries")
+            .EnumerateObject()
+            .Select(property => property.Name)
+            .ToArray();
+        libraries.Should().Contain($"Tandem.Packets/{version}");
+        libraries
+            .Should()
+            .Contain(name => name.StartsWith("YamlDotNet/", StringComparison.OrdinalIgnoreCase));
+        libraries.Should().NotContain(name => name.StartsWith("Tandem/", StringComparison.Ordinal));
     }
 
     private static async Task ProveLedgerConsumerAsync(

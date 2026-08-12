@@ -10,7 +10,7 @@
   "scripts": {
     "clean": "node scripts/clean.mjs",
     "build:bridge": "dotnet publish bridge/Tandem.NodeApiSpike.Bridge.csproj -r osx-arm64 --self-contained false --output .runtime-publish && node scripts/stage-runtime.mjs",
-    "build": "pnpm clean && pnpm build:bridge && tsc -p packages/sdk/tsconfig.json && node scripts/verify-package.mjs",
+    "build": "pnpm clean && pnpm build:bridge && tsc -p packages/sdk/tsconfig.json && tsc -p packages/packets/tsconfig.json && node scripts/verify-package.mjs",
     "typecheck": "tsc -p tsconfig.json && tsc -p tests/types/negative/tsconfig.json",
     "lint": "oxlint . && pnpm --filter '../examples/**' exec oxlint -c \"$PWD/.oxlintrc.json\" src",
     "format": "oxfmt --write . && pnpm --filter '../examples/**' exec oxfmt -c \"$PWD/.oxfmtrc.json\" --write src package.json",
@@ -27,6 +27,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@tandem/packets": "workspace:*",
     "@tandem/sdk": "workspace:*",
     "@types/node": "^24.10.1",
     "oxfmt": "^0.62.0",

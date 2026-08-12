@@ -17,6 +17,7 @@ public sealed class ProjectBoundaryTests
         var tandem = ProjectReferences("src/Tandem/Tandem.csproj");
         var advanced = ProjectReferences("src/Tandem.Advanced/Tandem.Advanced.csproj");
         var ledger = ProjectReferences("src/Tandem.Ledger/Tandem.Ledger.csproj");
+        var packets = ProjectReferences("src/Tandem.Packets/Tandem.Packets.csproj");
         var debate = ProjectReferences("examples/debate/csharp/Tandem.Sample.Debate.csproj");
         var codeWriter = ProjectReferences(
             "examples/code-writer/csharp/Tandem.Sample.CodeWriter.csproj"
@@ -40,6 +41,7 @@ public sealed class ProjectBoundaryTests
         songwriter.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
         tandem.Should().NotContain(reference => reference.Contains("Tandem.Ledger"));
         advanced.Should().NotContain(reference => reference.Contains("Tandem.Ledger"));
+        packets.Should().BeEmpty();
         codeWriter.Should().NotContain(reference => reference.Contains("Tandem.Ledger"));
         songwriter.Should().NotContain(reference => reference.Contains("Tandem.Ledger"));
     }

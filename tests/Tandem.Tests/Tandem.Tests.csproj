@@ -39,6 +39,7 @@
         <ProjectReference Include="..\..\src\Tandem.Advanced\Tandem.Advanced.csproj" />
         <ProjectReference Include="..\..\src\Tandem.Ledger\Tandem.Ledger.csproj" />
         <ProjectReference Include="..\..\src\Tandem.OpenAICompatible\Tandem.OpenAICompatible.csproj" />
+        <ProjectReference Include="..\..\src\Tandem.Packets\Tandem.Packets.csproj" />
         <ProjectReference Include="..\..\src\Tandem.Terminal\Tandem.Terminal.csproj" />
         <ProjectReference
             Include="..\Tandem.Ledger.TestWorker\Tandem.Ledger.TestWorker.csproj"

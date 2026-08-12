@@ -33,6 +33,11 @@ public sealed class PublicApiBoundaryTests
         "src/Tandem.Terminal/ExportedApi.txt",
         "src/Tandem.Terminal/PublicApiMembers.txt"
     )]
+    [InlineData(
+        typeof(Tandem.Packets.PacketFile),
+        "src/Tandem.Packets/ExportedApi.txt",
+        "src/Tandem.Packets/PublicApiMembers.txt"
+    )]
     public void PublicApi_MatchesReviewedManifest(
         Type assemblyMarker,
         string typeManifestPath,
@@ -306,7 +311,12 @@ public sealed class PublicApiBoundaryTests
     [Fact]
     public void PublicPackages_ExposeNoInfrastructureNamespacesOrForbiddenSignatureTypes()
     {
-        var assemblies = new[] { typeof(Pipeline<>).Assembly, typeof(PipelineOperation).Assembly };
+        var assemblies = new[]
+        {
+            typeof(Pipeline<>).Assembly,
+            typeof(PipelineOperation).Assembly,
+            typeof(Tandem.Packets.PacketFile).Assembly,
+        };
         var exported = assemblies.SelectMany(assembly => assembly.GetExportedTypes()).ToArray();
 
         exported.Should().NotContain(type => IsInfrastructureNamespace(type.Namespace));

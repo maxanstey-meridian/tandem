@@ -12,6 +12,9 @@ importers:
         specifier: ^4.3.6
         version: 4.4.3
     devDependencies:
+      '@tandem/packets':
+        specifier: workspace:*
+        version: link:packages/packets
       '@tandem/sdk':
         specifier: workspace:*
         version: link:packages/sdk
@@ -64,6 +67,16 @@ importers:
       '@tandem/sdk':
         specifier: 0.0.0-experiment
         version: link:../../../typescript/packages/sdk
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+
+  packages/packets:
+    dependencies:
+      yaml:
+        specifier: ^2.8.1
+        version: 2.9.0
+    devDependencies:
       zod:
         specifier: ^4.3.6
         version: 4.4.3
@@ -551,6 +564,11 @@ packages:
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
 
+  yaml@2.9.0:
+    resolution: {integrity: sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
   zod@4.4.3:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
@@ -843,5 +861,7 @@ snapshots:
   typescript@5.9.3: {}
 
   undici-types@7.18.2: {}
+
+  yaml@2.9.0: {}
 
   zod@4.4.3: {}

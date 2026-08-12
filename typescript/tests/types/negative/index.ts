@@ -1,3 +1,4 @@
+import { parsePacketFile } from "@tandem/packets";
 import {
   agent,
   agentTools,
@@ -12,6 +13,12 @@ import {
   type RunOptions,
 } from "@tandem/sdk";
 import { z } from "zod";
+const transformedPacket = parsePacketFile(
+  "---\ncount: '2'\n---",
+  z.object({ count: z.string().transform(Number) }),
+);
+// @ts-expect-error packet values use the schema output type
+const _packetCount: string = transformedPacket.value.count;
 const A = z.object({ value: z.number() });
 type A = z.infer<typeof A>;
 const B = z.object({ value: z.string() });

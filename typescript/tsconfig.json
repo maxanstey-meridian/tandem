@@ -9,6 +9,7 @@
   },
   "include": [
     "packages/sdk/src/**/*.ts",
+    "packages/packets/src/**/*.ts",
     "../examples/*/typescript/src/**/*.ts",
     "tests/types/positive/**/*.ts"
   ]
