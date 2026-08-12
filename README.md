@@ -3,6 +3,9 @@
 Tandem is a typed SDK for building agentic applications as explicit pipelines. Define the lifecycle in code, then run
 and inspect it.
 
+Looking for a ready-to-run coding pipeline? [Cadence](https://github.com/maxanstey-meridian/cadence) uses Tandem to
+plan, implement, verify, and review changes in an isolated workspace.
+
 ```typescript
 const myPipeline = pipeline({
   // Give the complete lifecycle one name in logs and the ledger.
