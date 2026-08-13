@@ -10,6 +10,8 @@ public abstract record AgentUpdate
 
     public sealed record Reasoning(string Value) : AgentUpdate;
 
+    public sealed record ModelSelected(string ModelId) : AgentUpdate;
+
     public sealed record Usage(long? InputTokens, long? OutputTokens, long? ReasoningTokens)
         : AgentUpdate;
 

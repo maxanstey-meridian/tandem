@@ -277,7 +277,9 @@ internal static class WorkspaceShellTools
 
         try
         {
-            var evidence = element.Deserialize<ShellResultEvidence>(JsonSerializerOptions.Web);
+            var evidence = element.Deserialize<ShellResultEvidence>(
+                TandemJson.CreateTypedContract()
+            );
             return evidence is null
                 ? null
                 : new ToolResultEvidenceDescriptor.Process(

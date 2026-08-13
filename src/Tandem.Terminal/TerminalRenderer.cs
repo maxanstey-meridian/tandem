@@ -72,7 +72,12 @@ internal sealed class TerminalRenderer(
             root["body"]
                 ["pipeline"]
                 .Update(
-                    RenderPipeline(model, Math.Max(3, bodyHeight - workHeight), pipelineEntries)
+                    RenderPipeline(
+                        model,
+                        Math.Max(3, bodyHeight - workHeight),
+                        Math.Max(10, width - 2),
+                        pipelineEntries
+                    )
                 );
         }
         else
@@ -81,7 +86,11 @@ internal sealed class TerminalRenderer(
             root["body"]
                 ["work"]
                 .Update(RenderWork(model, bodyHeight, Math.Max(10, width * 3 / 4 - 4)));
-            root["body"]["pipeline"].Update(RenderPipeline(model, bodyHeight, pipelineEntries));
+            root["body"]
+                ["pipeline"]
+                .Update(
+                    RenderPipeline(model, bodyHeight, Math.Max(10, width / 4 - 2), pipelineEntries)
+                );
         }
         root["footer"].Update(RenderFooter(model));
 
@@ -93,6 +102,7 @@ internal sealed class TerminalRenderer(
         }
         console.Cursor.SetPosition(0, 0);
         console.Write(root);
+        console.Cursor.SetPosition(0, height - 1);
     }
 
     private static IRenderable RenderHeader(TerminalSnapshot model)
@@ -122,6 +132,10 @@ internal sealed class TerminalRenderer(
         )
         {
             var entry = model.Transcript[index];
+            if (entry is { Kind: TranscriptKind.ToolCompleted, Succeeded: true })
+            {
+                continue;
+            }
             var rendered = RenderLines(entry, stepWidth, paneWidth).ToList();
             var remaining = MaxScrollbackLines - lines.Count;
             if (rendered.Count > remaining)
@@ -145,18 +159,9 @@ internal sealed class TerminalRenderer(
 
         var start = Math.Max(0, lines.Count - visibleCount - _scrollOffset);
         var visibleLines = lines.Skip(start).Take(visibleCount).ToList();
-        var title =
-            model.ActiveStep
-            ?? model.Transcript.LastOrDefault()?.StepId
-            ?? model.Visits.LastOrDefault()?.StepId
-            ?? "Work";
-        var state =
-            model.ActiveStep is not null ? "running"
-            : model.Visits.Count > 0 ? "done"
-            : "waiting";
-        var modelName = model.ModelName is null ? "" : $" · {Markup.Escape(model.ModelName)}";
+        var title = model.ModelName is null ? "" : Markup.Escape(model.ModelName);
         return new Panel(new Rows(visibleLines))
-            .Header($" {Markup.Escape(title)}{modelName} · {state} ")
+            .Header($" {title} ")
             .Border(BoxBorder.Rounded)
             .Expand();
     }
@@ -167,10 +172,21 @@ internal sealed class TerminalRenderer(
         int width
     )
     {
-        var label = $"[{Center(entry.StepId, stepWidth)}] ";
-        var prefix = entry.Kind == TranscriptKind.Reasoning ? "· " : "  ";
+        var label = $"[{entry.StepId}]".PadRight(stepWidth + 3);
+        var prefix = entry.Kind switch
+        {
+            TranscriptKind.Reasoning => "· ",
+            TranscriptKind.ToolStarted => "↯ ",
+            TranscriptKind.ToolCompleted when entry.Succeeded is true => "✓ ",
+            TranscriptKind.ToolCompleted => "✗ ",
+            TranscriptKind.Action when entry.Succeeded is false => "✗ ",
+            TranscriptKind.Semantic => "  ",
+            _ => "  ",
+        };
+        var value =
+            entry.Kind == TranscriptKind.ToolStarted ? entry.ToolName ?? entry.Text : entry.Text;
         var background = StepBackground(entry.StepId);
-        var jsonLines = TryRenderJson(entry.Text, label, prefix, background, width);
+        var jsonLines = TryRenderJson(value, label, prefix, background, width);
         if (jsonLines is not null)
         {
             foreach (var line in jsonLines)
@@ -183,13 +199,21 @@ internal sealed class TerminalRenderer(
         var coloredGutterWidth = label.Length + prefix.Length;
         var availableWidth = Math.Max(10, width - coloredGutterWidth - 1);
         var first = true;
-        foreach (var wrapped in WrapVisibleText(entry.Text, availableWidth))
+        foreach (var wrapped in WrapVisibleText(value, availableWidth))
         {
             var gutter = first ? label + prefix : new string(' ', coloredGutterWidth);
             var content = Markup.Escape(wrapped);
             if (entry.Kind == TranscriptKind.Reasoning)
             {
                 content = $"[grey]{content}[/]";
+            }
+            else if (entry.Kind == TranscriptKind.ToolStarted)
+            {
+                content = $"[cornflowerblue]{content}[/]";
+            }
+            else if (entry.Succeeded is false)
+            {
+                content = $"[red]{content}[/]";
             }
             yield return new Markup(
                 $"[white on {background}]{Markup.Escape(gutter)}[/] {content}"
@@ -489,13 +513,6 @@ internal sealed class TerminalRenderer(
         return _stepBackgrounds[(int)(hash % _stepBackgrounds.Length)];
     }
 
-    private static string Center(string value, int width)
-    {
-        var padding = Math.Max(0, width - value.Length);
-        var left = (padding + 1) / 2;
-        return new string(' ', left) + value + new string(' ', padding - left);
-    }
-
     private static IEnumerable<string> WrapVisibleText(string value, int width)
     {
         var normalized = value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
@@ -530,10 +547,11 @@ internal sealed class TerminalRenderer(
     private IRenderable RenderPipeline(
         TerminalSnapshot model,
         int paneHeight,
+        int paneWidth,
         IReadOnlyList<TerminalPipelineEntry>? pipelineEntries
     )
     {
-        var rows = model
+        var entries = model
             .Visits.Select(visit => new TerminalPipelineEntry(
                 visit.StepId,
                 visit.Outcome ?? "running",
@@ -547,46 +565,91 @@ internal sealed class TerminalRenderer(
                 }
             ))
             .Concat(pipelineEntries ?? [])
-            .Select(RenderPipelineEntry)
             .ToList();
+        var rows = entries.TakeLast(Math.Max(1, paneHeight - 2)).ToList();
+        if (rows.Count == 0 && model.Interaction is null)
+        {
+            return new Panel(new Text("no pipeline history", new Style(Color.Grey)))
+                .Header(" Pipeline ")
+                .Border(BoxBorder.Rounded)
+                .Expand();
+        }
+
+        var labelWidth = Math.Min(
+            rows.Select(entry => TerminalText.Sanitize(entry.Label).Length).DefaultIfEmpty(1).Max(),
+            Math.Max(1, paneWidth - 18)
+        );
+        var resultWidth = Math.Max(1, paneWidth - labelWidth - 16);
+        var grid = new Grid { Expand = true };
+        grid.AddColumn(
+            new GridColumn
+            {
+                Width = 1,
+                NoWrap = true,
+                Padding = new Padding(0, 0),
+            }
+        );
+        grid.AddColumn(
+            new GridColumn
+            {
+                Width = labelWidth,
+                NoWrap = true,
+                Padding = new Padding(1, 0, 0, 0),
+            }
+        );
+        grid.AddColumn(
+            new GridColumn
+            {
+                Width = 6,
+                Alignment = Justify.Right,
+                NoWrap = true,
+                Padding = new Padding(1, 0, 0, 0),
+            }
+        );
+        grid.AddColumn(
+            new GridColumn
+            {
+                Width = resultWidth,
+                NoWrap = true,
+                Padding = new Padding(1, 0, 0, 0),
+            }
+        );
+        foreach (var entry in rows.TakeLast(Math.Max(1, paneHeight - 2)))
+        {
+            grid.AddRow(RenderPipelineEntry(entry, labelWidth, resultWidth));
+        }
+        var content = new List<IRenderable> { grid };
         if (model.Interaction is { } interaction)
         {
-            rows.Add(
-                RenderPipelineEntry(
-                    new TerminalPipelineEntry(
-                        "question",
-                        "waiting",
-                        interaction.Prompt,
-                        Style: TerminalPipelineEntryStyle.Interaction
-                    )
-                )
+            content.Add(
+                new Text(
+                    TerminalText.Sanitize(interaction.Prompt),
+                    new Style(Color.Yellow)
+                ).Overflow(Overflow.Ellipsis)
             );
             if (!string.IsNullOrWhiteSpace(interaction.Detail))
             {
-                rows.Add(
+                content.Add(
                     new Text(
-                        $"reason  {TerminalText.Sanitize(interaction.Detail)}",
+                        TerminalText.Sanitize(interaction.Detail),
                         new Style(Color.Grey)
                     ).Overflow(Overflow.Ellipsis)
                 );
             }
         }
-        if (rows.Count == 0)
-        {
-            rows.Add(new Text("no pipeline history", new Style(Color.Grey)));
-        }
-        return new Panel(new Rows(rows.TakeLast(Math.Max(1, paneHeight - 2))))
-            .Header(" Pipeline ")
-            .Border(BoxBorder.Rounded)
-            .Expand();
+        return new Panel(new Rows(content)).Header(" Pipeline ").Border(BoxBorder.Rounded).Expand();
     }
 
-    private static IRenderable RenderPipelineEntry(TerminalPipelineEntry entry)
+    private static IRenderable[] RenderPipelineEntry(
+        TerminalPipelineEntry entry,
+        int labelWidth,
+        int resultWidth
+    )
     {
         var duration = entry.Duration switch
         {
-            { TotalSeconds: >= 1 } value => $"  {value.TotalSeconds:F1}s",
-            { } value => $"  {value.TotalMilliseconds:F0}ms",
+            { TotalSeconds: >= 1 } value => $"{value.TotalSeconds:F1}s",
+            { } value => $"{value.TotalMilliseconds:F0}ms",
             _ => "",
         };
         var icon = entry.Style switch
@@ -603,12 +666,33 @@ internal sealed class TerminalRenderer(
             TerminalPipelineEntryStyle.Interaction => Color.Yellow,
             _ => Color.Default,
         };
-        var summary = string.IsNullOrWhiteSpace(entry.Summary) ? "" : $"  {entry.Summary}";
-        return new Text(
-            TerminalText.Sanitize($"{icon} {entry.Label}  {entry.Kind}{duration}{summary}"),
-            new Style(color)
-        ).Overflow(Overflow.Ellipsis);
+        var result = string.IsNullOrWhiteSpace(entry.Summary)
+            ? HumanizePipelineKind(entry.Kind)
+            : TerminalText.Sanitize(entry.Summary);
+        return
+        [
+            new Text(icon, new Style(color)),
+            new Text(Truncate(TerminalText.Sanitize(entry.Label), labelWidth)).Overflow(
+                Overflow.Ellipsis
+            ),
+            new Text(duration, new Style(Color.Grey)),
+            new Text(Truncate(result, resultWidth), new Style(color)).Overflow(Overflow.Ellipsis),
+        ];
     }
+
+    private static string Truncate(string value, int width) =>
+        value.Length <= width ? value : value[..(width - 1)] + "…";
+
+    private static string HumanizePipelineKind(string kind) =>
+        kind switch
+        {
+            "running" => "Running",
+            "waiting" => "Waiting",
+            "faulted" => "Faulted",
+            "cancelled" => "Cancelled",
+            StandardOutcomeKinds.Success => "Succeeded",
+            _ => TerminalText.Sanitize(kind),
+        };
 
     private IRenderable RenderFooter(TerminalSnapshot model)
     {
@@ -621,13 +705,6 @@ internal sealed class TerminalRenderer(
         }
         else
         {
-            var current = model.CurrentContextTokens;
-            var window = model.ContextWindowTokens ?? 0;
-            var fraction = window > 0 ? Math.Clamp((double)current / window, 0, 1) : 0;
-            const int barWidth = 20;
-            var filled = (int)Math.Round(fraction * barWidth);
-            var bar = new string('▓', filled) + new string('░', barWidth - filled);
-            var usage = window > 0 ? $"{current / 1000.0:F1}k/{window / 1000.0:F0}k" : "—/—";
             var scroll = _scrollOffset > 0 ? $"↑ {_scrollOffset} lines · End follow  " : "";
             var actions = string.Join(
                 "  ",
@@ -637,11 +714,8 @@ internal sealed class TerminalRenderer(
             );
             var quit = IsTerminal(model.Status) ? "q close" : "q cancel";
             text =
-                $"{scroll}ctx {bar} {usage}  steps {model.Visits.Count}  {model.ActiveStep ?? model.Status.ToString()}{(actions.Length == 0 ? "" : $"  {actions}")}  ↑↓/Pg/Home/End scroll  {quit}";
-            style =
-                fraction > 0.85 ? new Style(Color.Red)
-                : fraction > 0.6 ? new Style(Color.Yellow)
-                : new Style(Color.Grey);
+                $"{scroll}steps {model.Visits.Count}{(actions.Length == 0 ? "" : $"  {actions}")}  ↑↓/Pg/Home/End scroll  {quit}";
+            style = new Style(Color.Grey);
         }
         return new Panel(new Text(TerminalText.Sanitize(text), style).Overflow(Overflow.Ellipsis))
             .Border(BoxBorder.None)

@@ -4,7 +4,7 @@ namespace Tandem;
 
 internal static class CapabilityAcceptanceRuntime
 {
-    private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerOptions.Web);
+    private static readonly JsonSerializerOptions _jsonOptions = TandemJson.TypedContract;
 
     public static async ValueTask<object?> AcceptAsync<TState>(
         CapabilityInvocationState<TState> invocation,
@@ -13,6 +13,7 @@ internal static class CapabilityAcceptanceRuntime
         string requestType,
         JsonElement payload,
         string summary,
+        Func<JsonElement?, PipelineCapabilityAccepted>? emitAccepted,
         Func<CancellationToken, ValueTask>? beforeAccept,
         Func<TState, TState> apply,
         CancellationToken cancellationToken
@@ -35,17 +36,20 @@ internal static class CapabilityAcceptanceRuntime
                 if (invocation.RunContext is { } observedRunContext)
                 {
                     await observedRunContext.ObserveAsync(
-                        new PipelineCapabilityAccepted(
-                            invocation.RunId,
-                            invocation.StepId,
-                            invocation.InvocationId,
-                            capabilityId,
-                            toolName,
-                            $"{invocation.RunId:N}:{invocation.StepId}:{invocation.InvocationId}:{capabilityId}",
-                            summary,
-                            requestType,
+                        emitAccepted?.Invoke(
                             observedRunContext.ShouldPersist(invocation.StepId) ? payload : null
-                        ),
+                        )
+                            ?? new PipelineCapabilityAccepted(
+                                invocation.RunId,
+                                invocation.StepId,
+                                invocation.InvocationId,
+                                capabilityId,
+                                toolName,
+                                $"{invocation.RunId:N}:{invocation.StepId}:{invocation.InvocationId}:{capabilityId}",
+                                summary,
+                                requestType,
+                                observedRunContext.ShouldPersist(invocation.StepId) ? payload : null
+                            ),
                         ct
                     );
                 }

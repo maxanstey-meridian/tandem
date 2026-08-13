@@ -41,7 +41,7 @@ public static partial class NodePipelineBridge
         {
             var record = JsonSerializer.Deserialize<RuntimeJournalRecord>(
                 (byte[])reader[0],
-                new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                TandemJson.CreateTypedContract()
             );
             if (record is not null && PipelineJournal.IsAccepted(record))
             {
@@ -56,7 +56,7 @@ public static partial class NodePipelineBridge
                 );
             }
         }
-        return JsonSerializer.Serialize(accepted);
+        return JsonSerializer.Serialize(accepted, TandemJson.CreateTypedContract());
     }
 
     /// <summary>Registers and runs a complete JavaScript-authored Tandem graph.</summary>
@@ -119,18 +119,9 @@ public static partial class NodePipelineBridge
         }
 
         var runId = Guid.CreateVersion7();
-        var modelNames = definition
-            .Nodes.SelectMany(EnumerateNodeContracts)
-            .Where(node => node.Kind == "agent")
-            .ToDictionary(node => node.Id!, node => node.Client!.Model!, StringComparer.Ordinal);
         await using var presentation = terminalCancellation is null
             ? null
-            : new TerminalRunPresentation(
-                pipeline.Inspect(),
-                runId,
-                terminalCancellation,
-                modelNames
-            );
+            : new TerminalRunPresentation(pipeline.Inspect(), runId, terminalCancellation);
         IPipelinePersistenceObserver? observer = null;
         SqliteLedgerStore? store = null;
         if (definition.LedgerPath is not null)
@@ -179,7 +170,8 @@ public static partial class NodePipelineBridge
                     succeeded = result.Succeeded,
                     state = JsonDocument.Parse(result.State.Json).RootElement,
                     summary = result.Outcome?.Summary,
-                }
+                },
+                TandemJson.CreateTypedContract()
             );
         }
         catch (CallbackContractException exception)
@@ -259,7 +251,7 @@ public static partial class NodePipelineBridge
             "TANDEM_CALLBACK_CONTRACT:"
                 + JsonSerializer.Serialize(
                     new { boundary = contract.Boundary, problems = contract.Problems },
-                    new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                    TandemJson.CreateTypedContract()
                 ),
             cause
         );

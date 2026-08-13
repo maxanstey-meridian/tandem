@@ -83,7 +83,7 @@ internal sealed class CallbackDispatcher(
         throw new InvalidOperationException($"JavaScript callback failed: {error.Message}");
     }
 
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions JsonOptions = TandemJson.CreateTypedContract();
 
     private sealed record CallbackResult(bool Succeeded, string? Value, CallbackError? Error);
 

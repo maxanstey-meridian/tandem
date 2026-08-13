@@ -37,6 +37,7 @@ Tandem.Pipeline
 Tandem.Pipeline`1
 Tandem.PipelineRunStatus
 Tandem.StandardOutcomeKinds
+Tandem.TandemJson
 
 [adapter-authoring]
 Tandem.AgentJsonCapabilityDefinition`1
@@ -45,6 +46,7 @@ Tandem.AgentJsonValidationProblem
 
 [runtime-hosting]
 Tandem.AgentUpdate
+Tandem.AgentUpdate+ModelSelected
 Tandem.AgentUpdate+Reasoning
 Tandem.AgentUpdate+Text
 Tandem.AgentUpdate+ToolCompleted
@@ -52,6 +54,8 @@ Tandem.AgentUpdate+ToolStarted
 Tandem.AgentUpdate+Usage
 Tandem.IPipelineObserver
 Tandem.IPipelinePersistenceObserver
+Tandem.CapabilityAccepted`1
+Tandem.OutputAccepted`1
 Tandem.PipelineAcceptedValue
 Tandem.PipelineActionAttempted
 Tandem.PipelineActionCompleted
@@ -76,6 +80,8 @@ Tandem.PipelineStepCompleted
 Tandem.PipelineStepFaulted
 Tandem.PipelineStepStarted
 Tandem.PipelineStructuredOutputAccepted
+Tandem.PipelineStructuredOutputProblem
+Tandem.PipelineStructuredOutputRejected
 
 [generator-abi]
 Tandem.GeneratedOutcomeStepDescriptor`1

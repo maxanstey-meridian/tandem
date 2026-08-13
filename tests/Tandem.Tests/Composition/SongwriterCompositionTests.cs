@@ -61,7 +61,11 @@ public sealed class SongwriterCompositionTests
         services.AddSongwriter(
             new SongwriterClients(
                 new ScriptedChatClient(order, "songwriter", "{\"lyrics\":\"Valid\\ndraft\"}"),
-                new ScriptedChatClient(order, "proofreader", "not json", "still not json")
+                new ScriptedChatClient(
+                    order,
+                    "proofreader",
+                    ["not json", .. Enumerable.Repeat("still not json", 99)]
+                )
             )
         );
         await using var provider = services.BuildServiceProvider();
@@ -73,7 +77,9 @@ public sealed class SongwriterCompositionTests
 
         var output = await RunAsync(pipeline, input);
 
-        order.Should().Equal("songwriter", "proofreader", "proofreader");
+        order.Should().HaveCount(101);
+        order[0].Should().Be("songwriter");
+        order.Skip(1).Should().OnlyContain(step => step == "proofreader");
         output.Status.Should().Be(PipelineRunStatus.Failed);
         output.LatestOutcome!.Kind.Should().Be(StandardOutcomeKinds.Failed);
         output.LatestResult!.CaseId.Should().Be("Failed");

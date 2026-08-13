@@ -31,8 +31,7 @@ public sealed class SqliteLedgerStore
             Pooling = false,
         }.ToString();
         _timeProvider = timeProvider ?? TimeProvider.System;
-        _serializerOptions =
-            serializerOptions ?? new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        _serializerOptions = serializerOptions ?? TandemJson.CreateTypedContract();
         _options = options ?? SqliteLedgerOptions.Default;
         if (_options.BusyTimeout <= TimeSpan.Zero || _options.BusyTimeout > TimeSpan.FromMinutes(1))
         {

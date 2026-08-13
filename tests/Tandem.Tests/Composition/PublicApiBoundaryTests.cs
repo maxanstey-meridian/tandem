@@ -38,6 +38,11 @@ public sealed class PublicApiBoundaryTests
         "src/Tandem.Packets/ExportedApi.txt",
         "src/Tandem.Packets/PublicApiMembers.txt"
     )]
+    [InlineData(
+        typeof(Tandem.OpenAICompatible.OpenRouterReasoningChatClient),
+        "src/Tandem.OpenAICompatible/ExportedApi.txt",
+        "src/Tandem.OpenAICompatible/PublicApiMembers.txt"
+    )]
     public void PublicApi_MatchesReviewedManifest(
         Type assemblyMarker,
         string typeManifestPath,

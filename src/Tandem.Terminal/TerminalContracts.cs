@@ -76,9 +76,6 @@ public sealed record TerminalDisplayOptions
 
     public IReadOnlyList<TerminalKeyAction> KeyActions { get; init; } = [];
 
-    public IReadOnlyDictionary<string, string> ModelNames { get; init; } =
-        new Dictionary<string, string>();
-
     public int? ContextWindowTokens { get; init; }
 
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;

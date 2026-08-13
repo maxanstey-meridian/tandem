@@ -4,9 +4,20 @@ internal enum TranscriptKind
 {
     Text,
     Reasoning,
+    ToolStarted,
+    ToolCompleted,
+    Command,
+    Action,
+    Semantic,
 }
 
-internal sealed record TranscriptEntry(string StepId, TranscriptKind Kind, string Text);
+internal sealed record TranscriptEntry(
+    string StepId,
+    TranscriptKind Kind,
+    string Text,
+    string? ToolName = null,
+    bool? Succeeded = null
+);
 
 internal sealed record StepVisit(
     string StepId,
@@ -43,7 +54,6 @@ internal sealed class TerminalModel(
     TimeProvider timeProvider,
     int entryCapacity,
     int characterCapacity,
-    IReadOnlyDictionary<string, string>? modelNames = null,
     int? contextWindowTokens = null
 )
 {
@@ -63,6 +73,8 @@ internal sealed class TerminalModel(
     private readonly DateTimeOffset _startedAt = timeProvider.GetUtcNow();
     private DateTimeOffset? _completedAt;
     private string? _modelName;
+    private readonly Dictionary<string, string> _models = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _toolNames = new(StringComparer.Ordinal);
 
     public void Apply(PipelineObservation observation)
     {
@@ -78,10 +90,7 @@ internal sealed class TerminalModel(
             {
                 case PipelineStepStarted started:
                     _activeStep = started.StepId;
-                    if (modelNames?.TryGetValue(started.StepId, out var activeModel) is true)
-                    {
-                        _modelName = activeModel;
-                    }
+                    _modelName = _models.GetValueOrDefault(started.StepId);
                     _visits.Add(new(started.StepId, timeProvider.GetUtcNow()));
                     break;
                 case PipelineStepCompleted completed:
@@ -104,8 +113,76 @@ internal sealed class TerminalModel(
                 case PipelineAgentUpdated { Update: AgentUpdate.Reasoning reasoning } update:
                     Append(update.StepId, TranscriptKind.Reasoning, reasoning.Value);
                     break;
+                case PipelineAgentUpdated { Update: AgentUpdate.ModelSelected selected } update:
+                    _activeStep = update.StepId;
+                    _models[update.StepId] = selected.ModelId;
+                    _modelName = selected.ModelId;
+                    break;
+                case PipelineAgentUpdated { Update: AgentUpdate.ToolStarted tool } update:
+                    _toolNames[tool.CallId] = tool.Name;
+                    Append(
+                        update.StepId,
+                        TranscriptKind.ToolStarted,
+                        tool.Arguments.ValueKind == System.Text.Json.JsonValueKind.Undefined
+                            ? "{}"
+                            : tool.Arguments.GetRawText(),
+                        tool.Name
+                    );
+                    if (tool.Name == "ask_planner")
+                    {
+                        AppendSemantic(update.StepId, tool.Arguments);
+                    }
+                    break;
+                case PipelineAgentUpdated { Update: AgentUpdate.ToolCompleted tool } update:
+                    _toolNames.Remove(tool.CallId, out var toolName);
+                    Append(
+                        update.StepId,
+                        TranscriptKind.ToolCompleted,
+                        tool.Error ?? tool.Result ?? toolName ?? tool.CallId,
+                        toolName,
+                        tool.Succeeded
+                    );
+                    break;
+                case PipelineCommandOutput command:
+                    Append(
+                        command.StepId,
+                        TranscriptKind.Command,
+                        $"{command.Command}\n{command.Output}",
+                        succeeded: command.ExitCode == 0
+                    );
+                    break;
+                case PipelineActionCompleted action when action.Result != "Completed":
+                    Append(
+                        action.StepId,
+                        TranscriptKind.Action,
+                        $"{action.ActionName}: {action.Result}",
+                        succeeded: false
+                    );
+                    break;
                 case PipelineCapabilityAccepted accepted:
                     Append(accepted.StepId, TranscriptKind.Text, accepted.Summary);
+                    if (accepted.Payload is { } capabilityPayload)
+                    {
+                        AppendSemantic(accepted.StepId, capabilityPayload);
+                    }
+                    break;
+                case PipelineStructuredOutputAccepted { Payload: { } payload } accepted:
+                    AppendSemantic(accepted.StepId, payload);
+                    break;
+                case PipelineStructuredOutputRejected rejected:
+                    Append(
+                        rejected.StepId,
+                        TranscriptKind.ToolCompleted,
+                        System.Text.Json.JsonSerializer.Serialize(
+                            new
+                            {
+                                isError = true,
+                                error = "structured output rejected",
+                                problems = rejected.Problems,
+                            }
+                        ),
+                        succeeded: false
+                    );
                     break;
                 case PipelineAgentUsage usage:
                     _inputTokens += usage.InputTokens;
@@ -126,6 +203,48 @@ internal sealed class TerminalModel(
                     }
                     break;
             }
+        }
+    }
+
+    private static string Json(System.Text.Json.JsonElement value) =>
+        value.ValueKind == System.Text.Json.JsonValueKind.Undefined ? "{}" : value.GetRawText();
+
+    private void AppendSemantic(string stepId, System.Text.Json.JsonElement value)
+    {
+        var json = Json(value);
+        if (
+            _transcript.LastOrDefault(entry =>
+                entry.StepId == stepId && entry.Kind == TranscriptKind.Semantic
+            )
+                is { } semantic
+            && JsonEquals(semantic.Text, value)
+        )
+        {
+            return;
+        }
+        if (
+            _transcript.LastOrDefault() is { Kind: TranscriptKind.Text } last
+            && last.StepId == stepId
+            && JsonEquals(last.Text, value)
+        )
+        {
+            _transcript[^1] = last with { Kind = TranscriptKind.Semantic, Text = json };
+            _characters += json.Length - last.Text.Length;
+            return;
+        }
+        Append(stepId, TranscriptKind.Semantic, json);
+    }
+
+    private static bool JsonEquals(string text, System.Text.Json.JsonElement value)
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(text);
+            return System.Text.Json.JsonElement.DeepEquals(document.RootElement, value);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
         }
     }
 
@@ -226,20 +345,31 @@ internal sealed class TerminalModel(
         }
     }
 
-    private void Append(string stepId, TranscriptKind kind, string text)
+    private void Append(
+        string stepId,
+        TranscriptKind kind,
+        string text,
+        string? toolName = null,
+        bool? succeeded = null
+    )
     {
         text = TerminalText.Sanitize(text);
         if (text.Length == 0)
         {
             return;
         }
-        if (_transcript.LastOrDefault() is { } last && last.StepId == stepId && last.Kind == kind)
+        if (
+            kind is TranscriptKind.Text or TranscriptKind.Reasoning
+            && _transcript.LastOrDefault() is { } last
+            && last.StepId == stepId
+            && last.Kind == kind
+        )
         {
             _transcript[^1] = last with { Text = last.Text + text };
         }
         else
         {
-            _transcript.Add(new(stepId, kind, text));
+            _transcript.Add(new(stepId, kind, text, toolName, succeeded));
         }
         _characters += text.Length;
         while (_transcript.Count > entryCapacity)

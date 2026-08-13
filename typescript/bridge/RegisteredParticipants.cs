@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Tandem.Advanced;
 
 namespace Tandem.NodeApiSpike;
@@ -85,7 +84,7 @@ internal static class RegisteredParticipantFactory
                     callbacks.Invoke(
                         node.MergeCallback!,
                         results.Baseline.Json,
-                        JsonSerializer.Serialize(states)
+                        JsonSerializer.Serialize(states, TandemJson.CreateTypedContract())
                     )
                 );
             }
@@ -275,10 +274,7 @@ internal static class RegisteredParticipantFactory
         var commands =
             JsonSerializer.Deserialize<RegisteredAgentCommand[]>(
                 json,
-                new JsonSerializerOptions(JsonSerializerDefaults.Web)
-                {
-                    UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-                }
+                TandemJson.CreateTypedContract()
             ) ?? throw new InvalidOperationException("Workspace command callback returned null.");
         return commands
             .Select(command =>
@@ -316,7 +312,7 @@ internal static class RegisteredParticipantFactory
 
         return JsonSerializer.Deserialize<AgentJsonValidationProblem[]>(
                 problems,
-                new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                TandemJson.CreateTypedContract()
             ) ?? [];
     }
 }

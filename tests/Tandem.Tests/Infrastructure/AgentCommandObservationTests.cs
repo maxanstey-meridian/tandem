@@ -8,6 +8,27 @@ namespace Tandem.Tests.Infrastructure;
 public sealed class AgentCommandObservationTests
 {
     [Fact]
+    public async Task HarnessCommand_EmitsSelectedModelAndRealToolInvocation()
+    {
+        var observations = new List<PipelineObservation>();
+
+        await RunAsync(SuccessCommand(), observations: observations);
+
+        var updates = observations
+            .OfType<PipelineAgentUpdated>()
+            .Select(observation => observation.Update)
+            .ToArray();
+        updates[0].Should().Be(new AgentUpdate.ModelSelected("harness-test-model"));
+        var started = updates[1].Should().BeOfType<AgentUpdate.ToolStarted>().Subject;
+        started.Name.Should().Be("run_verification_1");
+        started.Arguments.GetRawText().Should().Be("{}");
+        var completed = updates[2].Should().BeOfType<AgentUpdate.ToolCompleted>().Subject;
+        completed.CallId.Should().Be(started.CallId);
+        completed.Succeeded.Should().BeTrue();
+        completed.Result.Should().Contain("\"exitCode\": 0");
+    }
+
+    [Fact]
     public async Task SuccessfulCommand_IsAvailableToOutputAcceptanceAsProcessExecution()
     {
         var observations = (await RunAsync(SuccessCommand())).Tools;
@@ -221,7 +242,8 @@ public sealed class AgentCommandObservationTests
         string command,
         ToolInterceptor<TestState>? interceptor = null,
         bool invokeTwice = false,
-        bool rejectFirstOutput = false
+        bool rejectFirstOutput = false,
+        List<PipelineObservation>? observations = null
     )
     {
         var path = Path.Combine(
@@ -295,7 +317,13 @@ public sealed class AgentCommandObservationTests
                 .Route(agent.Success, complete, "complete")
                 .Build(complete);
 
-            await new PipelineRunner().RunAsync(pipeline, new TestState());
+            await new PipelineRunner().RunAsync(
+                pipeline,
+                new TestState(),
+                observations is null
+                    ? null
+                    : new PipelineRunOptions(Observer: new RecordingObserver(observations))
+            );
 
             return acceptedObservation
                 ?? throw new InvalidOperationException("Output was not accepted.");
@@ -359,8 +387,24 @@ public sealed class AgentCommandObservationTests
             }
         }
 
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public object? GetService(Type serviceType, object? serviceKey = null) =>
+            serviceType == typeof(ChatClientMetadata)
+                ? new ChatClientMetadata("test", null, "harness-test-model")
+                : null;
 
         public void Dispose() { }
+    }
+
+    private sealed class RecordingObserver(List<PipelineObservation> observations)
+        : IPipelinePersistenceObserver
+    {
+        public ValueTask ObserveAsync(
+            PipelineObservation observation,
+            CancellationToken cancellationToken
+        )
+        {
+            observations.Add(observation);
+            return ValueTask.CompletedTask;
+        }
     }
 }

@@ -90,7 +90,8 @@ public sealed class PipelineInteraction<TState, TRequest, TResponse>
                                 scope,
                                 $"Request '{scope}' resumed.",
                                 System.Text.Json.JsonSerializer.SerializeToElement(
-                                    response.Response
+                                    response.Response,
+                                    TandemJson.TypedContract
                                 )
                             ),
                             LatestResult = null,
@@ -163,7 +164,7 @@ internal sealed record InteractionRequest<TState, TRequest, TResponse>(
             InteractionId,
             requestId,
             Value,
-            persist ? JsonSerializer.SerializeToElement(Value, JsonSerializerOptions.Web) : null
+            persist ? JsonSerializer.SerializeToElement(Value, TandemJson.TypedContract) : null
         );
 
     PipelineObservation IInteractionRequest.CreateAnsweredObservation(
@@ -178,7 +179,7 @@ internal sealed record InteractionRequest<TState, TRequest, TResponse>(
                 InteractionId,
                 requestId,
                 typed,
-                persist ? JsonSerializer.SerializeToElement(typed, JsonSerializerOptions.Web) : null
+                persist ? JsonSerializer.SerializeToElement(typed, TandemJson.TypedContract) : null
             )
             : throw new InvalidOperationException(
                 $"Interaction '{InteractionId}' cannot observe response type "

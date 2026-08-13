@@ -221,31 +221,35 @@ public sealed class TerminalPipelineDisplayTests
     }
 
     [Fact]
-    public void ModelNameFollowsTheActiveModelBackedStepAndSurvivesCompletion()
+    public void ModelNameFollowsTheActiveParticipantRuntimeSelection()
     {
-        var model = new TerminalModel(
-            "pipeline",
-            _runId,
-            TimeProvider.System,
-            100,
-            10_000,
-            new Dictionary<string, string>
-            {
-                ["implementer"] = "deepseek/deepseek-v4-flash-0731",
-                ["reviewer"] = "gpt-5.6-sol",
-            }
-        );
+        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000);
 
         model.Apply(new PipelineStepStarted(_runId, "implementer"));
+        model.Apply(
+            new PipelineAgentUpdated(
+                _runId,
+                "implementer",
+                new AgentUpdate.ModelSelected("deepseek/deepseek-v4-flash-0731")
+            )
+        );
         model.Snapshot().ModelName.Should().Be("deepseek/deepseek-v4-flash-0731");
         model.Apply(new PipelineStepCompleted(_runId, "implementer", Outcome("implemented", 1)));
         model.Apply(new PipelineStepStarted(_runId, "reviewer"));
+        model.Snapshot().ModelName.Should().BeNull();
+        model.Apply(
+            new PipelineAgentUpdated(
+                _runId,
+                "reviewer",
+                new AgentUpdate.ModelSelected("gpt-5.6-sol")
+            )
+        );
         model.Snapshot().ModelName.Should().Be("gpt-5.6-sol");
         model.Apply(new PipelineStepCompleted(_runId, "reviewer", Outcome("accepted", 1)));
         model.Apply(new PipelineStepStarted(_runId, "done"));
         model.Finish(TerminalPipelineStatus.Succeeded, "complete");
 
-        model.Snapshot().ModelName.Should().Be("gpt-5.6-sol");
+        model.Snapshot().ModelName.Should().BeNull();
     }
 
     [Fact]
@@ -285,6 +289,35 @@ public sealed class TerminalPipelineDisplayTests
     }
 
     [Fact]
+    public async Task QuitIsNotStarvedByQueuedScrollInput()
+    {
+        var console = new TestConsole().Width(80).Height(20);
+        var keys = Enumerable
+            .Repeat(new ConsoleKeyInfo('\0', ConsoleKey.UpArrow, false, false, false), 500)
+            .Append(new ConsoleKeyInfo('q', ConsoleKey.Q, false, false, false))
+            .ToArray();
+        var calls = 0;
+        TerminalPipelineDisplay? display = null;
+        display = Create(
+            console,
+            new(true, true),
+            new QueueInput(keys),
+            async _ =>
+            {
+                calls++;
+                await display!.CancelledAsync("cancelled");
+            }
+        );
+        await using (display)
+        {
+            await display.StartAsync();
+            await display.WaitForCleanupAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        }
+
+        calls.Should().Be(1);
+    }
+
+    [Fact]
     public async Task InteractiveDisplayRemainsOpenAfterTerminalCompletionUntilQuit()
     {
         var console = new TestConsole().Width(80).Height(20);
@@ -300,6 +333,29 @@ public sealed class TerminalPipelineDisplayTests
         input.Enqueue(new ConsoleKeyInfo('q', ConsoleKey.Q, false, false, false));
 
         await cleanup.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Theory]
+    [InlineData(TerminalPipelineStatus.Faulted)]
+    [InlineData(TerminalPipelineStatus.Cancelled)]
+    public async Task InteractiveFaultOrCancellationRestoresTerminalWithoutAnotherKey(
+        TerminalPipelineStatus status
+    )
+    {
+        var console = new TestConsole().Width(80).Height(20);
+        await using var display = Create(console, new(true, true), new QueueInput());
+        await display.StartAsync();
+
+        if (status == TerminalPipelineStatus.Faulted)
+        {
+            await display.FaultedAsync("faulted");
+        }
+        else
+        {
+            await display.CancelledAsync("cancelled");
+        }
+
+        await display.WaitForCleanupAsync().WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     [Fact]

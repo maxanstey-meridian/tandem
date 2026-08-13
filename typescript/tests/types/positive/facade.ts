@@ -182,6 +182,9 @@ const observe = (event: RunObservation, { signal }: { readonly signal: AbortSign
     case "agentReasoning":
       void event.text;
       break;
+    case "agentModelSelected":
+      void event.modelId;
+      break;
     case "agentUsage":
       void (event.inputTokens + event.outputTokens + event.currentContextTokens);
       break;

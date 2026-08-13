@@ -86,7 +86,7 @@ internal sealed class JsonCapabilityFunction<TState>(
     CapabilityInvocationState<TState> invocation
 ) : AIFunction
 {
-    private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerOptions.Web);
+    private static readonly JsonSerializerOptions _jsonOptions = TandemJson.TypedContract;
 
     public override string Name => definition.ToolName;
     public override string Description => definition.Instructions;
@@ -126,6 +126,7 @@ internal sealed class JsonCapabilityFunction<TState>(
             definition.ValueType,
             request,
             summary,
+            emitAccepted: null,
             accept is null ? null : ct => accept(context, ct),
             state => apply(state, request),
             cancellationToken

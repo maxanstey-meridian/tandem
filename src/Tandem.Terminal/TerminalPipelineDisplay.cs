@@ -49,7 +49,6 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
             _options.TimeProvider,
             _options.TranscriptEntryCapacity,
             _options.TranscriptCharacterCapacity,
-            _options.ModelNames,
             _options.ContextWindowTokens
         );
         _renderer = new(_console, _options.KeyActions);
@@ -130,7 +129,10 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
             {
                 WritePlain($"pipeline {status}: {summary}");
             }
-            if (!IsInteractive)
+            if (
+                !IsInteractive
+                || status is TerminalPipelineStatus.Faulted or TerminalPipelineStatus.Cancelled
+            )
             {
                 _finished.TrySetResult();
             }
@@ -183,22 +185,30 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
 
     private async Task RunInteractiveAsync(CancellationToken cancellationToken)
     {
-        using var registration = cancellationToken.Register(() => _finished.TrySetResult());
-        while (!_finished.Task.IsCompleted)
+        _console.Write("\x1b[?25l");
+        try
         {
-            if (_options.ReadPipelineEntriesAsync is { } readPipelineEntries)
+            using var registration = cancellationToken.Register(() => _finished.TrySetResult());
+            while (!_finished.Task.IsCompleted)
             {
-                _pipelineEntries = await readPipelineEntries(cancellationToken);
+                if (_options.ReadPipelineEntriesAsync is { } readPipelineEntries)
+                {
+                    _pipelineEntries = await readPipelineEntries(cancellationToken);
+                }
+                _renderer.Render(_model.Snapshot(), _pipelineEntries);
+                await ReadKeysAsync(cancellationToken);
+                await Task.WhenAny(
+                    _finished.Task,
+                    Task.Delay(_options.RefreshInterval, _options.TimeProvider, cancellationToken)
+                );
             }
             _renderer.Render(_model.Snapshot(), _pipelineEntries);
-            await ReadKeyAsync(cancellationToken);
-            await Task.WhenAny(
-                _finished.Task,
-                Task.Delay(_options.RefreshInterval, _options.TimeProvider, cancellationToken)
-            );
+            await _finished.Task;
         }
-        _renderer.Render(_model.Snapshot(), _pipelineEntries);
-        await _finished.Task;
+        finally
+        {
+            _console.Write("\x1b[?25h");
+        }
     }
 
     private async Task RunPlainAsync(CancellationToken cancellationToken)
@@ -210,14 +220,50 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
         await _finished.Task;
     }
 
-    private async ValueTask ReadKeyAsync(CancellationToken cancellationToken)
+    private async ValueTask ReadKeysAsync(CancellationToken cancellationToken)
     {
         if (_keyInput is null)
         {
             return;
         }
-        var key = await _keyInput.ReadAsync(cancellationToken);
-        switch (key?.Key)
+
+        var keys = new List<ConsoleKeyInfo>();
+        while (await _keyInput.ReadAsync(cancellationToken) is { } key)
+        {
+            keys.Add(key);
+        }
+        var quitIndex = keys.FindIndex(key =>
+            key.Key == ConsoleKey.Q
+            || key.Key == ConsoleKey.C && (key.Modifiers & ConsoleModifiers.Control) != 0
+        );
+        if (quitIndex >= 0)
+        {
+            foreach (var key in keys.Take(quitIndex).Where(key => !IsScrollKey(key.Key)))
+            {
+                await HandleKeyAsync(key, cancellationToken);
+            }
+            await RequestCancellationAsync(cancellationToken);
+            return;
+        }
+
+        foreach (var key in keys)
+        {
+            await HandleKeyAsync(key, cancellationToken);
+        }
+    }
+
+    private static bool IsScrollKey(ConsoleKey key) =>
+        key
+            is ConsoleKey.UpArrow
+                or ConsoleKey.DownArrow
+                or ConsoleKey.PageUp
+                or ConsoleKey.PageDown
+                or ConsoleKey.Home
+                or ConsoleKey.End;
+
+    private async ValueTask HandleKeyAsync(ConsoleKeyInfo key, CancellationToken cancellationToken)
+    {
+        switch (key.Key)
         {
             case ConsoleKey.UpArrow:
                 _renderer.ScrollLines(1);
@@ -237,10 +283,6 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
             case ConsoleKey.End:
                 _renderer.ScrollEnd();
                 break;
-            case ConsoleKey.Q:
-            case ConsoleKey.C when (key.Value.Modifiers & ConsoleModifiers.Control) != 0:
-                await RequestCancellationAsync(cancellationToken);
-                break;
             case ConsoleKey.Enter
                 when _model.Snapshot().Interaction is not null
                     && (_options.CanSubmitText?.Invoke() ?? true)
@@ -253,15 +295,15 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
                 break;
             default:
                 var action = _options.KeyActions.FirstOrDefault(candidate =>
-                    candidate.Key == key?.Key && (candidate.IsAvailable?.Invoke() ?? true)
+                    candidate.Key == key.Key && (candidate.IsAvailable?.Invoke() ?? true)
                 );
                 if (action is not null)
                 {
                     await action.ExecuteAsync(cancellationToken);
                 }
-                else if (_model.Snapshot().Interaction is not null && key is { } character)
+                else if (_model.Snapshot().Interaction is not null)
                 {
-                    _model.AppendDraft(character);
+                    _model.AppendDraft(key);
                 }
                 break;
         }

@@ -1,15 +1,11 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace Tandem.NodeApiSpike;
 
 internal static partial class RegistrationContractValidator
 {
-    private static readonly JsonSerializerOptions _options = new(JsonSerializerOptions.Web)
-    {
-        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-    };
+    private static readonly JsonSerializerOptions _options = TandemJson.CreateTypedContract();
 
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*$")]
     private static partial Regex EnvironmentVariableName();

@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using FluentValidation;
 using Microsoft.Extensions.AI;
 using Tandem.Domain;
@@ -125,12 +124,8 @@ public sealed class AgentModelRequestOptions
 
 public sealed class AgentBuilder<TState>
 {
-    private static readonly JsonSerializerOptions _structuredOutputJsonOptions = new(
-        JsonSerializerDefaults.Web
-    )
-    {
-        Converters = { new JsonStringEnumConverter() },
-    };
+    private static readonly JsonSerializerOptions _structuredOutputJsonOptions =
+        TandemJson.TypedContract;
     private static readonly TimeSpan _maximumTimeout = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
     private readonly string _id;
     private readonly string _profile;
@@ -302,6 +297,16 @@ public sealed class AgentBuilder<TState>
                     output.ValidatorFor(state)
                 ),
             Apply: (state, candidate) => apply(state, (TOutput)candidate),
+            EmitAccepted: (runId, stepId, acceptedOutputId, kind, payload, candidate) =>
+                new OutputAccepted<TOutput>(
+                    runId,
+                    stepId,
+                    acceptedOutputId,
+                    kind,
+                    typeof(TOutput).FullName,
+                    payload,
+                    (TOutput)candidate
+                ),
             OutputType: typeof(TOutput),
             Instructions: output.Instructions,
             Examples: state =>
@@ -322,9 +327,7 @@ public sealed class AgentBuilder<TState>
                     .ToArray()
         );
         _configureChatOptions = options =>
-            options.ResponseFormat = ChatResponseFormat.ForJsonSchema<TOutput>(
-                serializerOptions: _structuredOutputJsonOptions
-            );
+            options.ResponseFormat = StructuredOutputSchema.Create<TOutput>();
         return this;
     }
 
@@ -452,7 +455,7 @@ public sealed class AgentBuilder<TState>
     {
         _structuredOutput = descriptor with { OutputType = typeof(TOutput) };
         _configureChatOptions = options =>
-            options.ResponseFormat = ChatResponseFormat.ForJsonSchema<TOutput>();
+            options.ResponseFormat = StructuredOutputSchema.Create<TOutput>();
         return this;
     }
 

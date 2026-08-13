@@ -1104,6 +1104,12 @@ export type RunObservation =
     }
   | {
       readonly version: 1;
+      readonly kind: "agentModelSelected";
+      readonly stepId: string;
+      readonly modelId: string;
+    }
+  | {
+      readonly version: 1;
       readonly kind: "agentUsage";
       readonly stepId: string;
       readonly inputTokens: number;
@@ -1149,6 +1155,14 @@ const runObservationSchema = z.discriminatedUnion("kind", [
   z
     .object({
       version: z.literal(1),
+      kind: z.literal("agentModelSelected"),
+      stepId: z.string().min(1),
+      modelId: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      version: z.literal(1),
       kind: z.literal("agentReasoning"),
       stepId: z.string().min(1),
       text: z.string(),
@@ -1185,13 +1199,13 @@ export type AcceptedValue = {
 const acceptedValueSchema = z
   .object({
     kind: z.enum(acceptedKinds),
-    StepId: z.string().min(1),
-    ValueType: z.string().min(1).nullable(),
-    Payload: z.unknown().nullable(),
+    stepId: z.string().min(1),
+    valueType: z.string().min(1).nullable(),
+    payload: z.unknown().nullable(),
   })
   .strict()
-  .refine((value) => value.ValueType !== null || value.Payload !== null, {
-    message: "ValueType and Payload cannot both be null",
+  .refine((value) => value.valueType !== null || value.payload !== null, {
+    message: "valueType and payload cannot both be null",
   });
 const acceptedValuesSchema = z.array(acceptedValueSchema);
 const runResultSchema = z
@@ -1217,9 +1231,9 @@ export async function inspectAccepted(options: {
         ({
           version: 1 as const,
           kind: value.kind,
-          stepId: value.StepId,
-          valueType: value.ValueType,
-          payload: value.Payload,
+          stepId: value.stepId,
+          valueType: value.valueType,
+          payload: value.payload,
         }) as AcceptedValue,
     );
   } catch (error) {

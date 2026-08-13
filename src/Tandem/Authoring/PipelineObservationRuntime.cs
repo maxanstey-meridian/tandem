@@ -34,7 +34,7 @@ public sealed record PipelineAcceptedValue(string ValueType, JsonElement Payload
         var valueType = value?.GetType() ?? typeof(TValue);
         return new(
             valueType.FullName ?? valueType.Name,
-            JsonSerializer.SerializeToElement(value, valueType, JsonSerializerOptions.Web)
+            JsonSerializer.SerializeToElement(value, valueType, TandemJson.TypedContract)
         );
     }
 
@@ -130,7 +130,7 @@ public sealed record PipelineActionCompleted(
     string Result
 ) : PipelineObservation(RunId, StepId);
 
-public sealed record PipelineStructuredOutputAccepted(
+public record PipelineStructuredOutputAccepted(
     Guid RunId,
     string StepId,
     string AcceptedOutputId,
@@ -139,7 +139,35 @@ public sealed record PipelineStructuredOutputAccepted(
     JsonElement? Payload = null
 ) : PipelineObservation(RunId, StepId);
 
-public sealed record PipelineCapabilityAccepted(
+public sealed record PipelineStructuredOutputRejected(
+    Guid RunId,
+    string StepId,
+    int Attempt,
+    IReadOnlyList<PipelineStructuredOutputProblem> Problems,
+    string RawResponse
+) : PipelineObservation(RunId, StepId);
+
+public sealed record PipelineStructuredOutputProblem(string Field, string Message);
+
+public sealed record OutputAccepted<T>(
+    Guid RunId,
+    string StepId,
+    string AcceptedOutputId,
+    string OutcomeKind,
+    string? OutputType,
+    JsonElement? Payload,
+    T AcceptedValue
+)
+    : PipelineStructuredOutputAccepted(
+        RunId,
+        StepId,
+        AcceptedOutputId,
+        OutcomeKind,
+        OutputType,
+        Payload
+    );
+
+public record PipelineCapabilityAccepted(
     Guid RunId,
     string StepId,
     string InvocationId,
@@ -150,6 +178,30 @@ public sealed record PipelineCapabilityAccepted(
     string? RequestType = null,
     JsonElement? Payload = null
 ) : PipelineObservation(RunId, StepId);
+
+public sealed record CapabilityAccepted<T>(
+    Guid RunId,
+    string StepId,
+    string InvocationId,
+    string CapabilityId,
+    string CapabilityName,
+    string AcceptedCallId,
+    string Summary,
+    string? RequestType,
+    JsonElement? Payload,
+    T AcceptedValue
+)
+    : PipelineCapabilityAccepted(
+        RunId,
+        StepId,
+        InvocationId,
+        CapabilityId,
+        CapabilityName,
+        AcceptedCallId,
+        Summary,
+        RequestType,
+        Payload
+    );
 
 internal sealed class PipelineRunContext(
     Guid runId,

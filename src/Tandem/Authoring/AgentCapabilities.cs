@@ -1,7 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
-using System.Text.Json.Schema;
-using System.Text.Json.Serialization;
 using FluentValidation;
 using Microsoft.Extensions.AI;
 
@@ -145,10 +142,7 @@ internal sealed record CapabilityAcceptanceContext<TState, TRequest>(
 internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
     where TRequest : class
 {
-    private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerOptions.Web)
-    {
-        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-    };
+    private static readonly JsonSerializerOptions _jsonOptions = TandemJson.TypedContract;
     private readonly string _capabilityId;
     private readonly string _name;
     private readonly string _description;
@@ -198,18 +192,20 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
         CancellationToken cancellationToken
     )
     {
+        var payload = JsonSerializer.SerializeToElement(arguments, _jsonOptions);
         TRequest request;
         try
         {
             request =
-                JsonSerializer.Deserialize<TRequest>(
-                    JsonSerializer.SerializeToElement(arguments, _jsonOptions),
-                    _jsonOptions
-                ) ?? throw new JsonException("Request was null.");
+                payload.Deserialize<TRequest>(_jsonOptions)
+                ?? throw new JsonException("Request was null.");
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException)
         {
-            return Error($"invalid {_name} call", [ex.Message]);
+            return Error(
+                $"invalid {_name} call",
+                [ex.Message, $"Received arguments: {payload.GetRawText()}"]
+            );
         }
 
         var validation = await _validator.ValidateAsync(request, cancellationToken);
@@ -233,11 +229,9 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
         }
 
         string summary;
-        JsonElement payload;
         try
         {
             summary = _summarize(request);
-            payload = JsonSerializer.SerializeToElement(request, _jsonOptions);
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException)
         {
@@ -259,6 +253,18 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
             typeof(TRequest).FullName ?? typeof(TRequest).Name,
             payload,
             summary,
+            acceptedPayload => new CapabilityAccepted<TRequest>(
+                _invocation.RunId,
+                _invocation.StepId,
+                _invocation.InvocationId,
+                _capabilityId,
+                _name,
+                $"{_invocation.RunId:N}:{_invocation.StepId}:{_invocation.InvocationId}:{_capabilityId}",
+                summary,
+                typeof(TRequest).FullName ?? typeof(TRequest).Name,
+                acceptedPayload,
+                request
+            ),
             _accept is null ? null : ct => _accept(context, ct),
             state => _apply(state, request),
             cancellationToken
@@ -276,39 +282,12 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
             _jsonOptions
         );
 
-    private static JsonElement CreateInputSchema()
-    {
-        var schema = _jsonOptions.GetJsonSchemaAsNode(typeof(TRequest));
-        if (schema is JsonObject root)
-        {
-            root.Remove("$schema");
-            root["type"] = "object";
-        }
-        RemoveNullableSchemaTypes(schema);
-        return JsonSerializer.SerializeToElement(schema, _jsonOptions);
-    }
-
-    private static void RemoveNullableSchemaTypes(JsonNode? node)
-    {
-        if (node is JsonObject value)
-        {
-            if (value["type"] is JsonArray types)
-            {
-                value["type"] = types
-                    .Select(type => type?.GetValue<string>())
-                    .First(type => type != "null");
-            }
-            foreach (var child in value.ToArray())
-            {
-                RemoveNullableSchemaTypes(child.Value);
-            }
-        }
-        else if (node is JsonArray values)
-        {
-            foreach (var child in values.ToArray())
-            {
-                RemoveNullableSchemaTypes(child);
-            }
-        }
-    }
+    private static JsonElement CreateInputSchema() =>
+        AIJsonUtilities.CreateJsonSchema(
+            typeof(TRequest),
+            description: null,
+            hasDefaultValue: false,
+            defaultValue: null,
+            _jsonOptions
+        );
 }

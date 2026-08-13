@@ -12,8 +12,7 @@ internal sealed class TerminalRunPresentation : IAsyncDisposable
     public TerminalRunPresentation(
         PipelineInspection pipeline,
         Guid runId,
-        CancellationTokenSource runCancellation,
-        IReadOnlyDictionary<string, string> modelNames
+        CancellationTokenSource runCancellation
     )
     {
         _display = new TerminalPipelineDisplay(
@@ -26,7 +25,6 @@ internal sealed class TerminalRunPresentation : IAsyncDisposable
                     runCancellation.Cancel();
                     return ValueTask.CompletedTask;
                 },
-                ModelNames = modelNames,
             }
         );
         _presentationObserver = new PresentationObserver(this);

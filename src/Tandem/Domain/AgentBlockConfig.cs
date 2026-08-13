@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Tandem.Infrastructure;
 
 namespace Tandem.Domain;
@@ -88,6 +89,15 @@ internal sealed record AgentStructuredOutputDescriptor<TState>(
         CancellationToken,
         ValueTask
     >? AcceptAsync = null,
+    Func<
+        Guid,
+        string,
+        string,
+        string,
+        JsonElement?,
+        object,
+        PipelineStructuredOutputAccepted
+    >? EmitAccepted = null,
     string? CorrectionRequiredToolName = null,
     Type? OutputType = null,
     string? ValueType = null,

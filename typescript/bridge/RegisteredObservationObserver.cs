@@ -7,7 +7,7 @@ internal sealed class RegisteredObservationObserver(
     string callbackReference
 ) : IPipelineObserver
 {
-    private static readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions _json = TandemJson.CreateTypedContract();
 
     public async ValueTask ObserveAsync(
         PipelineObservation observation,
@@ -67,6 +67,13 @@ internal sealed class RegisteredObservationObserver(
                 kind = "agentReasoning",
                 value.StepId,
                 text = update.Value,
+            },
+            PipelineAgentUpdated { Update: AgentUpdate.ModelSelected update } value => new
+            {
+                version = 1,
+                kind = "agentModelSelected",
+                value.StepId,
+                modelId = update.ModelId,
             },
             PipelineAgentUsage value => new
             {

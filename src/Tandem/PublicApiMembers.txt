@@ -229,6 +229,8 @@ M Tandem.PipelineInspection Inspect()
 T Tandem.StandardOutcomeKinds
 F static System.String Failed
 F static System.String Success
+T Tandem.TandemJson
+M static System.Text.Json.JsonSerializerOptions CreateTypedContract()
 
 [adapter-authoring]
 T Tandem.AgentJsonCapabilityDefinition<TState>
@@ -277,6 +279,16 @@ M System.Boolean Equals(Tandem.AgentUpdate? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
 M Tandem.AgentUpdate <Clone>$()
+T Tandem.AgentUpdate+ModelSelected
+C (System.String ModelId)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.AgentUpdate+ModelSelected? other)
+M System.Boolean Equals(Tandem.AgentUpdate? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String ModelId)
+M Tandem.AgentUpdate+ModelSelected <Clone>$()
+P System.String ModelId { get; set; }
 T Tandem.AgentUpdate+Reasoning
 C (System.String Value)
 M System.Boolean Equals(System.Object? obj)
@@ -334,9 +346,29 @@ M Tandem.AgentUpdate+Usage <Clone>$()
 P System.Nullable<System.Int64>? InputTokens { get; set; }
 P System.Nullable<System.Int64>? OutputTokens { get; set; }
 P System.Nullable<System.Int64>? ReasoningTokens { get; set; }
+T Tandem.CapabilityAccepted<T>
+C (System.Guid RunId, System.String StepId, System.String InvocationId, System.String CapabilityId, System.String CapabilityName, System.String AcceptedCallId, System.String Summary, System.String? RequestType, System.Nullable<System.Text.Json.JsonElement>? Payload, T AcceptedValue)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.CapabilityAccepted<T>? other)
+M System.Boolean Equals(Tandem.PipelineCapabilityAccepted? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String InvocationId, out System.String CapabilityId, out System.String CapabilityName, out System.String AcceptedCallId, out System.String Summary, out System.String? RequestType, out System.Nullable<System.Text.Json.JsonElement>? Payload, out T AcceptedValue)
+M Tandem.CapabilityAccepted<T> <Clone>$()
+P T AcceptedValue { get; set; }
 T Tandem.IPipelineObserver
 M System.Threading.Tasks.ValueTask ObserveAsync(Tandem.PipelineObservation observation, System.Threading.CancellationToken cancellationToken)
 T Tandem.IPipelinePersistenceObserver
+T Tandem.OutputAccepted<T>
+C (System.Guid RunId, System.String StepId, System.String AcceptedOutputId, System.String OutcomeKind, System.String? OutputType, System.Nullable<System.Text.Json.JsonElement>? Payload, T AcceptedValue)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.OutputAccepted<T>? other)
+M System.Boolean Equals(Tandem.PipelineStructuredOutputAccepted? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String AcceptedOutputId, out System.String OutcomeKind, out System.String? OutputType, out System.Nullable<System.Text.Json.JsonElement>? Payload, out T AcceptedValue)
+M Tandem.OutputAccepted<T> <Clone>$()
+P T AcceptedValue { get; set; }
 T Tandem.PipelineAcceptedValue
 C (System.String ValueType, System.Text.Json.JsonElement Payload)
 M System.Boolean Equals(System.Object? obj)
@@ -582,6 +614,28 @@ P System.Nullable<System.Text.Json.JsonElement>? Payload { get; set; }
 P System.String AcceptedOutputId { get; set; }
 P System.String OutcomeKind { get; set; }
 P System.String? OutputType { get; set; }
+T Tandem.PipelineStructuredOutputProblem
+C (System.String Field, System.String Message)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineStructuredOutputProblem? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Field, out System.String Message)
+M Tandem.PipelineStructuredOutputProblem <Clone>$()
+P System.String Field { get; set; }
+P System.String Message { get; set; }
+T Tandem.PipelineStructuredOutputRejected
+C (System.Guid RunId, System.String StepId, System.Int32 Attempt, System.Collections.Generic.IReadOnlyList<Tandem.PipelineStructuredOutputProblem> Problems, System.String RawResponse)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineObservation? other)
+M System.Boolean Equals(Tandem.PipelineStructuredOutputRejected? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.Int32 Attempt, out System.Collections.Generic.IReadOnlyList<Tandem.PipelineStructuredOutputProblem> Problems, out System.String RawResponse)
+M Tandem.PipelineStructuredOutputRejected <Clone>$()
+P System.Collections.Generic.IReadOnlyList<Tandem.PipelineStructuredOutputProblem> Problems { get; set; }
+P System.Int32 Attempt { get; set; }
+P System.String RawResponse { get; set; }
 
 [generator-abi]
 T Tandem.GeneratedOutcomeStepDescriptor<TState>

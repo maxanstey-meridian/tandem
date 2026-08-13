@@ -32,6 +32,7 @@ internal sealed class AgentBlock<TState>(
         declareCrossRunShareable: true
     )
 {
+    private const int StructuredOutputCorrectionLimit = 99;
     private static readonly HashSet<string> _reservedWorkspaceToolNames =
     [
         "read_file",
@@ -120,10 +121,13 @@ internal sealed class AgentBlock<TState>(
             var boundCapabilityNames = capabilityFunctions
                 .Select(function => function.Name)
                 .ToHashSet(StringComparer.Ordinal);
+            var selectedChatClient = SelectChatClient(message);
+            await PublishModelSelectedAsync(message, selectedChatClient, cts.Token);
             var agent = CreateAgent(
                 instructions,
                 tools,
                 message,
+                selectedChatClient,
                 requiredToolName: requiresCheckpointRelease
                     ? config.Checkpoint!.Capability.ToolName
                     : null,
@@ -269,6 +273,7 @@ internal sealed class AgentBlock<TState>(
                         instructions,
                         tools,
                         message,
+                        selectedChatClient,
                         activatedCheckpoint.Capability.ToolName,
                         collector,
                         boundCapabilityNames
@@ -320,17 +325,30 @@ internal sealed class AgentBlock<TState>(
                             if (message.RunContext is { } observedRunContext)
                             {
                                 await observedRunContext.ObserveAsync(
-                                    new PipelineStructuredOutputAccepted(
-                                        runtime.RunId,
-                                        config.StepId,
-                                        acceptedOutputId,
-                                        structuredResult.Outcome!.Kind,
-                                        config.StructuredOutput!.ValueType
-                                            ?? config.StructuredOutput.OutputType?.FullName
-                                            ?? config.StructuredOutput.OutputType?.Name,
-                                        observedRunContext.ShouldPersist(config.StepId)
-                                            ? structuredResult.Outcome!.Payload
-                                            : null
+                                    (
+                                        config.StructuredOutput!.EmitAccepted is { } emit
+                                            ? emit(
+                                                runtime.RunId,
+                                                config.StepId,
+                                                acceptedOutputId,
+                                                structuredResult.Outcome!.Kind,
+                                                observedRunContext.ShouldPersist(config.StepId)
+                                                    ? structuredResult.Outcome!.Payload
+                                                    : null,
+                                                structuredResult.Candidate!
+                                            )
+                                            : new PipelineStructuredOutputAccepted(
+                                                runtime.RunId,
+                                                config.StepId,
+                                                acceptedOutputId,
+                                                structuredResult.Outcome!.Kind,
+                                                config.StructuredOutput.ValueType
+                                                    ?? config.StructuredOutput.OutputType?.FullName
+                                                    ?? config.StructuredOutput.OutputType?.Name,
+                                                observedRunContext.ShouldPersist(config.StepId)
+                                                    ? structuredResult.Outcome!.Payload
+                                                    : null
+                                            )
                                     ),
                                     cancellationToken
                                 );
@@ -362,9 +380,31 @@ internal sealed class AgentBlock<TState>(
                             await AcceptAsync(cts.Token);
                         }
                     }
-                    if (structuredResult.Success || structuredAttempt >= 1)
+                    if (
+                        structuredResult.Success
+                        || structuredAttempt >= StructuredOutputCorrectionLimit
+                    )
                     {
                         break;
+                    }
+
+                    if (message.RunContext is { } rejectionRunContext)
+                    {
+                        await rejectionRunContext.ObserveAsync(
+                            new PipelineStructuredOutputRejected(
+                                runtime.RunId,
+                                config.StepId,
+                                structuredAttempt + 1,
+                                structuredResult
+                                    .Problems.Select(problem => new PipelineStructuredOutputProblem(
+                                        problem.Field,
+                                        problem.Message
+                                    ))
+                                    .ToArray(),
+                                structuredResult.RawResponse
+                            ),
+                            cts.Token
+                        );
                     }
 
                     structuredAttempt++;
@@ -379,6 +419,7 @@ internal sealed class AgentBlock<TState>(
                             instructions,
                             tools,
                             message,
+                            selectedChatClient,
                             config.StructuredOutput.CorrectionRequiredToolName,
                             collector,
                             boundCapabilityNames,
@@ -423,6 +464,7 @@ internal sealed class AgentBlock<TState>(
                     instructions,
                     tools,
                     message,
+                    selectedChatClient,
                     directive.RequiredToolName,
                     collector,
                     boundCapabilityNames
@@ -566,7 +608,7 @@ internal sealed class AgentBlock<TState>(
                     {
                         arguments = JsonSerializer.SerializeToElement(
                             ficContext.Arguments,
-                            JsonSerializerOptions.Web
+                            TandemJson.TypedContract
                         );
                     }
                     catch
@@ -598,6 +640,15 @@ internal sealed class AgentBlock<TState>(
                         }
                         throw;
                     }
+                    await PublishUpdateAsync(
+                        message,
+                        new AgentUpdate.ToolStarted(
+                            actionInvocationId,
+                            ficContext.Function.Name,
+                            arguments
+                        ),
+                        ct
+                    );
 
                     var activeGates = ResolveActiveGates(message);
                     var gate = activeGates.FirstOrDefault(active =>
@@ -635,6 +686,15 @@ internal sealed class AgentBlock<TState>(
                                 ct
                             );
                         }
+                        await PublishUpdateAsync(
+                            message,
+                            new AgentUpdate.ToolCompleted(
+                                actionInvocationId,
+                                null,
+                                "Action blocked by gate."
+                            ),
+                            ct
+                        );
                         return JsonSerializer.SerializeToElement(
                             new
                             {
@@ -714,6 +774,15 @@ internal sealed class AgentBlock<TState>(
                                     ct
                                 );
                             }
+                            await PublishUpdateAsync(
+                                message,
+                                new AgentUpdate.ToolCompleted(
+                                    actionInvocationId,
+                                    null,
+                                    blockedMessage
+                                ),
+                                ct
+                            );
                             return blockedMessage;
                         }
                     }
@@ -723,7 +792,7 @@ internal sealed class AgentBlock<TState>(
                     {
                         result = await next(ficContext, ct);
                     }
-                    catch
+                    catch (Exception exception)
                     {
                         collector.CompleteToolInvocation(
                             reservation,
@@ -750,6 +819,15 @@ internal sealed class AgentBlock<TState>(
                                 CancellationToken.None
                             );
                         }
+                        await PublishUpdateAsync(
+                            message,
+                            new AgentUpdate.ToolCompleted(
+                                actionInvocationId,
+                                null,
+                                exception.Message
+                            ),
+                            CancellationToken.None
+                        );
                         throw;
                     }
                     var isToolError =
@@ -821,6 +899,15 @@ internal sealed class AgentBlock<TState>(
                             ct
                         );
                     }
+                    await PublishUpdateAsync(
+                        message,
+                        new AgentUpdate.ToolCompleted(
+                            actionInvocationId,
+                            isToolError ? null : result?.ToString(),
+                            isToolError ? result?.ToString() ?? "Tool failed." : null
+                        ),
+                        ct
+                    );
                     if (isToolError)
                     {
                         collector.RecordFailedToolCall(reservation, ficContext.Function.Name);
@@ -929,7 +1016,7 @@ internal sealed class AgentBlock<TState>(
                             new BlockOutcome(
                                 "agent.failed",
                                 config.StepId,
-                                "Structured output remained invalid after one correction.",
+                                $"Structured output remained invalid after {StructuredOutputCorrectionLimit} corrections.",
                                 JsonSerializer.SerializeToElement(
                                     new
                                     {
@@ -1043,6 +1130,7 @@ internal sealed class AgentBlock<TState>(
         string instructions,
         IReadOnlyList<AITool> tools,
         PipelineMessage<TState> message,
+        IChatClient selectedChatClient,
         string? requiredToolName,
         ToolOutcomeCollector collector,
         IReadOnlySet<string> boundCapabilityNames,
@@ -1064,12 +1152,6 @@ internal sealed class AgentBlock<TState>(
             configureChatOptions?.Invoke(chatOptions);
         }
 
-        var selectedChatClient = chatClientFactory is null
-            ? chatClient
-            : chatClientFactory(
-                message.Runtime.AgentProfiles.GetValueOrDefault(config.StepId)?.ProfileName
-                    ?? config.ProfileName
-            );
         var toolEffects = new ToolEffectRegistry();
         foreach (var capabilityName in boundCapabilityNames)
         {
@@ -1253,18 +1335,22 @@ internal sealed class AgentBlock<TState>(
                     usage.Details.OutputTokenCount,
                     usage.Details.ReasoningTokenCount
                 ),
-                FunctionCallContent call => new AgentUpdate.ToolStarted(
-                    call.CallId,
-                    call.Name,
-                    JsonSerializer.SerializeToElement(call.Arguments)
-                ),
-                FunctionResultContent result => new AgentUpdate.ToolCompleted(
-                    result.CallId,
-                    result.Result?.ToString(),
-                    result.Exception?.Message
-                ),
                 _ => null,
             };
+
+            if (content is FunctionResultContent result)
+            {
+                onUpdate?.Invoke(
+                    config.StepId,
+                    runId,
+                    new AgentUpdate.ToolCompleted(
+                        result.CallId,
+                        result.Result?.ToString(),
+                        result.Exception?.Message
+                    )
+                );
+                continue;
+            }
 
             if (semantic is not null)
             {
@@ -1277,6 +1363,49 @@ internal sealed class AgentBlock<TState>(
                     );
                 }
             }
+        }
+    }
+
+    private IChatClient SelectChatClient(PipelineMessage<TState> message) =>
+        chatClientFactory is null
+            ? chatClient
+            : chatClientFactory(
+                message.Runtime.AgentProfiles.GetValueOrDefault(config.StepId)?.ProfileName
+                    ?? config.ProfileName
+            );
+
+    private async ValueTask PublishModelSelectedAsync(
+        PipelineMessage<TState> message,
+        IChatClient selectedChatClient,
+        CancellationToken cancellationToken
+    )
+    {
+        if (
+            selectedChatClient.GetService<ChatClientMetadata>()?.DefaultModelId is
+            { Length: > 0 } modelId
+        )
+        {
+            await PublishUpdateAsync(
+                message,
+                new AgentUpdate.ModelSelected(modelId),
+                cancellationToken
+            );
+        }
+    }
+
+    private async ValueTask PublishUpdateAsync(
+        PipelineMessage<TState> message,
+        AgentUpdate update,
+        CancellationToken cancellationToken
+    )
+    {
+        onUpdate?.Invoke(config.StepId, message.Runtime.RunId, update);
+        if (message.RunContext is not null)
+        {
+            await message.RunContext.ObserveAsync(
+                new PipelineAgentUpdated(message.Runtime.RunId, config.StepId, update),
+                cancellationToken
+            );
         }
     }
 

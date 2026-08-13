@@ -160,10 +160,10 @@ public sealed class CodeWriterCompositionTests
                     order,
                     "reviewer",
                     TextResponse(
-                        "{\"decision\":1,\"summary\":\"Clarify the implementation.\",\"findings\":[\"Recheck normalization.\"]}"
+                        "{\"decision\":\"RequestChanges\",\"summary\":\"Clarify the implementation.\",\"findings\":[\"Recheck normalization.\"]}"
                     ),
                     TextResponse(
-                        "{\"decision\":0,\"summary\":\"Meets the requirements.\",\"findings\":[]}"
+                        "{\"decision\":\"Accept\",\"summary\":\"Meets the requirements.\",\"findings\":[]}"
                     )
                 )
             );
