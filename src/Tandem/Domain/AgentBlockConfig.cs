@@ -128,7 +128,8 @@ internal sealed record AgentCheckpointDescriptor<TState>(
     int CheckpointAtPercent,
     AgentCapabilityDescriptor<TState> Capability,
     string Instructions,
-    Func<TState, int, string> UserMessage
+    Func<TState, int, string> UserMessage,
+    bool ResetSessionAfterRelease = true
 )
 {
     public int CheckpointAtTokens =>

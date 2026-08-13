@@ -570,7 +570,7 @@ public sealed class AgentBuilder<TState>
                 $"Context limit approaching. Call {policy.Capability.ToolName} before further mutation.",
                 policy.Capability.CapabilityId,
                 policy.Capability.ToolName,
-                ResetSessionAfterRelease: true
+                ResetSessionAfterRelease: policy.ResetSessionAfterRelease
             ),
         ];
         return this;

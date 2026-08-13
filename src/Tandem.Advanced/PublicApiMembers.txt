@@ -177,19 +177,24 @@ M static Tandem.Advanced.AgentWorkspace<TState> Define(System.Func<TState,System
 M static Tandem.Advanced.AgentWorkspace<TState> Define(System.Func<TState,System.String> path, System.Func<TState,System.Collections.Generic.IReadOnlyList<Tandem.Advanced.AgentCommand>> commands)
 P Tandem.Advanced.AgentToolSelection Commands { get; }
 T Tandem.Advanced.CheckpointPolicy<TState>
-C (System.Int32 ContextWindowTokens, System.Int32 MaxOutputTokens, System.Int32 CheckpointAtPercent, Tandem.AgentCapability<TState> Capability, System.String Instructions, System.Func<Tandem.Advanced.AgentCheckpointContext<TState>,System.String> UserMessage)
+C (System.Int32 ContextWindowTokens, System.Int32 MaxOutputTokens, System.Int32 CheckpointAtPercent, Tandem.AgentCapability<TState> Capability, System.String Instructions, System.Func<Tandem.Advanced.AgentCheckpointContext<TState>,System.String> UserMessage, Tandem.Advanced.CheckpointSessionBehavior SessionBehavior = Tandem.Advanced.CheckpointSessionBehavior.Reset)
 M System.Boolean Equals(System.Object? obj)
 M System.Boolean Equals(Tandem.Advanced.CheckpointPolicy<TState>? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
-M System.Void Deconstruct(out System.Int32 ContextWindowTokens, out System.Int32 MaxOutputTokens, out System.Int32 CheckpointAtPercent, out Tandem.AgentCapability<TState> Capability, out System.String Instructions, out System.Func<Tandem.Advanced.AgentCheckpointContext<TState>,System.String> UserMessage)
+M System.Void Deconstruct(out System.Int32 ContextWindowTokens, out System.Int32 MaxOutputTokens, out System.Int32 CheckpointAtPercent, out Tandem.AgentCapability<TState> Capability, out System.String Instructions, out System.Func<Tandem.Advanced.AgentCheckpointContext<TState>,System.String> UserMessage, out Tandem.Advanced.CheckpointSessionBehavior SessionBehavior)
 M Tandem.Advanced.CheckpointPolicy<TState> <Clone>$()
 P System.Func<Tandem.Advanced.AgentCheckpointContext<TState>,System.String> UserMessage { get; set; }
 P System.Int32 CheckpointAtPercent { get; set; }
 P System.Int32 ContextWindowTokens { get; set; }
 P System.Int32 MaxOutputTokens { get; set; }
 P System.String Instructions { get; set; }
+P Tandem.Advanced.CheckpointSessionBehavior SessionBehavior { get; set; }
 P Tandem.AgentCapability<TState> Capability { get; set; }
+T Tandem.Advanced.CheckpointSessionBehavior
+F System.Int32 value__
+F static Tandem.Advanced.CheckpointSessionBehavior Reset
+F static Tandem.Advanced.CheckpointSessionBehavior Retain
 T Tandem.Advanced.IPipelineAcceptanceUnitOfWork
 M System.Threading.Tasks.ValueTask<T> ExecuteAsync<T>(System.Func<System.Threading.CancellationToken,System.Threading.Tasks.ValueTask<T>> operation, System.Threading.CancellationToken cancellationToken)
 T Tandem.Advanced.LocalProcess

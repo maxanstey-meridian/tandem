@@ -224,13 +224,20 @@ public delegate AgentProfileDecision AgentProfilePolicy<TState>(TState state);
 
 public sealed record AgentCheckpointContext<TState>(TState State, int CurrentContextTokens);
 
+public enum CheckpointSessionBehavior
+{
+    Retain,
+    Reset,
+}
+
 public sealed record CheckpointPolicy<TState>(
     int ContextWindowTokens,
     int MaxOutputTokens,
     int CheckpointAtPercent,
     AgentCapability<TState> Capability,
     string Instructions,
-    Func<AgentCheckpointContext<TState>, string> UserMessage
+    Func<AgentCheckpointContext<TState>, string> UserMessage,
+    CheckpointSessionBehavior SessionBehavior = CheckpointSessionBehavior.Reset
 );
 
 public sealed record AgentStateGuard<TState>(
@@ -617,8 +624,16 @@ public static class AdvancedAgentBuilderExtensions
     public static AgentBuilder<TState> WithCheckpoint<TState>(
         this AgentBuilder<TState> builder,
         CheckpointPolicy<TState> policy
-    ) =>
-        builder.ConfigureCheckpoint(
+    )
+    {
+        var resetSessionAfterRelease = policy.SessionBehavior switch
+        {
+            CheckpointSessionBehavior.Retain => false,
+            CheckpointSessionBehavior.Reset => true,
+            _ => throw new ArgumentOutOfRangeException(nameof(policy.SessionBehavior)),
+        };
+
+        return builder.ConfigureCheckpoint(
             new AgentCheckpointDescriptor<TState>(
                 policy.ContextWindowTokens,
                 policy.MaxOutputTokens,
@@ -628,9 +643,11 @@ public static class AdvancedAgentBuilderExtensions
                 (state, currentContextTokens) =>
                     policy.UserMessage(
                         new AgentCheckpointContext<TState>(state, currentContextTokens)
-                    )
+                    ),
+                resetSessionAfterRelease
             )
         );
+    }
 
     public static AgentBuilder<TState> WithStateGuard<TState>(
         this AgentBuilder<TState> builder,

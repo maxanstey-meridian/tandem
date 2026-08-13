@@ -647,6 +647,92 @@ public sealed class LocalCapabilityTests
         output.State.Count.Should().Be(1);
     }
 
+    [Fact]
+    public async Task CheckpointRetainSessionBehavior_KeepsConversationAfterRelease()
+    {
+        var checkpoint = AgentCapabilities.Create(
+            new TestCapabilityDefinition<TestState, IncrementRequest>(
+                "checkpoint",
+                "Checkpoint progress.",
+                new InlineValidator<IncrementRequest>(),
+                request => $"Checkpointed {request.Amount}"
+            ),
+            (state, request) => state with { Count = state.Count + request.Amount }
+        );
+        var client = new ScriptedChatClient(
+            new ChatResponse(new ChatMessage(ChatRole.Assistant, "Still working."))
+            {
+                Usage = new UsageDetails { InputTokenCount = 70, OutputTokenCount = 1 },
+            },
+            ToolCall(
+                "checkpoint-call",
+                "checkpoint",
+                new Dictionary<string, object?> { ["amount"] = 1 }
+            ),
+            ToolCall(
+                "completion-call",
+                "checkpoint",
+                new Dictionary<string, object?> { ["amount"] = 1 }
+            )
+        );
+        var agent = Agent
+            .Create<TestState>("agent", "Work.", client)
+            .WithMessage(_ => "Work now.")
+            .ContinueSession()
+            .WithCheckpoint(
+                new CheckpointPolicy<TestState>(
+                    100,
+                    20,
+                    80,
+                    checkpoint,
+                    "Write a checkpoint.",
+                    _ => "Checkpoint now.",
+                    CheckpointSessionBehavior.Retain
+                )
+            )
+            .Build();
+        var complete = PipelineNodes.Complete(new TestCompletion<TestState>("complete"));
+        var pipeline = Pipeline
+            .Start(agent, "checkpoint-retain")
+            .Route(agent.Success, state => state.Count == 1, agent, "continue")
+            .Route(agent.Success, state => state.Count == 2, complete, "complete")
+            .Build(complete);
+
+        var result = await new PipelineRunner().RunAsync(pipeline, new TestState(0));
+
+        result.State.Count.Should().Be(2);
+        client.CallCount.Should().Be(3);
+        client
+            .Requests[2]
+            .Should()
+            .Contain(message =>
+                message.Role == ChatRole.Assistant
+                && message.Text.Contains("Still working.", StringComparison.Ordinal)
+            );
+    }
+
+    [Fact]
+    public void CheckpointSessionBehavior_RejectsUnknownValue()
+    {
+        var checkpoint = CreateCapability();
+        var builder = Agent.Create<TestState>("agent", "Work.", new ScriptedChatClient());
+
+        var act = () =>
+            builder.WithCheckpoint(
+                new CheckpointPolicy<TestState>(
+                    100,
+                    20,
+                    80,
+                    checkpoint,
+                    "Write a checkpoint.",
+                    _ => "Checkpoint now.",
+                    (CheckpointSessionBehavior)42
+                )
+            );
+
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
     private static string CapabilityKind(string name) =>
         $"capability:{typeof(TestState).FullName}:{name}";
 

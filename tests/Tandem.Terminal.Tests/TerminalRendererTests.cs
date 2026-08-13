@@ -45,6 +45,39 @@ public sealed class TerminalRendererTests
             .And.NotContain("model · running");
     }
 
+    [Theory]
+    [InlineData(800, "800")]
+    [InlineData(1000, "1k")]
+    [InlineData(131072, "131k")]
+    public void WorkHeaderShowsContextWindowNextToModel(int tokens, string expected)
+    {
+        var console = new TestConsole().Width(140).Height(24);
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new TerminalSnapshot(
+            "pipeline",
+            _runId,
+            TerminalPipelineStatus.Running,
+            null,
+            "executor",
+            "deepseek",
+            now,
+            null,
+            [new("executor", now)],
+            [new("executor", TranscriptKind.Text, "working")],
+            0,
+            0,
+            0,
+            tokens,
+            0,
+            null,
+            ""
+        );
+
+        new TerminalRenderer(console).Render(snapshot);
+
+        console.Output.Should().Contain($"deepseek · {expected}");
+    }
+
     [Fact]
     public void NarrowTerminalRendersWorkAndPipelineAsStackedPanes()
     {

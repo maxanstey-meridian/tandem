@@ -28,6 +28,7 @@ Tandem.Advanced.LocalProcessResult
 Tandem.Advanced.AgentTurnPolicy`1
 Tandem.Advanced.AgentWorkspace`1
 Tandem.Advanced.CheckpointPolicy`1
+Tandem.Advanced.CheckpointSessionBehavior
 Tandem.Advanced.MessageAugmentation`1
 Tandem.Advanced.OperationOutcome
 Tandem.Advanced.OperationResult`1

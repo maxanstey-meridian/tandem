@@ -981,7 +981,12 @@ internal sealed class AgentBlock<TState>(
         {
             return Task.FromResult(
                 capabilityInvocation.Accepted is { } checkpoint
-                    ? ApplyAcceptedCapability(runtime, checkpoint, resetSession: true, runContext)
+                    ? ApplyAcceptedCapability(
+                        runtime,
+                        checkpoint,
+                        resetSession: config.Checkpoint?.ResetSessionAfterRelease ?? true,
+                        runContext
+                    )
                     : new PipelineMessage<TState>(
                         runtime.IncrementInvocations(config.StepId),
                         state,

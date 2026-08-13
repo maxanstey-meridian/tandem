@@ -159,11 +159,30 @@ internal sealed class TerminalRenderer(
 
         var start = Math.Max(0, lines.Count - visibleCount - _scrollOffset);
         var visibleLines = lines.Skip(start).Take(visibleCount).ToList();
-        var title = model.ModelName is null ? "" : Markup.Escape(model.ModelName);
+        var title = FormatWorkHeader(model.ModelName, model.ContextWindowTokens);
         return new Panel(new Rows(visibleLines))
             .Header($" {title} ")
             .Border(BoxBorder.Rounded)
             .Expand();
+    }
+
+    private static string FormatWorkHeader(string? modelName, int? contextWindowTokens)
+    {
+        if (modelName is null)
+        {
+            return "";
+        }
+
+        var escaped = Markup.Escape(modelName);
+        if (contextWindowTokens is { } tokens and > 0)
+        {
+            var ctx = tokens < 1000
+                ? tokens.ToString()
+                : $"{tokens / 1000}k";
+            return $"{escaped} · {ctx}";
+        }
+
+        return escaped;
     }
 
     private static IEnumerable<IRenderable> RenderLines(
