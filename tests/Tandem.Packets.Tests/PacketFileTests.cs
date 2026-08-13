@@ -68,6 +68,35 @@ public sealed class PacketFileTests
     }
 
     [Fact]
+    public void Parse_ReportsThePathLocationAndExpectedTypeForShapeProblems()
+    {
+        var action = () =>
+            PacketFile.Parse<Packet>(
+                """
+                ---
+                title: Test
+                repository: .
+                outcomes: []
+                verification: []
+                constraints:
+                  - valid
+                  - invalid: object
+                mode: normal
+                ---
+                """,
+                "shape.packet"
+            );
+
+        var exception = action.Should().Throw<PacketFileException>().Which;
+        exception.Message.Should().Be("Packet shape is invalid.");
+        exception
+            .Problems.Should()
+            .ContainSingle()
+            .Which.Should()
+            .Be(new PacketProblem("$.constraints[1]", "Value must be a string.", 8, 5));
+    }
+
+    [Fact]
     public async Task ReadAsync_HonorsCancellation()
     {
         using var cancellation = new CancellationTokenSource();

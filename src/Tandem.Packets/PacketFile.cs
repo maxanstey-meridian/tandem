@@ -64,6 +64,7 @@ public static class PacketFile
         EnsureSize(Encoding.UTF8.GetByteCount(content), source.Name);
         var normalized = NormalizeLines(content);
         var (yaml, context, frontmatterLine) = SplitEnvelope(normalized, source.Name);
+        var nodes = new Dictionary<string, YamlNode>(StringComparer.Ordinal);
 
         try
         {
@@ -83,7 +84,8 @@ public static class PacketFile
                 "$",
                 0,
                 frontmatterLine,
-                source.Name
+                source.Name,
+                nodes
             );
             if (normalizedValue is not Dictionary<string, object?>)
             {
@@ -140,18 +142,22 @@ public static class PacketFile
         }
         catch (JsonException exception)
         {
+            var path = exception.Message.Contains(
+                "could not be mapped",
+                StringComparison.OrdinalIgnoreCase
+            )
+                ? "$"
+                : ToPacketPath(exception.Path);
+            nodes.TryGetValue(path, out var node);
             throw new PacketFileException(
                 "Packet shape is invalid.",
                 source.Name,
                 [
                     new PacketProblem(
-                        exception.Message.Contains(
-                            "could not be mapped",
-                            StringComparison.OrdinalIgnoreCase
-                        )
-                            ? "$"
-                            : ToPacketPath(exception.Path),
-                        "Value does not match the requested packet type."
+                        path,
+                        ShapeMessage(exception),
+                        node is null ? null : checked((int)node.Start.Line) + frontmatterLine,
+                        node is null ? null : checked((int)node.Start.Column)
                     ),
                 ],
                 exception
@@ -173,7 +179,8 @@ public static class PacketFile
         string path,
         int depth,
         int lineOffset,
-        string? sourceName
+        string? sourceName,
+        IDictionary<string, YamlNode> nodes
     )
     {
         if (depth > MaximumDepth)
@@ -184,6 +191,7 @@ public static class PacketFile
                 $"YAML nesting exceeds the maximum depth of {MaximumDepth}."
             );
         }
+        nodes[path] = node;
 
         RejectUnsupportedNode(node, path, lineOffset, sourceName);
         return node switch
@@ -193,12 +201,20 @@ public static class PacketFile
                 path,
                 depth,
                 lineOffset,
-                sourceName
+                sourceName,
+                nodes
             ),
             YamlSequenceNode sequence => sequence
                 .Children.Select(
                     (child, index) =>
-                        NormalizeNode(child, $"{path}[{index}]", depth + 1, lineOffset, sourceName)
+                        NormalizeNode(
+                            child,
+                            $"{path}[{index}]",
+                            depth + 1,
+                            lineOffset,
+                            sourceName,
+                            nodes
+                        )
                 )
                 .ToList(),
             YamlScalarNode scalar => NormalizeScalar(scalar, path, lineOffset, sourceName),
@@ -211,7 +227,8 @@ public static class PacketFile
         string path,
         int depth,
         int lineOffset,
-        string? sourceName
+        string? sourceName,
+        IDictionary<string, YamlNode> nodes
     )
     {
         var result = new Dictionary<string, object?>(StringComparer.Ordinal);
@@ -245,7 +262,7 @@ public static class PacketFile
             if (
                 !result.TryAdd(
                     key,
-                    NormalizeNode(pair.Value, childPath, depth + 1, lineOffset, sourceName)
+                    NormalizeNode(pair.Value, childPath, depth + 1, lineOffset, sourceName, nodes)
                 )
             )
             {
@@ -552,5 +569,22 @@ public static class PacketFile
         var segments = path.Split('.', StringSplitOptions.RemoveEmptyEntries)
             .Select(segment => JsonNamingPolicy.SnakeCaseLower.ConvertName(segment));
         return "$." + string.Join('.', segments);
+    }
+
+    private static string ShapeMessage(JsonException exception)
+    {
+        if (exception.Message.Contains("System.String", StringComparison.Ordinal))
+        {
+            return "Value must be a string.";
+        }
+        if (exception.Message.Contains("System.Int32", StringComparison.Ordinal))
+        {
+            return "Value must be an integer.";
+        }
+        if (exception.Message.Contains("System.Boolean", StringComparison.Ordinal))
+        {
+            return "Value must be true or false.";
+        }
+        return "Value does not match the requested packet type.";
     }
 }
