@@ -53,8 +53,7 @@ internal sealed class TerminalModel(
     Guid runId,
     TimeProvider timeProvider,
     int entryCapacity,
-    int characterCapacity,
-    int? contextWindowTokens = null
+    int characterCapacity
 )
 {
     private readonly object _gate = new();
@@ -67,6 +66,7 @@ internal sealed class TerminalModel(
     private long _inputTokens;
     private long _outputTokens;
     private long _currentContextTokens;
+    private int? _contextWindowTokens;
     private readonly HashSet<string> _waiting = new(StringComparer.Ordinal);
     private TerminalInteractionPrompt? _interaction;
     private string _draft = "";
@@ -74,6 +74,12 @@ internal sealed class TerminalModel(
     private DateTimeOffset? _completedAt;
     private string? _modelName;
     private readonly Dictionary<string, string> _models = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _activeSteps = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, long> _usageOrder = new(StringComparer.Ordinal);
+    private long _usageSequence;
+    private readonly Dictionary<string, (long Current, int Window)> _usage = new(
+        StringComparer.Ordinal
+    );
     private readonly Dictionary<string, string> _toolNames = new(StringComparer.Ordinal);
 
     public void Apply(PipelineObservation observation)
@@ -89,8 +95,10 @@ internal sealed class TerminalModel(
             switch (observation)
             {
                 case PipelineStepStarted started:
+                    _activeSteps.Add(started.StepId);
                     _activeStep = started.StepId;
                     _modelName = _models.GetValueOrDefault(started.StepId);
+                    ApplyUsage(started.StepId);
                     _visits.Add(new(started.StepId, timeProvider.GetUtcNow()));
                     break;
                 case PipelineStepCompleted completed:
@@ -187,7 +195,14 @@ internal sealed class TerminalModel(
                 case PipelineAgentUsage usage:
                     _inputTokens += usage.InputTokens;
                     _outputTokens += usage.OutputTokens;
-                    _currentContextTokens = usage.CurrentContextTokens;
+                    _usage[usage.StepId] = (usage.CurrentContextTokens, usage.ContextWindowTokens);
+                    _usageOrder[usage.StepId] = ++_usageSequence;
+                    if (_activeSteps.Contains(usage.StepId))
+                    {
+                        _activeStep = usage.StepId;
+                        _modelName = _models.GetValueOrDefault(usage.StepId);
+                        ApplyUsage(usage.StepId);
+                    }
                     break;
                 case PipelineInteractionRequestedObservation requested:
                     _waiting.Add(requested.RequestId);
@@ -310,12 +325,19 @@ internal sealed class TerminalModel(
                 _inputTokens,
                 _outputTokens,
                 _currentContextTokens,
-                contextWindowTokens,
+                _contextWindowTokens,
                 _waiting.Count,
                 _interaction,
                 _draft
             );
         }
+    }
+
+    private void ApplyUsage(string stepId)
+    {
+        var usage = _usage.GetValueOrDefault(stepId);
+        _currentContextTokens = usage.Current;
+        _contextWindowTokens = usage.Window > 0 ? usage.Window : null;
     }
 
     private void Complete(string stepId, string outcome, string? summary, TimeSpan? duration)
@@ -341,7 +363,24 @@ internal sealed class TerminalModel(
         }
         if (_activeStep == stepId)
         {
-            _activeStep = null;
+            _activeSteps.Remove(stepId);
+            _activeStep = _activeSteps
+                .OrderByDescending(active => _usageOrder.GetValueOrDefault(active))
+                .FirstOrDefault();
+            _modelName = _activeStep is null ? null : _models.GetValueOrDefault(_activeStep);
+            if (_activeStep is null)
+            {
+                _currentContextTokens = 0;
+                _contextWindowTokens = null;
+            }
+            else
+            {
+                ApplyUsage(_activeStep);
+            }
+        }
+        else
+        {
+            _activeSteps.Remove(stepId);
         }
     }
 

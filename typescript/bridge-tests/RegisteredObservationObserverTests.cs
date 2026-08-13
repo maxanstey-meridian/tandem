@@ -49,8 +49,12 @@ public sealed class RegisteredObservationObserverTests
                 """{"version":1,"kind":"agentModelSelected","stepId":"agent","modelId":"actual-model"}"""
             },
             {
+                new PipelineAgentUsage(Guid.Empty, "agent", 10, 5, 15, 200_000),
+                """{"version":1,"kind":"agentUsage","stepId":"agent","inputTokens":10,"outputTokens":5,"currentContextTokens":15,"contextWindowTokens":200000}"""
+            },
+            {
                 new PipelineAgentUsage(Guid.Empty, "agent", 10, 5, 15),
-                """{"version":1,"kind":"agentUsage","stepId":"agent","inputTokens":10,"outputTokens":5,"currentContextTokens":15}"""
+                """{"version":1,"kind":"agentUsage","stepId":"agent","inputTokens":10,"outputTokens":5,"currentContextTokens":15,"contextWindowTokens":null}"""
             },
         };
 

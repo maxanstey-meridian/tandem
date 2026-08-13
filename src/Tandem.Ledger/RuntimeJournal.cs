@@ -32,5 +32,6 @@ public sealed record RuntimeJournalRecord(
     int? OutputTokens = null,
     int? CurrentContextTokens = null,
     string? ValueType = null,
-    JsonElement? Payload = null
+    JsonElement? Payload = null,
+    int? ContextWindowTokens = null
 );

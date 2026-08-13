@@ -34,7 +34,6 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
             _options.TranscriptEntryCapacity <= 0
             || _options.TranscriptCharacterCapacity <= 0
             || _options.RefreshInterval <= TimeSpan.Zero
-            || _options.ContextWindowTokens is <= 0
         )
         {
             throw new ArgumentOutOfRangeException(
@@ -48,8 +47,7 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
             runId,
             _options.TimeProvider,
             _options.TranscriptEntryCapacity,
-            _options.TranscriptCharacterCapacity,
-            _options.ContextWindowTokens
+            _options.TranscriptCharacterCapacity
         );
         _renderer = new(_console, _options.KeyActions);
         _observer = new(this);
@@ -385,8 +383,12 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
                     WritePlain($"{answered.StepId} interaction answered");
                     break;
                 case PipelineAgentUsage usage:
+                    var contextWindow =
+                        usage.ContextWindowTokens > 0
+                            ? $"/{usage.ContextWindowTokens}"
+                            : string.Empty;
                     WritePlain(
-                        $"{usage.StepId} usage: in {usage.InputTokens} out {usage.OutputTokens} ctx {usage.CurrentContextTokens}"
+                        $"{usage.StepId} usage: in {usage.InputTokens} out {usage.OutputTokens} ctx {usage.CurrentContextTokens}{contextWindow}"
                     );
                     break;
             }

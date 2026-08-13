@@ -10,7 +10,9 @@ internal sealed record AgentImplementationContext(
     ChatOptions ChatOptions,
     ResolvedAgentWorkspace? Workspace,
     ToolEffectRegistry ToolEffects,
-    IReadOnlyList<AgentSkillDescriptor> Skills
+    IReadOnlyList<AgentSkillDescriptor> Skills,
+    int? MaxContextWindowTokens,
+    int? MaxOutputTokens
 );
 
 internal sealed record ResolvedAgentWorkspace(

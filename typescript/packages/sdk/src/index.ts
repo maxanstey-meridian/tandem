@@ -621,6 +621,22 @@ type AgentToolSelection = AgentToolName | AgentCommandSelection;
 export interface AgentToolGroup<TState> {
   readonly [toolGroupBrand]: (state: TState) => boolean;
 }
+export type AgentToolEffect =
+  | "read"
+  | "workspaceMutation"
+  | "processExecution"
+  | "lifecycleTransition"
+  | "unclassified";
+export interface AgentToolInvocation {
+  readonly name: string;
+  readonly effect: AgentToolEffect;
+  readonly arguments: unknown;
+}
+export type AgentToolInterceptor<TState> = (
+  state: TState,
+  invocation: AgentToolInvocation,
+  context: { readonly signal: AbortSignal },
+) => string | null | Promise<string | null>;
 class AgentToolGroupImplementation<TState> implements AgentToolGroup<TState> {
   readonly [toolGroupBrand]: (state: TState) => boolean;
   constructor(
@@ -664,6 +680,7 @@ export interface AgentWorkspace<TState> {
   readonly commands: AgentCommandSelection;
   withTools(
     groups: readonly (AgentToolGroup<TState> | AgentToolGroup<never>)[],
+    options?: { readonly interceptTool?: AgentToolInterceptor<TState> },
   ): AgentWorkspaceConfiguration<TState>;
 }
 class AgentWorkspaceImplementation<TState> implements AgentWorkspace<TState> {
@@ -687,6 +704,7 @@ class AgentWorkspaceImplementation<TState> implements AgentWorkspace<TState> {
   }
   withTools(
     groups: readonly (AgentToolGroup<TState> | AgentToolGroup<never>)[],
+    options?: { readonly interceptTool?: AgentToolInterceptor<TState> },
   ): AgentWorkspaceConfiguration<TState> {
     if (groups.length === 0) {
       throw new TandemError("An agent workspace requires tool groups.");
@@ -697,7 +715,14 @@ class AgentWorkspaceImplementation<TState> implements AgentWorkspace<TState> {
       }
       return group as AgentToolGroupImplementation<TState>;
     });
-    return new AgentWorkspaceConfigurationImplementation(this, implementations);
+    if (options?.interceptTool !== undefined && typeof options.interceptTool !== "function") {
+      throw new TandemError("Workspace tool interceptor must be a function.");
+    }
+    return new AgentWorkspaceConfigurationImplementation(
+      this,
+      implementations,
+      options?.interceptTool,
+    );
   }
 }
 class AgentWorkspaceConfigurationImplementation<
@@ -707,6 +732,7 @@ class AgentWorkspaceConfigurationImplementation<
   constructor(
     readonly workspace: AgentWorkspaceImplementation<TState>,
     readonly groups: readonly AgentToolGroupImplementation<TState>[],
+    readonly interceptTool: AgentToolInterceptor<TState> | undefined,
   ) {}
 }
 export function agentWorkspace<TState>(definition: {
@@ -741,6 +767,15 @@ export interface AgentDefinition<TState, TOutput = never> {
   readonly temperature?: number;
   readonly maxOutputTokens?: number;
   readonly continueSession?: boolean;
+  readonly checkpoint?: {
+    readonly contextWindowTokens: number;
+    readonly maxOutputTokens: number;
+    readonly checkpointAtPercent: number;
+    readonly capability: Capability<TState>;
+    readonly instructions: string;
+    readonly message: (state: TState, currentContextTokens: number) => string;
+    readonly session?: "retain" | "reset";
+  };
   readonly timeoutMs?: number;
   readonly persist?: boolean;
 }
@@ -769,6 +804,7 @@ class AgentImplementation<TState, TOutput>
     readonly temperature: number | undefined,
     readonly maxOutputTokens: number | undefined,
     readonly continueSession: boolean,
+    readonly checkpoint: AgentDefinition<TState>["checkpoint"],
     readonly timeoutMs?: number,
   ) {
     super(id, persist);
@@ -829,6 +865,55 @@ export function agent<TState, TOutput = never>(
       `Agent '${definition.id}' maxOutputTokens must be a positive 32-bit integer.`,
     );
   }
+  if (definition.checkpoint) {
+    const checkpoint = definition.checkpoint;
+    if (
+      !Number.isSafeInteger(checkpoint.contextWindowTokens) ||
+      checkpoint.contextWindowTokens <= 0 ||
+      checkpoint.contextWindowTokens > 2_147_483_647
+    ) {
+      throw new TandemError(
+        `Agent '${definition.id}' checkpoint contextWindowTokens must be a positive 32-bit integer.`,
+      );
+    }
+    if (
+      !Number.isSafeInteger(checkpoint.maxOutputTokens) ||
+      checkpoint.maxOutputTokens <= 0 ||
+      checkpoint.maxOutputTokens > 2_147_483_647 ||
+      checkpoint.maxOutputTokens >= checkpoint.contextWindowTokens
+    ) {
+      throw new TandemError(
+        `Agent '${definition.id}' checkpoint maxOutputTokens must be a positive 32-bit integer smaller than contextWindowTokens.`,
+      );
+    }
+    if (
+      !Number.isSafeInteger(checkpoint.checkpointAtPercent) ||
+      checkpoint.checkpointAtPercent <= 0 ||
+      checkpoint.checkpointAtPercent >= 100
+    ) {
+      throw new TandemError(
+        `Agent '${definition.id}' checkpoint checkpointAtPercent must be between 1 and 99.`,
+      );
+    }
+    if (!capabilities.includes(checkpoint.capability)) {
+      throw new TandemError(
+        `Agent '${definition.id}' checkpoint capability must be attached to the agent.`,
+      );
+    }
+    requireInstructions(
+      checkpoint.instructions,
+      `Agent '${definition.id}' checkpoint instructions`,
+    );
+    if (
+      checkpoint.session !== undefined &&
+      checkpoint.session !== "retain" &&
+      checkpoint.session !== "reset"
+    ) {
+      throw new TandemError(
+        `Agent '${definition.id}' checkpoint session must be 'retain' or 'reset'.`,
+      );
+    }
+  }
   return new AgentImplementation(
     definition.id,
     definition.persist,
@@ -842,6 +927,7 @@ export function agent<TState, TOutput = never>(
     definition.temperature,
     definition.maxOutputTokens,
     definition.continueSession ?? false,
+    definition.checkpoint,
     definition.timeoutMs,
   );
 }
@@ -1115,6 +1201,7 @@ export type RunObservation =
       readonly inputTokens: number;
       readonly outputTokens: number;
       readonly currentContextTokens: number;
+      readonly contextWindowTokens: number | null;
     };
 export interface RunOptions {
   readonly ledgerPath?: string;
@@ -1176,6 +1263,7 @@ const runObservationSchema = z.discriminatedUnion("kind", [
       inputTokens: z.number().int().nonnegative(),
       outputTokens: z.number().int().nonnegative(),
       currentContextTokens: z.number().int().nonnegative(),
+      contextWindowTokens: z.number().int().nonnegative().nullable(),
     })
     .strict(),
 ]);
@@ -1312,7 +1400,7 @@ export async function run<TState>(
       : undefined;
     const resultJson = await runRegisteredGraphAsync(
       JSON.stringify({
-        contractVersion: 9,
+        contractVersion: 10,
         name: graph.name,
         start: graph.start.id,
         initialState,
@@ -1471,6 +1559,22 @@ function compileNode<TState>(
       temperature: implementation.temperature,
       maxOutputTokens: implementation.maxOutputTokens,
       continueSession: implementation.continueSession,
+      checkpoint: implementation.checkpoint
+        ? {
+            contextWindowTokens: implementation.checkpoint.contextWindowTokens,
+            maxOutputTokens: implementation.checkpoint.maxOutputTokens,
+            checkpointAtPercent: implementation.checkpoint.checkpointAtPercent,
+            capabilityName: implementation.checkpoint.capability.name,
+            instructions: implementation.checkpoint.instructions,
+            messageCallback: callbacks.registerSync((state, input) =>
+              implementation.checkpoint!.message(
+                parseJson(stateSchema, state, `${node.id} checkpoint state`),
+                Number(input),
+              ),
+            ),
+            resetSession: (implementation.checkpoint.session ?? "reset") === "reset",
+          }
+        : undefined,
       timeoutMilliseconds: implementation.timeoutMs,
       workspace,
     };
@@ -1606,7 +1710,23 @@ function compileWorkspace<TState>(
       : undefined;
     return { tools, includeCommands, whenCallback };
   });
-  return { pathCallback, commandsCallback, toolGroups };
+  const interceptCallback = configuration.interceptTool
+    ? callbacks.registerAsync(async (state, input, signal) => {
+        const typedState = parseJson(stateSchema, state, `${id} tool interception state`);
+        let invocation: AgentToolInvocation;
+        try {
+          invocation = JSON.parse(input) as AgentToolInvocation;
+        } catch {
+          throw new TandemError(`Agent '${id}' received an invalid tool interception payload.`);
+        }
+        const result = await configuration.interceptTool!(typedState, invocation, { signal });
+        if (result !== null && typeof result !== "string") {
+          throw new TandemError(`Agent '${id}' tool interceptor must return a string or null.`);
+        }
+        return JSON.stringify(result);
+      })
+    : undefined;
+  return { pathCallback, commandsCallback, toolGroups, interceptCallback };
 }
 
 function compileAgentOutput<TState, TOutput>(

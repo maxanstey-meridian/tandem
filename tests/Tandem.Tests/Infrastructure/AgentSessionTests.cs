@@ -112,6 +112,52 @@ public sealed class AgentSessionTests
     }
 
     [Fact]
+    public async Task Usage_IsObservedBeforeTheStreamingInvocationCompletes()
+    {
+        var client = new BlockingAfterUsageChatClient();
+        var observer = new UsageObserver();
+        var runId = Guid.CreateVersion7();
+        var block = new AgentBlock<TestState>(
+            new AgentBlockConfig<TestState>(
+                "agent",
+                "agent",
+                "Respond.",
+                [],
+                _ => "request",
+                null,
+                null,
+                Checkpoint: new AgentCheckpointDescriptor<TestState>(
+                    200_000,
+                    32_000,
+                    160_000,
+                    AgentCapabilities
+                        .Create(new TestCapabilityDefinition(), (state, _) => state)
+                        .Descriptor,
+                    "Checkpoint.",
+                    (_, _) => "Checkpoint."
+                )
+            ),
+            client
+        );
+        var input = new PipelineMessage<TestState>(PipelineRuntime.Create(runId), new TestState(0))
+        {
+            RunContext = new PipelineRunContext(runId, observer),
+        };
+
+        var execution = block.ExecuteAsync(input, CancellationToken.None).AsTask();
+        var usage = await observer.Observed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        execution.IsCompleted.Should().BeFalse();
+        usage.InputTokens.Should().Be(47_000);
+        usage.OutputTokens.Should().Be(250);
+        usage.CurrentContextTokens.Should().Be(47_250);
+        usage.ContextWindowTokens.Should().Be(200_000);
+
+        client.Release.TrySetResult();
+        await execution;
+    }
+
+    [Fact]
     public async Task TypedExamples_AreFreshSessionTurns_AndAreNotResentForCorrectionOrRetention()
     {
         var client = new RecordingChatClient("{\"value\":0}", "{\"value\":1}", "{\"value\":2}");
@@ -169,6 +215,18 @@ public sealed class AgentSessionTests
     }
 
     private sealed record TestState(int Count);
+
+    private sealed record TestRequest;
+
+    private sealed class TestCapabilityDefinition
+        : IAgentCapabilityDefinition<TestState, TestRequest>
+    {
+        public string ToolName => "checkpoint";
+        public string Instructions => "Checkpoint.";
+        public IValidator<TestRequest> Validator { get; } = new InlineValidator<TestRequest>();
+
+        public string Summarize(TestRequest request) => "Checkpointed.";
+    }
 
     private sealed record ExampleState(int Value);
 
@@ -251,5 +309,60 @@ public sealed class AgentSessionTests
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
 
         public void Dispose() { }
+    }
+
+    private sealed class BlockingAfterUsageChatClient : IChatClient
+    {
+        public TaskCompletionSource Release { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default
+        ) => throw new NotSupportedException();
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default
+        )
+        {
+            var response = new ChatResponse(new ChatMessage(ChatRole.Assistant, "response"))
+            {
+                FinishReason = ChatFinishReason.Stop,
+                Usage = new UsageDetails { InputTokenCount = 47_000, OutputTokenCount = 250 },
+            };
+            foreach (var update in response.ToChatResponseUpdates())
+            {
+                yield return update;
+                if (update.Contents.Any(content => content is UsageContent))
+                {
+                    await Release.Task.WaitAsync(cancellationToken);
+                }
+            }
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose() { }
+    }
+
+    private sealed class UsageObserver : IPipelineObserver
+    {
+        public TaskCompletionSource<PipelineAgentUsage> Observed { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask ObserveAsync(
+            PipelineObservation observation,
+            CancellationToken cancellationToken
+        )
+        {
+            if (observation is PipelineAgentUsage usage)
+            {
+                Observed.TrySetResult(usage);
+            }
+            return ValueTask.CompletedTask;
+        }
     }
 }

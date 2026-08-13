@@ -86,7 +86,11 @@ public sealed class TerminalPipelineDisplayTests
             "secret"
         );
 
-        await observer.ObserveAsync(new PipelineAgentUsage(runId, "agent", 10, 4, 30), default);
+        model.Apply(new PipelineStepStarted(runId, "agent"));
+        await observer.ObserveAsync(
+            new PipelineAgentUsage(runId, "agent", 10, 4, 30, 200_000),
+            default
+        );
         await observer.ObserveAsync(request, default);
         model.Snapshot().Status.Should().Be(TerminalPipelineStatus.WaitingForInteraction);
         await observer.ObserveAsync(
@@ -98,6 +102,7 @@ public sealed class TerminalPipelineDisplayTests
         snapshot.InputTokens.Should().Be(10);
         snapshot.OutputTokens.Should().Be(4);
         snapshot.CurrentContextTokens.Should().Be(30);
+        snapshot.ContextWindowTokens.Should().Be(200_000);
         snapshot.WaitingInteractions.Should().Be(0);
         snapshot.Status.Should().Be(TerminalPipelineStatus.Running);
     }
@@ -250,6 +255,51 @@ public sealed class TerminalPipelineDisplayTests
         model.Finish(TerminalPipelineStatus.Succeeded, "complete");
 
         model.Snapshot().ModelName.Should().BeNull();
+    }
+
+    [Fact]
+    public void ContextUsageFollowsTheActiveParticipant()
+    {
+        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000);
+
+        model.Apply(new PipelineStepStarted(_runId, "executor"));
+        model.Apply(new PipelineAgentUsage(_runId, "executor", 10, 2, 12_000, 200_000));
+        model.Snapshot().CurrentContextTokens.Should().Be(12_000);
+        model.Snapshot().ContextWindowTokens.Should().Be(200_000);
+
+        model.Apply(new PipelineStepStarted(_runId, "reviewer"));
+        model.Snapshot().CurrentContextTokens.Should().Be(0);
+        model.Snapshot().ContextWindowTokens.Should().BeNull();
+        model.Apply(new PipelineAgentUsage(_runId, "reviewer", 5, 1, 6_000, 100_000));
+        model.Snapshot().CurrentContextTokens.Should().Be(6_000);
+        model.Snapshot().ContextWindowTokens.Should().Be(100_000);
+
+        model.Apply(new PipelineStepStarted(_runId, "executor"));
+        model.Snapshot().CurrentContextTokens.Should().Be(12_000);
+        model.Snapshot().ContextWindowTokens.Should().Be(200_000);
+    }
+
+    [Fact]
+    public void ParallelContextUsageFollowsTheMostRecentActiveParticipant()
+    {
+        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000);
+
+        model.Apply(new PipelineStepStarted(_runId, "first"));
+        model.Apply(new PipelineStepStarted(_runId, "second"));
+        model.Apply(new PipelineAgentUsage(_runId, "first", 10, 2, 12_000, 200_000));
+        model.Snapshot().CurrentContextTokens.Should().Be(12_000);
+
+        model.Apply(new PipelineAgentUsage(_runId, "second", 5, 1, 6_000, 100_000));
+        model.Snapshot().CurrentContextTokens.Should().Be(6_000);
+        model.Snapshot().ContextWindowTokens.Should().Be(100_000);
+
+        model.Apply(new PipelineStepCompleted(_runId, "second", Outcome("complete", 1)));
+        model.Snapshot().CurrentContextTokens.Should().Be(12_000);
+        model.Snapshot().ContextWindowTokens.Should().Be(200_000);
+
+        model.Apply(new PipelineStepCompleted(_runId, "first", Outcome("complete", 1)));
+        model.Snapshot().CurrentContextTokens.Should().Be(0);
+        model.Snapshot().ContextWindowTokens.Should().BeNull();
     }
 
     [Fact]

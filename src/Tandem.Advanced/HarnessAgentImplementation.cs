@@ -76,26 +76,36 @@ internal static class HarnessAgentImplementation
         }
         return new HarnessAgent(
             context.ChatClient,
-            new HarnessAgentOptions
-            {
-                Id = context.Id,
-                Name = context.Id,
-                HarnessInstructions = harnessInstructions,
-                ChatOptions = context.ChatOptions,
-                DisableFileMemory = true,
-                DisableTodoProvider = true,
-                DisableAgentModeProvider = true,
-                DisableAgentSkillsProvider = true,
-                AIContextProviders = providers.Count == 0 ? null : providers,
-                DisableWebSearch = true,
-                DisableToolAutoApproval = true,
-                DisableOpenTelemetry = true,
-                DisableCompaction = true,
-                MaximumIterationsPerRequest = 999,
-                FileAccessStore = null,
-            }
+            CreateOptions(context, harnessInstructions, providers)
         );
     }
+
+    internal static HarnessAgentOptions CreateOptions(
+        AgentImplementationContext context,
+        string harnessInstructions,
+        IReadOnlyList<AIContextProvider>? providers = null
+    ) =>
+        new()
+        {
+            Id = context.Id,
+            Name = context.Id,
+            HarnessInstructions = harnessInstructions,
+            ChatOptions = context.ChatOptions,
+            DisableFileMemory = true,
+            DisableTodoProvider = true,
+            DisableAgentModeProvider = true,
+            DisableAgentSkillsProvider = true,
+            AIContextProviders = providers is { Count: > 0 } ? providers : null,
+            DisableWebSearch = true,
+            DisableToolAutoApproval = true,
+            DisableOpenTelemetry = true,
+            MaxContextWindowTokens = context.MaxContextWindowTokens,
+            MaxOutputTokens = context.MaxOutputTokens,
+            DisableCompaction =
+                context.MaxContextWindowTokens is null || context.MaxOutputTokens is null,
+            MaximumIterationsPerRequest = 999,
+            FileAccessStore = null,
+        };
 
     private static bool IsMutation(WorkspaceToolKind kind) =>
         kind

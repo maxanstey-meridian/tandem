@@ -32,8 +32,8 @@ internal static partial class RegistrationContractValidator
             throw Invalid("registration must not be null.");
 
         var errors = new List<string>();
-        if (graph.ContractVersion != 9)
-            errors.Add($"contractVersion must be 9; received {graph.ContractVersion}.");
+        if (graph.ContractVersion != 10)
+            errors.Add($"contractVersion must be 10; received {graph.ContractVersion}.");
         Required(errors, "name", graph.Name);
         Required(errors, "start", graph.Start);
         Required(errors, "initialState", graph.InitialState);
@@ -322,6 +322,8 @@ internal static partial class RegistrationContractValidator
         {
             if (node.Workspace is not null)
                 errors.Add($"{path}.workspace is forbidden.");
+            if (node.Checkpoint is not null)
+                errors.Add($"{path}.checkpoint is forbidden.");
             if (node.Client is not null)
                 errors.Add($"{path}.client is forbidden.");
             if (node.Output is not null)
@@ -368,6 +370,30 @@ internal static partial class RegistrationContractValidator
             errors.Add($"{path}.maxOutputTokens must be a positive integer.");
         if (node.Workspace is { } workspace)
             ValidateWorkspace(errors, workspace, $"{path}.workspace");
+        if (node.Checkpoint is { } checkpoint)
+        {
+            if (checkpoint.ContextWindowTokens <= 0)
+                errors.Add($"{path}.checkpoint.contextWindowTokens must be positive.");
+            if (checkpoint.MaxOutputTokens <= 0)
+                errors.Add($"{path}.checkpoint.maxOutputTokens must be positive.");
+            else if (checkpoint.MaxOutputTokens >= checkpoint.ContextWindowTokens)
+                errors.Add(
+                    $"{path}.checkpoint.maxOutputTokens must be smaller than contextWindowTokens."
+                );
+            if (checkpoint.CheckpointAtPercent is <= 0 or >= 100)
+                errors.Add($"{path}.checkpoint.checkpointAtPercent must be between 1 and 99.");
+            Required(errors, $"{path}.checkpoint.capabilityName", checkpoint.CapabilityName);
+            Required(errors, $"{path}.checkpoint.instructions", checkpoint.Instructions);
+            Required(errors, $"{path}.checkpoint.messageCallback", checkpoint.MessageCallback);
+            if (
+                !(node.Capabilities ?? []).Any(capability =>
+                    capability?.Name == checkpoint.CapabilityName
+                )
+            )
+                errors.Add(
+                    $"{path}.checkpoint.capabilityName must reference an attached capability."
+                );
+        }
         if (node.Output is { } output)
         {
             Required(errors, $"{path}.output.instructions", output.Instructions);
@@ -419,6 +445,7 @@ internal static partial class RegistrationContractValidator
     {
         Required(errors, $"{path}.pathCallback", workspace.PathCallback);
         Required(errors, $"{path}.commandsCallback", workspace.CommandsCallback);
+        OptionalCallback(errors, $"{path}.interceptCallback", workspace.InterceptCallback);
         if (workspace.ToolGroups is null)
         {
             errors.Add($"{path}.toolGroups is required and must not be null.");
@@ -497,10 +524,12 @@ internal static partial class RegistrationContractValidator
             Add($"{path}.summaryCallback", node.SummaryCallback);
             Add($"{path}.messageCallback", node.MessageCallback);
             Add($"{path}.mergeCallback", node.MergeCallback);
+            Add($"{path}.checkpoint.messageCallback", node.Checkpoint?.MessageCallback);
             if (node.Workspace is { } workspace)
             {
                 Add($"{path}.workspace.pathCallback", workspace.PathCallback);
                 Add($"{path}.workspace.commandsCallback", workspace.CommandsCallback);
+                Add($"{path}.workspace.interceptCallback", workspace.InterceptCallback);
                 foreach (
                     var (group, index) in (workspace.ToolGroups ?? []).Select(
                         (value, index) => (value, index)

@@ -83,6 +83,9 @@ internal sealed class RegisteredObservationObserver(
                 value.InputTokens,
                 value.OutputTokens,
                 value.CurrentContextTokens,
+                contextWindowTokens = value.ContextWindowTokens > 0
+                    ? value.ContextWindowTokens
+                    : (int?)null,
             },
             _ => null,
         };

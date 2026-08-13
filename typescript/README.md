@@ -136,6 +136,18 @@ const executorWorkspace = repository.withTools([
   agentTools.when((state) => state.mutationAuthorized, "write_file", "replace"),
 ]);
 
+const checkpointedWorkspace = repository.withTools(
+  [agentTools.always("read_file", "ls", "grep", "git:ro", "write_file")],
+  {
+    // Interception is an Advanced runtime policy. Return a message to block the
+    // attempted tool call, or null to allow it.
+    interceptTool: async (state, invocation, { signal }) =>
+      invocation.effect === "workspaceMutation" && shouldCheckpoint(state)
+        ? "Call write_checkpoint before further mutation."
+        : null,
+  },
+);
+
 const plannerWorkspace = repository.withTools([
   // No commands and no mutation tools are selected for this role.
   agentTools.always("read_file", "ls", "grep"),

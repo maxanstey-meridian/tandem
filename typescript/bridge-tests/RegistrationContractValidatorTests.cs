@@ -6,11 +6,11 @@ namespace Tandem.NodeApiSpike;
 public sealed class RegistrationContractValidatorTests
 {
     [Fact]
-    public void AcceptsVersionNineAgentWithOutputCapabilitiesSkillsAndModelRequestControls()
+    public void AcceptsVersionTenAgentWithOutputCapabilitiesSkillsAndModelRequestControls()
     {
         var contract = RegistrationContractValidator.ParseAndValidate(ValidContract());
 
-        Assert.Equal(9, contract.ContractVersion);
+        Assert.Equal(10, contract.ContractVersion);
         Assert.Equal(2, contract.Nodes![0].Capabilities!.Length);
         Assert.Single(contract.Nodes[0].SkillDirectories!);
         Assert.NotNull(contract.Nodes[0].Output);
@@ -19,11 +19,11 @@ public sealed class RegistrationContractValidatorTests
     }
 
     [Fact]
-    public void AcceptsVersionNineParallelGroupWithNestedStages()
+    public void AcceptsVersionTenParallelGroupWithNestedStages()
     {
         var value = new Dictionary<string, object?>
         {
-            ["contractVersion"] = 9,
+            ["contractVersion"] = 10,
             ["name"] = "parallel",
             ["start"] = "parallel",
             ["initialState"] = "{}",
@@ -203,12 +203,12 @@ public sealed class RegistrationContractValidatorTests
             )
             .Message;
 
-        Assert.Contains("contractVersion must be 9", message);
+        Assert.Contains("contractVersion must be 10", message);
         Assert.Contains("object root with type 'object'", message);
     }
 
     [Fact]
-    public void AcceptsVersionNineWorkspaceCallbacksAndConditionalTools()
+    public void AcceptsVersionTenWorkspaceCallbacksAndConditionalTools()
     {
         var value = ContractObject();
         var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
@@ -221,6 +221,7 @@ public sealed class RegistrationContractValidatorTests
         var workspace = contract.Nodes![0].Workspace!;
         Assert.Equal("workspace.path", workspace.PathCallback);
         Assert.Equal("workspace.commands", workspace.CommandsCallback);
+        Assert.Null(workspace.InterceptCallback);
         Assert.Equal(2, workspace.ToolGroups!.Length);
         Assert.True(workspace.ToolGroups[0].IncludeCommands);
         Assert.Equal("workspace.can-mutate", workspace.ToolGroups[1].WhenCallback);
@@ -231,7 +232,7 @@ public sealed class RegistrationContractValidatorTests
     [InlineData("duplicate", "in more than one group")]
     [InlineData("commands-twice", "workspace commands more than once")]
     [InlineData("empty", "must select at least one tool")]
-    public void RejectsMalformedVersionNineWorkspacePolicies(string scenario, string expected)
+    public void RejectsMalformedVersionTenWorkspacePolicies(string scenario, string expected)
     {
         var value = ContractObject();
         var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
@@ -585,6 +586,31 @@ public sealed class RegistrationContractValidatorTests
     }
 
     [Fact]
+    public void RejectsCheckpointOnNonAgentNode()
+    {
+        var value = ContractObject();
+        var terminal = (Dictionary<string, object?>)((object[])value["nodes"]!)[1];
+        terminal["checkpoint"] = new Dictionary<string, object?>
+        {
+            ["contextWindowTokens"] = 100,
+            ["maxOutputTokens"] = 20,
+            ["checkpointAtPercent"] = 80,
+            ["capabilityName"] = "first",
+            ["instructions"] = "Checkpoint.",
+            ["messageCallback"] = "checkpoint.message",
+            ["resetSession"] = true,
+        };
+
+        var message = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
+            )
+            .Message;
+
+        Assert.Contains("nodes[1].checkpoint is forbidden", message);
+    }
+
+    [Fact]
     public void AcceptsExplicitReasoningDisable()
     {
         var value = ContractObject();
@@ -604,7 +630,7 @@ public sealed class RegistrationContractValidatorTests
     private static Dictionary<string, object?> ParallelContractObject() =>
         new()
         {
-            ["contractVersion"] = 9,
+            ["contractVersion"] = 10,
             ["name"] = "parallel",
             ["start"] = "parallel",
             ["initialState"] = "{}",
@@ -663,7 +689,7 @@ public sealed class RegistrationContractValidatorTests
     private static Dictionary<string, object?> ContractObject() =>
         new()
         {
-            ["contractVersion"] = 9,
+            ["contractVersion"] = 10,
             ["name"] = "test",
             ["start"] = "agent",
             ["initialState"] = "{}",
@@ -717,7 +743,7 @@ public sealed class RegistrationContractValidatorTests
     private static Dictionary<string, object?> InteractionContractObject() =>
         new()
         {
-            ["contractVersion"] = 9,
+            ["contractVersion"] = 10,
             ["name"] = "interaction-test",
             ["start"] = "review",
             ["initialState"] = "{}",

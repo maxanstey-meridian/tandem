@@ -29,7 +29,6 @@ P System.Func<System.Threading.CancellationToken,System.Threading.Tasks.ValueTas
 P System.Func<Tandem.PipelineInteractionRequestedObservation,Tandem.Terminal.TerminalInteractionPrompt?>? FormatInteraction { get; set; }
 P System.Int32 TranscriptCharacterCapacity { get; set; }
 P System.Int32 TranscriptEntryCapacity { get; set; }
-P System.Nullable<System.Int32>? ContextWindowTokens { get; set; }
 P System.TimeProvider TimeProvider { get; set; }
 P System.TimeSpan RefreshInterval { get; set; }
 P Tandem.Terminal.ITerminalKeyInput? KeyInput { get; set; }

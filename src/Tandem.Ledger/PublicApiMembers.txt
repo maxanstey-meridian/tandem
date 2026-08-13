@@ -112,13 +112,14 @@ F static Tandem.Ledger.RuntimeJournalKind StepStarted
 F static Tandem.Ledger.RuntimeJournalKind StructuredOutputAccepted
 F static Tandem.Ledger.RuntimeJournalKind UsageRecorded
 T Tandem.Ledger.RuntimeJournalRecord
-C (Tandem.Ledger.RuntimeJournalKind Kind, System.String StepId, System.String? Identity = null, System.String? Name = null, System.String? Effect = null, System.String? Result = null, System.String? OutcomeKind = null, System.Nullable<System.Int32>? InputTokens = default, System.Nullable<System.Int32>? OutputTokens = default, System.Nullable<System.Int32>? CurrentContextTokens = default, System.String? ValueType = null, System.Nullable<System.Text.Json.JsonElement>? Payload = default)
+C (Tandem.Ledger.RuntimeJournalKind Kind, System.String StepId, System.String? Identity = null, System.String? Name = null, System.String? Effect = null, System.String? Result = null, System.String? OutcomeKind = null, System.Nullable<System.Int32>? InputTokens = default, System.Nullable<System.Int32>? OutputTokens = default, System.Nullable<System.Int32>? CurrentContextTokens = default, System.String? ValueType = null, System.Nullable<System.Text.Json.JsonElement>? Payload = default, System.Nullable<System.Int32>? ContextWindowTokens = default)
 M System.Boolean Equals(System.Object? obj)
 M System.Boolean Equals(Tandem.Ledger.RuntimeJournalRecord? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
-M System.Void Deconstruct(out Tandem.Ledger.RuntimeJournalKind Kind, out System.String StepId, out System.String? Identity, out System.String? Name, out System.String? Effect, out System.String? Result, out System.String? OutcomeKind, out System.Nullable<System.Int32>? InputTokens, out System.Nullable<System.Int32>? OutputTokens, out System.Nullable<System.Int32>? CurrentContextTokens, out System.String? ValueType, out System.Nullable<System.Text.Json.JsonElement>? Payload)
+M System.Void Deconstruct(out Tandem.Ledger.RuntimeJournalKind Kind, out System.String StepId, out System.String? Identity, out System.String? Name, out System.String? Effect, out System.String? Result, out System.String? OutcomeKind, out System.Nullable<System.Int32>? InputTokens, out System.Nullable<System.Int32>? OutputTokens, out System.Nullable<System.Int32>? CurrentContextTokens, out System.String? ValueType, out System.Nullable<System.Text.Json.JsonElement>? Payload, out System.Nullable<System.Int32>? ContextWindowTokens)
 M Tandem.Ledger.RuntimeJournalRecord <Clone>$()
+P System.Nullable<System.Int32>? ContextWindowTokens { get; set; }
 P System.Nullable<System.Int32>? CurrentContextTokens { get; set; }
 P System.Nullable<System.Int32>? InputTokens { get; set; }
 P System.Nullable<System.Int32>? OutputTokens { get; set; }

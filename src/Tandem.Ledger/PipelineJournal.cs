@@ -105,7 +105,10 @@ public sealed class SqlitePipelineObserver : IPipelinePersistenceObserver
                 value.StepId,
                 InputTokens: value.InputTokens,
                 OutputTokens: value.OutputTokens,
-                CurrentContextTokens: value.CurrentContextTokens
+                CurrentContextTokens: value.CurrentContextTokens,
+                ContextWindowTokens: value.ContextWindowTokens > 0
+                    ? value.ContextWindowTokens
+                    : null
             ),
             PipelineActionAttempted value => new RuntimeJournalRecord(
                 RuntimeJournalKind.ActionAttempted,

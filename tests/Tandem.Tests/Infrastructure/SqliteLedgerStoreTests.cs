@@ -415,7 +415,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             CancellationToken.None
         );
         await observer.ObserveAsync(
-            new PipelineAgentUsage(runId, "executor", 10, 2, 12),
+            new PipelineAgentUsage(runId, "executor", 10, 2, 12, 200_000),
             CancellationToken.None
         );
         await observer.ObserveAsync(
@@ -458,6 +458,30 @@ public sealed class SqliteLedgerStoreTests : IDisposable
                 RuntimeJournalKind.RunCompleted
             );
         records.Select(record => record.Sequence).Should().Equal(1, 2, 3, 4, 5, 6);
+        records
+            .Single(record => record.Value.Kind == RuntimeJournalKind.UsageRecorded)
+            .Value.ContextWindowTokens.Should()
+            .Be(200_000);
+    }
+
+    [Fact]
+    public async Task RuntimeJournal_StoresUnknownContextWindowAsAbsent()
+    {
+        var store = await CreateStoreAsync(DatabasePath());
+        var runId = Guid.CreateVersion7();
+        var observer = await store.CreateObserverAsync(runId, "usage-without-window");
+
+        await observer.ObserveAsync(
+            new PipelineAgentUsage(runId, "executor", 10, 2, 12),
+            CancellationToken.None
+        );
+
+        var records = await store
+            .ForRun(runId)
+            .ReadAsync(
+                new LedgerStream<RuntimeJournalRecord>("runtime.journal", "tandem.runtime-journal")
+            );
+        records.Single().Value.ContextWindowTokens.Should().BeNull();
     }
 
     [Fact]

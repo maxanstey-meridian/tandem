@@ -110,7 +110,8 @@ public sealed record PipelineAgentUsage(
     string StepId,
     int InputTokens,
     int OutputTokens,
-    int CurrentContextTokens
+    int CurrentContextTokens,
+    int ContextWindowTokens = 0
 ) : PipelineObservation(RunId, StepId);
 
 public sealed record PipelineActionAttempted(

@@ -44,11 +44,13 @@ test("rejects invalid model request controls while authoring", async () => {
     { timeout: 15_000 },
   );
   const errors = JSON.parse(stdout.trim());
-  assert.equal(errors.length, 7);
+  assert.equal(errors.length, 10);
   assert(errors.every((error) => error.name === "TandemError"));
   assert(errors.some((error) => /reasoning effort/.test(error.message)));
   assert(errors.filter((error) => /temperature/.test(error.message)).length >= 3);
   assert(errors.filter((error) => /maxOutputTokens/.test(error.message)).length >= 3);
+  assert(errors.some((error) => /contextWindowTokens/.test(error.message)));
+  assert(errors.some((error) => /checkpoint session/.test(error.message)));
 });
 
 test("executes a fixed workspace command through the packed MAF shell runtime", async () => {

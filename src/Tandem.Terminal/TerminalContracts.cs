@@ -76,8 +76,6 @@ public sealed record TerminalDisplayOptions
 
     public IReadOnlyList<TerminalKeyAction> KeyActions { get; init; } = [];
 
-    public int? ContextWindowTokens { get; init; }
-
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
     public TimeSpan RefreshInterval { get; init; } = TimeSpan.FromMilliseconds(100);

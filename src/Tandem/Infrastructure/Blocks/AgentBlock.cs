@@ -220,6 +220,27 @@ internal sealed class AgentBlock<TState>(
                         {
                             turnInputTokens = usageContent.Details.InputTokenCount;
                             turnOutputTokens = usageContent.Details.OutputTokenCount;
+                            if (message.RunContext is { } usageRunContext)
+                            {
+                                var liveUsage = ResolveUsage(
+                                    turnInputTokens,
+                                    turnOutputTokens,
+                                    cumulativeInputTokens,
+                                    cumulativeOutputTokens,
+                                    turnSw.Elapsed
+                                );
+                                await usageRunContext.ObserveAsync(
+                                    new PipelineAgentUsage(
+                                        runtime.RunId,
+                                        config.StepId,
+                                        liveUsage.CurrentInputTokens,
+                                        liveUsage.CurrentOutputTokens,
+                                        liveUsage.CurrentContextTokens,
+                                        liveUsage.ContextWindowTokens
+                                    ),
+                                    cts.Token
+                                );
+                            }
                         }
                     }
 
@@ -478,19 +499,6 @@ internal sealed class AgentBlock<TState>(
                 cumulativeOutputTokens,
                 lastModelCallDuration
             );
-            if (message.RunContext is { } usageRunContext)
-            {
-                await usageRunContext.ObserveAsync(
-                    new PipelineAgentUsage(
-                        runtime.RunId,
-                        config.StepId,
-                        agentUsage.CurrentInputTokens,
-                        agentUsage.CurrentOutputTokens,
-                        agentUsage.CurrentContextTokens
-                    ),
-                    cts.Token
-                );
-            }
             var runtimeAfterUsage = LatchTriggeredGates(
                 runtime.WithUsage(config.StepId, agentUsage),
                 agentUsage
@@ -1171,7 +1179,9 @@ internal sealed class AgentBlock<TState>(
             chatOptions,
             workspace,
             toolEffects,
-            config.Skills ?? []
+            config.Skills ?? [],
+            config.Checkpoint?.ContextWindowTokens,
+            config.Checkpoint?.MaxOutputTokens
         );
         var agent = config.ImplementationFactory is null
             ? new ChatClientAgent(

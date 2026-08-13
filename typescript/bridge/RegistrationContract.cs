@@ -35,13 +35,25 @@ internal sealed record RegisteredNodeContract(
     bool? Persist,
     RegisteredParallelBranchContract[]? Branches = null,
     string? MergeCallback = null,
-    RegisteredWorkspaceContract? Workspace = null
+    RegisteredWorkspaceContract? Workspace = null,
+    RegisteredCheckpointContract? Checkpoint = null
+);
+
+internal sealed record RegisteredCheckpointContract(
+    int ContextWindowTokens,
+    int MaxOutputTokens,
+    int CheckpointAtPercent,
+    string? CapabilityName,
+    string? Instructions,
+    string? MessageCallback,
+    bool ResetSession
 );
 
 internal sealed record RegisteredWorkspaceContract(
     string? PathCallback,
     string? CommandsCallback,
-    RegisteredToolGroupContract[]? ToolGroups
+    RegisteredToolGroupContract[]? ToolGroups,
+    string? InterceptCallback
 );
 
 internal sealed record RegisteredToolGroupContract(

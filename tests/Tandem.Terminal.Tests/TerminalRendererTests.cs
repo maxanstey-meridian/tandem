@@ -49,7 +49,7 @@ public sealed class TerminalRendererTests
     [InlineData(800, "800")]
     [InlineData(1000, "1k")]
     [InlineData(131072, "131k")]
-    public void WorkHeaderShowsContextWindowNextToModel(int tokens, string expected)
+    public void WorkHeaderShowsCurrentContextAndWindowNextToModel(int tokens, string expected)
     {
         var console = new TestConsole().Width(140).Height(24);
         var now = DateTimeOffset.UtcNow;
@@ -66,7 +66,7 @@ public sealed class TerminalRendererTests
             [new("executor", TranscriptKind.Text, "working")],
             0,
             0,
-            0,
+            800,
             tokens,
             0,
             null,
@@ -75,7 +75,7 @@ public sealed class TerminalRendererTests
 
         new TerminalRenderer(console).Render(snapshot);
 
-        console.Output.Should().Contain($"deepseek · {expected}");
+        console.Output.Should().Contain($"deepseek · ctx 800/{expected}");
     }
 
     [Fact]

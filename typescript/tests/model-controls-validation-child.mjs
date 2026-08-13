@@ -1,4 +1,5 @@
-import { agent } from "../packages/sdk/dist/index.js";
+import { z } from "zod";
+import { agent, capability } from "../packages/sdk/dist/index.js";
 
 const base = {
   id: "worker",
@@ -12,6 +13,21 @@ const base = {
   },
   message: () => "work",
 };
+const checkpoint = capability({
+  name: "checkpoint",
+  instructions: "Checkpoint.",
+  schema: z.object({}),
+  apply: (state) => state,
+  summarize: () => "Checkpointed.",
+});
+const checkpointBase = {
+  contextWindowTokens: 100,
+  maxOutputTokens: 20,
+  checkpointAtPercent: 80,
+  capability: checkpoint,
+  instructions: "Checkpoint.",
+  message: () => "Checkpoint.",
+};
 const definitions = [
   { ...base, client: { ...base.client, reasoningEffort: "minimal" } },
   { ...base, temperature: -0.1 },
@@ -20,6 +36,13 @@ const definitions = [
   { ...base, maxOutputTokens: 0 },
   { ...base, maxOutputTokens: 1.5 },
   { ...base, maxOutputTokens: Number.MAX_SAFE_INTEGER + 1 },
+  {
+    ...base,
+    capabilities: [checkpoint],
+    checkpoint: { ...checkpointBase, contextWindowTokens: 2_147_483_648 },
+  },
+  { ...base, capabilities: [checkpoint], checkpoint: { ...checkpointBase, maxOutputTokens: 100 } },
+  { ...base, capabilities: [checkpoint], checkpoint: { ...checkpointBase, session: "rest" } },
 ];
 const errors = definitions.map((definition) => {
   try {

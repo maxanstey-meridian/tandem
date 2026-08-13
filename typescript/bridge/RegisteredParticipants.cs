@@ -130,6 +130,9 @@ internal static class RegisteredParticipantFactory
                 await OpenAiCompatibleChatClients.CreateAsync(node.Client!, cancellationToken)
             )
             .WithMessage(state => callbacks.Invoke(node.MessageCallback!, state.Json, ""));
+        var capabilities = new Dictionary<string, AgentCapability<JavaScriptState>>(
+            StringComparer.Ordinal
+        );
         builder.WithModelRequestOptions(
             new AgentModelRequestOptions(
                 node.Client!.ReasoningEffort switch
@@ -189,46 +192,72 @@ internal static class RegisteredParticipantFactory
         foreach (var capabilityContract in node.Capabilities ?? [])
         {
             using var schema = JsonDocument.Parse(capabilityContract.JsonSchema!);
-            builder.WithCapability(
-                AgentCapabilities.CreateJson(
-                    new AgentJsonCapabilityDefinition<JavaScriptState>(
-                        capabilityContract.Name!,
-                        capabilityContract.Instructions!,
-                        schema.RootElement.Clone(),
-                        request =>
+            var capability = AgentCapabilities.CreateJson(
+                new AgentJsonCapabilityDefinition<JavaScriptState>(
+                    capabilityContract.Name!,
+                    capabilityContract.Instructions!,
+                    schema.RootElement.Clone(),
+                    request =>
+                        ParseValidationProblems(
+                            callbacks.Invoke(
+                                capabilityContract.ValidateCallback!,
+                                "",
+                                request.GetRawText()
+                            )
+                        ),
+                    capabilityContract.ValidateForCallback is null
+                        ? null
+                        : (state, request) =>
                             ParseValidationProblems(
                                 callbacks.Invoke(
-                                    capabilityContract.ValidateCallback!,
-                                    "",
+                                    capabilityContract.ValidateForCallback,
+                                    state.Json,
                                     request.GetRawText()
                                 )
                             ),
-                        capabilityContract.ValidateForCallback is null
-                            ? null
-                            : (state, request) =>
-                                ParseValidationProblems(
-                                    callbacks.Invoke(
-                                        capabilityContract.ValidateForCallback,
-                                        state.Json,
-                                        request.GetRawText()
-                                    )
-                                ),
-                        request =>
-                            callbacks.Invoke(
-                                capabilityContract.SummaryCallback!,
-                                "",
-                                request.GetRawText()
-                            ),
-                        capabilityContract.ValueType!
-                    ),
-                    (state, request) =>
-                        new(
-                            callbacks.Invoke(
-                                capabilityContract.ApplyCallback!,
-                                state.Json,
-                                request.GetRawText()
-                            )
+                    request =>
+                        callbacks.Invoke(
+                            capabilityContract.SummaryCallback!,
+                            "",
+                            request.GetRawText()
+                        ),
+                    capabilityContract.ValueType!
+                ),
+                (state, request) =>
+                    new(
+                        callbacks.Invoke(
+                            capabilityContract.ApplyCallback!,
+                            state.Json,
+                            request.GetRawText()
                         )
+                    )
+            );
+            capabilities.Add(capabilityContract.Name!, capability);
+            if (node.Checkpoint?.CapabilityName != capabilityContract.Name)
+            {
+                builder.WithCapability(capability);
+            }
+        }
+        if (node.Checkpoint is { } checkpoint)
+        {
+            builder.WithCheckpoint(
+                new CheckpointPolicy<JavaScriptState>(
+                    checkpoint.ContextWindowTokens,
+                    checkpoint.MaxOutputTokens,
+                    checkpoint.CheckpointAtPercent,
+                    capabilities[checkpoint.CapabilityName!],
+                    checkpoint.Instructions!,
+                    context =>
+                        callbacks.Invoke(
+                            checkpoint.MessageCallback!,
+                            context.State.Json,
+                            context.CurrentContextTokens.ToString(
+                                System.Globalization.CultureInfo.InvariantCulture
+                            )
+                        ),
+                    checkpoint.ResetSession
+                        ? CheckpointSessionBehavior.Reset
+                        : CheckpointSessionBehavior.Retain
                 )
             );
         }
@@ -258,11 +287,42 @@ internal static class RegisteredParticipantFactory
                         );
                 })
                 .ToArray();
+            ToolInterceptor<JavaScriptState>? interceptor = null;
+            if (workspaceContract.InterceptCallback is { } interceptCallback)
+            {
+                interceptor = async (context, invocation, cancellationToken) =>
+                {
+                    var input = JsonSerializer.Serialize(
+                        new
+                        {
+                            name = invocation.Name,
+                            effect = invocation.Effect switch
+                            {
+                                ToolEffect.Read => "read",
+                                ToolEffect.WorkspaceMutation => "workspaceMutation",
+                                ToolEffect.ProcessExecution => "processExecution",
+                                ToolEffect.LifecycleTransition => "lifecycleTransition",
+                                _ => "unclassified",
+                            },
+                            arguments = invocation.Arguments,
+                        },
+                        TandemJson.CreateTypedContract()
+                    );
+                    var result = await callbacks.InvokeAsync(
+                        interceptCallback,
+                        context.State.Json,
+                        input,
+                        cancellationToken
+                    );
+                    var message = JsonSerializer.Deserialize<string?>(result);
+                    return message is null ? null : new ToolInterceptionResult.Blocked(message);
+                };
+            }
             builder
                 .UseHarness(
                     "Use the explicitly selected workspace tools to inspect or modify the configured repository."
                 )
-                .WithWorkspace(workspace, groups);
+                .WithWorkspace(workspace, groups, interceptor);
         }
         ApplyAgentPolicies(builder, node);
         var agent = builder.Build();

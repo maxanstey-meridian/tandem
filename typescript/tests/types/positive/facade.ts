@@ -117,6 +117,15 @@ const worker = agent<State, { amount: number }>({
   temperature: 0,
   maxOutputTokens: 2048,
   capabilities: granted,
+  checkpoint: {
+    contextWindowTokens: 131_072,
+    maxOutputTokens: 4096,
+    checkpointAtPercent: 80,
+    capability: record,
+    instructions: "Checkpoint now.",
+    message: (_state, currentContextTokens) => `Checkpoint at ${currentContextTokens} tokens.`,
+    session: "retain",
+  },
   skills: [meridian],
   output: {
     instructions: "Return an amount.",
@@ -131,10 +140,18 @@ agent<WorkspaceState>({
   instructions: "Work in the repository.",
   client,
   message: (state) => state.workspacePath,
-  workspace: repository.withTools([
-    agentTools.always("read_file", "git:ro", repository.commands),
-    agentTools.when<WorkspaceState>((state) => state.mutationAuthorized, "write_file"),
-  ]),
+  workspace: repository.withTools(
+    [
+      agentTools.always("read_file", "git:ro", repository.commands),
+      agentTools.when<WorkspaceState>((state) => state.mutationAuthorized, "write_file"),
+    ],
+    {
+      interceptTool: (state, invocation, { signal }) =>
+        state.mutationAuthorized && !signal.aborted && invocation.effect === "workspaceMutation"
+          ? null
+          : "Mutation is blocked.",
+    },
+  ),
 });
 agent({
   id: "transforming-worker",

@@ -415,14 +415,15 @@ M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out T
 M Tandem.PipelineAgentUpdated <Clone>$()
 P Tandem.AgentUpdate Update { get; set; }
 T Tandem.PipelineAgentUsage
-C (System.Guid RunId, System.String StepId, System.Int32 InputTokens, System.Int32 OutputTokens, System.Int32 CurrentContextTokens)
+C (System.Guid RunId, System.String StepId, System.Int32 InputTokens, System.Int32 OutputTokens, System.Int32 CurrentContextTokens, System.Int32 ContextWindowTokens = 0)
 M System.Boolean Equals(System.Object? obj)
 M System.Boolean Equals(Tandem.PipelineAgentUsage? other)
 M System.Boolean Equals(Tandem.PipelineObservation? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
-M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.Int32 InputTokens, out System.Int32 OutputTokens, out System.Int32 CurrentContextTokens)
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.Int32 InputTokens, out System.Int32 OutputTokens, out System.Int32 CurrentContextTokens, out System.Int32 ContextWindowTokens)
 M Tandem.PipelineAgentUsage <Clone>$()
+P System.Int32 ContextWindowTokens { get; set; }
 P System.Int32 CurrentContextTokens { get; set; }
 P System.Int32 InputTokens { get; set; }
 P System.Int32 OutputTokens { get; set; }

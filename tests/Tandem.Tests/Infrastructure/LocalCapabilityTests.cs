@@ -733,6 +733,35 @@ public sealed class LocalCapabilityTests
         act.Should().Throw<ArgumentOutOfRangeException>();
     }
 
+    [Theory]
+    [InlineData(0, 20, 80)]
+    [InlineData(100, 0, 80)]
+    [InlineData(100, 100, 80)]
+    [InlineData(100, 20, 0)]
+    [InlineData(100, 20, 100)]
+    public void CheckpointPolicy_RejectsInvalidLimits(
+        int contextWindowTokens,
+        int maxOutputTokens,
+        int checkpointAtPercent
+    )
+    {
+        var builder = Agent.Create<TestState>("agent", "Work.", new ScriptedChatClient());
+
+        var act = () =>
+            builder.WithCheckpoint(
+                new CheckpointPolicy<TestState>(
+                    contextWindowTokens,
+                    maxOutputTokens,
+                    checkpointAtPercent,
+                    CreateCapability(),
+                    "Write a checkpoint.",
+                    _ => "Checkpoint now."
+                )
+            );
+
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
     private static string CapabilityKind(string name) =>
         $"capability:{typeof(TestState).FullName}:{name}";
 

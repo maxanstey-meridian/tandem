@@ -626,6 +626,22 @@ public static class AdvancedAgentBuilderExtensions
         CheckpointPolicy<TState> policy
     )
     {
+        ArgumentNullException.ThrowIfNull(policy);
+        if (policy.ContextWindowTokens <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(policy.ContextWindowTokens));
+        }
+        if (policy.MaxOutputTokens <= 0 || policy.MaxOutputTokens >= policy.ContextWindowTokens)
+        {
+            throw new ArgumentOutOfRangeException(nameof(policy.MaxOutputTokens));
+        }
+        if (policy.CheckpointAtPercent is <= 0 or >= 100)
+        {
+            throw new ArgumentOutOfRangeException(nameof(policy.CheckpointAtPercent));
+        }
+        ArgumentNullException.ThrowIfNull(policy.Capability);
+        ArgumentException.ThrowIfNullOrWhiteSpace(policy.Instructions);
+        ArgumentNullException.ThrowIfNull(policy.UserMessage);
         var resetSessionAfterRelease = policy.SessionBehavior switch
         {
             CheckpointSessionBehavior.Retain => false,
