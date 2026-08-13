@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Tandem.Advanced;
 using Tandem.Ledger;
+using Tandem.Terminal;
 
 namespace Tandem.NodeApiSpike;
 
@@ -119,9 +120,6 @@ public static partial class NodePipelineBridge
         }
 
         var runId = Guid.CreateVersion7();
-        await using var presentation = terminalCancellation is null
-            ? null
-            : new TerminalRunPresentation(pipeline.Inspect(), runId, terminalCancellation);
         IPipelinePersistenceObserver? observer = null;
         SqliteLedgerStore? store = null;
         if (definition.LedgerPath is not null)
@@ -132,20 +130,12 @@ public static partial class NodePipelineBridge
         var liveObserver = definition.ObservationCallback is null
             ? null
             : new RegisteredObservationObserver(callbacks, definition.ObservationCallback);
-        var runObserver = RegisteredRunObserver.Compose(
-            observer,
-            liveObserver,
-            presentation?.Observer
-        );
+        var runObserver = RegisteredRunObserver.Compose(observer, liveObserver, null);
         LedgerRunStatus? terminalStatus = null;
         string? terminalSummary = null;
         var preserveActiveFailure = false;
         try
         {
-            if (presentation is not null)
-            {
-                await presentation.StartAsync(runCancellationToken);
-            }
             var options = new PipelineRunOptions(
                 RunId: runId,
                 Interactions: handlers,
@@ -155,12 +145,31 @@ public static partial class NodePipelineBridge
             {
                 options = options.WithAcceptanceUnitOfWork(new LedgerAcceptanceUnitOfWork(store));
             }
-            var result = await new PipelineRunner().RunAsync(
-                pipeline,
-                new JavaScriptState(definition.InitialState!),
-                options,
-                runCancellationToken
-            );
+            var runner = new PipelineRunner();
+            var initialState = new JavaScriptState(definition.InitialState!);
+            var result =
+                definition.Presentation == "terminal"
+                    ? await runner.RunWithTerminalAsync(
+                        pipeline,
+                        initialState,
+                        new TerminalPipelineRunOptions
+                        {
+                            Persistence = observer,
+                            Observer = liveObserver,
+                            Run = options,
+                            RunCancellation = terminalCancellation,
+                            TerminalizingAsync = store is null
+                                ? null
+                                : async (completion, token) =>
+                                    await store.CompleteRunAsync(
+                                        runId,
+                                        ToLedgerStatus(completion.Status),
+                                        token
+                                    ),
+                        },
+                        cancellationToken
+                    )
+                    : await runner.RunAsync(pipeline, initialState, options, cancellationToken);
             terminalStatus = result.Succeeded ? LedgerRunStatus.Ready : LedgerRunStatus.Failed;
             terminalSummary = result.Outcome?.Summary;
             return JsonSerializer.Serialize(
@@ -211,7 +220,11 @@ public static partial class NodePipelineBridge
         }
         finally
         {
-            if (store is not null && terminalStatus is { } status)
+            if (
+                definition.Presentation != "terminal"
+                && store is not null
+                && terminalStatus is { } status
+            )
             {
                 try
                 {
@@ -222,16 +235,17 @@ public static partial class NodePipelineBridge
                     // Preserve the active run failure when best-effort terminalization also fails.
                 }
             }
-            if (presentation is not null && terminalStatus is { } presentationStatus)
-            {
-                await presentation.CompleteAsync(
-                    presentationStatus,
-                    terminalSummary,
-                    preserveActiveFailure
-                );
-            }
         }
     }
+
+    private static LedgerRunStatus ToLedgerStatus(TerminalPipelineStatus status) =>
+        status switch
+        {
+            TerminalPipelineStatus.Succeeded => LedgerRunStatus.Ready,
+            TerminalPipelineStatus.Failed => LedgerRunStatus.Failed,
+            TerminalPipelineStatus.Cancelled => LedgerRunStatus.Cancelled,
+            _ => LedgerRunStatus.Faulted,
+        };
 
     private static CallbackContractException? FindCallbackContractException(Exception exception)
     {

@@ -56,6 +56,17 @@ P System.ConsoleKey Key { get; set; }
 P System.Func<System.Boolean>? IsAvailable { get; set; }
 P System.Func<System.Threading.CancellationToken,System.Threading.Tasks.ValueTask> ExecuteAsync { get; set; }
 P System.String Label { get; set; }
+T Tandem.Terminal.TerminalPipelineCompletion
+C (Tandem.Terminal.TerminalPipelineStatus Status, System.String Summary, System.Exception? Exception = null)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Terminal.TerminalPipelineCompletion? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out Tandem.Terminal.TerminalPipelineStatus Status, out System.String Summary, out System.Exception? Exception)
+M Tandem.Terminal.TerminalPipelineCompletion <Clone>$()
+P System.Exception? Exception { get; set; }
+P System.String Summary { get; set; }
+P Tandem.Terminal.TerminalPipelineStatus Status { get; set; }
 T Tandem.Terminal.TerminalPipelineDisplay
 C (Tandem.PipelineInspection pipeline, System.Guid runId, Tandem.Terminal.TerminalDisplayOptions? options = null)
 M System.Threading.Tasks.Task StartAsync(System.Threading.CancellationToken cancellationToken = default)
@@ -86,6 +97,21 @@ F static Tandem.Terminal.TerminalPipelineEntryStyle Failure
 F static Tandem.Terminal.TerminalPipelineEntryStyle Information
 F static Tandem.Terminal.TerminalPipelineEntryStyle Interaction
 F static Tandem.Terminal.TerminalPipelineEntryStyle Success
+T Tandem.Terminal.TerminalPipelineRunOptions
+C ()
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Terminal.TerminalPipelineRunOptions? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M Tandem.Terminal.TerminalPipelineRunOptions <Clone>$()
+P System.Func<Tandem.Terminal.TerminalPipelineCompletion,System.Threading.CancellationToken,System.Threading.Tasks.ValueTask>? TerminalizingAsync { get; set; }
+P System.Threading.CancellationTokenSource? RunCancellation { get; set; }
+P Tandem.IPipelineObserver? Observer { get; set; }
+P Tandem.IPipelinePersistenceObserver? Persistence { get; set; }
+P Tandem.PipelineRunOptions Run { get; set; }
+P Tandem.Terminal.TerminalDisplayOptions? Display { get; set; }
+T Tandem.Terminal.TerminalPipelineRunner
+M static System.Threading.Tasks.Task<Tandem.PipelineRunResult<TState>> RunWithTerminalAsync<TState>(Tandem.PipelineRunner runner, Tandem.Pipeline<TState> pipeline, TState initialState, Tandem.Terminal.TerminalPipelineRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
 T Tandem.Terminal.TerminalPipelineStatus
 F System.Int32 value__
 F static Tandem.Terminal.TerminalPipelineStatus Cancelled
