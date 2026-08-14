@@ -69,6 +69,7 @@ F System.Int32 value__
 F static Tandem.Ledger.LedgerRunStatus Cancelled
 F static Tandem.Ledger.LedgerRunStatus Failed
 F static Tandem.Ledger.LedgerRunStatus Faulted
+F static Tandem.Ledger.LedgerRunStatus Interrupted
 F static Tandem.Ledger.LedgerRunStatus Ready
 F static Tandem.Ledger.LedgerRunStatus Running
 T Tandem.Ledger.LedgerStream<TEntry>
@@ -153,6 +154,7 @@ M System.Threading.Tasks.ValueTask<Tandem.Ledger.AcceptedPipelineValue<TValue>?>
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.LedgerRun> CompleteRunAsync(System.Guid runId, Tandem.Ledger.LedgerRunStatus status, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.LedgerRun> CreateRunAsync(System.Guid runId, System.String composition, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.LedgerRun> GetRunAsync(System.Guid runId, System.Threading.CancellationToken cancellationToken = default)
+M System.Threading.Tasks.ValueTask<Tandem.Ledger.LedgerRun> ReopenRunAsync(System.Guid runId, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.SqlitePipelineObserver> CreateObserverAsync(System.Guid runId, System.String composition, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.SqlitePipelineObserver> CreateObserverAsync<TState>(System.Guid runId, Tandem.Pipeline<TState> pipeline, System.Threading.CancellationToken cancellationToken = default)
 M Tandem.Ledger.RunLedger ForRun(System.Guid runId)
@@ -174,3 +176,4 @@ P Tandem.IPipelineObserver? Observer { get; set; }
 P Tandem.PipelineInteractionHandlers? Interactions { get; set; }
 T Tandem.Ledger.SqlitePipelineRunnerExtensions
 M static System.Threading.Tasks.Task<Tandem.PipelineRunResult<TState>> RunAsync<TState>(Tandem.PipelineRunner runner, Tandem.Pipeline<TState> pipeline, TState initialState, Tandem.Ledger.SqlitePipelineRunOptions options, System.Threading.CancellationToken cancellationToken = default)
+M static Tandem.PipelineRunOptions WithRunLedger(Tandem.PipelineRunOptions options, Tandem.Ledger.RunLedger ledger)

@@ -384,8 +384,10 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         await conflict.Should().ThrowAsync<LedgerConflictException>();
     }
 
-    [Fact]
-    public async Task AbandonedRun_RemainsRunningWithReadableFactsAndNoResumeApi()
+    [Theory]
+    [InlineData(LedgerRunStatus.Faulted)]
+    [InlineData(LedgerRunStatus.Interrupted)]
+    public async Task ResumableRun_CanReopenWithReadableFacts(LedgerRunStatus status)
     {
         var path = DatabasePath();
         var runId = Guid.CreateVersion7();
@@ -393,22 +395,31 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         await store.CreateRunAsync(runId, "delivery");
         var facts = new LedgerStream<ProbeEntry>("facts", "test.fact");
         await store.ForRun(runId).AppendAsync(facts, "accepted", new ProbeEntry("durable", 1));
+        await store.CompleteRunAsync(runId, status);
 
         var reopened = await CreateStoreAsync(path);
-        var run = await reopened.GetRunAsync(runId);
+        var run = await reopened.ReopenRunAsync(runId);
         var entries = await reopened.ForRun(runId).ReadAsync(facts);
-        var resumeMethods = typeof(SqliteLedgerStore)
-            .Assembly.GetExportedTypes()
-            .SelectMany(type => type.GetMethods())
-            .Where(method =>
-                method.Name.Contains("Resume", StringComparison.OrdinalIgnoreCase)
-                || method.Name.Contains("Reconstruct", StringComparison.OrdinalIgnoreCase)
-            )
-            .ToArray();
 
         run.Status.Should().Be(LedgerRunStatus.Running);
+        run.EndedAt.Should().BeNull();
         entries.Should().ContainSingle().Which.Value.Name.Should().Be("durable");
-        resumeMethods.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(LedgerRunStatus.Ready)]
+    [InlineData(LedgerRunStatus.Failed)]
+    [InlineData(LedgerRunStatus.Cancelled)]
+    public async Task ReopenRun_RejectsOtherTerminalStatuses(LedgerRunStatus status)
+    {
+        var store = await CreateStoreAsync(DatabasePath());
+        var runId = Guid.CreateVersion7();
+        await store.CreateRunAsync(runId, "delivery");
+        await store.CompleteRunAsync(runId, status);
+
+        var reopen = async () => await store.ReopenRunAsync(runId);
+
+        await reopen.Should().ThrowAsync<LedgerConflictException>();
     }
 
     [Fact]

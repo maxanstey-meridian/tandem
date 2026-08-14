@@ -43,6 +43,7 @@ public enum LedgerRunStatus
     Ready,
     Failed,
     Faulted,
+    Interrupted,
     Cancelled,
 }
 

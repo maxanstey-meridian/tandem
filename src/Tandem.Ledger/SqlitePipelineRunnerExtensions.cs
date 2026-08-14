@@ -9,6 +9,16 @@ public sealed record SqlitePipelineRunOptions(
 
 public static class SqlitePipelineRunnerExtensions
 {
+    public static PipelineRunOptions WithRunLedger(
+        this PipelineRunOptions options,
+        RunLedger ledger
+    )
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(ledger);
+        return options with { Ledger = ledger };
+    }
+
     public static async Task<PipelineRunResult<TState>> RunAsync<TState>(
         this PipelineRunner runner,
         Pipeline<TState> pipeline,

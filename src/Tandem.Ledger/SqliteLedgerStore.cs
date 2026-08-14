@@ -102,7 +102,7 @@ public sealed class SqliteLedgerStore
             CREATE TABLE IF NOT EXISTS runs (
                 run_id TEXT PRIMARY KEY,
                 composition TEXT NOT NULL CHECK (length(trim(composition)) > 0),
-                status TEXT NOT NULL CHECK (status IN ('Running', 'Ready', 'Failed', 'Faulted', 'Cancelled')),
+                status TEXT NOT NULL CHECK (status IN ('Running', 'Ready', 'Failed', 'Faulted', 'Interrupted', 'Cancelled')),
                 started_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 ended_at INTEGER NULL
@@ -544,6 +544,36 @@ public sealed class SqliteLedgerStore
     {
         await using var connection = await OpenAsync(cancellationToken);
         return await ReadRunAsync(connection, runId, cancellationToken);
+    }
+
+    public async ValueTask<LedgerRun> ReopenRunAsync(
+        Guid runId,
+        CancellationToken cancellationToken = default
+    )
+    {
+        var now = Now();
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE runs
+            SET status = 'Running', updated_at = $now, ended_at = NULL
+            WHERE run_id = $run_id AND status IN ('Faulted', 'Interrupted');
+            """;
+        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
+        command.Parameters.AddWithValue("$now", now.ToUnixTimeMilliseconds());
+        await command.ExecuteNonQueryAsync(cancellationToken);
+
+        var run = await ReadRunAsync(connection, runId, cancellationToken, transaction);
+        if (run.Status != LedgerRunStatus.Running)
+        {
+            throw new LedgerConflictException(
+                $"Run '{runId:N}' cannot resume from status '{run.Status}'."
+            );
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return run;
     }
 
     public async ValueTask<LedgerRun> CompleteRunAsync(
