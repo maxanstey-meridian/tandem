@@ -10,6 +10,7 @@ public sealed record PipelineRunOptions(
 )
 {
     internal IPipelineAcceptanceUnitOfWork? AcceptanceUnitOfWork { get; init; }
+    internal IPipelineLedgerReader? Ledger { get; init; }
 }
 
 public sealed record PipelineRunResult<TState>(
@@ -162,6 +163,7 @@ public sealed class PipelineRunner
                 initialState,
                 options.Observer,
                 options.AcceptanceUnitOfWork,
+                options.Ledger,
                 cancellationToken
             )
             : await runner.RunAsync(
@@ -171,6 +173,7 @@ public sealed class PipelineRunner
                 new TypedInteractionHandler(options.Interactions),
                 options.Observer,
                 options.AcceptanceUnitOfWork,
+                options.Ledger,
                 cancellationToken
             );
         var outcome = output.LatestOutcome is null

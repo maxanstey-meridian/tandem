@@ -140,7 +140,10 @@ public static partial class NodePipelineBridge
                 RunId: runId,
                 Interactions: handlers,
                 Observer: runObserver
-            );
+            )
+            {
+                Ledger = store?.ForRun(runId),
+            };
             if (store is not null)
             {
                 options = options.WithAcceptanceUnitOfWork(new LedgerAcceptanceUnitOfWork(store));
@@ -271,7 +274,7 @@ public static partial class NodePipelineBridge
         );
 
     private sealed class LedgerAcceptanceUnitOfWork(SqliteLedgerStore store)
-        : IPipelineAcceptanceUnitOfWork
+        : Tandem.Advanced.IPipelineAcceptanceUnitOfWork
     {
         public ValueTask<T> ExecuteAsync<T>(
             Func<CancellationToken, ValueTask<T>> operation,

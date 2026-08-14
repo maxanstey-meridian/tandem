@@ -608,7 +608,9 @@ export type AgentToolName =
   | "replace"
   | "replace_lines"
   | "git:ro"
-  | "shell";
+  | "shell"
+  | "web_search"
+  | "web_fetch";
 export interface AgentCommand {
   readonly name: string;
   readonly description: string;

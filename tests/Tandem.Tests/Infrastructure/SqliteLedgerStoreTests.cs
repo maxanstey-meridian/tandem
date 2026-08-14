@@ -65,6 +65,97 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task AgentLedgerReader_PaginatesAndSearchesAcrossAcceptedStreams()
+    {
+        var store = await CreateStoreAsync(DatabasePath());
+        var runId = Guid.CreateVersion7();
+        await store.CreateRunAsync(runId, "test");
+        var ledger = store.ForRun(runId);
+        var firstStream = new LedgerStream<ProbeEntry>("first", "test.probe");
+        var secondStream = new LedgerStream<ProbeEntry>("second", "test.probe");
+        await ledger.AppendAsync(firstStream, "entry-1", new ProbeEntry("alpha", 1));
+        await ledger.AppendAsync(secondStream, "entry-2", new ProbeEntry("needle", 2));
+        await ledger.AppendAsync(firstStream, "entry-3", new ProbeEntry("omega", 3));
+
+        var reader = (IPipelineLedgerReader)ledger;
+        var firstPage = await reader.ReadAsync(limit: 2);
+        var secondPage = await reader.ReadAsync(firstPage.NextCursor, limit: 2);
+        var search = await reader.SearchAsync("NEEDLE");
+
+        firstPage.Entries.Select(entry => entry.EntryId).Should().Equal("entry-1", "entry-2");
+        firstPage.NextCursor.Should().NotBeNull();
+        secondPage.Entries.Select(entry => entry.EntryId).Should().Equal("entry-3");
+        secondPage.NextCursor.Should().BeNull();
+        search.Entries.Should().ContainSingle().Which.EntryId.Should().Be("entry-2");
+        search.Entries[0].Stream.Should().Be("second");
+        search.Entries[0].Value.Should().Contain("needle");
+    }
+
+    [Fact]
+    public async Task AgentLedgerReader_BoundsValuesAndKeepsSearchMatchVisible()
+    {
+        var store = await CreateStoreAsync(DatabasePath());
+        var runId = Guid.CreateVersion7();
+        await store.CreateRunAsync(runId, "test");
+        var ledger = store.ForRun(runId);
+        var marker = "MATCH-NEAR-THE-END";
+        await ledger.AppendAsync(
+            new LedgerStream<ProbeEntry>("large", "test.probe"),
+            "large-entry",
+            new ProbeEntry(new string('x', 20_000) + marker, 1)
+        );
+
+        var reader = (IPipelineLedgerReader)ledger;
+        var read = await reader.ReadAsync();
+        var search = await reader.SearchAsync(marker);
+
+        read.Entries.Single().Value.Length.Should().BeLessThan(5_000);
+        read.Entries.Single().Value.Should().Contain("[...truncated...]");
+        search.Entries.Single().Value.Should().Contain(marker);
+        search.Entries.Single().Value.Should().StartWith("[...truncated...]");
+    }
+
+    [Fact]
+    public async Task AgentLedgerReader_HidesRuntimeMechanicsAndReturnsAcceptedFacts()
+    {
+        var store = await CreateStoreAsync(DatabasePath());
+        var runId = Guid.CreateVersion7();
+        var observer = await store.CreateObserverAsync(runId, "test", CancellationToken.None);
+        await observer.RecordRunStartedAsync(CancellationToken.None);
+        await observer.ObserveAsync(
+            new PipelineAgentUsage(runId, "agent", 10, 2, 12, 100),
+            CancellationToken.None
+        );
+        await observer.ObserveAsync(
+            new PipelineStepCompleted(
+                runId,
+                "ephemeral",
+                new PipelineRunOutcome(
+                    StandardOutcomeKinds.Success,
+                    "ephemeral",
+                    "Not persisted.",
+                    JsonSerializer.SerializeToElement(new { }),
+                    TimeSpan.Zero
+                )
+            ),
+            CancellationToken.None
+        );
+        await observer.ObserveAsync(
+            AcceptedStep(runId, "agent", new RunnerState(3)),
+            CancellationToken.None
+        );
+
+        var page = await ((IPipelineLedgerReader)store.ForRun(runId)).ReadAsync(
+            cancellationToken: CancellationToken.None
+        );
+
+        page.Entries.Should().ContainSingle();
+        page.Entries.Single().Value.Should().Contain("StepCompleted");
+        page.Entries.Single().Value.Should().NotContain("RunStarted");
+        page.Entries.Single().Value.Should().NotContain("UsageRecorded");
+    }
+
+    [Fact]
     public async Task EntryIdentity_IsUniqueAcrossAWholeRun()
     {
         var store = await CreateStoreAsync(DatabasePath());
@@ -346,7 +437,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
                 new LedgerStream<RuntimeJournalRecord>("runtime.journal", "tandem.runtime-journal")
             );
         records.Should().ContainSingle();
-        records[0].EntryId.Should().Be("accepted-output--planner-output-1");
+        records[0].EntryId.Should().EndWith(":accepted-output--planner-output-1");
         records[0]
             .Value.Payload!.Value.Deserialize<ProbeDecision>(JsonSerializerOptions.Web)
             .Should()
@@ -382,7 +473,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
                 new LedgerStream<RuntimeJournalRecord>("runtime.journal", "tandem.runtime-journal")
             );
         records.Should().ContainSingle();
-        records[0].EntryId.Should().Be("accepted-capability--accepted-call-1");
+        records[0].EntryId.Should().EndWith(":accepted-capability--accepted-call-1");
         records[0]
             .Value.Payload!.Value.Deserialize<ProbeRequest>(JsonSerializerOptions.Web)
             .Should()
@@ -702,11 +793,13 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         await reopened.InitializeAsync();
         var latest = await reopened.ReadLatestAcceptedAsync<RunnerState>(firstRun, "shared");
         var other = await reopened.ReadLatestAcceptedAsync<RunnerState>(firstRun, "other");
+        var runLatest = await reopened.ReadLatestAcceptedAsync<RunnerState>(firstRun);
         var isolated = await reopened.ReadLatestAcceptedAsync<RunnerState>(secondRun, "shared");
 
         latest!.Value.Count.Should().Be(2);
         latest.Sequence.Should().BeGreaterThan(other!.Sequence);
         other.Value.Count.Should().Be(9);
+        runLatest.Should().Be(latest);
         isolated!.Value.Count.Should().Be(7);
     }
 

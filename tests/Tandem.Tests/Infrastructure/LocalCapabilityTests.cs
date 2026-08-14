@@ -41,6 +41,49 @@ public sealed class LocalCapabilityTests
     }
 
     [Fact]
+    public async Task RunLedger_AutomaticallyAdvertisesGenericReadAndSearchTools()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"tandem-agent-ledger-{Guid.NewGuid():N}");
+        try
+        {
+            var runId = Guid.CreateVersion7();
+            var store = new SqliteLedgerStore(Path.Combine(directory, "ledger.sqlite3"));
+            await store.InitializeAsync();
+            await store.CreateRunAsync(runId, "test");
+            var client = new ScriptedChatClient(
+                ToolCall(
+                    "accepted",
+                    "increment",
+                    new Dictionary<string, object?> { ["amount"] = 1 }
+                )
+            );
+            var message = new PipelineMessage<TestState>(
+                PipelineRuntime.Create(runId),
+                new TestState(0)
+            )
+            {
+                RunContext = new PipelineRunContext(runId, null, ledger: store.ForRun(runId)),
+            };
+
+            await CreateBlock(client, CreateCapability())
+                .ExecuteAsync(message, CancellationToken.None);
+
+            client
+                .AdvertisedTools.Should()
+                .ContainSingle()
+                .Which.Should()
+                .BeEquivalentTo(["increment", "read_ledger", "search_ledger"]);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task InvalidCall_ReturnsProblems_ThenAcceptsCorrectedCallInSameSession()
     {
         var toolResults = new List<string>();
@@ -709,6 +752,15 @@ public sealed class LocalCapabilityTests
                 message.Role == ChatRole.Assistant
                 && message.Text.Contains("Still working.", StringComparison.Ordinal)
             );
+        var retainedContents = client.Requests[2].SelectMany(message => message.Contents).ToArray();
+        retainedContents
+            .OfType<FunctionCallContent>()
+            .Should()
+            .Contain(call => call.CallId == "checkpoint-call");
+        retainedContents
+            .OfType<FunctionResultContent>()
+            .Should()
+            .Contain(result => result.CallId == "checkpoint-call");
     }
 
     [Fact]

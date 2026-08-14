@@ -142,8 +142,12 @@ agent<WorkspaceState>({
   message: (state) => state.workspacePath,
   workspace: repository.withTools(
     [
-      agentTools.always("read_file", "git:ro", repository.commands),
-      agentTools.when<WorkspaceState>((state) => state.mutationAuthorized, "write_file"),
+      agentTools.always("read_file", "git:ro", "web_search", repository.commands),
+      agentTools.when<WorkspaceState>(
+        (state) => state.mutationAuthorized,
+        "write_file",
+        "web_fetch",
+      ),
     ],
     {
       interceptTool: (state, invocation, { signal }) =>

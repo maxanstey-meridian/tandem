@@ -10,6 +10,19 @@ namespace Tandem.Tests.Infrastructure;
 public sealed class WorkspaceAuthorityTests
 {
     [Fact]
+    public void Tavily_tools_are_accepted_and_resolved_through_existing_tool_groups()
+    {
+        var always = AgentTools.Always<TestState>("web_search");
+        var conditional = AgentTools.When<TestState>(state => state.MutationAllowed, "web_fetch");
+
+        always.Descriptor.IsAvailable(new TestState()).Should().BeTrue();
+        always.Descriptor.Tools.Should().ContainSingle(tool => tool.Name == "web_search");
+        conditional.Descriptor.IsAvailable(new TestState()).Should().BeFalse();
+        conditional.Descriptor.IsAvailable(new TestState(MutationAllowed: true)).Should().BeTrue();
+        conditional.Descriptor.Tools.Should().ContainSingle(tool => tool.Name == "web_fetch");
+    }
+
+    [Fact]
     public void Workspace_RejectsCommandsOwnedByAnotherWorkspace()
     {
         var first = AgentWorkspace<TestState>.Define(_ => ".", []);
@@ -28,6 +41,8 @@ public sealed class WorkspaceAuthorityTests
 
     [Theory]
     [InlineData("read_file")]
+    [InlineData("web_search")]
+    [InlineData("web_fetch")]
     [InlineData("git_status")]
     [InlineData("run_shell")]
     [InlineData("load_skill")]

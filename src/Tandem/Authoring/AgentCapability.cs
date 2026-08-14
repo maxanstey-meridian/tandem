@@ -40,6 +40,8 @@ internal sealed class CapabilityInvocationState<TState>(
     public TState State { get; } = state;
     public PipelineRunContext? RunContext { get; } = runContext;
     public AcceptedCapability<TState>? Accepted { get; private set; }
+    public string? AcceptedCallId { get; private set; }
+    public object? AcceptedResult { get; private set; }
 
     public bool TryReserve()
     {
@@ -72,6 +74,19 @@ internal sealed class CapabilityInvocationState<TState>(
             }
             Accepted = accepted;
             _reserved = false;
+        }
+    }
+
+    public void RecordResult(string callId, object? result)
+    {
+        lock (_sync)
+        {
+            if (Accepted is null)
+            {
+                throw new InvalidOperationException("Capability result requires acceptance.");
+            }
+            AcceptedCallId = callId;
+            AcceptedResult = result;
         }
     }
 

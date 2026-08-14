@@ -149,6 +149,7 @@ C (System.String databasePath, System.TimeProvider? timeProvider = null, System.
 M System.Threading.Tasks.ValueTask InitializeAsync(System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<T> ExecuteAsync<T>(System.Func<System.Threading.CancellationToken,System.Threading.Tasks.ValueTask<T>> operation, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.AcceptedPipelineValue<TValue>?> ReadLatestAcceptedAsync<TValue>(System.Guid runId, System.String stepId, System.Threading.CancellationToken cancellationToken = default)
+M System.Threading.Tasks.ValueTask<Tandem.Ledger.AcceptedPipelineValue<TValue>?> ReadLatestAcceptedAsync<TValue>(System.Guid runId, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.LedgerRun> CompleteRunAsync(System.Guid runId, Tandem.Ledger.LedgerRunStatus status, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.LedgerRun> CreateRunAsync(System.Guid runId, System.String composition, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.LedgerRun> GetRunAsync(System.Guid runId, System.Threading.CancellationToken cancellationToken = default)

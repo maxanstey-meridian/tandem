@@ -19,6 +19,31 @@ public sealed class RegistrationContractValidatorTests
     }
 
     [Fact]
+    public void AcceptsTavilyWebToolNamesInWorkspaceGroups()
+    {
+        var value = ContractObject();
+        var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        agent["workspace"] = new
+        {
+            pathCallback = "workspace.path",
+            commandsCallback = "workspace.commands",
+            toolGroups = new[]
+            {
+                new { tools = new[] { "web_search", "web_fetch" }, includeCommands = false },
+            },
+        };
+
+        var contract = RegistrationContractValidator.ParseAndValidate(
+            JsonSerializer.Serialize(value)
+        );
+
+        Assert.Equal(
+            new[] { "web_search", "web_fetch" },
+            contract.Nodes![0].Workspace!.ToolGroups![0].Tools
+        );
+    }
+
+    [Fact]
     public void AcceptsVersionTenParallelGroupWithNestedStages()
     {
         var value = new Dictionary<string, object?>

@@ -20,6 +20,8 @@ internal sealed record ResolvedAgentWorkspace(
     IReadOnlySet<WorkspaceToolKind> FileTools,
     bool IncludeGitReadOnly,
     bool IncludeShell,
+    bool IncludeWebSearch,
+    bool IncludeWebFetch,
     IReadOnlyList<AgentCommandDescriptor> Commands
 );
 
@@ -38,6 +40,13 @@ internal sealed record AgentCommandDescriptor(string Name, string Description, s
 
 internal static class AgentSkillRuntime
 {
+    internal static void RegisterToolEffects(ToolEffectRegistry registry)
+    {
+        registry.Add(AgentSkillsProvider.LoadSkillToolName, ToolEffect.Read);
+        registry.Add(AgentSkillsProvider.ReadSkillResourceToolName, ToolEffect.Read);
+        registry.Add(AgentSkillsProvider.RunSkillScriptToolName, ToolEffect.ProcessExecution);
+    }
+
     internal static AgentSkillsSource CreateSource(IReadOnlyList<AgentSkillDescriptor> skills)
     {
         var allowedDirectories = skills
@@ -153,5 +162,8 @@ internal static class GenericAgentInstructions
     internal const string Value =
         "You are one bounded node in a Tandem pipeline. Follow the authored instructions, "
         + "use only the capabilities provided for this invocation, produce the requested result, "
-        + "and return control to Tandem. A capability transition occurs only when Tandem reports acceptance.";
+        + "and return control to Tandem. A capability transition occurs only when Tandem reports acceptance. "
+        + "When read_ledger is available, treat it as the authoritative accepted run history. After resume, "
+        + "rotation, compaction, or uncertain conversation context, call read_ledger before reconstructing "
+        + "prior work. Use search_ledger to find prior decisions, constraints, checkpoints, and accepted state.";
 }

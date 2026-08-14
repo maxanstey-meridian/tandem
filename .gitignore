@@ -13,3 +13,4 @@ node_modules/
 *.sqlite3-wal
 CLAUDE.md
 .claude/
+.threadkeeper/

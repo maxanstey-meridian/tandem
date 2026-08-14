@@ -466,6 +466,8 @@ internal static partial class RegistrationContractValidator
             "replace_lines",
             "git:ro",
             "shell",
+            "web_search",
+            "web_fetch",
         };
         foreach (
             var (group, index) in workspace.ToolGroups.Select((value, index) => (value, index))

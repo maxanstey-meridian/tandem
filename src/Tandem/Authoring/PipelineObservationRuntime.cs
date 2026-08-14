@@ -208,7 +208,8 @@ internal sealed class PipelineRunContext(
     Guid runId,
     IPipelineObserver? observer,
     IPipelineAcceptanceUnitOfWork? unitOfWork = null,
-    IReadOnlySet<string>? persistentStepIds = null
+    IReadOnlySet<string>? persistentStepIds = null,
+    IPipelineLedgerReader? ledger = null
 )
 {
     private readonly SemaphoreSlim _observationGate = new(1, 1);
@@ -218,6 +219,7 @@ internal sealed class PipelineRunContext(
         byte
     > _activeParallelGroups = new(StringComparer.Ordinal);
     public Guid RunId { get; } = runId;
+    public IPipelineLedgerReader? Ledger { get; } = ledger;
 
     public bool ShouldPersist(string stepId) => persistentStepIds?.Contains(stepId) is true;
 

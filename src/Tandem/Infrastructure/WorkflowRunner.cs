@@ -44,6 +44,7 @@ internal sealed class InProcessPipelineRunner
             RejectExternalRequests.Instance,
             observer: null,
             unitOfWork: null,
+            ledger: null,
             cancellationToken
         );
 
@@ -61,6 +62,7 @@ internal sealed class InProcessPipelineRunner
             RejectExternalRequests.Instance,
             observer,
             unitOfWork: null,
+            ledger: null,
             cancellationToken
         );
 
@@ -70,6 +72,7 @@ internal sealed class InProcessPipelineRunner
         TState initialState,
         IPipelineObserver? observer,
         IPipelineAcceptanceUnitOfWork? unitOfWork,
+        IPipelineLedgerReader? ledger,
         CancellationToken cancellationToken
     ) =>
         RunAsync(
@@ -79,6 +82,7 @@ internal sealed class InProcessPipelineRunner
             RejectExternalRequests.Instance,
             observer,
             unitOfWork,
+            ledger,
             cancellationToken
         );
 
@@ -96,6 +100,7 @@ internal sealed class InProcessPipelineRunner
             requests,
             observer: null,
             unitOfWork: null,
+            ledger: null,
             cancellationToken
         );
 
@@ -114,6 +119,7 @@ internal sealed class InProcessPipelineRunner
             requests,
             observer,
             unitOfWork: null,
+            ledger: null,
             cancellationToken
         );
 
@@ -124,6 +130,7 @@ internal sealed class InProcessPipelineRunner
         IExternalRequestHandler requests,
         IPipelineObserver? observer,
         IPipelineAcceptanceUnitOfWork? unitOfWork,
+        IPipelineLedgerReader? ledger,
         CancellationToken cancellationToken
     )
     {
@@ -140,7 +147,8 @@ internal sealed class InProcessPipelineRunner
                 runId,
                 observer,
                 unitOfWork,
-                pipeline.PersistentStepIds
+                pipeline.PersistentStepIds,
+                ledger
             ),
         };
         await using var run = await InProcessExecution.Concurrent.RunStreamingAsync(

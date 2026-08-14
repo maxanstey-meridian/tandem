@@ -40,7 +40,10 @@ public static class SqlitePipelineRunnerExtensions
             var result = await runner.RunAsync(
                 pipeline,
                 initialState,
-                new PipelineRunOptions(runId, options.Interactions, observer),
+                new PipelineRunOptions(runId, options.Interactions, observer)
+                {
+                    Ledger = store.ForRun(runId),
+                },
                 cancellationToken
             );
             terminalStatus = result.Status switch

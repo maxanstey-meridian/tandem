@@ -1,6 +1,6 @@
 namespace Tandem.Ledger;
 
-public sealed class RunLedger
+public sealed class RunLedger : IPipelineLedgerReader
 {
     private readonly SqliteLedgerStore _store;
 
@@ -11,6 +11,19 @@ public sealed class RunLedger
     }
 
     public Guid RunId { get; }
+
+    ValueTask<PipelineLedgerPage> IPipelineLedgerReader.ReadAsync(
+        long? cursor,
+        int limit,
+        CancellationToken cancellationToken
+    ) => _store.ReadPageAsync(RunId, null, cursor, limit, cancellationToken);
+
+    ValueTask<PipelineLedgerPage> IPipelineLedgerReader.SearchAsync(
+        string query,
+        long? cursor,
+        int limit,
+        CancellationToken cancellationToken
+    ) => _store.ReadPageAsync(RunId, query, cursor, limit, cancellationToken);
 
     public ValueTask<AcceptedLedgerEntry<TEntry>> AppendAsync<TEntry>(
         LedgerStream<TEntry> stream,

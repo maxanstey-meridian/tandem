@@ -7,6 +7,8 @@ namespace Tandem.Ledger;
 public sealed class SqliteLedgerStore
 {
     private const int SchemaVersion = 1;
+    private const int MaximumLedgerToolValueCharacters = 4_000;
+    private const int MaximumLedgerToolPageCharacters = 200_000;
     private readonly string _databasePath;
     private readonly string _connectionString;
     private readonly TimeProvider _timeProvider;
@@ -180,6 +182,129 @@ public sealed class SqliteLedgerStore
 
     public RunLedger ForRun(Guid runId) => new(this, runId);
 
+    internal async ValueTask<PipelineLedgerPage> ReadPageAsync(
+        Guid runId,
+        string? query,
+        long? cursor,
+        int limit,
+        CancellationToken cancellationToken
+    )
+    {
+        if (cursor < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(cursor));
+        }
+        if (limit is < 1 or > 50)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(limit),
+                "Ledger page size must be 1 to 50."
+            );
+        }
+        if (query is not null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(query);
+            if (query.Length > 1_024)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(query),
+                    "Ledger search query cannot exceed 1024 characters."
+                );
+            }
+        }
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT rowid, stream, sequence, entry_id, payload, recorded_at
+            FROM run_entries
+            WHERE run_id = $run_id AND rowid > $cursor
+            ORDER BY rowid;
+            """;
+        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
+        command.Parameters.AddWithValue("$cursor", cursor ?? 0);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var entries = new List<PipelineLedgerEntry>();
+        var pageCharacters = 0;
+        var hasMore = false;
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var stream = reader.GetString(1);
+            var value = System.Text.Encoding.UTF8.GetString((byte[])reader[4]);
+            if (!IsAgentReadableLedgerEntry(stream, value) || !Matches(value, query))
+            {
+                continue;
+            }
+            var formatted = FormatLedgerToolValue(value, query);
+            if (
+                entries.Count >= limit
+                || pageCharacters + formatted.Length > MaximumLedgerToolPageCharacters
+            )
+            {
+                hasMore = true;
+                break;
+            }
+            entries.Add(
+                new PipelineLedgerEntry(
+                    reader.GetInt64(0),
+                    stream,
+                    reader.GetInt64(2),
+                    reader.GetString(3),
+                    formatted,
+                    FromUnix(reader.GetInt64(5))
+                )
+            );
+            pageCharacters += formatted.Length;
+        }
+        return new PipelineLedgerPage(entries, hasMore ? entries[^1].Cursor : null);
+    }
+
+    private bool IsAgentReadableLedgerEntry(string stream, string value)
+    {
+        if (!string.Equals(stream, PipelineJournal.Stream.Name, StringComparison.Ordinal))
+        {
+            return true;
+        }
+        try
+        {
+            var record = JsonSerializer.Deserialize<RuntimeJournalRecord>(
+                value,
+                _serializerOptions
+            );
+            return record is not null && PipelineJournal.IsAccepted(record);
+        }
+        catch (Exception exception) when (exception is JsonException or NotSupportedException)
+        {
+            throw new LedgerDataException(
+                "The runtime journal contains a malformed record.",
+                exception
+            );
+        }
+    }
+
+    private static bool Matches(string value, string? query) =>
+        query is null || value.Contains(query, StringComparison.OrdinalIgnoreCase);
+
+    private static string FormatLedgerToolValue(string value, string? query)
+    {
+        if (value.Length <= MaximumLedgerToolValueCharacters)
+        {
+            return value;
+        }
+
+        var start = 0;
+        if (query is not null)
+        {
+            var match = value.IndexOf(query, StringComparison.OrdinalIgnoreCase);
+            start = Math.Max(0, match - MaximumLedgerToolValueCharacters / 4);
+            start = Math.Min(start, value.Length - MaximumLedgerToolValueCharacters);
+        }
+        var prefix = start > 0 ? "[...truncated...]" : "";
+        var suffix =
+            start + MaximumLedgerToolValueCharacters < value.Length ? "[...truncated...]" : "";
+        return $"{prefix}{value.Substring(start, MaximumLedgerToolValueCharacters)}{suffix}";
+    }
+
     public async ValueTask<SqlitePipelineObserver> CreateObserverAsync(
         Guid runId,
         string composition,
@@ -281,6 +406,63 @@ public sealed class SqliteLedgerStore
             latest.Sequence,
             latest.Value.StepId,
             latest.Value.ValueType,
+            value,
+            latest.RecordedAt
+        );
+    }
+
+    public async ValueTask<AcceptedPipelineValue<TValue>?> ReadLatestAcceptedAsync<TValue>(
+        Guid runId,
+        CancellationToken cancellationToken = default
+    )
+    {
+        await InitializeAsync(cancellationToken);
+        var expectedType = typeof(TValue).FullName ?? typeof(TValue).Name;
+        IReadOnlyList<AcceptedLedgerEntry<RuntimeJournalRecord>> entries;
+        try
+        {
+            entries = await ForRun(runId).ReadAsync(PipelineJournal.Stream, cancellationToken);
+        }
+        catch (JsonException exception)
+        {
+            throw new LedgerDataException(
+                $"Run '{runId:N}' contains a malformed pipeline journal record.",
+                exception
+            );
+        }
+        var latest = entries.LastOrDefault(entry =>
+            PipelineJournal.IsAccepted(entry.Value)
+            && string.Equals(entry.Value.ValueType, expectedType, StringComparison.Ordinal)
+        );
+        if (latest is null)
+        {
+            return null;
+        }
+        var payload =
+            latest.Value.Payload
+            ?? throw new LedgerDataException(
+                $"Accepted value at sequence '{latest.Sequence}' has no payload."
+            );
+        TValue value;
+        try
+        {
+            value =
+                payload.Deserialize<TValue>(_serializerOptions)
+                ?? throw new LedgerDataException(
+                    $"Accepted value at sequence '{latest.Sequence}' is null."
+                );
+        }
+        catch (Exception exception) when (exception is JsonException or NotSupportedException)
+        {
+            throw new LedgerDataException(
+                $"Accepted value at sequence '{latest.Sequence}' is malformed.",
+                exception
+            );
+        }
+        return new AcceptedPipelineValue<TValue>(
+            latest.Sequence,
+            latest.Value.StepId,
+            expectedType,
             value,
             latest.RecordedAt
         );

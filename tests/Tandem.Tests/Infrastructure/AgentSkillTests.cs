@@ -9,6 +9,27 @@ namespace Tandem.Tests.Infrastructure;
 public sealed class AgentSkillTests
 {
     [Fact]
+    public void Skill_tools_have_effects_matching_their_runtime_behavior()
+    {
+        var effects = new ToolEffectRegistry();
+
+        AgentSkillRuntime.RegisterToolEffects(effects);
+
+        var foundLoad = effects.TryGet(AgentSkillsProvider.LoadSkillToolName, out var load);
+        foundLoad.Should().BeTrue();
+        load.Effect.Should().Be(Tandem.Infrastructure.ToolEffect.Read);
+        var foundRead = effects.TryGet(
+            AgentSkillsProvider.ReadSkillResourceToolName,
+            out var readSkill
+        );
+        foundRead.Should().BeTrue();
+        readSkill.Effect.Should().Be(Tandem.Infrastructure.ToolEffect.Read);
+        var foundRun = effects.TryGet(AgentSkillsProvider.RunSkillScriptToolName, out var run);
+        foundRun.Should().BeTrue();
+        run.Effect.Should().Be(Tandem.Infrastructure.ToolEffect.ProcessExecution);
+    }
+
+    [Fact]
     public void FromDirectory_RequiresAnExistingSkillEntryPoint()
     {
         using var directory = new TemporaryDirectory();

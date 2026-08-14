@@ -11,7 +11,12 @@ namespace Tandem.Advanced;
 
 internal static class HarnessAgentImplementation
 {
-    internal static AIAgent Create(AgentImplementationContext context, string harnessInstructions)
+    internal static AIAgent Create(
+        AgentImplementationContext context,
+        string harnessInstructions,
+        Func<string, bool, bool, (AIFunction? Search, AIFunction? Fetch)>? createWebTools = null,
+        Func<string, string?>? getEnvironmentVariable = null
+    )
     {
         var workspace = context.Workspace;
         AgentFileStore? fileStore = workspace is null
@@ -74,6 +79,7 @@ internal static class HarnessAgentImplementation
                 }
             }
         }
+        TavilyWebTools.Add(context, createWebTools, getEnvironmentVariable);
         return new HarnessAgent(
             context.ChatClient,
             CreateOptions(context, harnessInstructions, providers)

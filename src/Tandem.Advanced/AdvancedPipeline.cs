@@ -332,6 +332,8 @@ public static class AgentTools
         "replace_lines",
         "git:ro",
         "shell",
+        "web_search",
+        "web_fetch",
     ];
 
     public static AgentToolGroup<TState> Always<TState>(params AgentToolSelection[] tools) =>

@@ -19,12 +19,14 @@ public sealed class SqlitePipelineObserver : IPipelinePersistenceObserver
 {
     private readonly RunLedger _ledger;
     private readonly Guid _runId;
+    private readonly Guid _executionAttemptId;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
 
-    internal SqlitePipelineObserver(RunLedger ledger)
+    internal SqlitePipelineObserver(RunLedger ledger, Guid? executionAttemptId = null)
     {
         _ledger = ledger;
         _runId = ledger.RunId;
+        _executionAttemptId = executionAttemptId ?? Guid.CreateVersion7();
     }
 
     public ValueTask RecordRunStartedAsync(CancellationToken cancellationToken = default) =>
@@ -146,18 +148,20 @@ public sealed class SqlitePipelineObserver : IPipelinePersistenceObserver
         };
         return record is null
             ? ValueTask.CompletedTask
-            : AppendAsync(record, EntryId(observation), cancellationToken);
+            : AppendAsync(record, EntryId(observation, _executionAttemptId), cancellationToken);
     }
 
-    private static string? EntryId(PipelineObservation observation) =>
+    private static string? EntryId(PipelineObservation observation, Guid executionAttemptId) =>
         observation switch
         {
-            PipelineStructuredOutputAccepted value => $"accepted-output--{value.AcceptedOutputId}",
-            PipelineCapabilityAccepted value => $"accepted-capability--{value.AcceptedCallId}",
+            PipelineStructuredOutputAccepted value =>
+                $"{executionAttemptId:N}:accepted-output--{value.AcceptedOutputId}",
+            PipelineCapabilityAccepted value =>
+                $"{executionAttemptId:N}:accepted-capability--{value.AcceptedCallId}",
             PipelineInteractionRequestedObservation value =>
-                $"interaction-request--{value.RequestId}",
+                $"{executionAttemptId:N}:interaction-request--{value.RequestId}",
             PipelineInteractionAnsweredObservation value =>
-                $"interaction-response--{value.RequestId}",
+                $"{executionAttemptId:N}:interaction-response--{value.RequestId}",
             _ => null,
         };
 

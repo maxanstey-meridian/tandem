@@ -33,6 +33,7 @@ internal sealed class AgentBlock<TState>(
     )
 {
     private const int StructuredOutputCorrectionLimit = 99;
+    private static readonly TimeSpan _modelStreamIdleTimeout = TimeSpan.FromMinutes(5);
     private static readonly HashSet<string> _reservedWorkspaceToolNames =
     [
         "read_file",
@@ -44,6 +45,8 @@ internal sealed class AgentBlock<TState>(
         "replace_lines",
         "git:ro",
         "shell",
+        "web_search",
+        "web_fetch",
         "git_status",
         "git_diff",
         "git_log",
@@ -91,6 +94,15 @@ internal sealed class AgentBlock<TState>(
             .Capabilities.Select(capability => capability.Bind(capabilityInvocation))
             .ToArray();
         if (
+            message.RunContext?.Ledger is not null
+            && capabilityFunctions.Any(tool => tool.Name is "read_ledger" or "search_ledger")
+        )
+        {
+            throw new InvalidOperationException(
+                $"Agent '{config.StepId}' has a capability that collides with a ledger tool."
+            );
+        }
+        if (
             (config.Skills?.Count ?? 0) > 0
             && capabilityFunctions.Any(tool =>
                 tool.Name
@@ -132,7 +144,8 @@ internal sealed class AgentBlock<TState>(
                     ? config.Checkpoint!.Capability.ToolName
                     : null,
                 collector: collector,
-                boundCapabilityNames: boundCapabilityNames
+                boundCapabilityNames: boundCapabilityNames,
+                capabilityInvocation: capabilityInvocation
             );
             var freshSession = !runtime.AgentSessions.ContainsKey(config.StepId);
             var session = await RestoreOrCreateSessionAsync(agent, runtime, cts.Token);
@@ -200,10 +213,11 @@ internal sealed class AgentBlock<TState>(
                 var turnOutputTokens = default(long?);
                 var turnSw = Stopwatch.StartNew();
 
+                var updates = initialMessages is null
+                    ? agent.RunStreamingAsync(userMessage, session, null, cts.Token)
+                    : agent.RunStreamingAsync(initialMessages, session, null, cts.Token);
                 await foreach (
-                    var update in initialMessages is null
-                        ? agent.RunStreamingAsync(userMessage, session, null, cts.Token)
-                        : agent.RunStreamingAsync(initialMessages, session, null, cts.Token)
+                    var update in WithIdleTimeout(updates, _modelStreamIdleTimeout, cts.Token)
                 )
                 {
                     foreach (var content in update.Contents)
@@ -297,7 +311,8 @@ internal sealed class AgentBlock<TState>(
                         selectedChatClient,
                         activatedCheckpoint.Capability.ToolName,
                         collector,
-                        boundCapabilityNames
+                        boundCapabilityNames,
+                        capabilityInvocation
                     );
                     continue;
                 }
@@ -444,6 +459,7 @@ internal sealed class AgentBlock<TState>(
                             config.StructuredOutput.CorrectionRequiredToolName,
                             collector,
                             boundCapabilityNames,
+                            capabilityInvocation,
                             configureStructuredOutput: false
                         );
                     }
@@ -488,7 +504,8 @@ internal sealed class AgentBlock<TState>(
                     selectedChatClient,
                     directive.RequiredToolName,
                     collector,
-                    boundCapabilityNames
+                    boundCapabilityNames,
+                    capabilityInvocation
                 );
             }
 
@@ -504,6 +521,27 @@ internal sealed class AgentBlock<TState>(
                 agentUsage
             );
 
+            if (
+                capabilityInvocation.AcceptedCallId is { } acceptedCallId
+                && agent.GetService<MessageInjectingChatClient>() is { } injectingClient
+            )
+            {
+                await injectingClient.EnqueueMessagesAsync(
+                    session,
+                    [
+                        new ChatMessage(
+                            ChatRole.Tool,
+                            [
+                                new FunctionResultContent(
+                                    acceptedCallId,
+                                    capabilityInvocation.AcceptedResult
+                                ),
+                            ]
+                        ),
+                    ],
+                    cts.Token
+                );
+            }
             var updatedRuntime = await CaptureSessionAsync(
                 agent,
                 session,
@@ -527,6 +565,36 @@ internal sealed class AgentBlock<TState>(
             }
             var timedOutcome = outcome.LatestOutcome with { Duration = blockSw.Elapsed };
             return FinalizeConversation(outcome with { LatestOutcome = timedOutcome });
+        }
+    }
+
+    internal static async IAsyncEnumerable<T> WithIdleTimeout<T>(
+        IAsyncEnumerable<T> source,
+        TimeSpan idleTimeout,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken
+    )
+    {
+        using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        await using var enumerator = source.GetAsyncEnumerator(idleCts.Token);
+        while (true)
+        {
+            idleCts.CancelAfter(idleTimeout);
+            try
+            {
+                if (!await enumerator.MoveNextAsync())
+                {
+                    yield break;
+                }
+            }
+            catch (OperationCanceledException)
+                when (idleCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException(
+                    $"Model stream produced no update for {idleTimeout.TotalSeconds:0} seconds."
+                );
+            }
+            idleCts.CancelAfter(Timeout.InfiniteTimeSpan);
+            yield return enumerator.Current;
         }
     }
 
@@ -580,6 +648,7 @@ internal sealed class AgentBlock<TState>(
         AIAgent agent,
         ToolOutcomeCollector collector,
         PipelineMessage<TState> message,
+        CapabilityInvocationState<TState> capabilityInvocation,
         IReadOnlySet<string> boundCapabilityNames,
         ToolEffectRegistry toolEffects
     ) =>
@@ -925,6 +994,7 @@ internal sealed class AgentBlock<TState>(
                     if (isLifecycle)
                     {
                         collector.RecordLifecycleCall(ficContext.Function.Name);
+                        capabilityInvocation.RecordResult(ficContext.CallContent.CallId, result);
                         ficContext.Terminate = true;
                     }
                     else
@@ -1147,6 +1217,7 @@ internal sealed class AgentBlock<TState>(
         string? requiredToolName,
         ToolOutcomeCollector collector,
         IReadOnlySet<string> boundCapabilityNames,
+        CapabilityInvocationState<TState> capabilityInvocation,
         bool configureStructuredOutput = true
     )
     {
@@ -1156,6 +1227,39 @@ internal sealed class AgentBlock<TState>(
             Tools = tools.ToList(),
         };
         configureModelRequestOptions?.Invoke(chatOptions);
+        if (message.RunContext?.Ledger is { } ledger)
+        {
+            chatOptions.Tools.Add(
+                AIFunctionFactory.Create(
+                    (
+                        [System.ComponentModel.Description("Cursor returned by the previous page.")]
+                            long? cursor = null,
+                        [System.ComponentModel.Description("Page size from 1 to 50.")]
+                            int limit = 20,
+                        CancellationToken cancellationToken = default
+                    ) => ledger.ReadAsync(cursor, limit, cancellationToken),
+                    "read_ledger",
+                    "Read accepted durable run records in order. Use after resume, rotation, compaction, or whenever conversation history is incomplete."
+                )
+            );
+            chatOptions.Tools.Add(
+                AIFunctionFactory.Create(
+                    (
+                        [System.ComponentModel.Description(
+                            "Case-insensitive text to find in accepted durable records."
+                        )]
+                            string query,
+                        [System.ComponentModel.Description("Cursor returned by the previous page.")]
+                            long? cursor = null,
+                        [System.ComponentModel.Description("Page size from 1 to 50.")]
+                            int limit = 20,
+                        CancellationToken cancellationToken = default
+                    ) => ledger.SearchAsync(query, cursor, limit, cancellationToken),
+                    "search_ledger",
+                    "Search accepted durable run records, then use read_ledger to inspect surrounding history."
+                )
+            );
+        }
         if (!string.IsNullOrWhiteSpace(requiredToolName))
         {
             chatOptions.ToolMode = ChatToolMode.RequireSpecific(requiredToolName);
@@ -1169,6 +1273,15 @@ internal sealed class AgentBlock<TState>(
         foreach (var capabilityName in boundCapabilityNames)
         {
             toolEffects.Add(capabilityName, ToolEffect.LifecycleTransition);
+        }
+        if (config.Skills is { Count: > 0 })
+        {
+            AgentSkillRuntime.RegisterToolEffects(toolEffects);
+        }
+        if (message.RunContext?.Ledger is not null)
+        {
+            toolEffects.Add("read_ledger", ToolEffect.Read);
+            toolEffects.Add("search_ledger", ToolEffect.Read);
         }
         var hasGates =
             (config.StateGuards?.Count ?? 0) > 0 || (config.LatchedGates?.Count ?? 0) > 0;
@@ -1214,6 +1327,7 @@ internal sealed class AgentBlock<TState>(
             agent,
             collector,
             message,
+            capabilityInvocation,
             boundCapabilityNames,
             toolEffects
         );
@@ -1280,10 +1394,10 @@ internal sealed class AgentBlock<TState>(
                 "delete_file" => WorkspaceToolKind.DeleteFile,
                 "replace" => WorkspaceToolKind.Replace,
                 "replace_lines" => WorkspaceToolKind.ReplaceLines,
-                "git:ro" or "shell" => default,
+                "git:ro" or "shell" or "web_search" or "web_fetch" => default,
                 _ => throw new InvalidOperationException($"Unknown workspace tool '{name}'."),
             };
-            if (name is not "git:ro" and not "shell")
+            if (name is not "git:ro" and not "shell" and not "web_search" and not "web_fetch")
             {
                 fileTools.Add(kind);
             }
@@ -1293,6 +1407,8 @@ internal sealed class AgentBlock<TState>(
             fileTools,
             selectedNames.Contains("git:ro"),
             selectedNames.Contains("shell"),
+            selectedNames.Contains("web_search"),
+            selectedNames.Contains("web_fetch"),
             selectedCommands
         );
     }

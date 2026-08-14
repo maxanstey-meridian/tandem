@@ -174,7 +174,7 @@ public sealed class WorkspaceShellToolsTests
         string path,
         IReadOnlyList<AgentCommandDescriptor> commands,
         bool includeShell = false
-    ) => new(path, new HashSet<WorkspaceToolKind>(), false, includeShell, commands);
+    ) => new(path, new HashSet<WorkspaceToolKind>(), false, includeShell, false, false, commands);
 
     private static ShellResult Result(object? value) =>
         ((JsonElement)value!).Deserialize<ShellResult>(

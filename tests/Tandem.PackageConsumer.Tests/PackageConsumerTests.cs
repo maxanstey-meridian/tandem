@@ -281,6 +281,7 @@ public sealed class PackageConsumerTests
         if (advanced)
         {
             libraries.Should().Contain($"Tandem.Advanced/{version}");
+            libraries.Should().Contain("Tavily/1.0.1");
         }
         else
         {
