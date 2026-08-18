@@ -559,7 +559,7 @@ public sealed class SqliteLedgerStore
         command.CommandText = """
             UPDATE runs
             SET status = 'Running', updated_at = $now, ended_at = NULL
-            WHERE run_id = $run_id AND status IN ('Faulted', 'Interrupted');
+            WHERE run_id = $run_id AND status IN ('Failed', 'Faulted', 'Interrupted');
             """;
         command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
         command.Parameters.AddWithValue("$now", now.ToUnixTimeMilliseconds());

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using Tandem.Domain;
 
 namespace Tandem.Infrastructure;
 
@@ -22,7 +23,8 @@ internal sealed record ResolvedAgentWorkspace(
     bool IncludeShell,
     bool IncludeWebSearch,
     bool IncludeWebFetch,
-    IReadOnlyList<AgentCommandDescriptor> Commands
+    IReadOnlyList<AgentCommandDescriptor> Commands,
+    IReadOnlyList<AgentWorkspaceToolDescriptor>? RegisteredTools = null
 );
 
 internal enum WorkspaceToolKind
@@ -34,6 +36,9 @@ internal enum WorkspaceToolKind
     DeleteFile,
     Replace,
     ReplaceLines,
+    CopyFile,
+    MoveFile,
+    CreateDirectory,
 }
 
 internal sealed record AgentCommandDescriptor(string Name, string Description, string Command);

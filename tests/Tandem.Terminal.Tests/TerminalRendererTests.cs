@@ -17,6 +17,49 @@ public sealed class TerminalRendererTests
     }
 
     [Fact]
+    public void WidePipelinePaneUsesItsContentWidthInsteadOfAQuarterOfTheTerminal()
+    {
+        var console = new TestConsole().Width(180).Height(24);
+        TerminalPipelineEntry[] pipelineEntries =
+        [
+            new(
+                "executor",
+                StandardOutcomeKinds.Success,
+                "Succeeded",
+                TimeSpan.FromSeconds(1067.1),
+                TerminalPipelineEntryStyle.Success
+            ),
+        ];
+
+        new TerminalRenderer(console, pipelineLabels: ["executor"])
+            .Render(Model(("executor", "done")), pipelineEntries);
+
+        var pipelineBorder = console
+            .Output.Split('\n')
+            .Single(line => line.Contains("Pipeline", StringComparison.Ordinal));
+        var paneStart = pipelineBorder.LastIndexOf('╭');
+        var paneEnd = pipelineBorder.LastIndexOf('╮');
+        paneStart.Should().BeGreaterThan(0);
+        (paneEnd - paneStart + 1).Should().BeLessThan(40);
+    }
+
+    [Fact]
+    public void PipelinePaneWidthDoesNotChangeWhenALongerRuntimeLabelAppears()
+    {
+        var initialConsole = new TestConsole().Width(180).Height(24);
+        var laterConsole = new TestConsole().Width(180).Height(24);
+        var initial = Model(("Foo", "working"));
+        var later = Model(("Foo", "working"), ("FooBarBaz", "working"));
+
+        new TerminalRenderer(initialConsole, pipelineLabels: ["Foo", "FooBarBaz"])
+            .Render(initial);
+        new TerminalRenderer(laterConsole, pipelineLabels: ["Foo", "FooBarBaz"])
+            .Render(later);
+
+        PipelinePaneWidth(initialConsole.Output).Should().Be(PipelinePaneWidth(laterConsole.Output));
+    }
+
+    [Fact]
     public void RunHeaderContainsOnlyRunIdStatusAndElapsedTime()
     {
         var console = new TestConsole().Width(140).Height(24);
@@ -70,7 +113,9 @@ public sealed class TerminalRendererTests
             tokens,
             0,
             null,
-            ""
+            "",
+            null,
+            null
         );
 
         new TerminalRenderer(console).Render(snapshot);
@@ -209,10 +254,10 @@ public sealed class TerminalRendererTests
     }
 
     [Fact]
-    public void PipelinePaneAlignsLabelsDurationsAndHumanFacingResults()
+    public void PipelinePaneAlignsLabelsDurationsAndTruncatesLongResults()
     {
         var console = new TestConsole().Width(180).Height(24);
-        var renderer = new TerminalRenderer(console);
+        var renderer = new TerminalRenderer(console, pipelineLabels: ["prepare", "verification"]);
         TerminalPipelineEntry[] pipelineEntries =
         [
             new(
@@ -245,8 +290,29 @@ public sealed class TerminalRendererTests
             .And.Contain("Succeeded")
             .And.Contain("verification")
             .And.Contain("1.0s")
-            .And.Contain("Tests passed")
+            .And.Contain("Tests pa…")
             .And.NotContain("tandem.success");
+    }
+
+    [Fact]
+    public void PipelinePaneDoesNotWrapLongDurationsOntoAnotherLine()
+    {
+        var console = new TestConsole().Width(140).Height(24);
+        TerminalPipelineEntry[] pipelineEntries =
+        [
+            new(
+                "executor",
+                StandardOutcomeKinds.Success,
+                "Succeeded",
+                TimeSpan.FromSeconds(1067.1),
+                TerminalPipelineEntryStyle.Success
+            ),
+        ];
+
+        new TerminalRenderer(console).Render(Model(("executor", "done")), pipelineEntries);
+
+        console.Output.Should().Contain("1067.1s");
+        console.Output.Split('\n').Should().NotContain(line => line.Trim() == "s");
     }
 
     [Fact]
@@ -265,7 +331,7 @@ public sealed class TerminalRendererTests
 
         new TerminalRenderer(console).Render(Model(("executor", "working")), pipelineEntries);
 
-        console.Output.Should().Contain("extraordinarily-lon…").And.Contain("Running");
+        console.Output.Should().Contain("extraordinarily-l…").And.Contain("Running");
         console.Output.Split('\n').Count(line => line.Trim() is "e" or "p").Should().Be(0);
     }
 
@@ -296,7 +362,7 @@ public sealed class TerminalRendererTests
     [Fact]
     public async Task InteractiveTranscriptIncludesToolAndCommandActivity()
     {
-        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000);
+        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000, null, null);
         model.Apply(new PipelineAgentUpdated(_runId, "agent", new AgentUpdate.Text("visible")));
         model.Apply(
             new PipelineAgentUpdated(
@@ -344,6 +410,14 @@ public sealed class TerminalRendererTests
 
     private static readonly Guid _runId = Guid.CreateVersion7();
 
+    private static int PipelinePaneWidth(string output)
+    {
+        var border = output
+            .Split('\n')
+            .Single(line => line.Contains("Pipeline", StringComparison.Ordinal));
+        return border.LastIndexOf('╮') - border.LastIndexOf('╭') + 1;
+    }
+
     private static string Render(params (string StepId, string Text)[] entries)
     {
         var console = new TestConsole().Width(120).Height(30);
@@ -379,7 +453,9 @@ public sealed class TerminalRendererTests
             null,
             0,
             null,
-            ""
+            "",
+            null,
+            null
         );
     }
 }

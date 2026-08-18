@@ -83,4 +83,8 @@ public sealed record TerminalDisplayOptions
     public int TranscriptEntryCapacity { get; init; } = 2_000;
 
     public int TranscriptCharacterCapacity { get; init; } = 200_000;
+
+    public string? Title { get; init; }
+
+    public string? WorkingDirectory { get; init; }
 }

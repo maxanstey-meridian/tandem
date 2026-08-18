@@ -26,6 +26,7 @@ Tandem.Advanced.LocalProcess
 Tandem.Advanced.LocalProcessRequest
 Tandem.Advanced.LocalProcessResult
 Tandem.Advanced.AgentTurnPolicy`1
+Tandem.Advanced.AgentWorkspaceTool
 Tandem.Advanced.AgentWorkspace`1
 Tandem.Advanced.CheckpointPolicy`1
 Tandem.Advanced.CheckpointSessionBehavior

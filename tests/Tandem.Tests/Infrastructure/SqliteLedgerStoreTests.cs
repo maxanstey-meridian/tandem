@@ -385,6 +385,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Theory]
+    [InlineData(LedgerRunStatus.Failed)]
     [InlineData(LedgerRunStatus.Faulted)]
     [InlineData(LedgerRunStatus.Interrupted)]
     public async Task ResumableRun_CanReopenWithReadableFacts(LedgerRunStatus status)
@@ -408,7 +409,6 @@ public sealed class SqliteLedgerStoreTests : IDisposable
 
     [Theory]
     [InlineData(LedgerRunStatus.Ready)]
-    [InlineData(LedgerRunStatus.Failed)]
     [InlineData(LedgerRunStatus.Cancelled)]
     public async Task ReopenRun_RejectsOtherTerminalStatuses(LedgerRunStatus status)
     {

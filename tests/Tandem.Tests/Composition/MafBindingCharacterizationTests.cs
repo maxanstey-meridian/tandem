@@ -25,6 +25,9 @@ public sealed class MafBindingCharacterizationTests
             FileAccessProvider.DeleteFileToolName,
             FileAccessProvider.ReplaceToolName,
             FileAccessProvider.ReplaceLinesToolName,
+            WorkspaceFileMutationTools.CopyToolName,
+            WorkspaceFileMutationTools.MoveToolName,
+            WorkspaceFileMutationTools.CreateDirectoryToolName,
         };
 
         reads.Should().Equal("file_access_read", "file_access_ls", "file_access_grep");
@@ -34,9 +37,12 @@ public sealed class MafBindingCharacterizationTests
                 "file_access_write",
                 "file_access_delete",
                 "file_access_replace",
-                "file_access_replace_lines"
+                "file_access_replace_lines",
+                "file_access_copy",
+                "file_access_move",
+                "file_access_create_directory"
             );
-        reads.Concat(mutations).Should().OnlyHaveUniqueItems().And.HaveCount(7);
+        reads.Concat(mutations).Should().OnlyHaveUniqueItems().And.HaveCount(10);
     }
 
     [Fact]

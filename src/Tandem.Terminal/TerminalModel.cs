@@ -45,7 +45,9 @@ internal sealed record TerminalSnapshot(
     int? ContextWindowTokens,
     int WaitingInteractions,
     TerminalInteractionPrompt? Interaction,
-    string Draft
+    string Draft,
+    string? Title,
+    string? WorkingDirectory
 );
 
 internal sealed class TerminalModel(
@@ -53,7 +55,9 @@ internal sealed class TerminalModel(
     Guid runId,
     TimeProvider timeProvider,
     int entryCapacity,
-    int characterCapacity
+    int characterCapacity,
+    string? title,
+    string? workingDirectory
 )
 {
     private readonly object _gate = new();
@@ -328,7 +332,9 @@ internal sealed class TerminalModel(
                 _contextWindowTokens,
                 _waiting.Count,
                 _interaction,
-                _draft
+                _draft,
+                title,
+                workingDirectory
             );
         }
     }

@@ -47,9 +47,11 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
             runId,
             _options.TimeProvider,
             _options.TranscriptEntryCapacity,
-            _options.TranscriptCharacterCapacity
+            _options.TranscriptCharacterCapacity,
+            _options.Title,
+            _options.WorkingDirectory
         );
-        _renderer = new(_console, _options.KeyActions);
+        _renderer = new(_console, _options.KeyActions, pipeline.StepIds);
         _observer = new(this);
         _keyInput =
             _options.KeyInput
@@ -230,8 +232,9 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
         {
             keys.Add(key);
         }
+        var interactionActive = _model.Snapshot().Interaction is not null;
         var quitIndex = keys.FindIndex(key =>
-            key.Key == ConsoleKey.Q
+            key.Key == ConsoleKey.Q && !interactionActive
             || key.Key == ConsoleKey.C && (key.Modifiers & ConsoleModifiers.Control) != 0
         );
         if (quitIndex >= 0)

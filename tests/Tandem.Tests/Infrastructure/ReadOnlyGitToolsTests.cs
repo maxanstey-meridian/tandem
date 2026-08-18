@@ -60,26 +60,50 @@ public sealed class ReadOnlyGitToolsTests
     }
 
     [Fact]
-    public async Task Git_capture_fails_closed_before_pagination()
+    public async Task Large_diffs_page_from_complete_on_disk_capture()
     {
         using var repository = TestRepository.Create();
         File.WriteAllText(Path.Combine(repository.Path, "large.txt"), "base\n");
         repository.Commit("base");
         var baseSha = repository.Head();
-        File.WriteAllText(Path.Combine(repository.Path, "large.txt"), new string('x', 17_000_000));
+        File.WriteAllText(Path.Combine(repository.Path, "large.txt"), new string('x', 200_000));
         repository.Commit("large");
+        var candidateSha = repository.Head();
+        var git = new ReadOnlyGitRepository(repository.Path);
 
-        var inspect = async () =>
-            await new ReadOnlyGitRepository(repository.Path).CompareAsync(
-                baseSha,
-                repository.Head(),
-                "large.txt"
-            );
+        var firstPage = await git.CompareAsync(
+            baseSha,
+            candidateSha,
+            "large.txt",
+            maxLines: 1
+        );
 
-        await inspect
+        firstPage
             .Should()
-            .ThrowAsync<InvalidOperationException>()
-            .WithMessage("*complete-output capture limit*");
+            .Contain("[lines 1-1 of")
+            .And.Contain("continue at startLine 2");
+
+        var fullPage = await git.CompareAsync(baseSha, candidateSha, "large.txt", maxLines: 500);
+        fullPage.Should().Contain("complete");
+    }
+
+    [Fact]
+    public async Task Repository_wide_diff_pages_when_total_exceeds_capture_limit()
+    {
+        using var repository = TestRepository.Create();
+        File.WriteAllText(Path.Combine(repository.Path, "a.txt"), "base\n");
+        File.WriteAllText(Path.Combine(repository.Path, "b.txt"), "base\n");
+        repository.Commit("base");
+        var baseSha = repository.Head();
+        File.WriteAllText(Path.Combine(repository.Path, "a.txt"), new string('x', 200_000));
+        File.WriteAllText(Path.Combine(repository.Path, "b.txt"), new string('y', 200_000));
+        repository.Commit("large");
+        var candidateSha = repository.Head();
+        var git = new ReadOnlyGitRepository(repository.Path);
+
+        var firstPage = await git.CompareAsync(baseSha, candidateSha, maxLines: 1);
+
+        firstPage.Should().Contain("[lines 1-1 of").And.Contain("continue at startLine 2");
     }
 
     [Fact]

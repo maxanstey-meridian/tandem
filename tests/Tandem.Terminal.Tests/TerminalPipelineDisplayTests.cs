@@ -197,7 +197,7 @@ public sealed class TerminalPipelineDisplayTests
     [Fact]
     public void AcceptedCapabilitySummaryAppearsInInteractiveTranscript()
     {
-        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000);
+        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000, null, null);
 
         model.Apply(
             new PipelineCapabilityAccepted(
@@ -228,7 +228,7 @@ public sealed class TerminalPipelineDisplayTests
     [Fact]
     public void ModelNameFollowsTheActiveParticipantRuntimeSelection()
     {
-        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000);
+        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000, null, null);
 
         model.Apply(new PipelineStepStarted(_runId, "implementer"));
         model.Apply(
@@ -260,7 +260,7 @@ public sealed class TerminalPipelineDisplayTests
     [Fact]
     public void ContextUsageFollowsTheActiveParticipant()
     {
-        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000);
+        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000, null, null);
 
         model.Apply(new PipelineStepStarted(_runId, "executor"));
         model.Apply(new PipelineAgentUsage(_runId, "executor", 10, 2, 12_000, 200_000));
@@ -282,7 +282,7 @@ public sealed class TerminalPipelineDisplayTests
     [Fact]
     public void ParallelContextUsageFollowsTheMostRecentActiveParticipant()
     {
-        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000);
+        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000, null, null);
 
         model.Apply(new PipelineStepStarted(_runId, "first"));
         model.Apply(new PipelineStepStarted(_runId, "second"));
@@ -516,7 +516,7 @@ public sealed class TerminalPipelineDisplayTests
                     new ConsoleKeyInfo('k', ConsoleKey.K, false, false, false),
                     new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false),
                     new ConsoleKeyInfo('p', ConsoleKey.P, false, false, false),
-                    new ConsoleKeyInfo('q', ConsoleKey.Q, false, false, false)
+                    new ConsoleKeyInfo('\u0003', ConsoleKey.C, false, false, true)
                 ),
                 FormatInteraction = _ => new("Question?", "Reason"),
                 SubmitTextAsync = (text, _) =>
@@ -552,6 +552,62 @@ public sealed class TerminalPipelineDisplayTests
         console.Output.Should().Contain("Question?").And.Contain("Reason");
     }
 
+    [Fact]
+    public async Task InteractionAnswerContainingQIsSubmittedInsteadOfCancellingRun()
+    {
+        var submitted = "";
+        var cancellations = 0;
+        TerminalPipelineDisplay? display = null;
+        display = new TerminalPipelineDisplay(
+            Inspection(),
+            _runId,
+            new TerminalDisplayOptions
+            {
+                Console = new TestConsole().Width(100).Height(24),
+                Capabilities = new(true, true),
+                KeyInput = new QueueInput(
+                    new ConsoleKeyInfo('q', ConsoleKey.Q, false, false, false),
+                    new ConsoleKeyInfo('u', ConsoleKey.U, false, false, false),
+                    new ConsoleKeyInfo('e', ConsoleKey.E, false, false, false),
+                    new ConsoleKeyInfo('s', ConsoleKey.S, false, false, false),
+                    new ConsoleKeyInfo('t', ConsoleKey.T, false, false, false),
+                    new ConsoleKeyInfo('i', ConsoleKey.I, false, false, false),
+                    new ConsoleKeyInfo('o', ConsoleKey.O, false, false, false),
+                    new ConsoleKeyInfo('n', ConsoleKey.N, false, false, false),
+                    new ConsoleKeyInfo('?', ConsoleKey.Oem2, false, false, false),
+                    new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false)
+                ),
+                FormatInteraction = _ => new("Question?", "Reason"),
+                SubmitTextAsync = async (text, _) =>
+                {
+                    submitted = text;
+                    await display!.CancelledAsync("done");
+                },
+                CancelAsync = _ =>
+                {
+                    cancellations++;
+                    return ValueTask.CompletedTask;
+                },
+                RefreshInterval = TimeSpan.FromMilliseconds(1),
+            }
+        );
+        await using (display)
+        {
+            await display.Observer.ObserveAsync(
+                new PipelineInteractionRequested<string>(_runId, "human", "request", "payload"),
+                CancellationToken.None
+            );
+
+            await display.StartAsync(CancellationToken.None);
+            await display
+                .WaitForCleanupAsync(CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(2), CancellationToken.None);
+        }
+
+        submitted.Should().Be("question?");
+        cancellations.Should().Be(0);
+    }
+
     private static readonly Guid _runId = Guid.CreateVersion7();
 
     private static TerminalPipelineDisplay Create(
@@ -574,7 +630,7 @@ public sealed class TerminalPipelineDisplayTests
         );
 
     private static TerminalModel Model(int entries = 10, int characters = 100) =>
-        new("pipeline", _runId, TimeProvider.System, entries, characters);
+        new("pipeline", _runId, TimeProvider.System, entries, characters, null, null);
 
     private static PipelineInspection Inspection() =>
         new("pipeline", null, "start", ["start"], [], [], ["start"], [], "", "");

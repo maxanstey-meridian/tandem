@@ -304,6 +304,46 @@ public sealed class AgentToolSelection
     public static implicit operator AgentToolSelection(string name) => AgentTools.Select(name);
 }
 
+public sealed class AgentWorkspaceTool
+{
+    private AgentWorkspaceTool(
+        string name,
+        Func<string, AIFunction> create,
+        ToolEffect effect,
+        ToolEvidence evidence
+    )
+    {
+        Name = name;
+        Create = create;
+        Effect = effect;
+        Evidence = evidence;
+    }
+
+    internal string Name { get; }
+    internal Func<string, AIFunction> Create { get; }
+    internal ToolEffect Effect { get; }
+    internal ToolEvidence Evidence { get; }
+
+    public static AgentWorkspaceTool Define(
+        string name,
+        Func<string, AIFunction> create,
+        ToolEffect effect,
+        ToolEvidence evidence = ToolEvidence.None
+    )
+    {
+        AgentCommand.ValidateToolName(name, nameof(name));
+        ArgumentNullException.ThrowIfNull(create);
+        if (effect == ToolEffect.Unclassified)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(effect),
+                "Registered workspace tools require a classified effect."
+            );
+        }
+        return new AgentWorkspaceTool(name, create, effect, evidence);
+    }
+}
+
 public sealed class AgentToolGroup<TState>
 {
     internal AgentToolGroup(
@@ -330,6 +370,9 @@ public static class AgentTools
         "delete_file",
         "replace",
         "replace_lines",
+        "copy_file",
+        "move_file",
+        "create_directory",
         "git:ro",
         "shell",
         "web_search",
@@ -397,6 +440,10 @@ public static class AgentTools
 
 public sealed class AgentWorkspace<TState>
 {
+    private readonly Dictionary<string, AgentWorkspaceTool> _registeredTools = new(
+        StringComparer.Ordinal
+    );
+
     private AgentWorkspace(
         Func<TState, string> path,
         Func<TState, IReadOnlyList<AgentCommand>> commands
@@ -412,7 +459,24 @@ public sealed class AgentWorkspace<TState>
 
     internal Func<TState, string> Path { get; }
     internal Func<TState, IReadOnlyList<AgentCommand>> CommandFactory { get; }
+    internal IReadOnlyDictionary<string, AgentWorkspaceTool> RegisteredTools => _registeredTools;
     public AgentToolSelection Commands { get; }
+
+    public AgentToolSelection Register(AgentWorkspaceTool tool)
+    {
+        ArgumentNullException.ThrowIfNull(tool);
+        if (!_registeredTools.TryAdd(tool.Name, tool))
+        {
+            throw new ArgumentException(
+                $"Workspace tool '{tool.Name}' is already registered.",
+                nameof(tool)
+            );
+        }
+        return new AgentToolSelection(
+            new AgentToolSelectionDescriptor(AgentToolSelectionKind.Registered, tool.Name),
+            this
+        );
+    }
 
     public static AgentWorkspace<TState> Define(
         Func<TState, string> path,
@@ -547,7 +611,36 @@ public static class AdvancedAgentBuilderExtensions
                     AgentWorkspace<TState>.ValidateCommands(commands);
                     return commands.Select(command => command.ToDescriptor()).ToArray();
                 },
-                groups!
+                groups!,
+                workspace.RegisteredTools.ToDictionary(
+                    entry => entry.Key,
+                    entry => new AgentWorkspaceToolDescriptor(
+                        entry.Value.Name,
+                        entry.Value.Create,
+                        entry.Value.Effect switch
+                        {
+                            ToolEffect.Read => Infrastructure.ToolEffect.Read,
+                            ToolEffect.WorkspaceMutation => Infrastructure
+                                .ToolEffect
+                                .WorkspaceMutation,
+                            ToolEffect.ProcessExecution => Infrastructure
+                                .ToolEffect
+                                .ProcessExecution,
+                            ToolEffect.LifecycleTransition => Infrastructure
+                                .ToolEffect
+                                .LifecycleTransition,
+                            _ => throw new ArgumentOutOfRangeException(nameof(entry.Value.Effect)),
+                        },
+                        entry.Value.Evidence switch
+                        {
+                            ToolEvidence.RepositoryInspection => Infrastructure
+                                .ToolEvidence
+                                .RepositoryInspection,
+                            _ => Infrastructure.ToolEvidence.None,
+                        }
+                    ),
+                    StringComparer.Ordinal
+                )
             ),
             toolInterceptor is null
                 ? null

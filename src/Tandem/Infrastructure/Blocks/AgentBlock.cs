@@ -1360,6 +1360,22 @@ internal sealed class AgentBlock<TState>(
         var includeCommands = selections.Any(selection =>
             selection.Kind == AgentToolSelectionKind.Commands
         );
+        var selectedRegisteredNames = selections
+            .Where(selection => selection.Kind == AgentToolSelectionKind.Registered)
+            .Select(selection => selection.Name!)
+            .ToHashSet(StringComparer.Ordinal);
+        var selectedRegisteredTools = selectedRegisteredNames
+            .Select(name =>
+                (
+                    authored.RegisteredTools
+                    ?? new Dictionary<string, AgentWorkspaceToolDescriptor>()
+                ).TryGetValue(name, out var tool)
+                    ? tool
+                    : throw new InvalidOperationException(
+                        $"Unknown registered workspace tool '{name}'."
+                    )
+            )
+            .ToArray();
         var selectedCommands = includeCommands ? commands : [];
         var reservedNames = new HashSet<string>(
             _reservedWorkspaceToolNames,
@@ -1371,6 +1387,15 @@ internal sealed class AgentBlock<TState>(
             {
                 throw new InvalidOperationException(
                     $"Agent '{config.StepId}' exposes more than one tool named '{command.Name}'."
+                );
+            }
+        }
+        foreach (var tool in selectedRegisteredTools)
+        {
+            if (!reservedNames.Add(tool.Name) || capabilityNames.Contains(tool.Name))
+            {
+                throw new InvalidOperationException(
+                    $"Agent '{config.StepId}' exposes more than one tool named '{tool.Name}'."
                 );
             }
         }
@@ -1394,6 +1419,9 @@ internal sealed class AgentBlock<TState>(
                 "delete_file" => WorkspaceToolKind.DeleteFile,
                 "replace" => WorkspaceToolKind.Replace,
                 "replace_lines" => WorkspaceToolKind.ReplaceLines,
+                "copy_file" => WorkspaceToolKind.CopyFile,
+                "move_file" => WorkspaceToolKind.MoveFile,
+                "create_directory" => WorkspaceToolKind.CreateDirectory,
                 "git:ro" or "shell" or "web_search" or "web_fetch" => default,
                 _ => throw new InvalidOperationException($"Unknown workspace tool '{name}'."),
             };
@@ -1409,7 +1437,8 @@ internal sealed class AgentBlock<TState>(
             selectedNames.Contains("shell"),
             selectedNames.Contains("web_search"),
             selectedNames.Contains("web_fetch"),
-            selectedCommands
+            selectedCommands,
+            selectedRegisteredTools
         );
     }
 
@@ -1498,12 +1527,14 @@ internal sealed class AgentBlock<TState>(
     }
 
     private IChatClient SelectChatClient(PipelineMessage<TState> message) =>
-        chatClientFactory is null
-            ? chatClient
-            : chatClientFactory(
-                message.Runtime.AgentProfiles.GetValueOrDefault(config.StepId)?.ProfileName
-                    ?? config.ProfileName
-            );
+        new ToolResultAdjacencyChatClient(
+            chatClientFactory is null
+                ? chatClient
+                : chatClientFactory(
+                    message.Runtime.AgentProfiles.GetValueOrDefault(config.StepId)?.ProfileName
+                        ?? config.ProfileName
+                )
+        );
 
     private async ValueTask PublishModelSelectedAsync(
         PipelineMessage<TState> message,

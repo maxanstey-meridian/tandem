@@ -8,11 +8,14 @@ namespace Tandem.Terminal;
 
 internal sealed class TerminalRenderer(
     IAnsiConsole console,
-    IReadOnlyList<TerminalKeyAction>? keyActions = null
+    IReadOnlyList<TerminalKeyAction>? keyActions = null,
+    IReadOnlyList<string>? pipelineLabels = null
 )
 {
     private const int NarrowWidth = 100;
     private const int MaxScrollbackLines = 2_000;
+    private const int PipelineDurationWidth = 8;
+    private const int PipelineResultWidth = 9;
     private static readonly string[] _stepBackgrounds =
     [
         "#244866",
@@ -33,6 +36,11 @@ internal sealed class TerminalRenderer(
     private int _lastRenderedLineCount;
     private int _lastTranscriptCount;
     private int _viewportHeight = 1;
+    private readonly int _pipelineContentWidth =
+        (pipelineLabels ?? []).Select(TerminalText.Sanitize).DefaultIfEmpty("Pipeline").MaxBy(label => label.Length)!.Length
+        + PipelineDurationWidth
+        + PipelineResultWidth
+        + 12;
 
     public void ScrollLines(int lines) =>
         _scrollOffset = Math.Clamp(_scrollOffset + lines, 0, _maxScrollOffset);
@@ -82,14 +90,24 @@ internal sealed class TerminalRenderer(
         }
         else
         {
-            root["body"].SplitColumns(new Layout("work").Ratio(3), new Layout("pipeline").Ratio(1));
+            var pipelineWidth = Math.Min(_pipelineContentWidth, width / 2);
+            root["body"]
+                .SplitColumns(
+                    new Layout("work"),
+                    new Layout("pipeline").Size(pipelineWidth)
+                );
             root["body"]
                 ["work"]
-                .Update(RenderWork(model, bodyHeight, Math.Max(10, width * 3 / 4 - 4)));
+                .Update(RenderWork(model, bodyHeight, Math.Max(10, width - pipelineWidth - 4)));
             root["body"]
                 ["pipeline"]
                 .Update(
-                    RenderPipeline(model, bodyHeight, Math.Max(10, width / 4 - 2), pipelineEntries)
+                    RenderPipeline(
+                        model,
+                        bodyHeight,
+                        Math.Max(10, pipelineWidth - 2),
+                        pipelineEntries
+                    )
                 );
         }
         root["footer"].Update(RenderFooter(model));
@@ -108,10 +126,16 @@ internal sealed class TerminalRenderer(
     private static IRenderable RenderHeader(TerminalSnapshot model)
     {
         var elapsed = (model.CompletedAt ?? DateTimeOffset.UtcNow) - model.StartedAt;
-        var text = new Text(
-            $"{model.RunId:N}  {model.Status}  {elapsed:hh\\:mm\\:ss}",
-            StatusStyle(model.Status)
-        ).Overflow(Overflow.Ellipsis);
+        var id = $"{model.RunId:N}";
+        var status = $"{model.Status}";
+        var timer = $"{elapsed:hh\\:mm\\:ss}";
+        var title = model.Title;
+        var text = title is null || title.Length == 0
+            ? new Text($"{id}  {status}  {timer}", StatusStyle(model.Status))
+            : new Text(
+                $"{id}  {title}  {status}  {timer}",
+                StatusStyle(model.Status)
+            ).Overflow(Overflow.Ellipsis);
         return new Panel(text).Border(BoxBorder.Rounded).Padding(1, 0, 1, 0);
     }
 
@@ -578,21 +602,7 @@ internal sealed class TerminalRenderer(
         IReadOnlyList<TerminalPipelineEntry>? pipelineEntries
     )
     {
-        var entries = model
-            .Visits.Select(visit => new TerminalPipelineEntry(
-                visit.StepId,
-                visit.Outcome ?? "running",
-                visit.Summary ?? "",
-                visit.Duration,
-                visit.Outcome switch
-                {
-                    StandardOutcomeKinds.Success => TerminalPipelineEntryStyle.Success,
-                    "faulted" or "cancelled" => TerminalPipelineEntryStyle.Failure,
-                    _ => TerminalPipelineEntryStyle.Information,
-                }
-            ))
-            .Concat(pipelineEntries ?? [])
-            .ToList();
+        var entries = PipelineEntries(model, pipelineEntries);
         var rows = entries.TakeLast(Math.Max(1, paneHeight - 2)).ToList();
         if (rows.Count == 0 && model.Interaction is null)
         {
@@ -602,11 +612,12 @@ internal sealed class TerminalRenderer(
                 .Expand();
         }
 
+        const int durationWidth = PipelineDurationWidth;
         var labelWidth = Math.Min(
             rows.Select(entry => TerminalText.Sanitize(entry.Label).Length).DefaultIfEmpty(1).Max(),
-            Math.Max(1, paneWidth - 18)
+            Math.Max(1, paneWidth - durationWidth - 12)
         );
-        var resultWidth = Math.Max(1, paneWidth - labelWidth - 16);
+        var resultWidth = Math.Max(1, paneWidth - labelWidth - durationWidth - 10);
         var grid = new Grid { Expand = true };
         grid.AddColumn(
             new GridColumn
@@ -627,7 +638,7 @@ internal sealed class TerminalRenderer(
         grid.AddColumn(
             new GridColumn
             {
-                Width = 6,
+                Width = durationWidth,
                 Alignment = Justify.Right,
                 NoWrap = true,
                 Padding = new Padding(1, 0, 0, 0),
@@ -667,18 +678,33 @@ internal sealed class TerminalRenderer(
         return new Panel(new Rows(content)).Header(" Pipeline ").Border(BoxBorder.Rounded).Expand();
     }
 
+    private static IReadOnlyList<TerminalPipelineEntry> PipelineEntries(
+        TerminalSnapshot model,
+        IReadOnlyList<TerminalPipelineEntry>? pipelineEntries
+    ) =>
+        model
+            .Visits.Select(visit => new TerminalPipelineEntry(
+                visit.StepId,
+                visit.Outcome ?? "running",
+                visit.Summary ?? "",
+                visit.Duration,
+                visit.Outcome switch
+                {
+                    StandardOutcomeKinds.Success => TerminalPipelineEntryStyle.Success,
+                    "faulted" or "cancelled" => TerminalPipelineEntryStyle.Failure,
+                    _ => TerminalPipelineEntryStyle.Information,
+                }
+            ))
+            .Concat(pipelineEntries ?? [])
+            .ToList();
+
     private static IRenderable[] RenderPipelineEntry(
         TerminalPipelineEntry entry,
         int labelWidth,
         int resultWidth
     )
     {
-        var duration = entry.Duration switch
-        {
-            { TotalSeconds: >= 1 } value => $"{value.TotalSeconds:F1}s",
-            { } value => $"{value.TotalMilliseconds:F0}ms",
-            _ => "",
-        };
+        var duration = Truncate(FormatDuration(entry.Duration), PipelineDurationWidth);
         var icon = entry.Style switch
         {
             TerminalPipelineEntryStyle.Success => "✓",
@@ -693,9 +719,7 @@ internal sealed class TerminalRenderer(
             TerminalPipelineEntryStyle.Interaction => Color.Yellow,
             _ => Color.Default,
         };
-        var result = string.IsNullOrWhiteSpace(entry.Summary)
-            ? HumanizePipelineKind(entry.Kind)
-            : TerminalText.Sanitize(entry.Summary);
+        var result = PipelineResult(entry);
         return
         [
             new Text(icon, new Style(color)),
@@ -709,6 +733,19 @@ internal sealed class TerminalRenderer(
 
     private static string Truncate(string value, int width) =>
         value.Length <= width ? value : value[..(width - 1)] + "…";
+
+    private static string FormatDuration(TimeSpan? duration) =>
+        duration switch
+        {
+            { TotalSeconds: >= 1 } value => $"{value.TotalSeconds:F1}s",
+            { } value => $"{value.TotalMilliseconds:F0}ms",
+            _ => "",
+        };
+
+    private static string PipelineResult(TerminalPipelineEntry entry) =>
+        string.IsNullOrWhiteSpace(entry.Summary)
+            ? HumanizePipelineKind(entry.Kind)
+            : TerminalText.Sanitize(entry.Summary);
 
     private static string HumanizePipelineKind(string kind) =>
         kind switch
@@ -740,8 +777,10 @@ internal sealed class TerminalRenderer(
                     .Select(action => $"{action.Key.ToString().ToLowerInvariant()} {action.Label}")
             );
             var quit = IsTerminal(model.Status) ? "q close" : "q cancel";
-            text =
-                $"{scroll}steps {model.Visits.Count}{(actions.Length == 0 ? "" : $"  {actions}")}  ↑↓/Pg/Home/End scroll  {quit}";
+            var cwd = model.WorkingDirectory;
+            text = cwd is null || cwd.Length == 0
+                ? $"{scroll}steps {model.Visits.Count}{(actions.Length == 0 ? "" : $"  {actions}")}  ↑↓/Pg/Home/End scroll  {quit}"
+                : $"{scroll}steps {model.Visits.Count}{(actions.Length == 0 ? "" : $"  {actions}")}  ↑↓/Pg/Home/End scroll  {quit}  {cwd}";
             style = new Style(Color.Grey);
         }
         return new Panel(new Text(TerminalText.Sanitize(text), style).Overflow(Overflow.Ellipsis))

@@ -169,7 +169,13 @@ public sealed class WorkspaceAuthorityTests
                     workspace,
                     [
                         AgentTools.Always<TestState>("read_file"),
-                        AgentTools.When<TestState>(state => state.MutationAllowed, "write_file"),
+                        AgentTools.When<TestState>(
+                            state => state.MutationAllowed,
+                            "write_file",
+                            "copy_file",
+                            "move_file",
+                            "create_directory"
+                        ),
                     ]
                 )
                 .WithMessage(_ => "Inspect.")
@@ -185,8 +191,20 @@ public sealed class WorkspaceAuthorityTests
 
             client.AdvertisedTools[0].Should().Contain("file_access_read");
             client.AdvertisedTools[0].Should().NotContain("file_access_write");
+            client.AdvertisedTools[0].Should().NotContain(WorkspaceFileMutationTools.CopyToolName);
+            client.AdvertisedTools[0].Should().NotContain(WorkspaceFileMutationTools.MoveToolName);
+            client
+                .AdvertisedTools[0]
+                .Should()
+                .NotContain(WorkspaceFileMutationTools.CreateDirectoryToolName);
             client.AdvertisedTools[1].Should().Contain("file_access_read");
             client.AdvertisedTools[1].Should().Contain("file_access_write");
+            client.AdvertisedTools[1].Should().Contain(WorkspaceFileMutationTools.CopyToolName);
+            client.AdvertisedTools[1].Should().Contain(WorkspaceFileMutationTools.MoveToolName);
+            client
+                .AdvertisedTools[1]
+                .Should()
+                .Contain(WorkspaceFileMutationTools.CreateDirectoryToolName);
         }
         finally
         {
@@ -215,6 +233,158 @@ public sealed class WorkspaceAuthorityTests
         finally
         {
             Directory.Delete(path, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CopyAndMoveFile_PreserveBytesAndEnforceWorkspaceBoundaries()
+    {
+        var parent = Path.Combine(Path.GetTempPath(), $"tandem-file-mutation-{Guid.NewGuid():N}");
+        var workspace = Path.Combine(parent, "workspace");
+        Directory.CreateDirectory(Path.Combine(workspace, "source"));
+        Directory.CreateDirectory(Path.Combine(workspace, "destination"));
+        try
+        {
+            WorkspaceFileMutationTools.CreateDirectory(
+                workspace,
+                "generated/nested",
+                CancellationToken.None
+            );
+            Directory.Exists(Path.Combine(workspace, "generated", "nested")).Should().BeTrue();
+            WorkspaceFileMutationTools.CreateDirectory(
+                workspace,
+                "generated/nested",
+                CancellationToken.None
+            );
+
+            var bytes = new byte[] { 0, 1, 2, 127, 128, 255 };
+            File.WriteAllBytes(Path.Combine(workspace, "source", "payload.bin"), bytes);
+
+            WorkspaceFileMutationTools.Copy(
+                workspace,
+                "source/payload.bin",
+                "destination/copied.bin",
+                overwrite: false,
+                CancellationToken.None
+            );
+            File.ReadAllBytes(Path.Combine(workspace, "destination", "copied.bin"))
+                .Should()
+                .Equal(bytes);
+
+            var replacement = new byte[] { 9, 8, 7 };
+            File.WriteAllBytes(Path.Combine(workspace, "source", "payload.bin"), replacement);
+            var refuseOverwrite = () =>
+                WorkspaceFileMutationTools.Copy(
+                    workspace,
+                    "source/payload.bin",
+                    "destination/copied.bin",
+                    overwrite: false,
+                    CancellationToken.None
+                );
+            refuseOverwrite.Should().Throw<IOException>();
+            WorkspaceFileMutationTools.Copy(
+                workspace,
+                "source/payload.bin",
+                "destination/copied.bin",
+                overwrite: true,
+                CancellationToken.None
+            );
+
+            WorkspaceFileMutationTools.Move(
+                workspace,
+                "destination/copied.bin",
+                "destination/moved.bin",
+                overwrite: false,
+                CancellationToken.None
+            );
+            File.Exists(Path.Combine(workspace, "destination", "copied.bin")).Should().BeFalse();
+            File.ReadAllBytes(Path.Combine(workspace, "destination", "moved.bin"))
+                .Should()
+                .Equal(replacement);
+
+            var escape = () =>
+                WorkspaceFileMutationTools.Copy(
+                    workspace,
+                    "source/payload.bin",
+                    "../escaped.bin",
+                    overwrite: false,
+                    CancellationToken.None
+                );
+            escape.Should().Throw<UnauthorizedAccessException>();
+
+            var git = () =>
+                WorkspaceFileMutationTools.Move(
+                    workspace,
+                    "source/payload.bin",
+                    ".GIT/payload.bin",
+                    overwrite: false,
+                    CancellationToken.None
+                );
+            git.Should().Throw<UnauthorizedAccessException>();
+
+            var createGit = () =>
+                WorkspaceFileMutationTools.CreateDirectory(
+                    workspace,
+                    ".git/generated",
+                    CancellationToken.None
+                );
+            createGit.Should().Throw<UnauthorizedAccessException>();
+        }
+        finally
+        {
+            Directory.Delete(parent, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void FileMutations_RejectLinksThatEscapeTheWorkspace()
+    {
+        var parent = Path.Combine(Path.GetTempPath(), $"tandem-file-link-{Guid.NewGuid():N}");
+        var workspace = Path.Combine(parent, "workspace");
+        var outside = Path.Combine(parent, "outside");
+        Directory.CreateDirectory(workspace);
+        Directory.CreateDirectory(outside);
+        try
+        {
+            var secret = Path.Combine(outside, "secret.txt");
+            File.WriteAllText(secret, "secret");
+            File.CreateSymbolicLink(Path.Combine(workspace, "secret-link.txt"), secret);
+            Directory.CreateSymbolicLink(Path.Combine(workspace, "outside-link"), outside);
+            File.WriteAllText(Path.Combine(workspace, "source.txt"), "source");
+
+            var copyFromLink = () =>
+                WorkspaceFileMutationTools.Copy(
+                    workspace,
+                    "secret-link.txt",
+                    "copied-secret.txt",
+                    overwrite: false,
+                    CancellationToken.None
+                );
+            var copyThroughLink = () =>
+                WorkspaceFileMutationTools.Copy(
+                    workspace,
+                    "source.txt",
+                    "outside-link/copied.txt",
+                    overwrite: false,
+                    CancellationToken.None
+                );
+            var createThroughLink = () =>
+                WorkspaceFileMutationTools.CreateDirectory(
+                    workspace,
+                    "outside-link/generated",
+                    CancellationToken.None
+                );
+
+            copyFromLink.Should().Throw<UnauthorizedAccessException>();
+            copyThroughLink.Should().Throw<UnauthorizedAccessException>();
+            createThroughLink.Should().Throw<UnauthorizedAccessException>();
+            File.Exists(Path.Combine(workspace, "copied-secret.txt")).Should().BeFalse();
+            File.Exists(Path.Combine(outside, "copied.txt")).Should().BeFalse();
+            Directory.Exists(Path.Combine(outside, "generated")).Should().BeFalse();
+        }
+        finally
+        {
+            Directory.Delete(parent, recursive: true);
         }
     }
 

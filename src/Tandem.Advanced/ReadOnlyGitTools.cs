@@ -80,8 +80,15 @@ internal static class ReadOnlyGitTools
 internal sealed class ReadOnlyGitRepository(string workspacePath)
 {
     private static readonly TimeSpan _timeout = TimeSpan.FromSeconds(30);
-    private const int MaximumOutputBytesPerStream = 16 * 1024 * 1024;
+    private const int MaximumOutputBytesPerStream = 128 * 1024;
     private readonly string _workspacePath = Path.GetFullPath(workspacePath);
+
+    private static readonly Dictionary<string, string> _gitEnvironment = new()
+    {
+        ["GIT_PAGER"] = "cat",
+        ["GIT_TERMINAL_PROMPT"] = "0",
+        ["GIT_OPTIONAL_LOCKS"] = "0",
+    };
 
     internal async Task<string> StatusAsync(CancellationToken cancellationToken = default) =>
         Page(
@@ -241,7 +248,11 @@ internal sealed class ReadOnlyGitRepository(string workspacePath)
             arguments.Add("--");
             arguments.Add(ValidatePath(path));
         }
-        return Page(await RunAsync(arguments, cancellationToken), startLine, maxLines);
+        return Page(
+            await RunDiffToFileAsync(arguments, cancellationToken),
+            startLine,
+            maxLines
+        );
     }
 
     private static string Range(string baseSha, string candidateSha) =>
@@ -325,12 +336,7 @@ internal sealed class ReadOnlyGitRepository(string workspacePath)
                 _workspacePath,
                 _timeout,
                 MaximumOutputBytesPerStream,
-                new Dictionary<string, string>
-                {
-                    ["GIT_PAGER"] = "cat",
-                    ["GIT_TERMINAL_PROMPT"] = "0",
-                    ["GIT_OPTIONAL_LOCKS"] = "0",
-                }
+                _gitEnvironment
             ),
             cancellationToken
         );
@@ -351,6 +357,71 @@ internal sealed class ReadOnlyGitRepository(string workspacePath)
             );
         }
         return result.Stdout;
+    }
+
+    private async Task<string> RunDiffToFileAsync(
+        IReadOnlyList<string> arguments,
+        CancellationToken cancellationToken
+    )
+    {
+        var tempPath = Path.GetTempFileName();
+        try
+        {
+            var fullArguments = new List<string>
+            {
+                "-c",
+                "core.fsmonitor=false",
+            };
+            var separatorIndex = Array.IndexOf(arguments.ToArray(), "--");
+            if (separatorIndex >= 0)
+            {
+                fullArguments.AddRange(arguments.Take(separatorIndex));
+                fullArguments.Add($"--output={tempPath}");
+                fullArguments.AddRange(arguments.Skip(separatorIndex));
+            }
+            else
+            {
+                fullArguments.AddRange(arguments);
+                fullArguments.Add($"--output={tempPath}");
+            }
+
+            var result = await LocalProcess.RunAsync(
+                new LocalProcessRequest(
+                    "git",
+                    fullArguments,
+                    _workspacePath,
+                    _timeout,
+                    MaximumOutputBytesPerStream,
+                    _gitEnvironment
+                ),
+                cancellationToken
+            );
+            if (result.TimedOut)
+            {
+                throw new TimeoutException();
+            }
+            if (result.StderrTruncated)
+            {
+                throw new InvalidOperationException(
+                    "Read-only Git inspection exceeded the complete-output capture limit."
+                );
+            }
+            if (result.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Read-only Git inspection failed: {result.Stderr.Trim()}"
+                );
+            }
+            return await File.ReadAllTextAsync(tempPath, cancellationToken);
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(tempPath);
+            }
+            catch { }
+        }
     }
 
     private static string Page(

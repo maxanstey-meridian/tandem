@@ -30,7 +30,15 @@ internal sealed record AgentBlockConfig<TState>(
 internal sealed record AgentWorkspaceDescriptor<TState>(
     Func<TState, string> Path,
     Func<TState, IReadOnlyList<AgentCommandDescriptor>> Commands,
-    IReadOnlyList<AgentToolGroupDescriptor<TState>> ToolGroups
+    IReadOnlyList<AgentToolGroupDescriptor<TState>> ToolGroups,
+    IReadOnlyDictionary<string, AgentWorkspaceToolDescriptor>? RegisteredTools = null
+);
+
+internal sealed record AgentWorkspaceToolDescriptor(
+    string Name,
+    Func<string, Microsoft.Extensions.AI.AIFunction> Create,
+    ToolEffect Effect,
+    ToolEvidence Evidence
 );
 
 internal sealed record AgentToolGroupDescriptor<TState>(
@@ -42,6 +50,7 @@ internal enum AgentToolSelectionKind
 {
     BuiltIn,
     Commands,
+    Registered,
 }
 
 internal sealed record AgentToolSelectionDescriptor(

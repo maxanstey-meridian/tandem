@@ -172,7 +172,10 @@ M System.String ToString()
 M Tandem.Advanced.AgentTurnPolicy<TState> <Clone>$()
 P System.Int32 MaxContinuationAttempts { get; }
 P Tandem.Advanced.AgentTurnContinuationPolicy<TState> Continue { get; }
+T Tandem.Advanced.AgentWorkspaceTool
+M static Tandem.Advanced.AgentWorkspaceTool Define(System.String name, System.Func<System.String,Microsoft.Extensions.AI.AIFunction> create, Tandem.Advanced.ToolEffect effect, Tandem.Advanced.ToolEvidence evidence = Tandem.Advanced.ToolEvidence.None)
 T Tandem.Advanced.AgentWorkspace<TState>
+M Tandem.Advanced.AgentToolSelection Register(Tandem.Advanced.AgentWorkspaceTool tool)
 M static Tandem.Advanced.AgentWorkspace<TState> Define(System.Func<TState,System.String> path, System.Collections.Generic.IReadOnlyList<Tandem.Advanced.AgentCommand> commands)
 M static Tandem.Advanced.AgentWorkspace<TState> Define(System.Func<TState,System.String> path, System.Func<TState,System.Collections.Generic.IReadOnlyList<Tandem.Advanced.AgentCommand>> commands)
 P Tandem.Advanced.AgentToolSelection Commands { get; }
