@@ -1,11 +1,11 @@
 using System.Runtime.CompilerServices;
+using Examples.CodeWriter;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Tandem.Sample.CodeWriter;
-using CodeWriterReviewDecision = Tandem.Sample.CodeWriter.ReviewDecision;
-using CodeWriterReviewDecisionValidator = Tandem.Sample.CodeWriter.ReviewDecisionValidator;
-using CodeWriterVerificationResult = Tandem.Sample.CodeWriter.VerificationResult;
+using CodeWriterReviewDecision = Examples.CodeWriter.ReviewDecision;
+using CodeWriterReviewDecisionValidator = Examples.CodeWriter.ReviewDecisionValidator;
+using CodeWriterVerificationResult = Examples.CodeWriter.VerificationResult;
 
 namespace Tandem.Tests.Composition;
 

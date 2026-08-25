@@ -8,7 +8,7 @@
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <NoWarn>$(NoWarn);CS1591</NoWarn>
-        <PackageId>Tandem.Terminal</PackageId>
+        <PackageId>Meridian.Tandem.Terminal</PackageId>
         <Title>Tandem Terminal</Title>
         <Description>Optional observation-driven terminal presentation for Tandem pipelines.</Description>
         <PackageTags>agents;ai;workflow;pipeline;terminal</PackageTags>
@@ -19,12 +19,17 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <PackageReference
+            Include="Microsoft.SourceLink.GitHub"
+            Version="8.0.0"
+            PrivateAssets="all"
+        />
         <PackageReference Include="Spectre.Console" Version="0.57.2" />
         <ProjectReference Include="..\Tandem\Tandem.csproj" />
         <InternalsVisibleTo Include="Tandem.Terminal.Tests" />
     </ItemGroup>
 
     <ItemGroup>
-        <None Include="../../README.md" Pack="true" PackagePath="/" />
+        <None Include="README.md" Pack="true" PackagePath="/" />
     </ItemGroup>
 </Project>

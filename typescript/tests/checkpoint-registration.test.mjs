@@ -6,7 +6,7 @@ import { z } from "zod";
 const runtimeUrl = "tandem:test-runtime";
 registerHooks({
   resolve(specifier, context, nextResolve) {
-    return specifier === "@tandem/runtime"
+    return specifier === "@maxanstey-meridian/tandem-runtime"
       ? { url: runtimeUrl, shortCircuit: true }
       : nextResolve(specifier, context);
   },

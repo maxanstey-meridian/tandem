@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Text.Json;
+using System.Xml.Linq;
 using FluentAssertions;
 
 namespace Tandem.PackageConsumer.Tests;
@@ -29,6 +31,16 @@ public sealed class PackageConsumerTests
             await PackAsync("src/Tandem.Advanced/Tandem.Advanced.csproj", feed, version);
             await PackAsync("src/Tandem.Ledger/Tandem.Ledger.csproj", feed, version);
             await PackAsync("src/Tandem.Packets/Tandem.Packets.csproj", feed, version);
+            await PackAsync("src/Tandem.Terminal/Tandem.Terminal.csproj", feed, version);
+            await PackAsync(
+                "src/Tandem.OpenAICompatible/Tandem.OpenAICompatible.csproj",
+                feed,
+                version
+            );
+            foreach (var packageId in PackageIds)
+            {
+                AssertPackageMetadata(feed, packageId, version);
+            }
             var config = WriteNuGetConfig(temp, feed);
 
             await ProveConsumerAsync(
@@ -63,6 +75,7 @@ public sealed class PackageConsumerTests
             );
             await ProveLedgerConsumerAsync(temp, packages, config, version);
             await ProvePacketsConsumerAsync(temp, packages, config, version);
+            await ProveOptionalPackagesConsumerAsync(temp, packages, config, version);
         }
         finally
         {
@@ -87,7 +100,7 @@ public sealed class PackageConsumerTests
             $"""
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
-              <ItemGroup><PackageReference Include="Tandem.Packets" Version="{version}" /></ItemGroup>
+              <ItemGroup><PackageReference Include="Meridian.Tandem.Packets" Version="{version}" /></ItemGroup>
             </Project>
             """
         );
@@ -131,11 +144,13 @@ public sealed class PackageConsumerTests
             .EnumerateObject()
             .Select(property => property.Name)
             .ToArray();
-        libraries.Should().Contain($"Tandem.Packets/{version}");
+        libraries.Should().Contain($"Meridian.Tandem.Packets/{version}");
         libraries
             .Should()
             .Contain(name => name.StartsWith("YamlDotNet/", StringComparison.OrdinalIgnoreCase));
-        libraries.Should().NotContain(name => name.StartsWith("Tandem/", StringComparison.Ordinal));
+        libraries
+            .Should()
+            .NotContain(name => name.StartsWith("Meridian.Tandem/", StringComparison.Ordinal));
     }
 
     private static async Task ProveLedgerConsumerAsync(
@@ -158,7 +173,7 @@ public sealed class PackageConsumerTests
                 <Nullable>enable</Nullable>
               </PropertyGroup>
               <ItemGroup>
-                <PackageReference Include="Tandem.Ledger" Version="{version}" />
+                <PackageReference Include="Meridian.Tandem.Ledger" Version="{version}" />
               </ItemGroup>
             </Project>
             """
@@ -204,6 +219,62 @@ public sealed class PackageConsumerTests
         );
     }
 
+    private static async Task ProveOptionalPackagesConsumerAsync(
+        string temp,
+        string packages,
+        string config,
+        string version
+    )
+    {
+        var directory = Path.Combine(temp, "OptionalPackages");
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(
+            Path.Combine(directory, "OptionalPackages.csproj"),
+            $"""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+              <ItemGroup>
+                <PackageReference Include="Meridian.Tandem.OpenAICompatible" Version="{version}" />
+                <PackageReference Include="Meridian.Tandem.Terminal" Version="{version}" />
+              </ItemGroup>
+            </Project>
+            """
+        );
+        await File.WriteAllTextAsync(
+            Path.Combine(directory, "Program.cs"),
+            """
+            using Tandem.OpenAICompatible;
+            using Tandem.Terminal;
+
+            _ = typeof(OpenRouterReasoningChatClient);
+            _ = typeof(TerminalPipelineRunner);
+            """
+        );
+        var project = Path.Combine(directory, "OptionalPackages.csproj");
+        await RunAsync(
+            directory,
+            "dotnet",
+            "restore",
+            project,
+            "--configfile",
+            config,
+            "--packages",
+            packages,
+            "--force",
+            "--no-cache"
+        );
+        await RunAsync(
+            directory,
+            "dotnet",
+            "run",
+            "--project",
+            project,
+            "--configuration",
+            "Release",
+            "--no-restore"
+        );
+    }
+
     private static async Task PackAsync(string project, string feed, string version) =>
         await RunAsync(
             _root,
@@ -216,6 +287,30 @@ public sealed class PackageConsumerTests
             feed,
             $"-p:Version={version}"
         );
+
+    private static void AssertPackageMetadata(string feed, string packageId, string version)
+    {
+        var packagePath = Path.Combine(feed, $"{packageId}.{version}.nupkg");
+        File.Exists(packagePath).Should().BeTrue($"{packageId} should be packed");
+        using var package = ZipFile.OpenRead(packagePath);
+        var nuspecEntry = package.Entries.Single(entry => entry.FullName.EndsWith(".nuspec"));
+        using var nuspecStream = nuspecEntry.Open();
+        var metadata = XDocument.Load(nuspecStream).Root!.Elements().Single().Elements();
+        metadata.Single(element => element.Name.LocalName == "id").Value.Should().Be(packageId);
+        metadata.Single(element => element.Name.LocalName == "version").Value.Should().Be(version);
+        metadata
+            .Single(element => element.Name.LocalName == "authors")
+            .Value.Should()
+            .Be("Max Anstey");
+        var repository = metadata.Single(element => element.Name.LocalName == "repository");
+        repository.Attribute("type")?.Value.Should().Be("git");
+        repository
+            .Attribute("url")
+            ?.Value.Should()
+            .Be("https://github.com/maxanstey-meridian/tandem.git");
+        package.Entries.Should().Contain(entry => entry.FullName == "README.md");
+        File.Exists(Path.Combine(feed, $"{packageId}.{version}.snupkg")).Should().BeTrue();
+    }
 
     private static async Task ProveConsumerAsync(
         string temp,
@@ -276,18 +371,20 @@ public sealed class PackageConsumerTests
             .EnumerateObject()
             .Select(p => p.Name)
             .ToArray();
-        libraries.Should().Contain($"Tandem/{version}");
-        libraries.Should().Contain($"Tandem.Generators/{version}");
+        libraries.Should().Contain($"Meridian.Tandem/{version}");
+        libraries.Should().Contain($"Meridian.Tandem.Generators/{version}");
         if (advanced)
         {
-            libraries.Should().Contain($"Tandem.Advanced/{version}");
+            libraries.Should().Contain($"Meridian.Tandem.Advanced/{version}");
             libraries.Should().Contain("Tavily/1.0.1");
         }
         else
         {
             libraries
                 .Should()
-                .NotContain(name => name.StartsWith("Tandem.Advanced/", StringComparison.Ordinal));
+                .NotContain(name =>
+                    name.StartsWith("Meridian.Tandem.Advanced/", StringComparison.Ordinal)
+                );
             libraries
                 .Should()
                 .NotContain(name =>
@@ -336,13 +433,13 @@ public sealed class PackageConsumerTests
                 <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
               </PropertyGroup>
               <ItemGroup>
-                <PackageReference Include="Tandem" Version="{version}" />
+                <PackageReference Include="Meridian.Tandem" Version="{version}" />
                 {(
                 advanced
-                    ? $"<PackageReference Include=\"Tandem.Advanced\" Version=\"{version}\" />"
+                    ? $"<PackageReference Include=\"Meridian.Tandem.Advanced\" Version=\"{version}\" />"
                     : ""
             )}
-                <PackageReference Include="Tandem.Generators" Version="{version}" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
+                <PackageReference Include="Meridian.Tandem.Generators" Version="{version}" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
                 <PackageReference Include="FluentValidation" Version="12.1.1" />
                 <PackageReference Include="Microsoft.Extensions.AI" Version="10.8.3" />
                 <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
@@ -394,6 +491,17 @@ public sealed class PackageConsumerTests
         "System.CommandLine/",
     ];
 
+    private static readonly string[] PackageIds =
+    [
+        "Meridian.Tandem",
+        "Meridian.Tandem.Advanced",
+        "Meridian.Tandem.Generators",
+        "Meridian.Tandem.Ledger",
+        "Meridian.Tandem.OpenAICompatible",
+        "Meridian.Tandem.Packets",
+        "Meridian.Tandem.Terminal",
+    ];
+
     private const string ScriptedClient = """
         using System.Runtime.CompilerServices;
         using Microsoft.Extensions.AI;
@@ -431,7 +539,7 @@ public sealed class PackageConsumerTests
 
     private const string SongwriterProgram = """
         using Tandem;
-        using Tandem.Sample.Songwriter;
+        using Examples.Songwriter;
 
         var participants = SongwriterDefinitions.Create(
             new SongwriterClients(
@@ -457,7 +565,7 @@ public sealed class PackageConsumerTests
     private const string CodeWriterProgram = """
         using Microsoft.Extensions.AI;
         using Tandem;
-        using Tandem.Sample.CodeWriter;
+        using Examples.CodeWriter;
 
         var submitImplementation = AgentCapabilities.Create<CodeWriterState, SubmitImplementation>(
             new SubmitImplementationCapability(),
@@ -553,7 +661,7 @@ public sealed class PackageConsumerTests
         using Microsoft.Extensions.AI;
         using Tandem;
         using Tandem.Advanced;
-        using Tandem.Sample.Debate;
+        using Examples.Debate;
 
         var verdict = AgentCapabilities.Create<DebateState, SubmitVerdict>(
             new SubmitVerdictCapability(),

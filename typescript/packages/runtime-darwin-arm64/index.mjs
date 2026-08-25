@@ -1,6 +1,6 @@
 if (process.platform !== "darwin" || process.arch !== "arm64") {
   throw new Error(
-    `@tandem/runtime-darwin-arm64 requires macOS arm64; received ${process.platform}-${process.arch}.`,
+    `@maxanstey-meridian/tandem-runtime-darwin-arm64 requires macOS arm64; received ${process.platform}-${process.arch}.`,
   );
 }
 

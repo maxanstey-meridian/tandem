@@ -1,0 +1,16 @@
+{
+  "name": "tandem-getting-started",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "example:01": "tsx src/01-single-pipeline.ts",
+    "example:02": "tsx src/02-routing.ts",
+    "example:03": "tsx src/03-stage.ts",
+    "example:04": "tsx src/04-persistence.ts",
+    "typecheck": "tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext --types node --typeRoots ../../../typescript/node_modules/@types src/*.ts"
+  },
+  "dependencies": {
+    "@maxanstey-meridian/tandem": "0.1.0-alpha.1",
+    "zod": "^4.3.6"
+  }
+}

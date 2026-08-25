@@ -1,6 +1,6 @@
 using Tandem.Examples.Hosting;
 
-namespace Tandem.Sample.Songwriter;
+namespace Examples.Songwriter;
 
 public static class Program
 {

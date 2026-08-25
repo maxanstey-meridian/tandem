@@ -1,7 +1,8 @@
 using System.Text.Json;
 using Microsoft.Extensions.AI;
+using Tandem;
 
-namespace Tandem.Sample.CodeWriter;
+namespace Examples.CodeWriter;
 
 public sealed record CodeWriterClients(IChatClient Implementer, IChatClient Reviewer);
 

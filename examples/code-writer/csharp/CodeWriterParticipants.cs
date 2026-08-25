@@ -1,4 +1,6 @@
-namespace Tandem.Sample.CodeWriter;
+using Tandem;
+
+namespace Examples.CodeWriter;
 
 public sealed record CodeWriterParticipants(
     AgentDefinition<CodeWriterState> Implementer,

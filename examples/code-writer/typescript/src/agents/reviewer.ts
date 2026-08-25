@@ -1,4 +1,4 @@
-import { agent, type ChatClient } from "@tandem/sdk";
+import { agent, type ChatClient } from "@maxanstey-meridian/tandem";
 import { recordReview, ReviewDecision, type State } from "../state.js";
 
 export const reviewerInstructions =

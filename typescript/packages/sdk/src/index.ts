@@ -1471,7 +1471,7 @@ export async function inspectAccepted(options: {
   runId: string;
 }): Promise<readonly AcceptedValue[]> {
   try {
-    const { inspectAcceptedAsync } = await import("@tandem/runtime");
+    const { inspectAcceptedAsync } = await import("@maxanstey-meridian/tandem-runtime");
     return parseJson(
       acceptedValuesSchema,
       await inspectAcceptedAsync(options.ledgerPath, options.runId),
@@ -1560,7 +1560,7 @@ export async function run<TState>(
           return "";
         })
       : undefined;
-    const { runRegisteredGraphAsync } = await import("@tandem/runtime");
+    const { runRegisteredGraphAsync } = await import("@maxanstey-meridian/tandem-runtime");
     const resultJson = await runRegisteredGraphAsync(
       JSON.stringify({
         contractVersion: 10,

@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { runCli } from "../packages/sdk/dist/cli.js";
 import { output, pipeline, route, stage } from "../packages/sdk/dist/index.js";
@@ -18,6 +19,14 @@ const work = stage({
     if (mode === "cancel") {
       await new Promise((resolve) => setTimeout(resolve, 100));
       signal.throwIfAborted();
+    }
+    if (mode === "signal") {
+      process.stdout.write("WORK_STARTED\n");
+      try {
+        await delay(60_000, undefined, { signal });
+      } finally {
+        process.stdout.write("CANCELLED_MARKER\n");
+      }
     }
     return { value: state.value + 1 };
   },

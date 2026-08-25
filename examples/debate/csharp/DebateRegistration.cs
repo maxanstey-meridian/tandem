@@ -1,8 +1,9 @@
 using FluentValidation;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Tandem;
 
-namespace Tandem.Sample.Debate;
+namespace Examples.Debate;
 
 public sealed record DebateOptions(
     IChatClient ProposerClient,

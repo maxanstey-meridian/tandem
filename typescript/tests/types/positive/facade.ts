@@ -1,4 +1,3 @@
-import { parsePacketFile, type PacketFile } from "@tandem/packets";
 import {
   agent,
   agentTools,
@@ -17,8 +16,9 @@ import {
   type Stage,
   type RunOptions,
   type RunObservation,
-} from "@tandem/sdk";
-import { closeCli, runCli, type RunCliOptions } from "@tandem/sdk/cli";
+} from "@maxanstey-meridian/tandem";
+import { parsePacketFile, type PacketFile } from "@maxanstey-meridian/tandem-packets";
+import { closeCli, runCli, type RunCliOptions } from "@maxanstey-meridian/tandem/cli";
 import { z } from "zod";
 const PacketSchema = z.object({ count: z.string().transform(Number) });
 const packet: PacketFile<{ count: number }> = parsePacketFile("---\ncount: '2'\n---", PacketSchema);

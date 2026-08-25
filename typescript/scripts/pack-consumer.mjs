@@ -28,7 +28,7 @@ try {
     JSON.stringify({
       type: "module",
       dependencies: {
-        "@tandem/packets": `file:${join(root, packetsTar)}`,
+        "@maxanstey-meridian/tandem-packets": `file:${join(root, packetsTar)}`,
         zod: "^4.3.6",
       },
     }),
@@ -37,18 +37,18 @@ try {
     cwd: packetsFixture,
     stdio: "inherit",
   });
-  execFileSync("npm", ["ls", "@tandem/packets"], {
+  execFileSync("npm", ["ls", "@maxanstey-meridian/tandem-packets"], {
     cwd: packetsFixture,
     stdio: "inherit",
   });
   writeFileSync(
     join(packetsFixture, "consumer.mjs"),
     `
-import { parsePacketFile } from "@tandem/packets";
+import { parsePacketFile } from "@maxanstey-meridian/tandem-packets";
 import { existsSync } from "node:fs";
 import { z } from "zod";
 const input = parsePacketFile("---\\ntitle: packed\\n---\\n\\nContext", z.object({ title: z.string() }).strict());
-console.log(JSON.stringify({ title: input.value.title, context: input.context, nativeRuntimeInstalled: existsSync(new URL("node_modules/@tandem/runtime", import.meta.url)) }));
+console.log(JSON.stringify({ title: input.value.title, context: input.context, nativeRuntimeInstalled: existsSync(new URL("node_modules/@maxanstey-meridian/tandem-runtime", import.meta.url)) }));
 `,
   );
   const packetsOutput = execFileSync("node", ["consumer.mjs"], {
@@ -109,26 +109,35 @@ console.log(JSON.stringify({ title: input.value.title, context: input.context, n
     JSON.stringify({
       type: "module",
       dependencies: {
-        "@tandem/sdk": `file:${join(root, sdkTar)}`,
-        "@tandem/runtime": `file:${join(root, loaderTar)}`,
-        "@tandem/runtime-darwin-arm64": `file:${join(root, runtimeTar)}`,
+        "@maxanstey-meridian/tandem": `file:${join(root, sdkTar)}`,
+        "@maxanstey-meridian/tandem-runtime": `file:${join(root, loaderTar)}`,
+        "@maxanstey-meridian/tandem-runtime-darwin-arm64": `file:${join(root, runtimeTar)}`,
         zod: "^4.3.6",
       },
     }),
   );
   execFileSync("npm", ["install", "--ignore-scripts"], { cwd: fixture, stdio: "inherit" });
-  execFileSync("npm", ["ls", "@tandem/sdk", "@tandem/runtime", "@tandem/runtime-darwin-arm64"], {
-    cwd: fixture,
-    stdio: "inherit",
-  });
+  execFileSync(
+    "npm",
+    [
+      "ls",
+      "@maxanstey-meridian/tandem",
+      "@maxanstey-meridian/tandem-runtime",
+      "@maxanstey-meridian/tandem-runtime-darwin-arm64",
+    ],
+    {
+      cwd: fixture,
+      stdio: "inherit",
+    },
+  );
   writeFileSync(
     join(fixture, "consumer.mjs"),
     `
-import { inspectAcceptedAsync, runRegisteredGraphAsync } from "@tandem/runtime";
+import { inspectAcceptedAsync, runRegisteredGraphAsync } from "@maxanstey-meridian/tandem-runtime";
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { interaction, interactions, output, pipeline, route, run, stage } from "@tandem/sdk";
-import { closeCli } from "@tandem/sdk/cli";
+import { interaction, interactions, output, pipeline, route, run, stage } from "@maxanstey-meridian/tandem";
+import { closeCli } from "@maxanstey-meridian/tandem/cli";
 import { z } from "zod";
 const ledgerPath = new URL("packed.sqlite3", import.meta.url).pathname;
 if (typeof inspectAcceptedAsync !== "function" || typeof runRegisteredGraphAsync !== "function") throw new Error("runtime loader exports are unavailable");
@@ -161,7 +170,7 @@ await closeCli(0);
     readFileSync(
       join(
         fixture,
-        "node_modules/@tandem/runtime-darwin-arm64/runtime/Tandem.NodeApiSpike.Bridge.mjs",
+        "node_modules/@maxanstey-meridian/tandem-runtime-darwin-arm64/runtime/Tandem.NodeApiSpike.Bridge.mjs",
       ),
       "utf8",
     ).includes("__dirname"),

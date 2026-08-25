@@ -17,8 +17,9 @@
     "format:check": "oxfmt --check . && pnpm --filter '../examples/**' exec oxfmt -c \"$PWD/.oxfmtrc.json\" --check src package.json",
     "check": "pnpm build && pnpm typecheck && pnpm lint && pnpm format:check",
     "test:bridge": "dotnet test bridge-tests/Tandem.NodeApiSpike.Bridge.Tests.csproj",
-    "test": "pnpm check && pnpm test:bridge && node --import tsx --test --test-concurrency=1 tests/*.test.mjs && pnpm pack-consumer",
+    "test": "pnpm check && pnpm test:bridge && node --import tsx --test --test-concurrency=1 tests/*.test.mjs && pnpm pack-consumer && pnpm registry-consumer",
     "pack-consumer": "node scripts/pack-consumer.mjs",
+    "registry-consumer": "node scripts/registry-consumer.mjs",
     "run:code-writer": "pnpm build && pnpm --filter tandem-code-writer-example run run",
     "run:debate": "pnpm build && pnpm --filter tandem-debate-example run run",
     "run:songwriter": "pnpm build && pnpm --filter tandem-songwriter-example run run"
@@ -27,13 +28,14 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@tandem/packets": "workspace:*",
-    "@tandem/sdk": "workspace:*",
+    "@maxanstey-meridian/tandem": "workspace:*",
+    "@maxanstey-meridian/tandem-packets": "workspace:*",
     "@types/node": "^24.10.1",
     "oxfmt": "^0.62.0",
     "oxlint": "^1.77.0",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "verdaccio": "6.10.0"
   },
   "packageManager": "pnpm@11.20.0"
 }

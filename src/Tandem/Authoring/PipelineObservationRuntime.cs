@@ -4,8 +4,18 @@ using Tandem.Domain;
 
 namespace Tandem;
 
+/// <summary>
+/// Receives ordered observations from one pipeline run.
+/// </summary>
+/// <remarks>
+/// Tandem awaits each call before publishing the next observation, so observer work applies
+/// backpressure to the run. Implementations should complete promptly and honor cancellation.
+/// An observer exception during otherwise successful execution faults the run; an execution
+/// failure remains authoritative if publishing its terminal observation also fails.
+/// </remarks>
 public interface IPipelineObserver
 {
+    /// <summary>Processes one observation before pipeline execution continues.</summary>
     public ValueTask ObserveAsync(
         PipelineObservation observation,
         CancellationToken cancellationToken

@@ -8,7 +8,7 @@
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <NoWarn>$(NoWarn);CS1591</NoWarn>
-        <PackageId>Tandem</PackageId>
+        <PackageId>Meridian.Tandem</PackageId>
         <Title>Tandem</Title>
         <Description>Typed in-process agentic pipelines built on Microsoft Agent Framework.</Description>
         <PackageTags>agents;ai;workflow;pipeline</PackageTags>
@@ -19,6 +19,11 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <PackageReference
+            Include="Microsoft.SourceLink.GitHub"
+            Version="8.0.0"
+            PrivateAssets="all"
+        />
         <PackageReference Include="FluentValidation" Version="12.1.1" />
         <PackageReference Include="JsonSchema.Net.Generation" Version="7.3.11" />
         <PackageReference Include="Microsoft.Agents.AI" Version="1.16.0" />
@@ -36,6 +41,6 @@
         <InternalsVisibleTo Include="Tandem.Advanced" />
         <InternalsVisibleTo Include="Tandem.Ledger" />
         <InternalsVisibleTo Include="Tandem.NodeApiSpike.Bridge" />
-        <None Include="../../README.md" Pack="true" PackagePath="/" />
+        <None Include="README.md" Pack="true" PackagePath="/" />
     </ItemGroup>
 </Project>

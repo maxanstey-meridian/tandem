@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <ItemGroup>
+        <PackageReference Include="Meridian.Tandem.Ledger" Version="0.1.0-alpha.1" />
+    </ItemGroup>
+</Project>

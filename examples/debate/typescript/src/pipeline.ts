@@ -1,4 +1,12 @@
-import { agent, capability, output, pipeline, route, stage, type ChatClient } from "@tandem/sdk";
+import {
+  agent,
+  capability,
+  output,
+  pipeline,
+  route,
+  stage,
+  type ChatClient,
+} from "@maxanstey-meridian/tandem";
 import {
   CritiqueDecision,
   ProposalDecision,

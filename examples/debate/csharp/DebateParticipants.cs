@@ -1,4 +1,6 @@
-namespace Tandem.Sample.Debate;
+using Tandem;
+
+namespace Examples.Debate;
 
 public sealed record DebateParticipants(
     OpenDebateStage Open,

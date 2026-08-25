@@ -1,4 +1,6 @@
-namespace Tandem.Sample.Songwriter;
+using Tandem;
+
+namespace Examples.Songwriter;
 
 public sealed class SongwriterComposition(SongwriterParticipants song)
 {

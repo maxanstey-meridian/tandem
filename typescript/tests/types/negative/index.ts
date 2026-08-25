@@ -1,4 +1,3 @@
-import { parsePacketFile } from "@tandem/packets";
 import {
   agent,
   agentTools,
@@ -11,7 +10,8 @@ import {
   stage,
   output,
   type RunOptions,
-} from "@tandem/sdk";
+} from "@maxanstey-meridian/tandem";
+import { parsePacketFile } from "@maxanstey-meridian/tandem-packets";
 import { z } from "zod";
 const transformedPacket = parsePacketFile(
   "---\ncount: '2'\n---",
@@ -241,7 +241,7 @@ agent<A>({
 // @ts-expect-error participant interfaces are types, not public constructors
 new Stage<A>();
 // @ts-expect-error CLI process exit is not exported from the root facade
-import("@tandem/sdk").then((sdk) => sdk.closeCli(0));
+import("@maxanstey-meridian/tandem").then((sdk) => sdk.closeCli(0));
 // @ts-expect-error terminal is the only public presentation mode
 const badPresentation: RunOptions = { presentation: "json" };
 void badPresentation;

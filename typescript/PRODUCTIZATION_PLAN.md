@@ -148,7 +148,7 @@ Exit: malformed registrations fail deterministically before MAF execution.
 Exit: adding a participant kind requires one adapter, registration contract data,
 and tests rather than changes throughout the bridge.
 
-### 4. Build `@tandem/sdk`
+### 4. Build `@maxanstey-meridian/tandem`
 
 - Turn the inferred probe facade into a package with stable internal ownership.
 - Hide graph JSON, callback IDs, DLL paths, Node API types, CLR generics,
@@ -159,7 +159,7 @@ and tests rather than changes throughout the bridge.
   compile-time pipeline ownership.
 - Settle names only after the dogfood sample is complete.
 
-Exit: application code imports only `@tandem/sdk`, Zod, and its provider package.
+Exit: application code imports only `@maxanstey-meridian/tandem`, Zod, and its provider package.
 
 ### 5. Wire The Real Tandem Client Adapters
 

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.AI;
+using Tandem;
 
-namespace Tandem.Sample.Songwriter;
+namespace Examples.Songwriter;
 
 public sealed record SongwriterClients(IChatClient Songwriter, IChatClient Proofreader);
 

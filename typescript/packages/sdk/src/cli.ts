@@ -10,21 +10,38 @@ export async function runCli<TState>(
   options: RunCliOptions<TState>,
 ): Promise<never> {
   let exitCode = 2;
+  let signalExitCode: number | null = null;
   let pipelineCompleted = false;
-  process.on("SIGINT", () => closeCli(130));
-  process.on("SIGTERM", () => closeCli(143));
+  const shutdown = new AbortController();
+  const requestShutdown = (code: number, signal: NodeJS.Signals) => {
+    signalExitCode ??= code;
+    shutdown.abort(new Error(`Received ${signal}.`));
+  };
+  const onSigInt = () => requestShutdown(130, "SIGINT");
+  const onSigTerm = () => requestShutdown(143, "SIGTERM");
+  process.once("SIGINT", onSigInt);
+  process.once("SIGTERM", onSigTerm);
   try {
-    const { formatResult, ...runOptions } = options;
-    const result = await run(graph, initial, { ...runOptions, presentation: "terminal" });
+    const { formatResult, signal, ...runOptions } = options;
+    const runSignal = signal ? AbortSignal.any([signal, shutdown.signal]) : shutdown.signal;
+    const result = await run(graph, initial, {
+      ...runOptions,
+      signal: runSignal,
+      presentation: "terminal",
+    });
     pipelineCompleted = true;
     const formatted = await formatResult(result);
     await write(process.stdout, `${formatted}\n`);
     exitCode = result.succeeded ? 0 : 1;
   } catch (error) {
-    const prefix = pipelineCompleted ? "Pipeline completed, but result output failed: " : "";
-    await write(process.stderr, `${prefix}${formatError(error)}\n`);
+    if (signalExitCode === null) {
+      const prefix = pipelineCompleted ? "Pipeline completed, but result output failed: " : "";
+      await write(process.stderr, `${prefix}${formatError(error)}\n`);
+    }
   } finally {
-    closeCli(exitCode);
+    process.removeListener("SIGINT", onSigInt);
+    process.removeListener("SIGTERM", onSigTerm);
+    closeCli(signalExitCode ?? exitCode);
   }
 }
 

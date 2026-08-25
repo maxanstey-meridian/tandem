@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Tandem.Sample.Songwriter;
+namespace Examples.Songwriter;
 
 public static class SongwriterRegistration
 {

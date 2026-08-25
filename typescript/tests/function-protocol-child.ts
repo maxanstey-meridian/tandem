@@ -1,4 +1,4 @@
-import { inspectAccepted, run, type ChatClient } from "@tandem/sdk";
+import { inspectAccepted, run, type ChatClient } from "@maxanstey-meridian/tandem";
 import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

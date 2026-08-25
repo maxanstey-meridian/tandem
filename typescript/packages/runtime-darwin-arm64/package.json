@@ -1,6 +1,6 @@
 {
-  "name": "@tandem/runtime-darwin-arm64",
-  "version": "0.0.0-experiment",
+  "name": "@maxanstey-meridian/tandem-runtime-darwin-arm64",
+  "version": "0.1.0-alpha.1",
   "description": "macOS arm64 runtime host for the Tandem TypeScript SDK",
   "homepage": "https://github.com/maxanstey-meridian/tandem#readme",
   "license": "MIT",
@@ -28,7 +28,10 @@
       "import": "./index.mjs"
     }
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
-    "node-api-dotnet": "0.9.21"
+    "node-api-dotnet": "0.9.26"
   }
 }

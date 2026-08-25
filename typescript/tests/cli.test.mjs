@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { test } from "node:test";
 import { promisify } from "node:util";
 
@@ -15,6 +15,43 @@ async function child(mode) {
   } catch (error) {
     return { stdout: error.stdout, stderr: error.stderr, code: error.code };
   }
+}
+
+async function signalChild() {
+  const child = spawn(process.execPath, [
+    new URL("cli-child.mjs", import.meta.url).pathname,
+    "signal",
+  ]);
+  let stdout = "";
+  let stderr = "";
+  let signalSent = false;
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+    if (!signalSent && stdout.includes("WORK_STARTED")) {
+      signalSent = true;
+      child.kill("SIGTERM");
+    }
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const code = await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("runCli did not exit after SIGTERM."));
+    }, 10_000);
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("exit", (exitCode) => {
+      clearTimeout(timeout);
+      resolve(exitCode);
+    });
+  });
+  return { stdout, stderr, code };
 }
 
 test("runCli requests terminal presentation, then formats success exactly once", async () => {
@@ -59,4 +96,12 @@ test("runCli distinguishes post-success result formatting failure", async () => 
   assert.match(result.stderr, /formatter failed\n\s+at /);
   assert.match(result.stderr, /Caused by: formatter cause\n\s+at /);
   assert.doesNotMatch(result.stdout, /FORMAT_MARKER/);
+});
+
+test("runCli aborts active work and awaits cleanup before exiting on SIGTERM", async () => {
+  const result = await signalChild();
+  assert.equal(result.code, 143);
+  assert.equal(result.stderr, "");
+  assert.match(result.stdout, /WORK_STARTED/);
+  assert.match(result.stdout, /CANCELLED_MARKER/);
 });

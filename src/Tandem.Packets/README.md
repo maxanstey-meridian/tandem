@@ -1,6 +1,11 @@
-# Tandem.Packets
+# Meridian.Tandem.Packets
 
-`Tandem.Packets` reads UTF-8 Markdown files with strict YAML frontmatter into application-owned C# types.
+`Meridian.Tandem.Packets` reads UTF-8 Markdown files with strict YAML frontmatter into
+application-owned C# types.
+
+```sh
+dotnet add package Meridian.Tandem.Packets --version 0.1.0-alpha.1
+```
 
 ```csharp
 using Tandem.Packets;

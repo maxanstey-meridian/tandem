@@ -18,6 +18,7 @@
         <Project Path="tests/Tandem.Process.TestChild/Tandem.Process.TestChild.csproj" />
         <Project Path="tests/Tandem.ExternalConsumer.Tests/Tandem.ExternalConsumer.Tests.csproj" />
         <Project Path="tests/Tandem.Packets.Tests/Tandem.Packets.Tests.csproj" />
+        <Project Path="tests/Tandem.PackageConsumer.Tests/Tandem.PackageConsumer.Tests.csproj" />
         <Project Path="tests/Tandem.Tests/Tandem.Tests.csproj" />
         <Project Path="tests/Tandem.Terminal.Tests/Tandem.Terminal.Tests.csproj" />
     </Folder>

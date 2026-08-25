@@ -37,6 +37,5 @@ tasks:
     cmds:
       - task: format:check
       - task: test
-      - task: package:test
       - task: typescript:test
       - task: build

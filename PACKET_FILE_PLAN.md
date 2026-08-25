@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented in `Tandem.Packets` and `@tandem/packets`, with one manifest-backed portable
+Implemented in `Tandem.Packets` and `@maxanstey-meridian/tandem-packets`, with one manifest-backed portable
 fixture suite consumed by both languages. Cadence migration remains deliberately out of
 scope for this implementation pass.
 
@@ -70,7 +70,7 @@ Add optional packages:
 
 ```text
 Tandem.Packets
-@tandem/packets
+@maxanstey-meridian/tandem-packets
 ```
 
 They are pure input packages, not runtime packages.
@@ -83,10 +83,10 @@ They are pure input packages, not runtime packages.
   C# API;
 - exposes no YamlDotNet types.
 
-`@tandem/packets`:
+`@maxanstey-meridian/tandem-packets`:
 
 - is ESM and requires Node 22+, matching Tandem's TypeScript packages;
-- does not depend on `@tandem/sdk`, `@tandem/runtime`, or the native bridge;
+- does not depend on `@maxanstey-meridian/tandem`, `@maxanstey-meridian/tandem-runtime`, or the native bridge;
 - uses `yaml` as its maintained YAML implementation;
 - accepts caller-owned Zod schemas and declares Zod as a peer dependency;
 - exposes no parser-library AST types.
@@ -360,7 +360,7 @@ applications.
 ### Ordinary use
 
 ```typescript
-import { readPacketFile } from "@tandem/packets";
+import { readPacketFile } from "@maxanstey-meridian/tandem-packets";
 
 const input = await readPacketFile(path, Packet);
 
@@ -541,7 +541,7 @@ agree on its valid fixtures and expected invalid paths.
 Status: complete, including public API, package-consumer, analyzer, build, and full
 repository gates.
 
-### Phase 3: implement `@tandem/packets`
+### Phase 3: implement `@maxanstey-meridian/tandem-packets`
 
 1. Add `typescript/packages/packets` as an ESM package.
 2. Implement pure `parsePacketFile` and asynchronous `readPacketFile`.
@@ -549,7 +549,7 @@ repository gates.
 4. Add positive and negative type tests proving `z.output` inference.
 5. Add cancellation, file I/O, parser-policy, and resource-bound tests.
 6. Extend TypeScript build, lint, format, test, and clean scripts for the package.
-7. Extend the packed-consumer test to install `@tandem/packets` without any Tandem native
+7. Extend the packed-consumer test to install `@maxanstey-meridian/tandem-packets` without any Tandem native
    runtime package and execute a real parse/read.
 
 Status: implemented, including shared fixtures and packed-consumer coverage.

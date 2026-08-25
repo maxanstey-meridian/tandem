@@ -8,7 +8,7 @@
         <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <GenerateDocumentationFile>false</GenerateDocumentationFile>
-        <PackageId>Tandem.Generators</PackageId>
+        <PackageId>Meridian.Tandem.Generators</PackageId>
         <Title>Tandem Generators</Title>
         <Description>Source generator for typed Tandem pipeline stages.</Description>
         <PackageTags>agents;ai;workflow;pipeline;analyzer</PackageTags>
@@ -24,6 +24,11 @@
 
     <ItemGroup>
         <PackageReference
+            Include="Microsoft.SourceLink.GitHub"
+            Version="8.0.0"
+            PrivateAssets="all"
+        />
+        <PackageReference
             Include="Microsoft.CodeAnalysis.CSharp"
             Version="5.3.0"
             PrivateAssets="all"
@@ -32,6 +37,11 @@
 
     <ItemGroup>
         <None Include="$(TargetPath)" Pack="true" PackagePath="analyzers/dotnet/cs" />
-        <None Include="../../README.md" Pack="true" PackagePath="/" />
+        <None
+            Include="$(TargetDir)$(AssemblyName).pdb"
+            Pack="true"
+            PackagePath="analyzers/dotnet/cs"
+        />
+        <None Include="README.md" Pack="true" PackagePath="/" />
     </ItemGroup>
 </Project>

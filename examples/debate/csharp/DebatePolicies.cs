@@ -1,7 +1,8 @@
 using FluentValidation;
+using Tandem;
 using Tandem.Advanced;
 
-namespace Tandem.Sample.Debate;
+namespace Examples.Debate;
 
 public static class DebatePolicies
 {

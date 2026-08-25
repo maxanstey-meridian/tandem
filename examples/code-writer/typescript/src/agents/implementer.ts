@@ -1,4 +1,4 @@
-import { agent, type ChatClient } from "@tandem/sdk";
+import { agent, type ChatClient } from "@maxanstey-meridian/tandem";
 import type { submitImplementation } from "../capabilities/submitImplementation.js";
 import type { State } from "../state.js";
 

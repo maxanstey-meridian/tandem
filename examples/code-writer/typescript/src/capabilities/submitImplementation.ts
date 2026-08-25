@@ -1,4 +1,4 @@
-import { capability } from "@tandem/sdk";
+import { capability } from "@maxanstey-meridian/tandem";
 import { z } from "zod";
 import { recordImplementation, type ImplementationCandidate, type State } from "../state.js";
 

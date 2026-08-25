@@ -1,4 +1,4 @@
-import { output, pipeline, route, type ChatClient } from "@tandem/sdk";
+import { output, pipeline, route, type ChatClient } from "@maxanstey-meridian/tandem";
 import { implementerAgent } from "./agents/implementer.js";
 import { reviewerAgent } from "./agents/reviewer.js";
 import { submitImplementation } from "./capabilities/submitImplementation.js";

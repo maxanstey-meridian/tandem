@@ -1,6 +1,7 @@
+using Tandem;
 using Tandem.Examples.Hosting;
 
-namespace Tandem.Sample.CodeWriter;
+namespace Examples.CodeWriter;
 
 public static class Program
 {

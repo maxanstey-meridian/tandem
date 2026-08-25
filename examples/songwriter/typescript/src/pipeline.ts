@@ -1,4 +1,4 @@
-import { agent, output, pipeline, route, stage, type ChatClient } from "@tandem/sdk";
+import { agent, output, pipeline, route, stage, type ChatClient } from "@maxanstey-meridian/tandem";
 import { ProofreaderDecision, recordProofread, recordSong, SongDecision, State } from "./state.js";
 
 const message = (state: State) =>

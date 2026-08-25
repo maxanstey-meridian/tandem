@@ -1,4 +1,6 @@
-namespace Tandem.Sample.CodeWriter;
+using Tandem;
+
+namespace Examples.CodeWriter;
 
 public sealed class CodeWriterComposition(CodeWriterParticipants codeWriter)
 {

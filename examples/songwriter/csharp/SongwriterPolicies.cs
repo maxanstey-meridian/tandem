@@ -1,6 +1,7 @@
 using FluentValidation;
+using Tandem;
 
-namespace Tandem.Sample.Songwriter;
+namespace Examples.Songwriter;
 
 public static class SongwriterPolicies
 {

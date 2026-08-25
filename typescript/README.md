@@ -1,6 +1,6 @@
 # Tandem for TypeScript
 
-`@tandem/sdk` lets a Node application author and run Tandem pipelines in TypeScript.
+`@maxanstey-meridian/tandem` lets a Node application author and run Tandem pipelines in TypeScript.
 State is described with Zod; agents, ordinary functions, interactions, and routes use
 normal TypeScript values.
 
@@ -18,24 +18,24 @@ This is currently an experiment for macOS arm64.
 - .NET 10 runtime
 - pnpm for this repository
 
-Applications import `@tandem/sdk`; they do not build or load .NET assemblies
+Applications import `@maxanstey-meridian/tandem`; they do not build or load .NET assemblies
 themselves.
 
 ## Packages
 
-- `@tandem/sdk` is the public TypeScript API.
-- `@tandem/runtime` selects the package for the current platform.
-- `@tandem/runtime-darwin-arm64` contains the C# bridge and runtime files for Apple
+- `@maxanstey-meridian/tandem` is the public TypeScript API.
+- `@maxanstey-meridian/tandem-runtime` selects the package for the current platform.
+- `@maxanstey-meridian/tandem-runtime-darwin-arm64` contains the C# bridge and runtime files for Apple
   silicon.
 
-Only `@tandem/sdk` belongs in application code.
+Only `@maxanstey-meridian/tandem` belongs in application code.
 
 ## Author A Pipeline
 
 Participants read and return one shared state shape. Routes decide what runs next.
 
 ```ts
-import { output, pipeline, route, run, stage } from "@tandem/sdk";
+import { output, pipeline, route, run, stage } from "@maxanstey-meridian/tandem";
 import { z } from "zod";
 
 const State = z.object({

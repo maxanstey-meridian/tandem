@@ -1,5 +1,5 @@
 const packages = {
-  "darwin-arm64": "@tandem/runtime-darwin-arm64",
+  "darwin-arm64": "@maxanstey-meridian/tandem-runtime-darwin-arm64",
 };
 
 const platform = `${process.platform}-${process.arch}`;

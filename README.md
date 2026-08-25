@@ -1069,7 +1069,7 @@ Your application owns the process and starts a pipeline with its initial state.
 ### TypeScript
 
 ```ts
-import { run } from "@tandem/sdk";
+import { run } from "@maxanstey-meridian/tandem";
 
 const result = await run(
     // Run this configured lifecycle...
@@ -1126,7 +1126,7 @@ Tandem has one execution model with two authoring surfaces.
 | **Runtime**           | Tandem + Microsoft Agent Framework in-process | The same Tandem/.NET engine           |
 
 
-TypeScript applications import `@tandem/sdk`; they do not build or manually load .NET assemblies.
+TypeScript applications import `@maxanstey-meridian/tandem`; they do not build or manually load .NET assemblies.
 
 See [`typescript/README.md`](typescript/README.md) for TypeScript-specific runtime and packaging details.
 
@@ -1142,7 +1142,7 @@ var state = WorkState.Create(input.Value, input.Context, input.Source);
 ```
 
 ```ts
-import { readPacketFile } from "@tandem/packets";
+import { readPacketFile } from "@maxanstey-meridian/tandem-packets";
 
 const input = await readPacketFile(path, WorkPacket.strict());
 const state = createWorkState(input.value, input.context, input.source);
@@ -1184,6 +1184,11 @@ rather than requiring ordinary pipelines to understand runtime envelopes, execut
 framework node identities.
 
 ## Examples
+
+Start with the package-backed [C# quickstart](docs/quickstarts/csharp.md) or
+[TypeScript quickstart](docs/quickstarts/typescript.md), then follow the
+[getting-started progression](examples/getting-started) from one participant through routing,
+deterministic stages, and persistence.
 
 The repository contains matching C# and TypeScript examples for:
 

@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 
-namespace Tandem.Sample.CodeWriter;
+namespace Examples.CodeWriter;
 
 public sealed class ImplementationAssessment
 {

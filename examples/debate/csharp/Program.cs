@@ -1,7 +1,8 @@
 using System.Text.Json;
+using Tandem;
 using Tandem.Examples.Hosting;
 
-namespace Tandem.Sample.Debate;
+namespace Examples.Debate;
 
 public static class Program
 {

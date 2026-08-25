@@ -1,4 +1,4 @@
-import { stage } from "@tandem/sdk";
+import { stage } from "@maxanstey-meridian/tandem";
 import { assessImplementation } from "../infrastructure/assess-implementation.js";
 import { recordVerification, type State } from "../state.js";
 

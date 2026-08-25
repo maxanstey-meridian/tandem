@@ -1,11 +1,11 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Examples.Songwriter;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Tandem.Domain;
-using Tandem.Sample.Songwriter;
 
 namespace Tandem.Tests.Composition;
 

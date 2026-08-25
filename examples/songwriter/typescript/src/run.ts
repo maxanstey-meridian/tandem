@@ -1,5 +1,5 @@
-import { type ChatClient } from "@tandem/sdk";
-import { closeCli, runCli } from "@tandem/sdk/cli";
+import { type ChatClient } from "@maxanstey-meridian/tandem";
+import { closeCli, runCli } from "@maxanstey-meridian/tandem/cli";
 import { createPipeline } from "./pipeline.js";
 import type { State } from "./state.js";
 

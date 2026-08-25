@@ -1,4 +1,4 @@
-namespace Tandem.Sample.Debate;
+namespace Examples.Debate;
 
 public sealed record DebateState(
     string Question,

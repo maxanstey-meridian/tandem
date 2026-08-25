@@ -521,7 +521,7 @@ or timestamp pagination.
 - no resume or workflow reconstruction;
 - no event-sourced application state;
 - no automatic payload registry; and
-- no SQLite dependency in `@tandem/sdk`.
+- no SQLite dependency in `@maxanstey-meridian/tandem`.
 
 ## Work Packages
 

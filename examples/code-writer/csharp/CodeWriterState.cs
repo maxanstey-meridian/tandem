@@ -1,4 +1,4 @@
-namespace Tandem.Sample.CodeWriter;
+namespace Examples.CodeWriter;
 
 public sealed record CodeWriterState(
     IReadOnlyList<string> Requirements,

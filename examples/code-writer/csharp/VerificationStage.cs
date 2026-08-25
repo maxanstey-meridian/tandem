@@ -1,4 +1,6 @@
-namespace Tandem.Sample.CodeWriter;
+using Tandem;
+
+namespace Examples.CodeWriter;
 
 [PipelineStage("verification")]
 public sealed partial class VerificationStage

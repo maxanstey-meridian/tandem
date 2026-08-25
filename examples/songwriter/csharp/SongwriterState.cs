@@ -1,4 +1,4 @@
-namespace Tandem.Sample.Songwriter;
+namespace Examples.Songwriter;
 
 public sealed record SongwriterState(
     string Brief,

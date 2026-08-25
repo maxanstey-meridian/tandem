@@ -1,6 +1,6 @@
 {
-  "name": "@tandem/sdk",
-  "version": "0.0.0-experiment",
+  "name": "@maxanstey-meridian/tandem",
+  "version": "0.1.0-alpha.1",
   "description": "TypeScript authoring API for Tandem agentic pipelines",
   "homepage": "https://github.com/maxanstey-meridian/tandem#readme",
   "license": "MIT",
@@ -23,8 +23,11 @@
       "import": "./dist/cli.js"
     }
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
-    "@tandem/runtime": "0.0.0-experiment"
+    "@maxanstey-meridian/tandem-runtime": "0.1.0-alpha.1"
   },
   "devDependencies": {
     "zod": "^4.3.6"

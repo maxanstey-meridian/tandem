@@ -1,6 +1,7 @@
 using FluentValidation;
+using Tandem;
 
-namespace Tandem.Sample.CodeWriter;
+namespace Examples.CodeWriter;
 
 public sealed class SubmitImplementationValidator : AbstractValidator<SubmitImplementation>
 {

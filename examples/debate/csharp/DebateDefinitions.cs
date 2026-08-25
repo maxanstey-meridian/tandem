@@ -1,8 +1,9 @@
 using System.Text.Json;
 using Microsoft.Extensions.AI;
+using Tandem;
 using Tandem.Advanced;
 
-namespace Tandem.Sample.Debate;
+namespace Examples.Debate;
 
 public static class DebateDefinitions
 {

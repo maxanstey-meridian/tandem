@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
+using Tandem;
 
-namespace Tandem.Sample.CodeWriter;
+namespace Examples.CodeWriter;
 
 public static class CodeWriterRegistration
 {
