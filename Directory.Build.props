@@ -12,4 +12,10 @@
         <VersionSuffix>alpha.1</VersionSuffix>
         <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
     </PropertyGroup>
+    <ItemGroup>
+        <SourceLinkGitHubHost
+            Include="github-meridian"
+            ContentUrl="https://raw.githubusercontent.com"
+        />
+    </ItemGroup>
 </Project>
