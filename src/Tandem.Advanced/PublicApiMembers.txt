@@ -28,6 +28,7 @@ M System.Int32 GetHashCode()
 M System.String ToString()
 M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String InvocationId, out System.String CapabilityId, out System.String AcceptedCallId, out TState State, out TRequest Request)
 M Tandem.Advanced.AgentCapabilityAcceptanceContext<TState,TRequest> <Clone>$()
+P System.Collections.Generic.IReadOnlyList<Tandem.Advanced.ToolInvocationObservation> ToolInvocations { get; set; }
 P System.Guid RunId { get; set; }
 P System.String AcceptedCallId { get; set; }
 P System.String CapabilityId { get; set; }
@@ -55,9 +56,25 @@ M System.Int32 GetHashCode()
 M System.String ToString()
 M Tandem.Advanced.AgentCommand <Clone>$()
 M static Tandem.Advanced.AgentCommand Define(System.String name, System.String description, System.String command)
+M static Tandem.Advanced.AgentCommand Define(System.String name, System.String description, System.String command, System.Collections.Generic.IEnumerable<Tandem.Advanced.AgentCommandArgument> arguments)
+P System.Collections.Generic.IReadOnlyList<Tandem.Advanced.AgentCommandArgument> Arguments { get; }
 P System.String Command { get; }
 P System.String Description { get; }
 P System.String Name { get; }
+T Tandem.Advanced.AgentCommandArgument
+C (System.String Name, System.String Description, System.String Flag, System.String? Pattern, System.Collections.Generic.IReadOnlyList<System.String>? AllowedValues, System.Nullable<System.Int32>? MaxLength = default)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.AgentCommandArgument? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Name, out System.String Description, out System.String Flag, out System.String? Pattern, out System.Collections.Generic.IReadOnlyList<System.String>? AllowedValues, out System.Nullable<System.Int32>? MaxLength)
+M Tandem.Advanced.AgentCommandArgument <Clone>$()
+P System.Collections.Generic.IReadOnlyList<System.String>? AllowedValues { get; set; }
+P System.Nullable<System.Int32>? MaxLength { get; set; }
+P System.String Description { get; set; }
+P System.String Flag { get; set; }
+P System.String Name { get; set; }
+P System.String? Pattern { get; set; }
 T Tandem.Advanced.AgentConversationDecision
 C (Tandem.Advanced.AgentConversationRetention Retention)
 M System.Boolean Equals(System.Object? obj)
@@ -187,6 +204,7 @@ M System.Int32 GetHashCode()
 M System.String ToString()
 M System.Void Deconstruct(out System.Int32 ContextWindowTokens, out System.Int32 MaxOutputTokens, out System.Int32 CheckpointAtPercent, out Tandem.AgentCapability<TState> Capability, out System.String Instructions, out System.Func<Tandem.Advanced.AgentCheckpointContext<TState>,System.String> UserMessage, out Tandem.Advanced.CheckpointSessionBehavior SessionBehavior)
 M Tandem.Advanced.CheckpointPolicy<TState> <Clone>$()
+P System.Boolean DisableCompaction { get; set; }
 P System.Func<Tandem.Advanced.AgentCheckpointContext<TState>,System.String> UserMessage { get; set; }
 P System.Int32 CheckpointAtPercent { get; set; }
 P System.Int32 ContextWindowTokens { get; set; }

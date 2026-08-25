@@ -106,7 +106,21 @@ type WorkspaceState = { workspacePath: string; mutationAuthorized: boolean };
 const repository = agentWorkspace<WorkspaceState>({
   path: (state) => state.workspacePath,
   commands: (state) => [
-    { name: "run_tests", description: `Test from ${state.workspacePath}`, command: "task test" },
+    {
+      name: "run_tests",
+      description: `Test from ${state.workspacePath}`,
+      command: "task test",
+      arguments: [
+        { name: "path", description: "Path.", flag: "--path", pattern: "src/.+" },
+        {
+          name: "mode",
+          description: "Mode.",
+          flag: "--mode",
+          allowedValues: ["fast", "thorough"],
+          maxLength: 20,
+        },
+      ],
+    },
   ],
 });
 const worker = agent<State, { amount: number }>({
@@ -125,6 +139,7 @@ const worker = agent<State, { amount: number }>({
     instructions: "Checkpoint now.",
     message: (_state, currentContextTokens) => `Checkpoint at ${currentContextTokens} tokens.`,
     session: "retain",
+    disableCompaction: true,
   },
   skills: [meridian],
   output: {
@@ -186,7 +201,10 @@ if (accepted.kind === "CapabilityAccepted") {
 }
 const opaqueStage: Stage<State> = increment;
 void opaqueStage;
-const terminalPresentation: RunOptions = { presentation: "terminal" };
+const terminalPresentation: RunOptions = {
+  presentation: "terminal",
+  terminal: { truncatedToolNames: ["write_checkpoint", "file_access_write"] },
+};
 void terminalPresentation;
 const observe = (event: RunObservation, { signal }: { readonly signal: AbortSignal }) => {
   signal.throwIfAborted();

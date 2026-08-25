@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using FluentAssertions;
+using FluentValidation;
 using Microsoft.Extensions.AI;
 
 namespace Tandem.Tests.Infrastructure;
@@ -11,8 +12,13 @@ public sealed class AgentCommandObservationTests
     public async Task HarnessCommand_EmitsSelectedModelAndRealToolInvocation()
     {
         var observations = new List<PipelineObservation>();
+        string? resolvedWorkspace = null;
 
-        await RunAsync(SuccessCommand(), observations: observations);
+        await RunAsync(
+            SuccessCommand(),
+            observations: observations,
+            captureWorkspace: path => resolvedWorkspace = path
+        );
 
         var updates = observations
             .OfType<PipelineAgentUpdated>()
@@ -22,10 +28,176 @@ public sealed class AgentCommandObservationTests
         var started = updates[1].Should().BeOfType<AgentUpdate.ToolStarted>().Subject;
         started.Name.Should().Be("run_verification_1");
         started.Arguments.GetRawText().Should().Be("{}");
+        started.WorkingDirectory.Should().Be(resolvedWorkspace);
+        started.WorkingDirectory.Should().NotBe(Environment.CurrentDirectory);
         var completed = updates[2].Should().BeOfType<AgentUpdate.ToolCompleted>().Subject;
         completed.CallId.Should().Be(started.CallId);
         completed.Succeeded.Should().BeTrue();
         completed.Result.Should().Contain("\"exitCode\": 0");
+    }
+
+    [Fact]
+    public async Task CapabilityAcceptance_ReceivesPriorRealToolInvocations()
+    {
+        AgentCapabilityAcceptanceContext<TestState, FinishRequest>? accepted = null;
+        var capability = AgentCapabilities
+            .Create(
+                new TestCapabilityDefinition<TestState, FinishRequest>(
+                    "finish",
+                    "Finish.",
+                    new InlineValidator<FinishRequest>(),
+                    _ => "Finished."
+                ),
+                (state, _) => state
+            )
+            .WithAcceptance(
+                (context, _) =>
+                {
+                    accepted = context;
+                    return ValueTask.CompletedTask;
+                }
+            );
+        var path = Path.Combine(
+            Path.GetTempPath(),
+            $"tandem-capability-observation-{Guid.NewGuid():N}"
+        );
+        Directory.CreateDirectory(path);
+        try
+        {
+            var workspace = AgentWorkspace<TestState>.Define(
+                _ => path,
+                [AgentCommand.Define("run_verification_1", "Verify.", SuccessCommand())]
+            );
+            var client = new ScriptedChatClient(
+                ToolCall("run_verification_1"),
+                new ChatResponse(
+                    new ChatMessage(
+                        ChatRole.Assistant,
+                        [
+                            new FunctionCallContent(
+                                "finish-call",
+                                "finish",
+                                new Dictionary<string, object?>()
+                            ),
+                        ]
+                    )
+                )
+                {
+                    FinishReason = ChatFinishReason.ToolCalls,
+                }
+            );
+            var agent = Agent
+                .Create<TestState>("agent", "Verify then finish.", client)
+                .UseHarness("Test harness.")
+                .WithWorkspace(workspace, [AgentTools.Always<TestState>(workspace.Commands)])
+                .WithCapability(capability)
+                .WithMessage(_ => "Verify then finish.")
+                .Build();
+            var complete = PipelineNodes.Complete(new TestCompletion<TestState>("complete"));
+            var pipeline = Pipeline
+                .Start(agent, "acceptance-observation")
+                .Route(agent.Success, complete, "complete")
+                .Build(complete);
+
+            await new PipelineRunner().RunAsync(pipeline, new TestState());
+
+            accepted.Should().NotBeNull();
+            var invocation = accepted!.ToolInvocations.Should().ContainSingle().Subject;
+            invocation.Name.Should().Be("run_verification_1");
+            invocation.Status.Should().Be(ToolInvocationStatus.Completed);
+            invocation
+                .Result.Should()
+                .BeOfType<ToolResultEvidence.Process>()
+                .Which.ExitCode.Should()
+                .Be(0);
+            accepted.ToolInvocations.Should().NotContain(item => item.Name == "finish");
+        }
+        finally
+        {
+            Directory.Delete(path, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CapabilityAcceptance_RetainsToolInvocationsAcrossRetainedAgentSession()
+    {
+        AgentCapabilityAcceptanceContext<TestState, FinishRequest>? accepted = null;
+        var continueCapability = AgentCapabilities.Create(
+            new TestCapabilityDefinition<TestState, FinishRequest>(
+                "continue_work",
+                "Continue in a later invocation.",
+                new InlineValidator<FinishRequest>(),
+                _ => "Continued."
+            ),
+            (state, _) => state with { Continued = true }
+        );
+        var finishCapability = AgentCapabilities
+            .Create(
+                new TestCapabilityDefinition<TestState, FinishRequest>(
+                    "finish",
+                    "Finish.",
+                    new InlineValidator<FinishRequest>(),
+                    _ => "Finished."
+                ),
+                (state, _) => state with { Done = true }
+            )
+            .WithAcceptance(
+                (context, _) =>
+                {
+                    accepted = context;
+                    return ValueTask.CompletedTask;
+                }
+            );
+        var path = Path.Combine(
+            Path.GetTempPath(),
+            $"tandem-retained-observation-{Guid.NewGuid():N}"
+        );
+        Directory.CreateDirectory(path);
+        try
+        {
+            var workspace = AgentWorkspace<TestState>.Define(
+                _ => path,
+                [AgentCommand.Define("run_verification_1", "Verify.", SuccessCommand())]
+            );
+            var client = new ScriptedChatClient(
+                ToolCall("run_verification_1", "verification-call"),
+                ToolCall("continue_work", "continue-call"),
+                ToolCall("finish", "finish-call")
+            );
+            var agent = Agent
+                .Create<TestState>("agent", "Verify then finish.", client)
+                .UseHarness("Test harness.")
+                .WithWorkspace(workspace, [AgentTools.Always<TestState>(workspace.Commands)])
+                .WithCapability(continueCapability)
+                .WithCapability(finishCapability)
+                .WithMessage(_ => "Continue.")
+                .ContinueSession()
+                .Build();
+            var complete = PipelineNodes.Complete(new TestCompletion<TestState>("complete"));
+            var pipeline = Pipeline
+                .Start(agent, "retained-observation")
+                .Route(agent.Success, state => state.Continued && !state.Done, agent, "continue")
+                .Route(agent.Success, state => state.Done, complete, "complete")
+                .Build(complete);
+
+            await new PipelineRunner().RunAsync(pipeline, new TestState());
+
+            accepted.Should().NotBeNull();
+            accepted!
+                .ToolInvocations.Select(invocation => invocation.Name)
+                .Should()
+                .Equal("run_verification_1", "continue_work");
+            accepted
+                .ToolInvocations[0]
+                .Result.Should()
+                .BeOfType<ToolResultEvidence.Process>()
+                .Which.ExitCode.Should()
+                .Be(0);
+        }
+        finally
+        {
+            Directory.Delete(path, recursive: true);
+        }
     }
 
     [Fact]
@@ -243,7 +415,8 @@ public sealed class AgentCommandObservationTests
         ToolInterceptor<TestState>? interceptor = null,
         bool invokeTwice = false,
         bool rejectFirstOutput = false,
-        List<PipelineObservation>? observations = null
+        List<PipelineObservation>? observations = null,
+        Action<string>? captureWorkspace = null
     )
     {
         var path = Path.Combine(
@@ -251,6 +424,7 @@ public sealed class AgentCommandObservationTests
             $"tandem-command-observation-{Guid.NewGuid():N}"
         );
         Directory.CreateDirectory(path);
+        captureWorkspace?.Invoke(path);
         try
         {
             OutputAcceptanceObservation<TestState, AcceptedOutput>? acceptedObservation = null;
@@ -334,11 +508,11 @@ public sealed class AgentCommandObservationTests
         }
     }
 
-    private static ChatResponse ToolCall(string name) =>
+    private static ChatResponse ToolCall(string name, string callId = "command-call") =>
         new(
             new ChatMessage(
                 ChatRole.Assistant,
-                [new FunctionCallContent("command-call", name, new Dictionary<string, object?>())]
+                [new FunctionCallContent(callId, name, new Dictionary<string, object?>())]
             )
         )
         {
@@ -357,9 +531,11 @@ public sealed class AgentCommandObservationTests
 
     private static string FailureCommand() => OperatingSystem.IsWindows() ? "exit /b 7" : "exit 7";
 
-    private sealed record TestState;
+    private sealed record TestState(bool Continued = false, bool Done = false);
 
     private sealed record AcceptedOutput;
+
+    private sealed record FinishRequest;
 
     private sealed class ScriptedChatClient(params ChatResponse[] responses) : IChatClient
     {

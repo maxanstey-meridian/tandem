@@ -73,6 +73,15 @@ public sealed class LocalCapabilityTests
                 .ContainSingle()
                 .Which.Should()
                 .BeEquivalentTo(["increment", "read_ledger", "search_ledger"]);
+            var descriptions = client.AdvertisedToolDescriptions.Should().ContainSingle().Subject;
+            descriptions["read_ledger"]
+                .Should()
+                .Contain("accepted durable lifecycle history")
+                .And.Contain("verified against the current repository before reliance");
+            descriptions["search_ledger"]
+                .Should()
+                .Contain("accepted durable lifecycle history")
+                .And.Contain("does not establish current repository or implementation state");
         }
         finally
         {
@@ -1008,6 +1017,7 @@ public sealed class LocalCapabilityTests
 
         public int CallCount { get; private set; }
         public List<IReadOnlyList<string>> AdvertisedTools { get; } = [];
+        public List<IReadOnlyDictionary<string, string>> AdvertisedToolDescriptions { get; } = [];
         public List<IReadOnlyList<ChatMessage>> Requests { get; } = [];
 
         public Task<ChatResponse> GetResponseAsync(
@@ -1024,6 +1034,10 @@ public sealed class LocalCapabilityTests
         {
             Requests.Add(messages.ToArray());
             AdvertisedTools.Add(options?.Tools?.Select(tool => tool.Name).ToArray() ?? []);
+            AdvertisedToolDescriptions.Add(
+                options?.Tools?.ToDictionary(tool => tool.Name, tool => tool.Description)
+                    ?? new Dictionary<string, string>()
+            );
             foreach (var update in Dequeue().ToChatResponseUpdates())
             {
                 yield return update;

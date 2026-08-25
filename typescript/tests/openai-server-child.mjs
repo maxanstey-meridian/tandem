@@ -114,7 +114,7 @@ const server = createServer(async (request, response) => {
   }
   if (request.url === "/v1/chat/completions") {
     response.setHeader("content-type", "text/event-stream");
-    if (mode === "workspace") {
+    if (mode === "workspace" || mode === "workspace-parameterized") {
       const hasToolResult = body.messages.some((message) => message.role === "tool");
       const chunk = {
         id: "chat_workspace",
@@ -133,7 +133,16 @@ const server = createServer(async (request, response) => {
                       index: 0,
                       id: "call_workspace",
                       type: "function",
-                      function: { name: "run_tests", arguments: "{}" },
+                      function: {
+                        name: "run_tests",
+                        arguments:
+                          mode === "workspace-parameterized"
+                            ? JSON.stringify({
+                                value:
+                                  "spaces ' \" $() `touch marker` ; New-Item marker ; && || | > <\n* $HOME",
+                              })
+                            : "{}",
+                      },
                     },
                   ],
                 },

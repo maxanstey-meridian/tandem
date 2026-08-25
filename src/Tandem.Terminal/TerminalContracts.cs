@@ -76,6 +76,9 @@ public sealed record TerminalDisplayOptions
 
     public IReadOnlyList<TerminalKeyAction> KeyActions { get; init; } = [];
 
+    public IReadOnlySet<string> TruncatedToolNames { get; init; } =
+        new HashSet<string>(StringComparer.Ordinal);
+
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
     public TimeSpan RefreshInterval { get; init; } = TimeSpan.FromMilliseconds(100);

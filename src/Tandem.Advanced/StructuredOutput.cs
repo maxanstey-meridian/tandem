@@ -374,7 +374,7 @@ internal static class StructuredOutputDescriptors
                 : ToolEvidence.None
         );
 
-    private static ToolInvocationObservation ToPublic(
+    internal static ToolInvocationObservation ToPublic(
         Infrastructure.ToolInvocationObservationDescriptor observation
     ) =>
         new(

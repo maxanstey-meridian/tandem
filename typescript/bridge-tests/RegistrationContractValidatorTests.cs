@@ -339,6 +339,60 @@ public sealed class RegistrationContractValidatorTests
     }
 
     [Fact]
+    public void AcceptsExactTerminalTruncatedToolNames()
+    {
+        var value = ContractObject();
+        value["presentation"] = "terminal";
+        value["terminal"] = new
+        {
+            truncatedToolNames = new[] { "write_checkpoint", "file_access_write" },
+        };
+
+        var contract = RegistrationContractValidator.ParseAndValidate(
+            JsonSerializer.Serialize(value)
+        );
+
+        Assert.Equal(
+            ["write_checkpoint", "file_access_write"],
+            contract.Terminal!.TruncatedToolNames!
+        );
+    }
+
+    [Fact]
+    public void RejectsTerminalOptionsWithoutTerminalPresentationOrWithInvalidNames()
+    {
+        var withoutPresentation = ContractObject();
+        withoutPresentation["terminal"] = new { truncatedToolNames = new[] { "write_checkpoint" } };
+        var presentationMessage = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(
+                    JsonSerializer.Serialize(withoutPresentation)
+                )
+            )
+            .Message;
+        Assert.Contains("terminal options require terminal presentation", presentationMessage);
+
+        var invalidNames = ContractObject();
+        invalidNames["presentation"] = "terminal";
+        invalidNames["terminal"] = new
+        {
+            truncatedToolNames = new[] { "write_checkpoint", " ", "write_checkpoint" },
+        };
+        var namesMessage = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(
+                    JsonSerializer.Serialize(invalidNames)
+                )
+            )
+            .Message;
+        Assert.Contains("terminal.truncatedToolNames[1] must be non-blank", namesMessage);
+        Assert.Contains(
+            "terminal.truncatedToolNames[2] duplicates 'write_checkpoint'",
+            namesMessage
+        );
+    }
+
+    [Fact]
     public void AcceptsOptionalObservationCallback()
     {
         var value = ContractObject();
@@ -608,6 +662,55 @@ public sealed class RegistrationContractValidatorTests
         Assert.Contains("nodes[0].maxOutputTokens must be a positive integer", message);
         Assert.Contains("nodes[1].temperature is forbidden", message);
         Assert.Contains("nodes[1].maxOutputTokens is forbidden", message);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PreservesCheckpointDisableCompaction(bool disableCompaction)
+    {
+        var value = ContractObject();
+        var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        agent["checkpoint"] = new Dictionary<string, object?>
+        {
+            ["contextWindowTokens"] = 100,
+            ["maxOutputTokens"] = 20,
+            ["checkpointAtPercent"] = 80,
+            ["capabilityName"] = "first",
+            ["instructions"] = "Checkpoint.",
+            ["messageCallback"] = "checkpoint.message",
+            ["resetSession"] = true,
+            ["disableCompaction"] = disableCompaction,
+        };
+
+        var contract = RegistrationContractValidator.ParseAndValidate(
+            JsonSerializer.Serialize(value)
+        );
+
+        Assert.Equal(disableCompaction, contract.Nodes![0].Checkpoint!.DisableCompaction);
+    }
+
+    [Fact]
+    public void CheckpointDisableCompaction_OmissionDefaultsToFalse()
+    {
+        var value = ContractObject();
+        var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        agent["checkpoint"] = new Dictionary<string, object?>
+        {
+            ["contextWindowTokens"] = 100,
+            ["maxOutputTokens"] = 20,
+            ["checkpointAtPercent"] = 80,
+            ["capabilityName"] = "first",
+            ["instructions"] = "Checkpoint.",
+            ["messageCallback"] = "checkpoint.message",
+            ["resetSession"] = true,
+        };
+
+        var contract = RegistrationContractValidator.ParseAndValidate(
+            JsonSerializer.Serialize(value)
+        );
+
+        Assert.False(contract.Nodes![0].Checkpoint!.DisableCompaction);
     }
 
     [Fact]

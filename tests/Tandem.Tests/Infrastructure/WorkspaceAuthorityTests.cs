@@ -50,7 +50,7 @@ public sealed class WorkspaceAuthorityTests
     {
         var workspace = new AgentWorkspaceDescriptor<TestState>(
             _ => ".",
-            _ => [new AgentCommandDescriptor(name, "Reserved command.", "exit 0")],
+            _ => [new AgentCommandDescriptor(name, "Reserved command.", "exit 0", [])],
             [
                 new AgentToolGroupDescriptor<TestState>(
                     _ => true,
@@ -189,7 +189,7 @@ public sealed class WorkspaceAuthorityTests
             await new PipelineRunner().RunAsync(pipeline, new TestState());
             await new PipelineRunner().RunAsync(pipeline, new TestState(MutationAllowed: true));
 
-            client.AdvertisedTools[0].Should().Contain("file_access_read");
+            client.AdvertisedTools[0].Count(name => name == "file_access_read").Should().Be(1);
             client.AdvertisedTools[0].Should().NotContain("file_access_write");
             client.AdvertisedTools[0].Should().NotContain(WorkspaceFileMutationTools.CopyToolName);
             client.AdvertisedTools[0].Should().NotContain(WorkspaceFileMutationTools.MoveToolName);
@@ -197,7 +197,7 @@ public sealed class WorkspaceAuthorityTests
                 .AdvertisedTools[0]
                 .Should()
                 .NotContain(WorkspaceFileMutationTools.CreateDirectoryToolName);
-            client.AdvertisedTools[1].Should().Contain("file_access_read");
+            client.AdvertisedTools[1].Count(name => name == "file_access_read").Should().Be(1);
             client.AdvertisedTools[1].Should().Contain("file_access_write");
             client.AdvertisedTools[1].Should().Contain(WorkspaceFileMutationTools.CopyToolName);
             client.AdvertisedTools[1].Should().Contain(WorkspaceFileMutationTools.MoveToolName);

@@ -21,6 +21,7 @@ public sealed class HarnessAgentImplementationTests
         options.MaxOutputTokens.Should().Be(32_000);
         options.DisableCompaction.Should().BeFalse();
         options.CompactionStrategy.Should().NotBeNull();
+        options.MaximumIterationsPerRequest.Should().Be(40);
     }
 
     [Fact]
@@ -35,6 +36,20 @@ public sealed class HarnessAgentImplementationTests
     }
 
     [Fact]
+    public void Explicit_setting_disables_compaction_without_discarding_context_limits()
+    {
+        var options = HarnessAgentImplementation.CreateOptions(
+            Context(330_000, 32_000, disableCompaction: true),
+            "Harness."
+        );
+
+        options.MaxContextWindowTokens.Should().Be(330_000);
+        options.MaxOutputTokens.Should().Be(32_000);
+        options.DisableCompaction.Should().BeTrue();
+        options.CompactionStrategy.Should().BeNull();
+    }
+
+    [Fact]
     public void Compaction_strategy_uses_fixed_summary_instead_of_default_formatter()
     {
         var options = HarnessAgentImplementation.CreateOptions(
@@ -42,7 +57,10 @@ public sealed class HarnessAgentImplementationTests
             "Harness."
         );
 
-        var pipeline = options.CompactionStrategy.Should().BeOfType<PipelineCompactionStrategy>().Subject;
+        var pipeline = options
+            .CompactionStrategy.Should()
+            .BeOfType<PipelineCompactionStrategy>()
+            .Subject;
         var strategies = pipeline.Strategies;
         var toolResult = strategies
             .Should()
@@ -52,10 +70,21 @@ public sealed class HarnessAgentImplementationTests
             .Subject;
 
         toolResult.ToolCallFormatter.Should().NotBeNull();
-        toolResult.MinimumPreservedGroups.Should().Be(2);
+        toolResult.MinimumPreservedGroups.Should().Be(10);
+        strategies
+            .Should()
+            .ContainSingle(s => s is TruncationCompactionStrategy)
+            .Which.Should()
+            .BeOfType<TruncationCompactionStrategy>()
+            .Subject.MinimumPreservedGroups.Should()
+            .Be(10);
     }
 
-    private static AgentImplementationContext Context(int? contextWindow, int? output) =>
+    private static AgentImplementationContext Context(
+        int? contextWindow,
+        int? output,
+        bool disableCompaction = false
+    ) =>
         new(
             "agent",
             new NoopChatClient(),
@@ -64,7 +93,8 @@ public sealed class HarnessAgentImplementationTests
             new ToolEffectRegistry(),
             [],
             contextWindow,
-            output
+            output,
+            disableCompaction
         );
 
     private sealed class NoopChatClient : IChatClient

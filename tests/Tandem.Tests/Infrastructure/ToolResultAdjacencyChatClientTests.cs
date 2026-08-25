@@ -146,6 +146,68 @@ public sealed class ToolResultAdjacencyChatClientTests
     }
 
     [Fact]
+    public void Normalize_adds_interrupted_result_for_dangling_call()
+    {
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.User, "packet"),
+            AssistantCall("call_interrupted", "run_command"),
+        };
+
+        var normalized = ToolResultAdjacencyChatClient.Normalize(history);
+
+        normalized
+            .Select(message => message.Role)
+            .Should()
+            .Equal(ChatRole.User, ChatRole.Assistant, ChatRole.Tool);
+        var result = normalized[2].Contents.OfType<FunctionResultContent>().Single();
+        result.CallId.Should().Be("call_interrupted");
+        result.Result.Should().Be("Tool execution was interrupted before a result was recorded.");
+    }
+
+    [Fact]
+    public void Normalize_synthesizes_only_missing_parallel_results()
+    {
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.User, "packet"),
+            new(
+                ChatRole.Assistant,
+                [
+                    new FunctionCallContent(
+                        "call_complete",
+                        "read",
+                        new Dictionary<string, object?>()
+                    ),
+                    new FunctionCallContent(
+                        "call_interrupted",
+                        "grep",
+                        new Dictionary<string, object?>()
+                    ),
+                ]
+            ),
+            ToolResult("call_complete", "complete result"),
+        };
+
+        var normalized = ToolResultAdjacencyChatClient.Normalize(history);
+
+        normalized
+            .Select(message => message.Role)
+            .Should()
+            .Equal(ChatRole.User, ChatRole.Assistant, ChatRole.Tool, ChatRole.Tool);
+        normalized[2]
+            .Contents.OfType<FunctionResultContent>()
+            .Single()
+            .CallId.Should()
+            .Be("call_complete");
+        normalized[3]
+            .Contents.OfType<FunctionResultContent>()
+            .Single()
+            .CallId.Should()
+            .Be("call_interrupted");
+    }
+
+    [Fact]
     public void Normalize_keeps_output_only_history_for_server_managed_conversations()
     {
         var history = new List<ChatMessage>

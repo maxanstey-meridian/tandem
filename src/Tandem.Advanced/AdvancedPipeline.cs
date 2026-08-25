@@ -238,7 +238,10 @@ public sealed record CheckpointPolicy<TState>(
     string Instructions,
     Func<AgentCheckpointContext<TState>, string> UserMessage,
     CheckpointSessionBehavior SessionBehavior = CheckpointSessionBehavior.Reset
-);
+)
+{
+    public bool DisableCompaction { get; init; }
+}
 
 public sealed record AgentStateGuard<TState>(
     string Id,
@@ -248,28 +251,138 @@ public sealed record AgentStateGuard<TState>(
     AgentCapability<TState>? Remediation = null
 );
 
+public sealed record AgentCommandArgument(
+    string Name,
+    string Description,
+    string Flag,
+    string? Pattern,
+    IReadOnlyList<string>? AllowedValues,
+    int? MaxLength = null
+);
+
 public sealed record AgentCommand
 {
-    private AgentCommand(string name, string description, string command)
+    private AgentCommand(
+        string name,
+        string description,
+        string command,
+        IReadOnlyList<AgentCommandArgument> arguments
+    )
     {
         Name = name;
         Description = description;
         Command = command;
+        Arguments = arguments;
     }
 
     public string Name { get; }
     public string Description { get; }
     public string Command { get; }
+    public IReadOnlyList<AgentCommandArgument> Arguments { get; }
 
-    public static AgentCommand Define(string name, string description, string command)
+    public static AgentCommand Define(string name, string description, string command) =>
+        Define(name, description, command, []);
+
+    public static AgentCommand Define(
+        string name,
+        string description,
+        string command,
+        IEnumerable<AgentCommandArgument> arguments
+    )
     {
         ValidateToolName(name, nameof(name));
         ArgumentException.ThrowIfNullOrWhiteSpace(description);
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
-        return new AgentCommand(name, description, command);
+        ArgumentNullException.ThrowIfNull(arguments);
+        var copy = arguments.Select(ValidateArgument).ToArray();
+        if (
+            copy.Select(value => value.Name).Distinct(StringComparer.Ordinal).Count() != copy.Length
+        )
+        {
+            throw new ArgumentException("Argument names must be unique.", nameof(arguments));
+        }
+        return new AgentCommand(name, description, command, copy);
     }
 
-    internal AgentCommandDescriptor ToDescriptor() => new(Name, Description, Command);
+    internal AgentCommandDescriptor ToDescriptor() =>
+        new(
+            Name,
+            Description,
+            Command,
+            Arguments
+                .Select(value => new AgentCommandArgumentDescriptor(
+                    value.Name,
+                    value.Description,
+                    value.Flag,
+                    value.Pattern,
+                    value.AllowedValues,
+                    value.MaxLength
+                ))
+                .ToArray()
+        );
+
+    private static AgentCommandArgument ValidateArgument(AgentCommandArgument argument)
+    {
+        ArgumentNullException.ThrowIfNull(argument);
+        if (
+            string.IsNullOrWhiteSpace(argument.Name)
+            || !(char.IsAsciiLetter(argument.Name[0]) || argument.Name[0] == '_')
+            || argument.Name.Any(character =>
+                !(char.IsAsciiLetterOrDigit(character) || character == '_')
+            )
+        )
+        {
+            throw new ArgumentException(
+                "Argument names must be valid JSON property identifiers.",
+                nameof(argument)
+            );
+        }
+        ArgumentException.ThrowIfNullOrWhiteSpace(argument.Description);
+        if (string.IsNullOrWhiteSpace(argument.Flag) || argument.Flag.Any(char.IsWhiteSpace))
+        {
+            throw new ArgumentException(
+                "Argument flags must be non-blank, whitespace-free switch tokens.",
+                nameof(argument)
+            );
+        }
+        var hasPattern = argument.Pattern is not null;
+        var hasAllowedValues = argument.AllowedValues is not null;
+        if (hasPattern == hasAllowedValues)
+        {
+            throw new ArgumentException(
+                "Arguments require exactly one validation strategy.",
+                nameof(argument)
+            );
+        }
+        if (argument.MaxLength is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(argument),
+                "Maximum length must be positive."
+            );
+        }
+        if (hasPattern)
+        {
+            _ = new System.Text.RegularExpressions.Regex(
+                $"\\A(?:{argument.Pattern})\\z",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant,
+                TimeSpan.FromSeconds(1)
+            );
+        }
+        else if (
+            argument.AllowedValues!.Count == 0
+            || argument.AllowedValues.Any(string.IsNullOrWhiteSpace)
+            || argument.AllowedValues.Distinct(StringComparer.Ordinal).Count()
+                != argument.AllowedValues.Count
+        )
+        {
+            throw new ArgumentException(
+                "Allowed values must be non-blank and unique.",
+                nameof(argument)
+            );
+        }
+        return argument with { AllowedValues = argument.AllowedValues?.ToArray() };
+    }
 
     internal static void ValidateToolName(string name, string parameterName)
     {
@@ -755,7 +868,8 @@ public static class AdvancedAgentBuilderExtensions
                     policy.UserMessage(
                         new AgentCheckpointContext<TState>(state, currentContextTokens)
                     ),
-                resetSessionAfterRelease
+                resetSessionAfterRelease,
+                policy.DisableCompaction
             )
         );
     }

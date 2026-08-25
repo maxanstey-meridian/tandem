@@ -22,6 +22,7 @@ M System.String ToString()
 M Tandem.Terminal.TerminalDisplayOptions <Clone>$()
 P Spectre.Console.IAnsiConsole? Console { get; set; }
 P System.Collections.Generic.IReadOnlyList<Tandem.Terminal.TerminalKeyAction> KeyActions { get; set; }
+P System.Collections.Generic.IReadOnlySet<System.String> TruncatedToolNames { get; set; }
 P System.Func<System.Boolean>? CanSubmitText { get; set; }
 P System.Func<System.String,System.Threading.CancellationToken,System.Threading.Tasks.ValueTask>? SubmitTextAsync { get; set; }
 P System.Func<System.Threading.CancellationToken,System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Tandem.Terminal.TerminalPipelineEntry>>>? ReadPipelineEntriesAsync { get; set; }

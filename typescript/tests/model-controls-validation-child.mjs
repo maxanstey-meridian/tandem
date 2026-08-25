@@ -43,6 +43,11 @@ const definitions = [
   },
   { ...base, capabilities: [checkpoint], checkpoint: { ...checkpointBase, maxOutputTokens: 100 } },
   { ...base, capabilities: [checkpoint], checkpoint: { ...checkpointBase, session: "rest" } },
+  {
+    ...base,
+    capabilities: [checkpoint],
+    checkpoint: { ...checkpointBase, disableCompaction: "yes" },
+  },
 ];
 const errors = definitions.map((definition) => {
   try {

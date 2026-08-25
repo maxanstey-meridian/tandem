@@ -133,6 +133,35 @@ const workspace = agentWorkspace<A>({
     },
   ],
 });
+agentWorkspace<A>({
+  path: () => "/tmp",
+  commands: [
+    {
+      name: "missing-strategy",
+      description: "Missing strategy.",
+      command: "check",
+      arguments: [
+        // @ts-expect-error command arguments require one validation strategy
+        { name: "value", description: "Value.", flag: "--value" },
+      ],
+    },
+    {
+      name: "two-strategies",
+      description: "Two strategies.",
+      command: "check",
+      arguments: [
+        // @ts-expect-error command arguments cannot combine validation strategies
+        {
+          name: "value",
+          description: "Value.",
+          flag: "--value",
+          pattern: ".+",
+          allowedValues: ["value"],
+        },
+      ],
+    },
+  ],
+});
 workspace.withTools([
   // @ts-expect-error workspace tools are a closed catalogue
   agentTools.always("unknown_tool"),

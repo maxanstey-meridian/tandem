@@ -23,7 +23,8 @@ public sealed class WorkspaceShellToolsTests
                     new AgentCommandDescriptor(
                         "where_am_i",
                         "Print the workspace.",
-                        CurrentDirectory()
+                        CurrentDirectory(),
+                        []
                     ),
                 ]
             ),
@@ -54,7 +55,7 @@ public sealed class WorkspaceShellToolsTests
             options,
             ResolvedWorkspace(
                 workspace.Path,
-                [new AgentCommandDescriptor("fail", "Fail with evidence.", FailureCommand())]
+                [new AgentCommandDescriptor("fail", "Fail with evidence.", FailureCommand(), [])]
             ),
             new ToolEffectRegistry()
         );
@@ -65,6 +66,141 @@ public sealed class WorkspaceShellToolsTests
 
         result.ExitCode.Should().Be(7);
         result.Stderr.Should().Contain("expected failure");
+    }
+
+    [Fact]
+    public async Task ParameterizedCommand_EmitsSchemaValidatesAndQuotesOneArgument()
+    {
+        using var workspace = TemporaryWorkspace.Create();
+        string command;
+        string flag;
+        if (OperatingSystem.IsWindows())
+        {
+            command = "Set-Content -NoNewline -Path received.txt";
+            flag = "-Value";
+        }
+        else
+        {
+            var script = System.IO.Path.Combine(workspace.Path, "capture.sh");
+            await File.WriteAllTextAsync(script, "#!/bin/sh\nprintf '%s' \"$2\" > received.txt\n");
+            File.SetUnixFileMode(
+                script,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            );
+            command = "./capture.sh";
+            flag = "--value";
+        }
+        var options = new ChatOptions();
+        WorkspaceShellTools.Add(
+            options,
+            ResolvedWorkspace(
+                workspace.Path,
+                [
+                    new AgentCommandDescriptor(
+                        "capture",
+                        "Capture one value.",
+                        command,
+                        [
+                            new AgentCommandArgumentDescriptor(
+                                "value",
+                                "Diagnostic selector.",
+                                flag,
+                                @"[\s\S]*",
+                                null,
+                                200
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+            new ToolEffectRegistry()
+        );
+        var tool = (AIFunction)options.Tools!.Single();
+        var property = tool.JsonSchema.GetProperty("properties").GetProperty("value");
+        property.GetProperty("type").GetString().Should().Be("string");
+        property.GetProperty("description").GetString().Should().Be("Diagnostic selector.");
+        property.GetProperty("maxLength").GetInt32().Should().Be(200);
+        property.GetProperty("pattern").GetString().Should().Be("^(?:[\\s\\S]*)$");
+        tool.JsonSchema.GetProperty("additionalProperties").GetBoolean().Should().BeFalse();
+
+        const string value =
+            "spaces ' \" $() `touch marker` ; New-Item marker ; && || | > <\n* $HOME";
+        await tool.InvokeAsync(new AIFunctionArguments { ["value"] = value });
+
+        (await File.ReadAllTextAsync(System.IO.Path.Combine(workspace.Path, "received.txt")))
+            .Should()
+            .Be(value);
+        File.Exists(System.IO.Path.Combine(workspace.Path, "marker")).Should().BeFalse();
+        var unknown = async () =>
+            await tool.InvokeAsync(new AIFunctionArguments { ["other"] = "x" });
+        await unknown.Should().ThrowAsync<ArgumentException>();
+        var explicitNull = async () =>
+            await tool.InvokeAsync(new AIFunctionArguments { ["value"] = null });
+        await explicitNull.Should().ThrowAsync<ArgumentException>();
+        var nonString = async () =>
+            await tool.InvokeAsync(new AIFunctionArguments { ["value"] = 42 });
+        await nonString.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task WindowsExecutor_IsPinnedToPowerShell()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        using var workspace = TemporaryWorkspace.Create();
+        await using var executor = WorkspaceShellTools.CreateExecutor(
+            workspace.Path,
+            acknowledgeUnsafe: false,
+            timeout: null,
+            maxOutputBytes: 1024
+        );
+
+        System.IO.Path.GetFileName(executor.ResolvedShellBinary).Should().Be("powershell.exe");
+    }
+
+    [Fact]
+    public void PublicCommandArguments_RequireOneValidationStrategyAndCopyAllowedValues()
+    {
+        var allowedValues = new List<string> { "fast", "thorough" };
+
+        var command = AgentCommand.Define(
+            "run_review",
+            "Run review.",
+            "review",
+            [
+                new("path", "Path.", "--path", @"src/.+", null, 200),
+                new("mode", "Mode.", "--mode", null, allowedValues, 20),
+            ]
+        );
+        allowedValues[0] = "mutated";
+
+        command.Arguments.Should().HaveCount(2);
+        command.Arguments[0].Pattern.Should().Be(@"src/.+");
+        command.Arguments[1].AllowedValues.Should().Equal("fast", "thorough");
+        FluentActions
+            .Invoking(() =>
+                AgentCommand.Define(
+                    "invalid",
+                    "Invalid.",
+                    "invalid",
+                    [new("value", "Value.", "--value", null, null)]
+                )
+            )
+            .Should()
+            .Throw<ArgumentException>();
+        FluentActions
+            .Invoking(() =>
+                AgentCommand.Define(
+                    "invalid",
+                    "Invalid.",
+                    "invalid",
+                    [new("value", "Value.", "--value", ".+", ["one"])]
+                )
+            )
+            .Should()
+            .Throw<ArgumentException>();
     }
 
     [Fact]
@@ -109,7 +245,7 @@ public sealed class WorkspaceShellToolsTests
             options,
             ResolvedWorkspace(
                 workspace.Path,
-                [new AgentCommandDescriptor("slow", "Run slowly.", SlowCommand())]
+                [new AgentCommandDescriptor("slow", "Run slowly.", SlowCommand(), [])]
             ),
             new ToolEffectRegistry(),
             TimeSpan.FromMilliseconds(100)
@@ -132,7 +268,7 @@ public sealed class WorkspaceShellToolsTests
             options,
             ResolvedWorkspace(
                 workspace.Path,
-                [new AgentCommandDescriptor("slow", "Run slowly.", SlowCommand())]
+                [new AgentCommandDescriptor("slow", "Run slowly.", SlowCommand(), [])]
             ),
             new ToolEffectRegistry()
         );
@@ -156,7 +292,7 @@ public sealed class WorkspaceShellToolsTests
             options,
             ResolvedWorkspace(
                 workspace.Path,
-                [new AgentCommandDescriptor("noisy", "Produce output.", NoisyCommand())]
+                [new AgentCommandDescriptor("noisy", "Produce output.", NoisyCommand(), [])]
             ),
             new ToolEffectRegistry(),
             maxOutputBytes: 256

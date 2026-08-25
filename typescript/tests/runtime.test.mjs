@@ -4,6 +4,14 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 const exec = promisify(execFile);
 
+test("importing the authoring SDK does not keep Node alive", async () => {
+  const result = await exec(process.execPath, [
+    new URL("authoring-import-child.mjs", import.meta.url).pathname,
+  ]);
+  assert.equal(result.stdout, "imported\n");
+  assert.equal(result.stderr, "");
+});
+
 async function child(mode, timeout = 15_000) {
   const { stdout } = await exec(
     process.execPath,
@@ -44,13 +52,14 @@ test("rejects invalid model request controls while authoring", async () => {
     { timeout: 15_000 },
   );
   const errors = JSON.parse(stdout.trim());
-  assert.equal(errors.length, 10);
+  assert.equal(errors.length, 11);
   assert(errors.every((error) => error.name === "TandemError"));
   assert(errors.some((error) => /reasoning effort/.test(error.message)));
   assert(errors.filter((error) => /temperature/.test(error.message)).length >= 3);
   assert(errors.filter((error) => /maxOutputTokens/.test(error.message)).length >= 3);
   assert(errors.some((error) => /contextWindowTokens/.test(error.message)));
   assert(errors.some((error) => /checkpoint session/.test(error.message)));
+  assert(errors.some((error) => /disableCompaction/.test(error.message)));
 });
 
 test("executes a fixed workspace command through the packed MAF shell runtime", async () => {
@@ -60,6 +69,36 @@ test("executes a fixed workspace command through the packed MAF shell runtime", 
     { timeout: 15_000 },
   );
   assert.equal(JSON.parse(stdout.trim()).commandRan, true);
+});
+
+test("executes a parameterized workspace command through the packed runtime", async () => {
+  const { stdout } = await exec(
+    process.execPath,
+    [new URL("workspace-runtime-child.mjs", import.meta.url).pathname, "parameterized"],
+    { timeout: 15_000 },
+  );
+  const result = JSON.parse(stdout.trim());
+  assert.equal(
+    result.received,
+    "spaces ' \" $() `touch marker` ; New-Item marker ; && || | > <\n* $HOME",
+  );
+  assert.equal(result.marker, false);
+});
+
+test("rejects malformed workspace command arguments while authoring", async () => {
+  const { stdout } = await exec(process.execPath, [
+    new URL("workspace-command-validation-child.mjs", import.meta.url).pathname,
+  ]);
+  const errors = JSON.parse(stdout.trim());
+  assert.equal(errors.length, 8);
+  assert(errors.every((error) => error.name === "TandemError"));
+  assert(errors.some((error) => /valid JSON property identifier/.test(error.message)));
+  assert(errors.some((error) => /whitespace-free switch token/.test(error.message)));
+  assert(errors.some((error) => /exactly one/.test(error.message)));
+  assert(errors.some((error) => /positive integer/.test(error.message)));
+  assert(errors.some((error) => /must not be empty/.test(error.message)));
+  assert(errors.some((error) => /non-blank strings/.test(error.message)));
+  assert(errors.some((error) => /duplicates 'one'/.test(error.message)));
 });
 
 test("snapshots static workspace command catalogues", async () => {
@@ -339,6 +378,25 @@ test("one agent composes its authored message, multiple capabilities, structured
         body.response_format?.type === "json_schema",
     ),
   );
+});
+
+test("TypeScript terminal presentation truncates configured tool arguments", async () => {
+  const { stdout } = await exec(
+    "/usr/bin/env",
+    [
+      "-u",
+      "NODE_TEST_CONTEXT",
+      process.execPath,
+      new URL("capability-message-child.mjs", import.meta.url).pathname,
+      "terminal",
+    ],
+    { timeout: 15_000 },
+  );
+  assert.match(stdout, /executor tool accept started/);
+  assert.doesNotMatch(stdout, /executor tool accept accepted=true/);
+  const result = JSON.parse(stdout.trim().split("\n").at(-1));
+  assert.equal(result.error, null);
+  assert.equal(result.accepted, true);
 });
 
 test("rolls back durable acceptance when JavaScript state application faults", async () => {

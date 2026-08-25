@@ -64,7 +64,7 @@ public sealed class SongwriterCompositionTests
                 new ScriptedChatClient(
                     order,
                     "proofreader",
-                    ["not json", .. Enumerable.Repeat("still not json", 99)]
+                    ["not json", .. Enumerable.Repeat("still not json", 2)]
                 )
             )
         );
@@ -77,7 +77,7 @@ public sealed class SongwriterCompositionTests
 
         var output = await RunAsync(pipeline, input);
 
-        order.Should().HaveCount(101);
+        order.Should().HaveCount(4);
         order[0].Should().Be("songwriter");
         order.Skip(1).Should().OnlyContain(step => step == "proofreader");
         output.Status.Should().Be(PipelineRunStatus.Failed);

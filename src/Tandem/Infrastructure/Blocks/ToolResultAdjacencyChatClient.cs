@@ -50,6 +50,7 @@ internal sealed class ToolResultAdjacencyChatClient(IChatClient innerClient)
 
         var misplaced = new List<(int Index, int OwnerIndex)>();
         var orphaned = new List<int>();
+        var resultCallIds = new HashSet<string>(StringComparer.Ordinal);
         var hasConversationContext = list.Any(message => message.Role != ChatRole.Tool);
         for (var i = 0; i < list.Count; i++)
         {
@@ -60,8 +61,9 @@ internal sealed class ToolResultAdjacencyChatClient(IChatClient innerClient)
             var callIds = list[i]
                 .Contents.OfType<FunctionResultContent>()
                 .Select(result => result.CallId)
-                .Where(id => id is not null)
+                .OfType<string>()
                 .ToHashSet(StringComparer.Ordinal);
+            resultCallIds.UnionWith(callIds);
             if (callIds.Count == 0)
             {
                 continue;
@@ -90,7 +92,8 @@ internal sealed class ToolResultAdjacencyChatClient(IChatClient innerClient)
             }
         }
 
-        if (misplaced.Count == 0 && orphaned.Count == 0)
+        var missing = callOwner.Keys.Where(id => !resultCallIds.Contains(id)).ToHashSet();
+        if (misplaced.Count == 0 && orphaned.Count == 0 && missing.Count == 0)
         {
             return list;
         }
@@ -115,6 +118,42 @@ internal sealed class ToolResultAdjacencyChatClient(IChatClient innerClient)
                 insertAt++;
             }
             reordered.Insert(insertAt, message);
+        }
+        foreach (var owner in list.Where(message => message.Role == ChatRole.Assistant))
+        {
+            var interruptedCalls = owner
+                .Contents.OfType<FunctionCallContent>()
+                .Where(call => call.CallId is not null && missing.Contains(call.CallId))
+                .ToArray();
+            if (interruptedCalls.Length == 0)
+            {
+                continue;
+            }
+
+            var insertAt = reordered.FindIndex(message => ReferenceEquals(message, owner)) + 1;
+            while (
+                insertAt < reordered.Count
+                && reordered[insertAt].Role == ChatRole.Tool
+                && OwnsAny(reordered[insertAt], callOwner, callOwner[interruptedCalls[0].CallId!])
+            )
+            {
+                insertAt++;
+            }
+            foreach (var call in interruptedCalls)
+            {
+                reordered.Insert(
+                    insertAt++,
+                    new(
+                        ChatRole.Tool,
+                        [
+                            new FunctionResultContent(
+                                call.CallId!,
+                                "Tool execution was interrupted before a result was recorded."
+                            ),
+                        ]
+                    )
+                );
+            }
         }
         return reordered;
 

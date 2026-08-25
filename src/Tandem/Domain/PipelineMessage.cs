@@ -31,6 +31,7 @@ internal sealed record PipelineResult(string StepId, string CaseId, JsonElement 
 internal sealed record PipelineRuntime(
     Guid RunId,
     IReadOnlyDictionary<string, JsonElement> AgentSessions,
+    IReadOnlyDictionary<string, JsonElement> AgentToolInvocations,
     IReadOnlyDictionary<string, AgentUsage> AgentUsage,
     IReadOnlyDictionary<string, int> InvocationCounts,
     IReadOnlyDictionary<string, AgentProfileSelection> AgentProfiles,
@@ -40,6 +41,7 @@ internal sealed record PipelineRuntime(
     public static PipelineRuntime Create(Guid runId) =>
         new(
             runId,
+            new Dictionary<string, JsonElement>(),
             new Dictionary<string, JsonElement>(),
             new Dictionary<string, AgentUsage>(),
             new Dictionary<string, int>(),
@@ -51,6 +53,7 @@ internal sealed record PipelineRuntime(
         new(
             RunId,
             new Dictionary<string, JsonElement>(AgentSessions),
+            new Dictionary<string, JsonElement>(AgentToolInvocations),
             new Dictionary<string, AgentUsage>(AgentUsage),
             new Dictionary<string, int>(InvocationCounts),
             new Dictionary<string, AgentProfileSelection>(AgentProfiles),
@@ -74,6 +77,11 @@ internal sealed record PipelineRuntime(
             AgentSessions = MergeDictionary(
                 baseline.AgentSessions,
                 branchValues.Select(value => value.AgentSessions),
+                JsonElement.DeepEquals
+            ),
+            AgentToolInvocations = MergeDictionary(
+                baseline.AgentToolInvocations,
+                branchValues.Select(value => value.AgentToolInvocations),
                 JsonElement.DeepEquals
             ),
             AgentUsage = MergeDictionary(
@@ -213,6 +221,23 @@ internal sealed record PipelineRuntime(
         this with
         {
             AgentSessions = AgentSessions
+                .Where(kvp => kvp.Key != stepId)
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
+        };
+
+    public PipelineRuntime WithToolInvocations(string stepId, JsonElement invocations) =>
+        this with
+        {
+            AgentToolInvocations = new Dictionary<string, JsonElement>(AgentToolInvocations)
+            {
+                [stepId] = invocations,
+            },
+        };
+
+    public PipelineRuntime WithoutToolInvocations(string stepId) =>
+        this with
+        {
+            AgentToolInvocations = AgentToolInvocations
                 .Where(kvp => kvp.Key != stepId)
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
         };

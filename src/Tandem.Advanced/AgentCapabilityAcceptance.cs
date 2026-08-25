@@ -10,7 +10,10 @@ public sealed record AgentCapabilityAcceptanceContext<TState, TRequest>(
     string AcceptedCallId,
     TState State,
     TRequest Request
-);
+)
+{
+    public IReadOnlyList<ToolInvocationObservation> ToolInvocations { get; init; } = [];
+}
 
 public static class AgentCapabilityAcceptanceExtensions
 {
@@ -36,7 +39,12 @@ public static class AgentCapabilityAcceptanceExtensions
                         context.AcceptedCallId,
                         context.State,
                         context.Request
-                    ),
+                    )
+                    {
+                        ToolInvocations = context
+                            .ToolInvocations.Select(StructuredOutputDescriptors.ToPublic)
+                            .ToArray(),
+                    },
                     cancellationToken
                 )
         );
@@ -65,7 +73,12 @@ public static class AgentCapabilityAcceptanceExtensions
                         context.AcceptedCallId,
                         context.State,
                         context.Request
-                    ),
+                    )
+                    {
+                        ToolInvocations = context
+                            .ToolInvocations.Select(StructuredOutputDescriptors.ToPublic)
+                            .ToArray(),
+                    },
                     cancellationToken
                 )
         );

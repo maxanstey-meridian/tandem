@@ -606,6 +606,13 @@ public sealed class PackageConsumerTests
                 "package.dynamic-capability"
             ),
             (state, _) => state
+        ).WithAcceptance(
+            (context, _) =>
+            {
+                IReadOnlyList<ToolInvocationObservation> invocations = context.ToolInvocations;
+                if (invocations.Count != 0) throw new Exception("Unexpected prior package invocation.");
+                return ValueTask.CompletedTask;
+            }
         );
         var capabilityResponse = new ChatResponse(
             new ChatMessage(

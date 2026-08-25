@@ -6,6 +6,7 @@ Tandem.Advanced.AgentCapabilityAcceptanceContext`2
 Tandem.Advanced.AgentCapabilityAcceptanceExtensions
 Tandem.Advanced.AgentCheckpointContext`1
 Tandem.Advanced.AgentCommand
+Tandem.Advanced.AgentCommandArgument
 Tandem.Advanced.AgentConversationDecision
 Tandem.Advanced.AgentConversationPolicy`1
 Tandem.Advanced.AgentConversationRetention

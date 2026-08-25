@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Tandem.Ledger;
 
 public static class PipelineJournal
@@ -100,7 +102,9 @@ public sealed class SqlitePipelineObserver : IPipelinePersistenceObserver
                 RuntimeJournalKind.CommandCompleted,
                 value.StepId,
                 Name: value.Command,
-                Result: value.ExitCode.ToString()
+                Result: value.ExitCode.ToString(),
+                ValueType: typeof(string).FullName,
+                Payload: JsonSerializer.SerializeToElement(value.Output)
             ),
             PipelineAgentUsage value => new RuntimeJournalRecord(
                 RuntimeJournalKind.UsageRecorded,
@@ -125,7 +129,10 @@ public sealed class SqlitePipelineObserver : IPipelinePersistenceObserver
                 value.InvocationId,
                 value.ActionName,
                 value.Effect,
-                value.Result
+                value.Result,
+                Payload: value.Process is null
+                    ? null
+                    : JsonSerializer.SerializeToElement(value.Process)
             ),
             PipelineStructuredOutputAccepted value => new RuntimeJournalRecord(
                 RuntimeJournalKind.StructuredOutputAccepted,

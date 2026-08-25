@@ -1,14 +1,19 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 
 const directory = mkdtempSync(join(tmpdir(), "tandem-workspace-runtime-"));
+const mode = process.argv[2] ?? "execute";
 const logPath = join(directory, "requests.jsonl");
 const server = spawn(
   process.execPath,
-  [new URL("openai-server-child.mjs", import.meta.url).pathname, logPath, "workspace"],
+  [
+    new URL("openai-server-child.mjs", import.meta.url).pathname,
+    logPath,
+    mode === "parameterized" ? "workspace-parameterized" : "workspace",
+  ],
   { stdio: ["ignore", "pipe", "inherit"] },
 );
 const port = await new Promise((resolve, reject) => {
@@ -26,14 +31,34 @@ const cleanup = async () => {
 
 const { agent, agentTools, agentWorkspace, output, pipeline, route, run } =
   await import("../packages/sdk/dist/index.js");
-const mode = process.argv[2] ?? "execute";
 const State = z.object({ workspacePath: z.string() });
+if (mode === "parameterized") {
+  writeFileSync(
+    join(directory, "capture.mjs"),
+    "import { writeFileSync } from 'node:fs'; writeFileSync('received.txt', process.argv[3]);\n",
+  );
+}
 const commands = [
-  {
-    name: "run_tests",
-    description: "Write proof that the fixed command ran.",
-    command: `${JSON.stringify(process.execPath)} -e "require('fs').writeFileSync('command-ran.txt','ok')"`,
-  },
+  mode === "parameterized"
+    ? {
+        name: "run_tests",
+        description: "Capture one validated argument.",
+        command: "node capture.mjs",
+        arguments: [
+          {
+            name: "value",
+            description: "Diagnostic value.",
+            flag: "--value",
+            pattern: "[\\s\\S]*",
+            maxLength: 200,
+          },
+        ],
+      }
+    : {
+        name: "run_tests",
+        description: "Write proof that the fixed command ran.",
+        command: `${JSON.stringify(process.execPath)} -e "require('fs').writeFileSync('command-ran.txt','ok')"`,
+      },
 ];
 const workspace = agentWorkspace({
   path: (state) => state.workspacePath,
@@ -74,6 +99,10 @@ try {
   console.log(
     JSON.stringify({
       commandRan: existsSync(join(directory, "command-ran.txt")),
+      received: existsSync(join(directory, "received.txt"))
+        ? readFileSync(join(directory, "received.txt"), "utf8")
+        : null,
+      marker: existsSync(join(directory, "marker")),
       mutatedCommandRan: existsSync(join(directory, "mutated-command-ran.txt")),
     }),
   );

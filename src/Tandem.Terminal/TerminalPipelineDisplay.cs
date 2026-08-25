@@ -6,6 +6,7 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
 {
     private static int _interactiveOwner;
     private readonly TerminalDisplayOptions _options;
+    private readonly IReadOnlySet<string> _truncatedToolNames;
     private readonly IAnsiConsole _console;
     private readonly TerminalModel _model;
     private readonly TerminalRenderer _renderer;
@@ -41,6 +42,10 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
                 "Capacities and refresh interval must be positive."
             );
         }
+        _truncatedToolNames = new HashSet<string>(
+            _options.TruncatedToolNames,
+            StringComparer.Ordinal
+        );
         _console = _options.Console ?? AnsiConsole.Console;
         _model = new(
             pipeline.Name,
@@ -49,7 +54,8 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
             _options.TranscriptEntryCapacity,
             _options.TranscriptCharacterCapacity,
             _options.Title,
-            _options.WorkingDirectory
+            _options.WorkingDirectory,
+            _truncatedToolNames
         );
         _renderer = new(_console, _options.KeyActions, pipeline.StepIds);
         _observer = new(this);
@@ -348,7 +354,10 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
                     WritePlain($"{update.StepId} reasoning: {reasoning.Value}");
                     break;
                 case PipelineAgentUpdated { Update: AgentUpdate.ToolStarted tool } update:
-                    WritePlain($"{update.StepId} tool {tool.Name} started");
+                    var arguments = TerminalModel.DisplayArguments(tool, _truncatedToolNames);
+                    WritePlain(
+                        $"{update.StepId} tool {ToolStartFormatter.Format(tool.Name, arguments, tool.WorkingDirectory)} started"
+                    );
                     break;
                 case PipelineAgentUpdated { Update: AgentUpdate.ToolCompleted tool } update:
                     WritePlain(

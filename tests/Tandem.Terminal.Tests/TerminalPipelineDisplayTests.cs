@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FluentAssertions;
 using Spectre.Console.Testing;
 
@@ -158,15 +159,31 @@ public sealed class TerminalPipelineDisplayTests
     [Fact]
     public async Task RuntimeActivityIsVisibleAndControlCharactersAreRemoved()
     {
-        var console = new TestConsole();
-        await using var display = Create(console, new(false, false));
+        var console = new TestConsole().Width(240);
+        var workingDirectory = Path.Combine(Path.GetTempPath(), "terminal-launch");
+        var invocationDirectory = Path.Combine(Path.GetTempPath(), "agent-workspace");
+        await using var display = new TerminalPipelineDisplay(
+            Inspection(),
+            _runId,
+            new TerminalDisplayOptions
+            {
+                Console = console,
+                Capabilities = new(false, false),
+                WorkingDirectory = workingDirectory,
+                RefreshInterval = TimeSpan.FromMilliseconds(1),
+            }
+        );
         await display.StartAsync();
 
+        using var arguments = JsonDocument.Parse("{\"path\":\"src/file.cs\",\"staged\":false}");
         await display.Observer.ObserveAsync(
             new PipelineAgentUpdated(
                 _runId,
                 "agent",
-                new AgentUpdate.ToolStarted("call", "search", default)
+                new AgentUpdate.ToolStarted("call", "search", arguments.RootElement)
+                {
+                    WorkingDirectory = invocationDirectory,
+                }
             ),
             default
         );
@@ -188,16 +205,100 @@ public sealed class TerminalPipelineDisplayTests
         await display.SucceededAsync("complete");
         await display.WaitForCleanupAsync();
 
-        console.Output.Should().Contain("tool search started");
+        console
+            .Output.Should()
+            .Contain(
+                $"tool search path=\"src/file.cs\" staged=false in {invocationDirectory} started"
+            );
         console.Output.Should().Contain("command test exited 0: [31mpassed");
         console.Output.Should().Contain("action publish Completed");
         console.Output.Should().NotContain("\u001b");
     }
 
     [Fact]
+    public async Task PlainOutputTruncatesArgumentsOnlyForConfiguredTools()
+    {
+        var console = new TestConsole().Width(240);
+        var invocationDirectory = Path.Combine(Path.GetTempPath(), "agent-workspace");
+        await using var display = new TerminalPipelineDisplay(
+            Inspection(),
+            _runId,
+            new TerminalDisplayOptions
+            {
+                Console = console,
+                Capabilities = new(false, false),
+                TruncatedToolNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "write_checkpoint",
+                },
+            }
+        );
+        await display.StartAsync();
+
+        using var arguments = JsonDocument.Parse("{\"summary\":\"Detailed checkpoint\"}");
+        await display.Observer.ObserveAsync(
+            new PipelineAgentUpdated(
+                _runId,
+                "executor",
+                new AgentUpdate.ToolStarted(
+                    "checkpoint-call",
+                    "write_checkpoint",
+                    arguments.RootElement
+                )
+                {
+                    WorkingDirectory = invocationDirectory,
+                }
+            ),
+            default
+        );
+        await display.Observer.ObserveAsync(
+            new PipelineAgentUpdated(
+                _runId,
+                "executor",
+                new AgentUpdate.ToolStarted("case-call", "WRITE_CHECKPOINT", arguments.RootElement)
+                {
+                    WorkingDirectory = invocationDirectory,
+                }
+            ),
+            default
+        );
+        await display.Observer.ObserveAsync(
+            new PipelineAgentUpdated(
+                _runId,
+                "executor",
+                new AgentUpdate.ToolStarted("search-call", "search", arguments.RootElement)
+                {
+                    WorkingDirectory = invocationDirectory,
+                }
+            ),
+            default
+        );
+        await display.SucceededAsync("complete");
+        await display.WaitForCleanupAsync();
+
+        console
+            .Output.Should()
+            .Contain($"tool write_checkpoint in {invocationDirectory} started")
+            .And.Contain(
+                $"tool WRITE_CHECKPOINT summary=\"Detailed checkpoint\" in {invocationDirectory} started"
+            )
+            .And.Contain(
+                $"tool search summary=\"Detailed checkpoint\" in {invocationDirectory} started"
+            );
+    }
+
+    [Fact]
     public void AcceptedCapabilitySummaryAppearsInInteractiveTranscript()
     {
-        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000, null, null);
+        var model = new TerminalModel(
+            "pipeline",
+            _runId,
+            TimeProvider.System,
+            100,
+            10_000,
+            null,
+            null
+        );
 
         model.Apply(
             new PipelineCapabilityAccepted(
@@ -226,9 +327,59 @@ public sealed class TerminalPipelineDisplayTests
     }
 
     [Fact]
+    public void EmptyAcceptedCapabilitySummaryLeavesOnlySemanticPayload()
+    {
+        var model = new TerminalModel(
+            "pipeline",
+            _runId,
+            TimeProvider.System,
+            100,
+            10_000,
+            null,
+            null
+        );
+        using var payload = JsonDocument.Parse("{\"summary\":\"Detailed checkpoint\"}");
+
+        model.Apply(
+            new PipelineCapabilityAccepted(
+                _runId,
+                "executor",
+                "invocation",
+                "capability",
+                "write_checkpoint",
+                "accepted-call",
+                "",
+                "checkpoint",
+                payload.RootElement
+            )
+        );
+
+        model
+            .Snapshot()
+            .Transcript.Should()
+            .ContainSingle()
+            .Which.Should()
+            .Be(
+                new TranscriptEntry(
+                    "executor",
+                    TranscriptKind.Semantic,
+                    "{\"summary\":\"Detailed checkpoint\"}"
+                )
+            );
+    }
+
+    [Fact]
     public void ModelNameFollowsTheActiveParticipantRuntimeSelection()
     {
-        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000, null, null);
+        var model = new TerminalModel(
+            "pipeline",
+            _runId,
+            TimeProvider.System,
+            100,
+            10_000,
+            null,
+            null
+        );
 
         model.Apply(new PipelineStepStarted(_runId, "implementer"));
         model.Apply(
@@ -260,7 +411,15 @@ public sealed class TerminalPipelineDisplayTests
     [Fact]
     public void ContextUsageFollowsTheActiveParticipant()
     {
-        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000, null, null);
+        var model = new TerminalModel(
+            "pipeline",
+            _runId,
+            TimeProvider.System,
+            100,
+            10_000,
+            null,
+            null
+        );
 
         model.Apply(new PipelineStepStarted(_runId, "executor"));
         model.Apply(new PipelineAgentUsage(_runId, "executor", 10, 2, 12_000, 200_000));
@@ -282,7 +441,15 @@ public sealed class TerminalPipelineDisplayTests
     [Fact]
     public void ParallelContextUsageFollowsTheMostRecentActiveParticipant()
     {
-        var model = new TerminalModel("pipeline", _runId, TimeProvider.System, 100, 10_000, null, null);
+        var model = new TerminalModel(
+            "pipeline",
+            _runId,
+            TimeProvider.System,
+            100,
+            10_000,
+            null,
+            null
+        );
 
         model.Apply(new PipelineStepStarted(_runId, "first"));
         model.Apply(new PipelineStepStarted(_runId, "second"));

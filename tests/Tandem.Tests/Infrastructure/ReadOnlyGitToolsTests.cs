@@ -6,6 +6,19 @@ namespace Tandem.Tests.Infrastructure;
 public sealed class ReadOnlyGitToolsTests
 {
     [Fact]
+    public void Compare_description_does_not_make_diff_traversal_a_review_proxy()
+    {
+        ReadOnlyGitTools.CompareDescription.Should().Contain("when the diff is relevant");
+        ReadOnlyGitTools
+            .CompareDescription.Should()
+            .Contain("path filtering and pagination as needed");
+        ReadOnlyGitTools
+            .CompareDescription.Should()
+            .Contain("do not treat a sampled diff as complete evidence");
+        ReadOnlyGitTools.CompareDescription.Should().NotContain("inspect every returned path");
+    }
+
+    [Fact]
     public async Task Changed_files_and_diff_are_complete_and_paginated()
     {
         using var repository = TestRepository.Create();
@@ -21,14 +34,15 @@ public sealed class ReadOnlyGitToolsTests
         var git = new ReadOnlyGitRepository(repository.Path);
 
         var changed = await git.ChangedFilesAsync(baseSha, candidateSha);
-        var firstPage = await git.CompareAsync(baseSha, candidateSha, "feature.txt", maxLines: 1);
+        var firstPage = await git.CompareAsync(baseSha, candidateSha, "feature.txt", limit: 64);
         var deleted = await git.CompareAsync(baseSha, candidateSha, "deleted.txt");
         var empty = await git.CompareAsync(candidateSha, candidateSha);
 
-        changed.Should().Contain("feature.txt").And.Contain("deleted.txt");
-        firstPage.Should().Contain("continue at startLine 2");
-        deleted.Should().Contain("-deleted").And.Contain("complete");
-        empty.Should().Be("(no changes)");
+        changed.Content.Should().Contain("feature.txt").And.Contain("deleted.txt");
+        firstPage.HasMore.Should().BeTrue();
+        deleted.Content.Should().Contain("-deleted");
+        deleted.HasMore.Should().BeFalse();
+        empty.Should().BeEquivalentTo(new TextPage("", 0, 0, 0, false, null));
     }
 
     [Fact]
@@ -52,10 +66,10 @@ public sealed class ReadOnlyGitToolsTests
         var blame = await git.BlameAsync("tracked.txt", sha, 1, 1);
 
         status.Should().Contain("tracked.txt").And.Contain("untracked.txt");
-        staged.Should().Contain("+staged");
-        unstaged.Should().Contain("+unstaged");
+        staged.Content.Should().Contain("+staged");
+        unstaged.Content.Should().Contain("+unstaged");
         log.Should().Contain(sha).And.Contain("base");
-        show.Should().Contain("commit " + sha).And.Contain("+base");
+        show.Content.Should().Contain("commit " + sha).And.Contain("+base");
         blame.Should().Contain(sha).And.Contain("base");
     }
 
@@ -71,20 +85,13 @@ public sealed class ReadOnlyGitToolsTests
         var candidateSha = repository.Head();
         var git = new ReadOnlyGitRepository(repository.Path);
 
-        var firstPage = await git.CompareAsync(
-            baseSha,
-            candidateSha,
-            "large.txt",
-            maxLines: 1
-        );
+        var firstPage = await git.CompareAsync(baseSha, candidateSha, "large.txt", limit: 64);
 
-        firstPage
-            .Should()
-            .Contain("[lines 1-1 of")
-            .And.Contain("continue at startLine 2");
+        firstPage.Length.Should().BeLessThanOrEqualTo(64);
+        firstPage.HasMore.Should().BeTrue();
 
-        var fullPage = await git.CompareAsync(baseSha, candidateSha, "large.txt", maxLines: 500);
-        fullPage.Should().Contain("complete");
+        var fullPage = await git.CompareAsync(baseSha, candidateSha, "large.txt", limit: 65_536);
+        fullPage.HasMore.Should().BeTrue();
     }
 
     [Fact]
@@ -101,9 +108,146 @@ public sealed class ReadOnlyGitToolsTests
         var candidateSha = repository.Head();
         var git = new ReadOnlyGitRepository(repository.Path);
 
-        var firstPage = await git.CompareAsync(baseSha, candidateSha, maxLines: 1);
+        var firstPage = await git.CompareAsync(baseSha, candidateSha, limit: 64);
 
-        firstPage.Should().Contain("[lines 1-1 of").And.Contain("continue at startLine 2");
+        firstPage.Length.Should().BeLessThanOrEqualTo(64);
+        firstPage.HasMore.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Every_paginated_command_reconstructs_output_beyond_process_capture_limit()
+    {
+        using var repository = TestRepository.Create();
+        File.WriteAllText(Path.Combine(repository.Path, "large.txt"), "base\n");
+        repository.Commit("base");
+        var baseSha = repository.Head();
+        File.WriteAllText(Path.Combine(repository.Path, "large.txt"), new string('x', 200_000));
+        for (var index = 0; index < 2_500; index++)
+        {
+            File.WriteAllText(
+                Path.Combine(repository.Path, $"changed-{index:D4}-{new string('n', 45)}.txt"),
+                "x"
+            );
+        }
+        repository.Commit("candidate");
+        var candidateSha = repository.Head();
+        var git = new ReadOnlyGitRepository(repository.Path);
+
+        var compare = await Reconstruct(offset =>
+            git.CompareAsync(baseSha, candidateSha, limit: 32_768, offset: offset)
+        );
+        var changed = await Reconstruct(offset =>
+            git.ChangedFilesAsync(baseSha, candidateSha, offset, 32_768)
+        );
+        var show = await Reconstruct(offset =>
+            git.ShowAsync(candidateSha, offset: offset, limit: 32_768)
+        );
+
+        compare
+            .Should()
+            .Be(
+                repository.RunPublic(
+                    "diff",
+                    "--find-renames",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--no-color",
+                    $"{baseSha}..{candidateSha}"
+                )
+            );
+        changed
+            .Should()
+            .Be(
+                repository.RunPublic(
+                    "diff",
+                    "--name-status",
+                    "--find-renames",
+                    "--no-ext-diff",
+                    "--no-color",
+                    $"{baseSha}..{candidateSha}"
+                )
+            );
+        show.Should()
+            .Be(
+                repository.RunPublic(
+                    "show",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--no-color",
+                    "--format=fuller",
+                    candidateSha
+                )
+            );
+        compare.Length.Should().BeGreaterThan(128 * 1024);
+        changed.Length.Should().BeGreaterThan(128 * 1024);
+        show.Length.Should().BeGreaterThan(128 * 1024);
+
+        File.WriteAllText(Path.Combine(repository.Path, "large.txt"), new string('z', 210_000));
+        var workspace = await Reconstruct(offset =>
+            git.WorkspaceDiffAsync(offset: offset, limit: 32_768)
+        );
+        workspace
+            .Should()
+            .Be(repository.RunPublic("diff", "--no-ext-diff", "--no-textconv", "--no-color"));
+        workspace.Length.Should().BeGreaterThan(128 * 1024);
+    }
+
+    [Fact]
+    public async Task Paged_git_capture_is_deleted_after_success_failure_and_cancellation()
+    {
+        using var repository = TestRepository.Create();
+        File.WriteAllText(Path.Combine(repository.Path, "tracked.txt"), "base\n");
+        repository.Commit("base");
+        File.WriteAllText(Path.Combine(repository.Path, "tracked.txt"), "changed\n");
+        var captures = new List<string>();
+        string CreateCapture()
+        {
+            var path = Path.Combine(repository.Path, $"capture-{captures.Count}.tmp");
+            using (File.Create(path)) { }
+            captures.Add(path);
+            return path;
+        }
+        var git = new ReadOnlyGitRepository(repository.Path, CreateCapture);
+
+        await git.WorkspaceDiffAsync();
+        File.Exists(captures[^1]).Should().BeFalse();
+
+        var missingRepository = Path.Combine(repository.Path, "missing");
+        var failing = new ReadOnlyGitRepository(missingRepository, CreateCapture);
+        await FluentActions
+            .Awaiting(() => failing.WorkspaceDiffAsync())
+            .Should()
+            .ThrowAsync<Exception>();
+        File.Exists(captures[^1]).Should().BeFalse();
+
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await FluentActions
+            .Awaiting(() => git.WorkspaceDiffAsync(cancellationToken: cancellation.Token))
+            .Should()
+            .ThrowAsync<OperationCanceledException>();
+        File.Exists(captures[^1]).Should().BeFalse();
+    }
+
+    private static async Task<string> Reconstruct(Func<int, Task<TextPage>> read)
+    {
+        var content = new System.Text.StringBuilder();
+        var offset = 0;
+        while (true)
+        {
+            var page = await read(offset);
+            page.Offset.Should().Be(offset);
+            page.Length.Should().Be(page.Content.Length).And.BeLessThanOrEqualTo(32_768);
+            content.Append(page.Content);
+            if (!page.HasMore)
+            {
+                page.NextOffset.Should().BeNull();
+                return content.ToString();
+            }
+            page.NextOffset.Should().Be(offset + page.Length);
+            page.NextOffset.Should().BeGreaterThan(offset);
+            offset = page.NextOffset!.Value;
+        }
     }
 
     [Fact]
@@ -125,7 +269,7 @@ public sealed class ReadOnlyGitToolsTests
             "tracked.txt"
         );
 
-        output.Should().Contain("-before").And.Contain("+after");
+        output.Content.Should().Contain("-before").And.Contain("+after");
     }
 
     [Fact]

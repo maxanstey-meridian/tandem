@@ -156,6 +156,51 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task AgentLedgerReader_ReturnsPersistedCommandOutput()
+    {
+        var store = await CreateStoreAsync(DatabasePath());
+        var runId = Guid.CreateVersion7();
+        var observer = await store.CreateObserverAsync(runId, "test", CancellationToken.None);
+        await observer.ObserveAsync(
+            new PipelineCommandOutput(
+                runId,
+                "executor",
+                "task ui:e2e:ci",
+                "FORM_FIELD_OPTIONS_REQUIRED",
+                1
+            ),
+            CancellationToken.None
+        );
+        await store
+            .ForRun(runId)
+            .AppendAsync(
+                PipelineJournal.Stream,
+                "legacy-command",
+                new RuntimeJournalRecord(
+                    RuntimeJournalKind.CommandCompleted,
+                    "executor",
+                    Name: "legacy command",
+                    Result: "1"
+                ),
+                CancellationToken.None
+            );
+
+        var reader = (IPipelineLedgerReader)store.ForRun(runId);
+        var page = await reader.ReadAsync(cancellationToken: CancellationToken.None);
+        var search = await reader.SearchAsync(
+            "FORM_FIELD_OPTIONS_REQUIRED",
+            cancellationToken: CancellationToken.None
+        );
+
+        page.Entries.Should().ContainSingle();
+        page.Entries[0].Value.Should().Contain("CommandCompleted");
+        page.Entries[0].Value.Should().Contain("task ui:e2e:ci");
+        page.Entries[0].Value.Should().Contain("FORM_FIELD_OPTIONS_REQUIRED");
+        page.Entries[0].Value.Should().Contain("\"result\":\"1\"");
+        search.Entries.Should().ContainSingle();
+    }
+
+    [Fact]
     public async Task EntryIdentity_IsUniqueAcrossAWholeRun()
     {
         var store = await CreateStoreAsync(DatabasePath());
@@ -385,10 +430,13 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Theory]
+    [InlineData(LedgerRunStatus.Running)]
+    [InlineData(LedgerRunStatus.Ready)]
     [InlineData(LedgerRunStatus.Failed)]
     [InlineData(LedgerRunStatus.Faulted)]
     [InlineData(LedgerRunStatus.Interrupted)]
-    public async Task ResumableRun_CanReopenWithReadableFacts(LedgerRunStatus status)
+    [InlineData(LedgerRunStatus.Cancelled)]
+    public async Task AnyPersistedRun_CanReopenWithReadableFacts(LedgerRunStatus status)
     {
         var path = DatabasePath();
         var runId = Guid.CreateVersion7();
@@ -396,7 +444,10 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         await store.CreateRunAsync(runId, "delivery");
         var facts = new LedgerStream<ProbeEntry>("facts", "test.fact");
         await store.ForRun(runId).AppendAsync(facts, "accepted", new ProbeEntry("durable", 1));
-        await store.CompleteRunAsync(runId, status);
+        if (status != LedgerRunStatus.Running)
+        {
+            await store.CompleteRunAsync(runId, status);
+        }
 
         var reopened = await CreateStoreAsync(path);
         var run = await reopened.ReopenRunAsync(runId);
@@ -405,21 +456,6 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         run.Status.Should().Be(LedgerRunStatus.Running);
         run.EndedAt.Should().BeNull();
         entries.Should().ContainSingle().Which.Value.Name.Should().Be("durable");
-    }
-
-    [Theory]
-    [InlineData(LedgerRunStatus.Ready)]
-    [InlineData(LedgerRunStatus.Cancelled)]
-    public async Task ReopenRun_RejectsOtherTerminalStatuses(LedgerRunStatus status)
-    {
-        var store = await CreateStoreAsync(DatabasePath());
-        var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "delivery");
-        await store.CompleteRunAsync(runId, status);
-
-        var reopen = async () => await store.ReopenRunAsync(runId);
-
-        await reopen.Should().ThrowAsync<LedgerConflictException>();
     }
 
     [Fact]
@@ -541,6 +577,10 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             ),
             CancellationToken.None
         );
+        await observer.ObserveAsync(
+            new PipelineCommandOutput(runId, "executor", "task check", "red output", 7),
+            CancellationToken.None
+        );
         await observer.RecordRunCompletedAsync("Ready", CancellationToken.None);
 
         var records = await store
@@ -557,13 +597,20 @@ public sealed class SqliteLedgerStoreTests : IDisposable
                 RuntimeJournalKind.UsageRecorded,
                 RuntimeJournalKind.ActionAttempted,
                 RuntimeJournalKind.ActionCompleted,
+                RuntimeJournalKind.CommandCompleted,
                 RuntimeJournalKind.RunCompleted
             );
-        records.Select(record => record.Sequence).Should().Equal(1, 2, 3, 4, 5, 6);
+        records.Select(record => record.Sequence).Should().Equal(1, 2, 3, 4, 5, 6, 7);
         records
             .Single(record => record.Value.Kind == RuntimeJournalKind.UsageRecorded)
             .Value.ContextWindowTokens.Should()
             .Be(200_000);
+        var command = records.Single(record =>
+            record.Value.Kind == RuntimeJournalKind.CommandCompleted
+        );
+        command.Value.Name.Should().Be("task check");
+        command.Value.Result.Should().Be("7");
+        command.Value.Payload!.Value.GetString().Should().Be("red output");
     }
 
     [Fact]

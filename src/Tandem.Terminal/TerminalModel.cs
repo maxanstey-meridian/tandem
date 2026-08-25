@@ -16,7 +16,8 @@ internal sealed record TranscriptEntry(
     TranscriptKind Kind,
     string Text,
     string? ToolName = null,
-    bool? Succeeded = null
+    bool? Succeeded = null,
+    string? WorkingDirectory = null
 );
 
 internal sealed record StepVisit(
@@ -57,7 +58,8 @@ internal sealed class TerminalModel(
     int entryCapacity,
     int characterCapacity,
     string? title,
-    string? workingDirectory
+    string? workingDirectory,
+    IReadOnlySet<string>? truncatedToolNames = null
 )
 {
     private readonly object _gate = new();
@@ -85,6 +87,10 @@ internal sealed class TerminalModel(
         StringComparer.Ordinal
     );
     private readonly Dictionary<string, string> _toolNames = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _truncatedToolNames = new(
+        truncatedToolNames ?? (IReadOnlySet<string>)new HashSet<string>(StringComparer.Ordinal),
+        StringComparer.Ordinal
+    );
 
     public void Apply(PipelineObservation observation)
     {
@@ -135,15 +141,10 @@ internal sealed class TerminalModel(
                     Append(
                         update.StepId,
                         TranscriptKind.ToolStarted,
-                        tool.Arguments.ValueKind == System.Text.Json.JsonValueKind.Undefined
-                            ? "{}"
-                            : tool.Arguments.GetRawText(),
-                        tool.Name
+                        DisplayArguments(tool, _truncatedToolNames),
+                        tool.Name,
+                        workingDirectory: tool.WorkingDirectory
                     );
-                    if (tool.Name == "ask_planner")
-                    {
-                        AppendSemantic(update.StepId, tool.Arguments);
-                    }
                     break;
                 case PipelineAgentUpdated { Update: AgentUpdate.ToolCompleted tool } update:
                     _toolNames.Remove(tool.CallId, out var toolName);
@@ -227,6 +228,11 @@ internal sealed class TerminalModel(
 
     private static string Json(System.Text.Json.JsonElement value) =>
         value.ValueKind == System.Text.Json.JsonValueKind.Undefined ? "{}" : value.GetRawText();
+
+    internal static string DisplayArguments(
+        AgentUpdate.ToolStarted tool,
+        IReadOnlySet<string> truncatedToolNames
+    ) => truncatedToolNames.Contains(tool.Name) ? "" : Json(tool.Arguments);
 
     private void AppendSemantic(string stepId, System.Text.Json.JsonElement value)
     {
@@ -395,11 +401,12 @@ internal sealed class TerminalModel(
         TranscriptKind kind,
         string text,
         string? toolName = null,
-        bool? succeeded = null
+        bool? succeeded = null,
+        string? workingDirectory = null
     )
     {
         text = TerminalText.Sanitize(text);
-        if (text.Length == 0)
+        if (text.Length == 0 && kind != TranscriptKind.ToolStarted)
         {
             return;
         }
@@ -414,7 +421,7 @@ internal sealed class TerminalModel(
         }
         else
         {
-            _transcript.Add(new(stepId, kind, text, toolName, succeeded));
+            _transcript.Add(new(stepId, kind, text, toolName, succeeded, workingDirectory));
         }
         _characters += text.Length;
         while (_transcript.Count > entryCapacity)

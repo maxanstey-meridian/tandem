@@ -42,6 +42,16 @@ internal sealed class CapabilityInvocationState<TState>(
     public AcceptedCapability<TState>? Accepted { get; private set; }
     public string? AcceptedCallId { get; private set; }
     public object? AcceptedResult { get; private set; }
+    public IReadOnlyList<Infrastructure.ToolInvocationObservationDescriptor> ToolInvocations =>
+        ToolOutcomeCollector?.ToolInvocations ?? [];
+
+    internal Infrastructure.Blocks.ToolOutcomeCollector? ToolOutcomeCollector { get; private set; }
+
+    internal void AttachToolOutcomeCollector(Infrastructure.Blocks.ToolOutcomeCollector collector)
+    {
+        ArgumentNullException.ThrowIfNull(collector);
+        ToolOutcomeCollector = collector;
+    }
 
     public bool TryReserve()
     {

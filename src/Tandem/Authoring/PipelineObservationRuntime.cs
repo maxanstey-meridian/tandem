@@ -122,13 +122,24 @@ public sealed record PipelineActionAttempted(
     string Effect
 ) : PipelineObservation(RunId, StepId);
 
+public sealed record PipelineActionProcessPayload(
+    JsonElement Arguments,
+    int ExitCode,
+    string Stdout,
+    string Stderr,
+    TimeSpan Duration,
+    bool TimedOut,
+    bool Truncated
+);
+
 public sealed record PipelineActionCompleted(
     Guid RunId,
     string StepId,
     string InvocationId,
     string ActionName,
     string Effect,
-    string Result
+    string Result,
+    PipelineActionProcessPayload? Process = null
 ) : PipelineObservation(RunId, StepId);
 
 public record PipelineStructuredOutputAccepted(

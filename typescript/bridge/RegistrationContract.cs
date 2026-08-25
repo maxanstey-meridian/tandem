@@ -11,9 +11,12 @@ internal sealed record RegisteredGraphContract(
     string[]? Outputs,
     string? LedgerPath,
     string? Presentation,
+    RegisteredTerminalPresentationContract? Terminal,
     string? ObservationCallback,
     RegisteredInteractionHandlerContract[]? InteractionHandlers
 );
+
+internal sealed record RegisteredTerminalPresentationContract(string[]? TruncatedToolNames);
 
 internal sealed record RegisteredNodeContract(
     string? Id,
@@ -46,7 +49,8 @@ internal sealed record RegisteredCheckpointContract(
     string? CapabilityName,
     string? Instructions,
     string? MessageCallback,
-    bool ResetSession
+    bool ResetSession,
+    bool DisableCompaction
 );
 
 internal sealed record RegisteredWorkspaceContract(

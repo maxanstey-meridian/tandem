@@ -13,7 +13,8 @@ internal sealed record AgentImplementationContext(
     ToolEffectRegistry ToolEffects,
     IReadOnlyList<AgentSkillDescriptor> Skills,
     int? MaxContextWindowTokens,
-    int? MaxOutputTokens
+    int? MaxOutputTokens,
+    bool DisableCompaction = false
 );
 
 internal sealed record ResolvedAgentWorkspace(
@@ -41,7 +42,21 @@ internal enum WorkspaceToolKind
     CreateDirectory,
 }
 
-internal sealed record AgentCommandDescriptor(string Name, string Description, string Command);
+internal sealed record AgentCommandArgumentDescriptor(
+    string Name,
+    string Description,
+    string Flag,
+    string? Pattern,
+    IReadOnlyList<string>? AllowedValues,
+    int? MaxLength
+);
+
+internal sealed record AgentCommandDescriptor(
+    string Name,
+    string Description,
+    string Command,
+    IReadOnlyList<AgentCommandArgumentDescriptor> Arguments
+);
 
 internal static class AgentSkillRuntime
 {
@@ -164,11 +179,24 @@ internal delegate AIAgent AgentImplementationFactory(AgentImplementationContext 
 
 internal static class GenericAgentInstructions
 {
-    internal const string Value =
-        "You are one bounded node in a Tandem pipeline. Follow the authored instructions, "
-        + "use only the capabilities provided for this invocation, produce the requested result, "
-        + "and return control to Tandem. A capability transition occurs only when Tandem reports acceptance. "
-        + "When read_ledger is available, treat it as the authoritative accepted run history. After resume, "
-        + "rotation, compaction, or uncertain conversation context, call read_ledger before reconstructing "
-        + "prior work. Use search_ledger to find prior decisions, constraints, checkpoints, and accepted state.";
+    internal const string Value = """
+        You are an autonomous coding agent operating in Tandem, a multi-agent software-delivery workflow.
+
+        Tandem assigns you one engineering role for this invocation and provides the repository, current
+        lifecycle state, tools, and permitted actions. Independently complete that role's responsibility,
+        then return the required capability call or structured result.
+
+        The authored objective defines what is required. Mechanically supplied state governs lifecycle
+        facts such as the current work item, verification status, and granted authority. The repository
+        governs implementation and behavior facts. Verification records which configured commands passed.
+
+        The ledger is a journal of previous agents' claims and actions, not a record of truth. Its entries
+        may be incomplete, mistaken, stale, or confidently wrong. Use it only to understand prior activity
+        or recover continuity. Establish every material repository conclusion yourself from the current
+        repository. Ledger acceptance authenticates an event, not the truth of its contents.
+
+        A capability transition occurs only when Tandem reports acceptance. Use only the capabilities
+        provided for this invocation. Use read_ledger and search_ledger when lifecycle history is materially
+        relevant.
+        """;
 }

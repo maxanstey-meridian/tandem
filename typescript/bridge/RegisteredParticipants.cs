@@ -104,6 +104,33 @@ internal static class RegisteredParticipantFactory
         );
     }
 
+    internal static CheckpointPolicy<JavaScriptState> CreateCheckpointPolicy(
+        RegisteredCheckpointContract checkpoint,
+        AgentCapability<JavaScriptState> capability,
+        CallbackDispatcher callbacks
+    ) =>
+        new(
+            checkpoint.ContextWindowTokens,
+            checkpoint.MaxOutputTokens,
+            checkpoint.CheckpointAtPercent,
+            capability,
+            checkpoint.Instructions!,
+            context =>
+                callbacks.Invoke(
+                    checkpoint.MessageCallback!,
+                    context.State.Json,
+                    context.CurrentContextTokens.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture
+                    )
+                ),
+            checkpoint.ResetSession
+                ? CheckpointSessionBehavior.Reset
+                : CheckpointSessionBehavior.Retain
+        )
+        {
+            DisableCompaction = checkpoint.DisableCompaction,
+        };
+
     private static RegisteredParticipant CreateInteraction(
         RegisteredNodeContract node,
         CallbackDispatcher callbacks
@@ -241,23 +268,10 @@ internal static class RegisteredParticipantFactory
         if (node.Checkpoint is { } checkpoint)
         {
             builder.WithCheckpoint(
-                new CheckpointPolicy<JavaScriptState>(
-                    checkpoint.ContextWindowTokens,
-                    checkpoint.MaxOutputTokens,
-                    checkpoint.CheckpointAtPercent,
+                CreateCheckpointPolicy(
+                    checkpoint,
                     capabilities[checkpoint.CapabilityName!],
-                    checkpoint.Instructions!,
-                    context =>
-                        callbacks.Invoke(
-                            checkpoint.MessageCallback!,
-                            context.State.Json,
-                            context.CurrentContextTokens.ToString(
-                                System.Globalization.CultureInfo.InvariantCulture
-                            )
-                        ),
-                    checkpoint.ResetSession
-                        ? CheckpointSessionBehavior.Reset
-                        : CheckpointSessionBehavior.Retain
+                    callbacks
                 )
             );
         }
@@ -329,7 +343,7 @@ internal static class RegisteredParticipantFactory
         return RegisteredParticipant.ForStandard(node, agent, agent.Success, agent.Failed);
     }
 
-    private static IReadOnlyList<AgentCommand> ParseCommands(string json)
+    internal static IReadOnlyList<AgentCommand> ParseCommands(string json)
     {
         var commands =
             JsonSerializer.Deserialize<RegisteredAgentCommand[]>(
@@ -338,12 +352,38 @@ internal static class RegisteredParticipantFactory
             ) ?? throw new InvalidOperationException("Workspace command callback returned null.");
         return commands
             .Select(command =>
-                AgentCommand.Define(command.Name, command.Description, command.Command)
+                AgentCommand.Define(
+                    command.Name,
+                    command.Description,
+                    command.Command,
+                    (command.Arguments ?? []).Select(argument => new AgentCommandArgument(
+                        argument.Name,
+                        argument.Description,
+                        argument.Flag,
+                        argument.Pattern,
+                        argument.AllowedValues,
+                        argument.MaxLength
+                    ))
+                )
             )
             .ToArray();
     }
 
-    private sealed record RegisteredAgentCommand(string Name, string Description, string Command);
+    private sealed record RegisteredAgentCommand(
+        string Name,
+        string Description,
+        string Command,
+        RegisteredAgentCommandArgument[]? Arguments
+    );
+
+    private sealed record RegisteredAgentCommandArgument(
+        string Name,
+        string Description,
+        string Flag,
+        string? Pattern,
+        string[]? AllowedValues,
+        int? MaxLength
+    );
 
     private static void ApplyAgentPolicies(
         AgentBuilder<JavaScriptState> builder,

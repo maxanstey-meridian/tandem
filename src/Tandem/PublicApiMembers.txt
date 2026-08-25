@@ -333,6 +333,7 @@ M System.Void Deconstruct(out System.String CallId, out System.String Name, out 
 M Tandem.AgentUpdate+ToolStarted <Clone>$()
 P System.String CallId { get; set; }
 P System.String Name { get; set; }
+P System.String? WorkingDirectory { get; set; }
 P System.Text.Json.JsonElement Arguments { get; set; }
 T Tandem.AgentUpdate+Usage
 C (System.Nullable<System.Int64>? InputTokens, System.Nullable<System.Int64>? OutputTokens, System.Nullable<System.Int64>? ReasoningTokens)
@@ -392,18 +393,34 @@ P System.String ActionName { get; set; }
 P System.String Effect { get; set; }
 P System.String InvocationId { get; set; }
 T Tandem.PipelineActionCompleted
-C (System.Guid RunId, System.String StepId, System.String InvocationId, System.String ActionName, System.String Effect, System.String Result)
+C (System.Guid RunId, System.String StepId, System.String InvocationId, System.String ActionName, System.String Effect, System.String Result, Tandem.PipelineActionProcessPayload? Process = null)
 M System.Boolean Equals(System.Object? obj)
 M System.Boolean Equals(Tandem.PipelineActionCompleted? other)
 M System.Boolean Equals(Tandem.PipelineObservation? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
-M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String InvocationId, out System.String ActionName, out System.String Effect, out System.String Result)
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String InvocationId, out System.String ActionName, out System.String Effect, out System.String Result, out Tandem.PipelineActionProcessPayload? Process)
 M Tandem.PipelineActionCompleted <Clone>$()
 P System.String ActionName { get; set; }
 P System.String Effect { get; set; }
 P System.String InvocationId { get; set; }
 P System.String Result { get; set; }
+P Tandem.PipelineActionProcessPayload? Process { get; set; }
+T Tandem.PipelineActionProcessPayload
+C (System.Text.Json.JsonElement Arguments, System.Int32 ExitCode, System.String Stdout, System.String Stderr, System.TimeSpan Duration, System.Boolean TimedOut, System.Boolean Truncated)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineActionProcessPayload? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Text.Json.JsonElement Arguments, out System.Int32 ExitCode, out System.String Stdout, out System.String Stderr, out System.TimeSpan Duration, out System.Boolean TimedOut, out System.Boolean Truncated)
+M Tandem.PipelineActionProcessPayload <Clone>$()
+P System.Boolean TimedOut { get; set; }
+P System.Boolean Truncated { get; set; }
+P System.Int32 ExitCode { get; set; }
+P System.String Stderr { get; set; }
+P System.String Stdout { get; set; }
+P System.Text.Json.JsonElement Arguments { get; set; }
+P System.TimeSpan Duration { get; set; }
 T Tandem.PipelineAgentUpdated
 C (System.Guid RunId, System.String StepId, Tandem.AgentUpdate Update)
 M System.Boolean Equals(System.Object? obj)

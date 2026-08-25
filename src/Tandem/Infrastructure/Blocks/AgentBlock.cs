@@ -32,8 +32,8 @@ internal sealed class AgentBlock<TState>(
         declareCrossRunShareable: true
     )
 {
-    private const int StructuredOutputCorrectionLimit = 99;
-    private static readonly TimeSpan _modelStreamIdleTimeout = TimeSpan.FromMinutes(5);
+    private const int StructuredOutputCorrectionLimit = 2;
+    private static readonly TimeSpan _modelStreamIdleTimeout = TimeSpan.FromMinutes(20);
     private static readonly HashSet<string> _reservedWorkspaceToolNames =
     [
         "read_file",
@@ -117,7 +117,8 @@ internal sealed class AgentBlock<TState>(
             );
         }
         {
-            var collector = new ToolOutcomeCollector();
+            var collector = new ToolOutcomeCollector(RestoreToolInvocations(runtime));
+            capabilityInvocation.AttachToolOutcomeCollector(collector);
 
             var instructions = requiresCheckpointRelease
                 ? config.Checkpoint!.Instructions
@@ -542,11 +543,9 @@ internal sealed class AgentBlock<TState>(
                     cts.Token
                 );
             }
-            var updatedRuntime = await CaptureSessionAsync(
-                agent,
-                session,
-                runtimeAfterUsage,
-                cts.Token
+            var updatedRuntime = CaptureToolInvocations(
+                await CaptureSessionAsync(agent, session, runtimeAfterUsage, cts.Token),
+                collector
             );
 
             var outcome = await ResolveOutcomeAsync(
@@ -650,7 +649,8 @@ internal sealed class AgentBlock<TState>(
         PipelineMessage<TState> message,
         CapabilityInvocationState<TState> capabilityInvocation,
         IReadOnlySet<string> boundCapabilityNames,
-        ToolEffectRegistry toolEffects
+        ToolEffectRegistry toolEffects,
+        string? workingDirectory
     ) =>
         agent
             .AsBuilder()
@@ -723,7 +723,10 @@ internal sealed class AgentBlock<TState>(
                             actionInvocationId,
                             ficContext.Function.Name,
                             arguments
-                        ),
+                        )
+                        {
+                            WorkingDirectory = workingDirectory,
+                        },
                         ct
                     );
 
@@ -971,7 +974,18 @@ internal sealed class AgentBlock<TState>(
                                 actionInvocationId,
                                 ficContext.Function.Name,
                                 effect,
-                                isToolError ? "Failed" : "Completed"
+                                isToolError ? "Failed" : "Completed",
+                                resultEvidence is ToolResultEvidenceDescriptor.Process process
+                                    ? new PipelineActionProcessPayload(
+                                        arguments,
+                                        process.ExitCode,
+                                        process.Stdout,
+                                        process.Stderr,
+                                        process.Duration,
+                                        process.TimedOut,
+                                        process.Truncated
+                                    )
+                                    : null
                             ),
                             ct
                         );
@@ -1239,7 +1253,7 @@ internal sealed class AgentBlock<TState>(
                         CancellationToken cancellationToken = default
                     ) => ledger.ReadAsync(cursor, limit, cancellationToken),
                     "read_ledger",
-                    "Read accepted durable run records in order. Use after resume, rotation, compaction, or whenever conversation history is incomplete."
+                    "Read accepted durable lifecycle history in order: claims, decisions, findings, checkpoints, state, and transitions. Repository and implementation claims in those records must be verified against the current repository before reliance."
                 )
             );
             chatOptions.Tools.Add(
@@ -1256,7 +1270,7 @@ internal sealed class AgentBlock<TState>(
                         CancellationToken cancellationToken = default
                     ) => ledger.SearchAsync(query, cursor, limit, cancellationToken),
                     "search_ledger",
-                    "Search accepted durable run records, then use read_ledger to inspect surrounding history."
+                    "Search accepted durable lifecycle history for relevant prior claims, decisions, findings, constraints, checkpoints, and state, then use read_ledger to inspect surrounding records. A match does not establish current repository or implementation state."
                 )
             );
         }
@@ -1294,7 +1308,8 @@ internal sealed class AgentBlock<TState>(
             toolEffects,
             config.Skills ?? [],
             config.Checkpoint?.ContextWindowTokens,
-            config.Checkpoint?.MaxOutputTokens
+            config.Checkpoint?.MaxOutputTokens,
+            config.Checkpoint?.DisableCompaction ?? false
         );
         var agent = config.ImplementationFactory is null
             ? new ChatClientAgent(
@@ -1329,7 +1344,8 @@ internal sealed class AgentBlock<TState>(
             message,
             capabilityInvocation,
             boundCapabilityNames,
-            toolEffects
+            toolEffects,
+            workspace?.Path
         );
     }
 
@@ -1586,6 +1602,7 @@ internal sealed class AgentBlock<TState>(
         {
             Runtime = message
                 .Runtime.WithoutSession(config.StepId)
+                .WithoutToolInvocations(config.StepId)
                 .WithoutUsage(config.StepId)
                 .WithoutProfile(config.StepId),
         };
@@ -1596,7 +1613,10 @@ internal sealed class AgentBlock<TState>(
         var runtime = message.Runtime;
         if (!config.ContinueSession)
         {
-            runtime = runtime.WithoutSession(config.StepId).WithoutUsage(config.StepId);
+            runtime = runtime
+                .WithoutSession(config.StepId)
+                .WithoutToolInvocations(config.StepId)
+                .WithoutUsage(config.StepId);
         }
 
         var profile =
@@ -1611,7 +1631,10 @@ internal sealed class AgentBlock<TState>(
             )
         )
         {
-            runtime = runtime.WithoutSession(config.StepId).WithoutUsage(config.StepId);
+            runtime = runtime
+                .WithoutSession(config.StepId)
+                .WithoutToolInvocations(config.StepId)
+                .WithoutUsage(config.StepId);
         }
         return runtime.WithProfile(config.StepId, profile);
     }
@@ -1626,6 +1649,27 @@ internal sealed class AgentBlock<TState>(
         var serialized = await agent.SerializeSessionAsync(session, cancellationToken: ct);
         return runtime.WithSession(config.StepId, serialized);
     }
+
+    private IReadOnlyList<ToolInvocationObservationDescriptor> RestoreToolInvocations(
+        PipelineRuntime runtime
+    ) =>
+        runtime.AgentToolInvocations.TryGetValue(config.StepId, out var serialized)
+            ? serialized
+                .Deserialize<PersistedToolInvocation[]>()!
+                .Select(invocation => invocation.ToDescriptor())
+                .ToArray()
+            : [];
+
+    private PipelineRuntime CaptureToolInvocations(
+        PipelineRuntime runtime,
+        ToolOutcomeCollector collector
+    ) =>
+        runtime.WithToolInvocations(
+            config.StepId,
+            JsonSerializer.SerializeToElement(
+                collector.ToolInvocations.Select(PersistedToolInvocation.FromDescriptor).ToArray()
+            )
+        );
 
     private async Task<AgentSession> RestoreOrCreateSessionAsync(
         AIAgent agent,
@@ -1642,6 +1686,64 @@ internal sealed class AgentBlock<TState>(
     }
 }
 
+internal sealed record PersistedToolInvocation(
+    string Name,
+    ToolEffect? Effect,
+    ToolEvidence? Evidence,
+    JsonElement Arguments,
+    ToolInvocationStatus Status,
+    PersistedProcessEvidence? Process
+)
+{
+    internal static PersistedToolInvocation FromDescriptor(
+        ToolInvocationObservationDescriptor invocation
+    ) =>
+        new(
+            invocation.Name,
+            invocation.Semantics?.Effect,
+            invocation.Semantics?.Evidence,
+            invocation.Arguments,
+            invocation.Status,
+            invocation.Result is ToolResultEvidenceDescriptor.Process process
+                ? new PersistedProcessEvidence(
+                    process.ExitCode,
+                    process.Stdout,
+                    process.Stderr,
+                    process.Duration,
+                    process.TimedOut,
+                    process.Truncated
+                )
+                : null
+        );
+
+    internal ToolInvocationObservationDescriptor ToDescriptor() =>
+        new(
+            Name,
+            Effect is { } effect ? new ToolSemantics(effect, Evidence ?? ToolEvidence.None) : null,
+            Arguments,
+            Status,
+            Process is { } process
+                ? new ToolResultEvidenceDescriptor.Process(
+                    process.ExitCode,
+                    process.Stdout,
+                    process.Stderr,
+                    process.Duration,
+                    process.TimedOut,
+                    process.Truncated
+                )
+                : null
+        );
+}
+
+internal sealed record PersistedProcessEvidence(
+    int ExitCode,
+    string Stdout,
+    string Stderr,
+    TimeSpan Duration,
+    bool TimedOut,
+    bool Truncated
+);
+
 internal sealed class ToolOutcomeCollector
 {
     internal readonly record struct ToolInvocationReservation(int Ordinal);
@@ -1653,6 +1755,16 @@ internal sealed class ToolOutcomeCollector
         (int Ordinal, ToolObservationDescriptor? Observation)
     > _latestToolOutcomes = [];
     private readonly List<ToolInvocationObservationDescriptor?> _toolInvocations = [];
+
+    public ToolOutcomeCollector(
+        IReadOnlyList<ToolInvocationObservationDescriptor>? priorInvocations = null
+    )
+    {
+        if (priorInvocations is not null)
+        {
+            _toolInvocations.AddRange(priorInvocations);
+        }
+    }
 
     public bool HasLifecycleCall
     {

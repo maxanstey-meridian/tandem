@@ -16,7 +16,10 @@ public abstract record AgentUpdate
         : AgentUpdate;
 
     public sealed record ToolStarted(string CallId, string Name, JsonElement Arguments)
-        : AgentUpdate;
+        : AgentUpdate
+    {
+        public string? WorkingDirectory { get; init; }
+    }
 
     public sealed record ToolCompleted(string CallId, string? Result, string? Error) : AgentUpdate
     {

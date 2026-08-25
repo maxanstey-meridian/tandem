@@ -136,6 +136,8 @@ internal sealed record CapabilityAcceptanceContext<TState, TRequest>(
     TRequest Request
 )
 {
+    internal IReadOnlyList<Infrastructure.ToolInvocationObservationDescriptor> ToolInvocations { get; init; } =
+    [];
     internal string AcceptedCallId => $"{RunId:N}:{StepId}:{InvocationId}:{CapabilityId}";
 }
 
@@ -245,7 +247,10 @@ internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
             _capabilityId,
             _invocation.State,
             request
-        );
+        )
+        {
+            ToolInvocations = _invocation.ToolInvocations,
+        };
         return await CapabilityAcceptanceRuntime.AcceptAsync(
             _invocation,
             _capabilityId,

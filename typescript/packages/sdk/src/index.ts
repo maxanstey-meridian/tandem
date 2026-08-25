@@ -1,4 +1,3 @@
-import { inspectAcceptedAsync, runRegisteredGraphAsync } from "@tandem/runtime";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 
@@ -611,10 +610,22 @@ export type AgentToolName =
   | "shell"
   | "web_search"
   | "web_fetch";
+interface AgentCommandArgumentBase {
+  readonly name: string;
+  readonly description: string;
+  readonly flag: string;
+  readonly maxLength?: number;
+}
+export type AgentCommandArgument = AgentCommandArgumentBase &
+  (
+    | { readonly pattern: string; readonly allowedValues?: never }
+    | { readonly allowedValues: readonly string[]; readonly pattern?: never }
+  );
 export interface AgentCommand {
   readonly name: string;
   readonly description: string;
   readonly command: string;
+  readonly arguments?: readonly AgentCommandArgument[];
 }
 interface AgentCommandSelection {
   readonly [commandSelectionBrand]: object;
@@ -701,7 +712,7 @@ class AgentWorkspaceImplementation<TState> implements AgentWorkspace<TState> {
     this.commandSource =
       typeof commandSource === "function" || commandSource === undefined
         ? commandSource
-        : commandSource.map((command) => ({ ...command }));
+        : commandSource.map(copyAgentCommand);
     this.commands = { [commandSelectionBrand]: this };
   }
   withTools(
@@ -744,7 +755,124 @@ export function agentWorkspace<TState>(definition: {
   if (typeof definition.path !== "function") {
     throw new TandemError("Workspace path is required.");
   }
+  if (definition.commands !== undefined && typeof definition.commands !== "function") {
+    validateAgentCommands(definition.commands, "Workspace commands");
+  }
   return new AgentWorkspaceImplementation(definition.path, definition.commands);
+}
+
+function copyAgentCommand(command: AgentCommand): AgentCommand {
+  return command.arguments === undefined
+    ? { ...command }
+    : {
+        ...command,
+        arguments: command.arguments.map((argument) =>
+          argument.pattern !== undefined
+            ? { ...argument }
+            : { ...argument, allowedValues: [...argument.allowedValues] },
+        ),
+      };
+}
+
+function validateAgentCommands(
+  commands: unknown,
+  context: string,
+): asserts commands is readonly AgentCommand[] {
+  if (!Array.isArray(commands)) {
+    throw new TandemError(`${context} must be an array.`);
+  }
+  for (const [commandIndex, command] of commands.entries()) {
+    const commandContext = `${context}[${commandIndex}]`;
+    if (typeof command !== "object" || command === null) {
+      throw new TandemError(`${commandContext} must be a command.`);
+    }
+    const candidate = command as Partial<AgentCommand>;
+    if (typeof candidate.name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(candidate.name)) {
+      throw new TandemError(`${commandContext}.name must be a valid tool name.`);
+    }
+    if (typeof candidate.description !== "string" || candidate.description.trim().length === 0) {
+      throw new TandemError(`${commandContext}.description must be non-blank.`);
+    }
+    if (typeof candidate.command !== "string" || candidate.command.trim().length === 0) {
+      throw new TandemError(`${commandContext}.command must be non-blank.`);
+    }
+    if (candidate.arguments !== undefined && !Array.isArray(candidate.arguments)) {
+      throw new TandemError(`${commandContext}.arguments must be an array.`);
+    }
+    const argumentNames = new Set<string>();
+    for (const [argumentIndex, argument] of (candidate.arguments ?? []).entries()) {
+      const argumentContext = `${commandContext}.arguments[${argumentIndex}]`;
+      if (typeof argument !== "object" || argument === null) {
+        throw new TandemError(`${argumentContext} must be an argument.`);
+      }
+      const candidateArgument = argument as Partial<AgentCommandArgument>;
+      if (
+        typeof candidateArgument.name !== "string" ||
+        !/^[A-Za-z_][A-Za-z0-9_]*$/.test(candidateArgument.name)
+      ) {
+        throw new TandemError(`${argumentContext}.name must be a valid JSON property identifier.`);
+      }
+      if (argumentNames.has(candidateArgument.name)) {
+        throw new TandemError(`${argumentContext}.name duplicates '${candidateArgument.name}'.`);
+      }
+      argumentNames.add(candidateArgument.name);
+      if (
+        typeof candidateArgument.description !== "string" ||
+        candidateArgument.description.trim().length === 0
+      ) {
+        throw new TandemError(`${argumentContext}.description must be non-blank.`);
+      }
+      if (
+        typeof candidateArgument.flag !== "string" ||
+        candidateArgument.flag.trim().length === 0 ||
+        /\s/.test(candidateArgument.flag)
+      ) {
+        throw new TandemError(`${argumentContext}.flag must be a whitespace-free switch token.`);
+      }
+      if (
+        candidateArgument.pattern !== undefined &&
+        typeof candidateArgument.pattern !== "string"
+      ) {
+        throw new TandemError(`${argumentContext}.pattern must be a string.`);
+      }
+      if (
+        candidateArgument.allowedValues !== undefined &&
+        !Array.isArray(candidateArgument.allowedValues)
+      ) {
+        throw new TandemError(`${argumentContext}.allowedValues must be an array.`);
+      }
+      const hasPattern = typeof candidateArgument.pattern === "string";
+      const hasAllowedValues = Array.isArray(candidateArgument.allowedValues);
+      if (hasPattern === hasAllowedValues) {
+        throw new TandemError(
+          `${argumentContext} requires exactly one of pattern or allowedValues.`,
+        );
+      }
+      if (
+        candidateArgument.maxLength !== undefined &&
+        (!Number.isSafeInteger(candidateArgument.maxLength) ||
+          candidateArgument.maxLength <= 0 ||
+          candidateArgument.maxLength > 2_147_483_647)
+      ) {
+        throw new TandemError(`${argumentContext}.maxLength must be a positive integer.`);
+      }
+      if (candidateArgument.allowedValues !== undefined) {
+        if (candidateArgument.allowedValues.length === 0) {
+          throw new TandemError(`${argumentContext}.allowedValues must not be empty.`);
+        }
+        const values = new Set<string>();
+        for (const value of candidateArgument.allowedValues) {
+          if (typeof value !== "string" || value.trim().length === 0) {
+            throw new TandemError(`${argumentContext}.allowedValues must be non-blank strings.`);
+          }
+          if (values.has(value)) {
+            throw new TandemError(`${argumentContext}.allowedValues duplicates '${value}'.`);
+          }
+          values.add(value);
+        }
+      }
+    }
+  }
 }
 export function skill(definition: { readonly directory: string }): AgentSkill {
   if (typeof definition.directory !== "string" || definition.directory.trim().length === 0) {
@@ -777,6 +905,7 @@ export interface AgentDefinition<TState, TOutput = never> {
     readonly instructions: string;
     readonly message: (state: TState, currentContextTokens: number) => string;
     readonly session?: "retain" | "reset";
+    readonly disableCompaction?: boolean;
   };
   readonly timeoutMs?: number;
   readonly persist?: boolean;
@@ -913,6 +1042,14 @@ export function agent<TState, TOutput = never>(
     ) {
       throw new TandemError(
         `Agent '${definition.id}' checkpoint session must be 'retain' or 'reset'.`,
+      );
+    }
+    if (
+      checkpoint.disableCompaction !== undefined &&
+      typeof checkpoint.disableCompaction !== "boolean"
+    ) {
+      throw new TandemError(
+        `Agent '${definition.id}' checkpoint disableCompaction must be a boolean.`,
       );
     }
   }
@@ -1205,11 +1342,15 @@ export type RunObservation =
       readonly currentContextTokens: number;
       readonly contextWindowTokens: number | null;
     };
+export interface TerminalPresentationOptions {
+  readonly truncatedToolNames?: readonly string[];
+}
 export interface RunOptions {
   readonly ledgerPath?: string;
   readonly signal?: AbortSignal;
   readonly interactions?: InteractionHandlers;
   readonly presentation?: "terminal";
+  readonly terminal?: TerminalPresentationOptions;
   readonly observe?: (
     event: RunObservation,
     context: { readonly signal: AbortSignal },
@@ -1312,6 +1453,7 @@ export async function inspectAccepted(options: {
   runId: string;
 }): Promise<readonly AcceptedValue[]> {
   try {
+    const { inspectAcceptedAsync } = await import("@tandem/runtime");
     return parseJson(
       acceptedValuesSchema,
       await inspectAcceptedAsync(options.ledgerPath, options.runId),
@@ -1400,6 +1542,7 @@ export async function run<TState>(
           return "";
         })
       : undefined;
+    const { runRegisteredGraphAsync } = await import("@tandem/runtime");
     const resultJson = await runRegisteredGraphAsync(
       JSON.stringify({
         contractVersion: 10,
@@ -1409,6 +1552,7 @@ export async function run<TState>(
         persist: graph.persist,
         ledgerPath: options.ledgerPath,
         presentation: options.presentation,
+        terminal: options.terminal,
         observationCallback,
         nodes,
         routes,
@@ -1575,6 +1719,7 @@ function compileNode<TState>(
               ),
             ),
             resetSession: (implementation.checkpoint.session ?? "reset") === "reset",
+            disableCompaction: implementation.checkpoint.disableCompaction ?? false,
           }
         : undefined,
       timeoutMilliseconds: implementation.timeoutMs,
@@ -1662,9 +1807,30 @@ function compileWorkspace<TState>(
       typeof workspace.commandSource === "function"
         ? workspace.commandSource(typedState)
         : (workspace.commandSource ?? []);
+    validateAgentCommands(value, `Agent '${id}' workspace commands`);
     return serializeBoundary(
       z.array(
-        z.object({ name: z.string(), description: z.string(), command: z.string() }).strict(),
+        z
+          .object({
+            name: z.string(),
+            description: z.string(),
+            command: z.string(),
+            arguments: z
+              .array(
+                z
+                  .object({
+                    name: z.string(),
+                    description: z.string(),
+                    flag: z.string(),
+                    pattern: z.string().optional(),
+                    allowedValues: z.array(z.string()).optional(),
+                    maxLength: z.number().optional(),
+                  })
+                  .strict(),
+              )
+              .optional(),
+          })
+          .strict(),
       ),
       value,
       `${id} workspace commands`,

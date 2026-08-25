@@ -50,6 +50,9 @@ internal static partial class RegistrationContractValidator
             errors.Add("ledgerPath must be non-blank when provided.");
         if (graph.Presentation is not null && graph.Presentation != "terminal")
             errors.Add("presentation must be null or 'terminal'.");
+        if (graph.Terminal is not null && graph.Presentation != "terminal")
+            errors.Add("terminal options require terminal presentation.");
+        Unique(errors, "terminal.truncatedToolNames", graph.Terminal?.TruncatedToolNames);
         OptionalCallback(errors, "observationCallback", graph.ObservationCallback);
         if (
             graph.LedgerPath is null

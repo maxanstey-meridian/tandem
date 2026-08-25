@@ -59,6 +59,7 @@ Tandem.OutputAccepted`1
 Tandem.PipelineAcceptedValue
 Tandem.PipelineActionAttempted
 Tandem.PipelineActionCompleted
+Tandem.PipelineActionProcessPayload
 Tandem.PipelineAgentUpdated
 Tandem.PipelineAgentUsage
 Tandem.PipelineCapabilityAccepted

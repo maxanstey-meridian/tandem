@@ -37,7 +37,11 @@ internal sealed class TerminalRenderer(
     private int _lastTranscriptCount;
     private int _viewportHeight = 1;
     private readonly int _pipelineContentWidth =
-        (pipelineLabels ?? []).Select(TerminalText.Sanitize).DefaultIfEmpty("Pipeline").MaxBy(label => label.Length)!.Length
+        (pipelineLabels ?? [])
+            .Select(TerminalText.Sanitize)
+            .DefaultIfEmpty("Pipeline")
+            .MaxBy(label => label.Length)!
+            .Length
         + PipelineDurationWidth
         + PipelineResultWidth
         + 12;
@@ -92,10 +96,7 @@ internal sealed class TerminalRenderer(
         {
             var pipelineWidth = Math.Min(_pipelineContentWidth, width / 2);
             root["body"]
-                .SplitColumns(
-                    new Layout("work"),
-                    new Layout("pipeline").Size(pipelineWidth)
-                );
+                .SplitColumns(new Layout("work"), new Layout("pipeline").Size(pipelineWidth));
             root["body"]
                 ["work"]
                 .Update(RenderWork(model, bodyHeight, Math.Max(10, width - pipelineWidth - 4)));
@@ -126,17 +127,19 @@ internal sealed class TerminalRenderer(
     private static IRenderable RenderHeader(TerminalSnapshot model)
     {
         var elapsed = (model.CompletedAt ?? DateTimeOffset.UtcNow) - model.StartedAt;
-        var id = $"{model.RunId:N}";
-        var status = $"{model.Status}";
-        var timer = $"{elapsed:hh\\:mm\\:ss}";
-        var title = model.Title;
-        var text = title is null || title.Length == 0
-            ? new Text($"{id}  {status}  {timer}", StatusStyle(model.Status))
-            : new Text(
-                $"{id}  {title}  {status}  {timer}",
-                StatusStyle(model.Status)
-            ).Overflow(Overflow.Ellipsis);
-        return new Panel(text).Border(BoxBorder.Rounded).Padding(1, 0, 1, 0);
+        var output = new StringBuilder();
+        AppendChrome(output, $"{model.RunId:N}", "cornflowerblue");
+        if (!string.IsNullOrEmpty(model.Title))
+        {
+            AppendChrome(output, "  ", "grey");
+            AppendChrome(output, TerminalText.Sanitize(model.Title), "mediumpurple1");
+        }
+        AppendChrome(output, "  ", "grey");
+        AppendChrome(output, $"{model.Status}", StatusColor(model.Status), bold: true);
+        AppendChrome(output, $"  {elapsed:hh\\:mm\\:ss}", "grey");
+        return new Panel(new Markup(output.ToString()).Overflow(Overflow.Ellipsis))
+            .Border(BoxBorder.Rounded)
+            .Padding(1, 0, 1, 0);
     }
 
     private IRenderable RenderWork(TerminalSnapshot model, int paneHeight, int paneWidth)
@@ -235,7 +238,13 @@ internal sealed class TerminalRenderer(
             _ => "  ",
         };
         var value =
-            entry.Kind == TranscriptKind.ToolStarted ? entry.ToolName ?? entry.Text : entry.Text;
+            entry.Kind == TranscriptKind.ToolStarted
+                ? ToolStartFormatter.Format(
+                    entry.ToolName ?? entry.Text,
+                    entry.Text,
+                    entry.WorkingDirectory
+                )
+                : entry.Text;
         var background = StepBackground(entry.StepId);
         var jsonLines = TryRenderJson(value, label, prefix, background, width);
         if (jsonLines is not null)
@@ -253,14 +262,17 @@ internal sealed class TerminalRenderer(
         foreach (var wrapped in WrapVisibleText(value, availableWidth))
         {
             var gutter = first ? label + prefix : new string(' ', coloredGutterWidth);
-            var content = Markup.Escape(wrapped);
+            var content =
+                entry.Kind == TranscriptKind.ToolStarted
+                    ? ToolStartFormatter.FormatMarkup(
+                        wrapped,
+                        first,
+                        !string.IsNullOrWhiteSpace(entry.WorkingDirectory)
+                    )
+                    : Markup.Escape(wrapped);
             if (entry.Kind == TranscriptKind.Reasoning)
             {
                 content = $"[grey]{content}[/]";
-            }
-            else if (entry.Kind == TranscriptKind.ToolStarted)
-            {
-                content = $"[cornflowerblue]{content}[/]";
             }
             else if (entry.Succeeded is false)
             {
@@ -351,9 +363,10 @@ internal sealed class TerminalRenderer(
         var rendered = new List<IRenderable>();
         for (var index = 0; index < lines.Length; index++)
         {
-            var fragments = WrapVisibleText(lines[index], availableWidth)
-                .DefaultIfEmpty("")
-                .ToArray();
+            var fragments =
+                index < jsonStartsAt
+                    ? WrapVisibleText(lines[index], availableWidth).DefaultIfEmpty("").ToArray()
+                    : WrapJsonLine(lines[index], availableWidth).ToArray();
             for (var fragmentIndex = 0; fragmentIndex < fragments.Length; fragmentIndex++)
             {
                 var firstVisualLine = rendered.Count == 0;
@@ -372,13 +385,9 @@ internal sealed class TerminalRenderer(
                 {
                     markup.Append(Markup.Escape(fragment));
                 }
-                else if (fragmentIndex == 0)
-                {
-                    AppendJsonTokens(markup, fragment);
-                }
                 else
                 {
-                    AppendStyled(markup, fragment, JsonContinuationColor(lines[index]));
+                    markup.Append(fragment);
                 }
                 rendered.Add(new Markup(markup.ToString()).Overflow(Overflow.Ellipsis));
             }
@@ -458,32 +467,43 @@ internal sealed class TerminalRenderer(
         return documents;
     }
 
-    private static string JsonContinuationColor(string line)
+    internal static IReadOnlyList<string> WrapJsonLine(string line, int width)
     {
-        var colon = line.IndexOf(':');
-        if (colon < 0)
+        var tokens = JsonTokens(line);
+        var fragments = new List<string>();
+        var output = new StringBuilder();
+        var length = 0;
+        foreach (var (text, color) in tokens)
         {
-            return "grey";
+            for (var index = 0; index < text.Length; )
+            {
+                var unitLength =
+                    text[index] == '\\'
+                        ? text.AsSpan(index).StartsWith("\\u", StringComparison.Ordinal)
+                            ? Math.Min(6, text.Length - index)
+                            : Math.Min(2, text.Length - index)
+                        : 1;
+                if (length > 0 && length + unitLength > width)
+                {
+                    fragments.Add(output.ToString());
+                    output.Clear();
+                    length = 0;
+                }
+                AppendStyled(output, text.Substring(index, unitLength), color);
+                length += unitLength;
+                index += unitLength;
+            }
         }
-        var value = line[(colon + 1)..].TrimStart();
-        if (value.StartsWith('"'))
+        if (length > 0 || fragments.Count == 0)
         {
-            return "green";
+            fragments.Add(output.ToString());
         }
-        if (
-            value.StartsWith("true", StringComparison.Ordinal)
-            || value.StartsWith("false", StringComparison.Ordinal)
-        )
-        {
-            return "yellow";
-        }
-        return value.Length > 0 && (value[0] == '-' || char.IsDigit(value[0]))
-            ? "cornflowerblue"
-            : "grey";
+        return fragments;
     }
 
-    private static void AppendJsonTokens(StringBuilder output, string line)
+    private static IReadOnlyList<(string Text, string Color)> JsonTokens(string line)
     {
+        var tokens = new List<(string Text, string Color)>();
         var index = 0;
         while (index < line.Length)
         {
@@ -492,19 +512,15 @@ internal sealed class TerminalRenderer(
             if (character == '"')
             {
                 index++;
-                var escaped = false;
                 while (index < line.Length)
                 {
-                    var current = line[index++];
-                    if (escaped)
+                    if (line[index] == '\\')
                     {
-                        escaped = false;
+                        index += line.AsSpan(index).StartsWith("\\u", StringComparison.Ordinal)
+                            ? 6
+                            : 2;
                     }
-                    else if (current == '\\')
-                    {
-                        escaped = true;
-                    }
-                    else if (current == '"')
+                    else if (line[index++] == '"')
                     {
                         break;
                     }
@@ -514,10 +530,11 @@ internal sealed class TerminalRenderer(
                 {
                     probe++;
                 }
-                AppendStyled(
-                    output,
-                    line[start..index],
-                    probe < line.Length && line[probe] == ':' ? "cyan" : "green"
+                tokens.Add(
+                    (
+                        line[start..Math.Min(index, line.Length)],
+                        probe < line.Length && line[probe] == ':' ? "cyan" : "green"
+                    )
                 );
             }
             else if (character == '-' || char.IsDigit(character))
@@ -530,7 +547,7 @@ internal sealed class TerminalRenderer(
                 {
                     index++;
                 }
-                AppendStyled(output, line[start..index], "cornflowerblue");
+                tokens.Add((line[start..index], "cornflowerblue"));
             }
             else if (char.IsLetter(character))
             {
@@ -540,14 +557,15 @@ internal sealed class TerminalRenderer(
                     index++;
                 }
                 var token = line[start..index];
-                AppendStyled(output, token, token is "true" or "false" ? "yellow" : "grey");
+                tokens.Add((token, token is "true" or "false" ? "yellow" : "grey"));
             }
             else
             {
                 index++;
-                AppendStyled(output, line[start..index], "grey");
+                tokens.Add((line[start..index], "grey"));
             }
         }
+        return tokens;
     }
 
     private static void AppendStyled(StringBuilder output, string value, string color) =>
@@ -760,33 +778,71 @@ internal sealed class TerminalRenderer(
 
     private IRenderable RenderFooter(TerminalSnapshot model)
     {
-        string text;
-        Style style;
-        if (model.Interaction is { } interaction)
+        var output = new StringBuilder();
+        if (model.Interaction is not null)
         {
-            text = $"> {model.Draft}  Enter submit";
-            style = new Style(Color.White);
+            AppendChrome(output, "> ", "cornflowerblue");
+            AppendChrome(output, TerminalText.Sanitize(model.Draft), "white");
+            AppendChrome(output, "  Enter", "yellow");
+            AppendChrome(output, " submit", "grey");
         }
         else
         {
-            var scroll = _scrollOffset > 0 ? $"↑ {_scrollOffset} lines · End follow  " : "";
-            var actions = string.Join(
-                "  ",
-                (keyActions ?? [])
-                    .Where(action => action.IsAvailable?.Invoke() ?? true)
-                    .Select(action => $"{action.Key.ToString().ToLowerInvariant()} {action.Label}")
+            if (_scrollOffset > 0)
+            {
+                AppendChrome(output, $"↑ {_scrollOffset} lines", "cornflowerblue");
+                AppendChrome(output, " · ", "grey");
+                AppendChrome(output, "End", "yellow");
+                AppendChrome(output, " follow  ", "grey");
+            }
+            AppendChrome(output, "steps", "cyan");
+            AppendChrome(output, $" {model.Visits.Count}", "white");
+            foreach (
+                var action in (keyActions ?? []).Where(action =>
+                    action.IsAvailable?.Invoke() ?? true
+                )
+            )
+            {
+                AppendChrome(output, "  ", "grey");
+                AppendChrome(output, action.Key.ToString().ToLowerInvariant(), "yellow");
+                AppendChrome(output, $" {TerminalText.Sanitize(action.Label)}", "white");
+            }
+            AppendChrome(output, "  ", "grey");
+            AppendChrome(output, "↑↓/Pg/Home/End", "yellow");
+            AppendChrome(output, " scroll  ", "grey");
+            AppendChrome(output, "q", "yellow");
+            AppendChrome(
+                output,
+                IsTerminal(model.Status) ? " close" : " cancel",
+                IsTerminal(model.Status) ? "grey" : "red"
             );
-            var quit = IsTerminal(model.Status) ? "q close" : "q cancel";
-            var cwd = model.WorkingDirectory;
-            text = cwd is null || cwd.Length == 0
-                ? $"{scroll}steps {model.Visits.Count}{(actions.Length == 0 ? "" : $"  {actions}")}  ↑↓/Pg/Home/End scroll  {quit}"
-                : $"{scroll}steps {model.Visits.Count}{(actions.Length == 0 ? "" : $"  {actions}")}  ↑↓/Pg/Home/End scroll  {quit}  {cwd}";
-            style = new Style(Color.Grey);
+            if (!string.IsNullOrEmpty(model.WorkingDirectory))
+            {
+                AppendChrome(output, "  ", "grey");
+                AppendChrome(
+                    output,
+                    TerminalText.Sanitize(model.WorkingDirectory),
+                    "mediumpurple1"
+                );
+            }
         }
-        return new Panel(new Text(TerminalText.Sanitize(text), style).Overflow(Overflow.Ellipsis))
+        return new Panel(new Markup(output.ToString()).Overflow(Overflow.Ellipsis))
             .Border(BoxBorder.None)
             .Padding(1, 0, 0, 0);
     }
+
+    private static void AppendChrome(
+        StringBuilder output,
+        string value,
+        string color,
+        bool bold = false
+    ) =>
+        output
+            .Append('[')
+            .Append(color)
+            .Append(bold ? " bold]" : "]")
+            .Append(Markup.Escape(value))
+            .Append("[/]");
 
     private static bool IsTerminal(TerminalPipelineStatus status) =>
         status
@@ -795,19 +851,13 @@ internal sealed class TerminalRenderer(
                 or TerminalPipelineStatus.Faulted
                 or TerminalPipelineStatus.Cancelled;
 
-    private static Style StatusStyle(TerminalPipelineStatus status) =>
+    private static string StatusColor(TerminalPipelineStatus status) =>
         status switch
         {
-            TerminalPipelineStatus.Succeeded => new Style(Color.Green, decoration: Decoration.Bold),
-            TerminalPipelineStatus.Failed or TerminalPipelineStatus.Faulted => new Style(
-                Color.Red,
-                decoration: Decoration.Bold
-            ),
-            TerminalPipelineStatus.Cancelled => new Style(Color.Grey, decoration: Decoration.Bold),
-            TerminalPipelineStatus.WaitingForInteraction => new Style(
-                Color.Yellow,
-                decoration: Decoration.Bold
-            ),
-            _ => new Style(Color.Cyan, decoration: Decoration.Bold),
+            TerminalPipelineStatus.Succeeded => "green",
+            TerminalPipelineStatus.Failed or TerminalPipelineStatus.Faulted => "red",
+            TerminalPipelineStatus.Cancelled => "grey",
+            TerminalPipelineStatus.WaitingForInteraction => "yellow",
+            _ => "cyan",
         };
 }

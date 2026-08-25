@@ -33,6 +33,10 @@ internal static class HarnessAgentImplementation
                 context.ToolEffects,
                 workspace!.FileTools
             );
+            if (selectedFileToolNames.Contains(FileAccessProvider.ReadFileToolName))
+            {
+                WorkspaceFileReadTools.Add(context.ChatOptions, workspace.Path);
+            }
             if (selectedFileToolNames.Count > 0)
             {
                 providers.Add(
@@ -111,13 +115,16 @@ internal static class HarnessAgentImplementation
             MaxContextWindowTokens = context.MaxContextWindowTokens,
             MaxOutputTokens = context.MaxOutputTokens,
             DisableCompaction =
-                context.MaxContextWindowTokens is null || context.MaxOutputTokens is null,
+                context.DisableCompaction
+                || context.MaxContextWindowTokens is null
+                || context.MaxOutputTokens is null,
             CompactionStrategy =
-                context.MaxContextWindowTokens is { } ctx
+                !context.DisableCompaction
+                && context.MaxContextWindowTokens is { } ctx
                 && context.MaxOutputTokens is { } output
                     ? BuildCompactionStrategy(ctx, output)
                     : null,
-            MaximumIterationsPerRequest = 999,
+            MaximumIterationsPerRequest = 40,
             FileAccessStore = null,
         };
 
@@ -130,15 +137,14 @@ internal static class HarnessAgentImplementation
         return new PipelineCompactionStrategy(
             new ToolResultCompactionStrategy(
                 CompactionTriggers.TokensExceed((int)(inputBudget * 0.5)),
-                minimumPreservedGroups: 2
+                minimumPreservedGroups: 10
             )
             {
-                ToolCallFormatter = _ =>
-                    "[prior tool results compacted — consult the ledger]",
+                ToolCallFormatter = _ => "[prior tool results compacted — consult the ledger]",
             },
             new TruncationCompactionStrategy(
                 CompactionTriggers.TokensExceed((int)(inputBudget * 0.8)),
-                minimumPreservedGroups: 2
+                minimumPreservedGroups: 10
             )
         );
     }
@@ -208,9 +214,9 @@ internal static class HarnessToolEffects
             };
             if (
                 kind
-                    is WorkspaceToolKind.CopyFile
-                        or WorkspaceToolKind.MoveFile
-                        or WorkspaceToolKind.CreateDirectory
+                is WorkspaceToolKind.CopyFile
+                    or WorkspaceToolKind.MoveFile
+                    or WorkspaceToolKind.CreateDirectory
             )
             {
                 continue;
@@ -219,6 +225,106 @@ internal static class HarnessToolEffects
             names.Add(name);
         }
         return names;
+    }
+}
+
+internal static class WorkspaceFileReadTools
+{
+    internal static void Add(ChatOptions options, string workspacePath)
+    {
+        var tools = options.Tools?.ToList() ?? [];
+        if (tools.Any(tool => tool.Name == FileAccessProvider.ReadFileToolName))
+        {
+            throw new InvalidOperationException(
+                $"Agent already exposes tool '{FileAccessProvider.ReadFileToolName}'."
+            );
+        }
+        tools.Add(
+            AIFunctionFactory.Create(
+                async (
+                    [System.ComponentModel.Description("Repository-relative text file path.")]
+                        string path,
+                    [System.ComponentModel.Description("Zero-based UTF-16 text offset.")]
+                        int offset = 0,
+                    [System.ComponentModel.Description(
+                        "Maximum UTF-16 code units to return, from 1 to 65536."
+                    )]
+                        int limit = BoundedTextPageReader.DefaultLimit,
+                    CancellationToken cancellationToken = default
+                ) =>
+                    await BoundedTextPageReader.ReadAsync(
+                        WorkspacePathAuthority.Resolve(workspacePath, path, "read"),
+                        offset,
+                        limit,
+                        cancellationToken
+                    ),
+                FileAccessProvider.ReadFileToolName,
+                "Read a bounded page of a workspace text file. Follow nextOffset until hasMore is false. Offsets and lengths are UTF-16 code units."
+            )
+        );
+        options.Tools = tools;
+    }
+}
+
+internal static class WorkspacePathAuthority
+{
+    internal static string Resolve(string workspacePath, string path, string operation)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        if (Path.IsPathRooted(path))
+        {
+            throw new UnauthorizedAccessException("File paths must be relative to the workspace.");
+        }
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(workspacePath));
+        var fullPath = Path.GetFullPath(Path.Combine(root, path));
+        var relative = Path.GetRelativePath(root, fullPath);
+        if (
+            relative == ".."
+            || relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+            || relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal)
+        )
+        {
+            throw new UnauthorizedAccessException("File paths must remain within the workspace.");
+        }
+        if (
+            relative
+                .Split(
+                    [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                    StringSplitOptions.RemoveEmptyEntries
+                )
+                .Any(segment => string.Equals(segment, ".git", StringComparison.OrdinalIgnoreCase))
+        )
+        {
+            throw new UnauthorizedAccessException("Access to Git metadata is not allowed.");
+        }
+        var current = root;
+        foreach (
+            var segment in relative.Split(
+                [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                StringSplitOptions.RemoveEmptyEntries
+            )
+        )
+        {
+            current = Path.Combine(current, segment);
+            try
+            {
+                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                {
+                    throw new UnauthorizedAccessException(
+                        $"Workspace {operation} paths cannot contain symbolic links or reparse points."
+                    );
+                }
+            }
+            catch (FileNotFoundException)
+            {
+                break;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                break;
+            }
+        }
+        return fullPath;
     }
 }
 
@@ -291,10 +397,7 @@ internal static class WorkspaceFileMutationTools
                     "Create a directory and any missing parent directories within the configured workspace."
                 )
             );
-            effects.Add(
-                CreateDirectoryToolName,
-                Infrastructure.ToolEffect.WorkspaceMutation
-            );
+            effects.Add(CreateDirectoryToolName, Infrastructure.ToolEffect.WorkspaceMutation);
         }
         options.Tools = tools;
     }
@@ -340,72 +443,8 @@ internal static class WorkspaceFileMutationTools
         return $"Created directory '{directoryName}'.";
     }
 
-    private static string Resolve(string workspacePath, string fileName)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
-        if (Path.IsPathRooted(fileName))
-        {
-            throw new UnauthorizedAccessException("File paths must be relative to the workspace.");
-        }
-
-        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(workspacePath));
-        var fullPath = Path.GetFullPath(Path.Combine(root, fileName));
-        var relative = Path.GetRelativePath(root, fullPath);
-        if (
-            relative == ".."
-            || relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
-            || relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal)
-        )
-        {
-            throw new UnauthorizedAccessException("File paths must remain within the workspace.");
-        }
-        if (
-            relative
-                .Split(
-                    [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
-                    StringSplitOptions.RemoveEmptyEntries
-                )
-                .Any(segment => string.Equals(segment, ".git", StringComparison.OrdinalIgnoreCase))
-        )
-        {
-            throw new UnauthorizedAccessException("Access to Git metadata is not allowed.");
-        }
-        RejectLinks(root, relative);
-        return fullPath;
-    }
-
-    private static void RejectLinks(string root, string relative)
-    {
-        var current = root;
-        foreach (
-            var segment in relative.Split(
-                [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
-                StringSplitOptions.RemoveEmptyEntries
-            )
-        )
-        {
-            current = Path.Combine(current, segment);
-            FileAttributes attributes;
-            try
-            {
-                attributes = File.GetAttributes(current);
-            }
-            catch (FileNotFoundException)
-            {
-                break;
-            }
-            catch (DirectoryNotFoundException)
-            {
-                break;
-            }
-            if ((attributes & FileAttributes.ReparsePoint) != 0)
-            {
-                throw new UnauthorizedAccessException(
-                    "Workspace mutation paths cannot contain symbolic links or reparse points."
-                );
-            }
-        }
-    }
+    private static string Resolve(string workspacePath, string fileName) =>
+        WorkspacePathAuthority.Resolve(workspacePath, fileName, "mutation");
 }
 
 internal sealed class FilteringAIContextProvider(
@@ -491,22 +530,8 @@ internal static class WorkspaceShellTools
         var tools = options.Tools?.ToList() ?? [];
         foreach (var command in workspace.Commands)
         {
-            var authoredCommand = command.Command;
             tools.Add(
-                AIFunctionFactory.Create(
-                    async (CancellationToken cancellationToken) =>
-                    {
-                        await using var shell = CreateExecutor(
-                            workspace.Path,
-                            acknowledgeUnsafe: false,
-                            timeout,
-                            maxOutputBytes
-                        );
-                        return await shell.RunAsync(authoredCommand, cancellationToken);
-                    },
-                    command.Name,
-                    command.Description
-                )
+                new WorkspaceCommandFunction(command, workspace.Path, timeout, maxOutputBytes)
             );
             effects.Add(
                 command.Name,
@@ -531,6 +556,169 @@ internal static class WorkspaceShellTools
             effects.Add(tool.Name, Infrastructure.ToolEffect.ProcessExecution);
         }
         options.Tools = tools;
+    }
+
+    private sealed class WorkspaceCommandFunction : AIFunction
+    {
+        private static readonly TimeSpan _regexTimeout = TimeSpan.FromSeconds(1);
+        private readonly AgentCommandDescriptor _command;
+        private readonly string _workspacePath;
+        private readonly TimeSpan? _timeout;
+        private readonly int _maxOutputBytes;
+        private readonly JsonElement _schema;
+
+        internal WorkspaceCommandFunction(
+            AgentCommandDescriptor command,
+            string workspacePath,
+            TimeSpan? timeout,
+            int maxOutputBytes
+        )
+        {
+            _command = command;
+            _workspacePath = workspacePath;
+            _timeout = timeout;
+            _maxOutputBytes = maxOutputBytes;
+            _schema = CreateSchema(command.Arguments);
+        }
+
+        public override string Name => _command.Name;
+        public override string Description => _command.Description;
+        public override JsonElement JsonSchema => _schema;
+
+        protected override async ValueTask<object?> InvokeCoreAsync(
+            AIFunctionArguments arguments,
+            CancellationToken cancellationToken
+        )
+        {
+            var declarations = _command.Arguments.ToDictionary(
+                value => value.Name,
+                StringComparer.Ordinal
+            );
+            foreach (var name in arguments.Keys)
+            {
+                if (!declarations.ContainsKey(name))
+                {
+                    throw new ArgumentException($"Unknown argument '{name}'.", nameof(arguments));
+                }
+            }
+
+            var command = new StringBuilder(_command.Command);
+            foreach (var declaration in _command.Arguments)
+            {
+                if (!arguments.TryGetValue(declaration.Name, out var rawValue))
+                {
+                    continue;
+                }
+                var value = rawValue switch
+                {
+                    string text => text,
+                    JsonElement { ValueKind: JsonValueKind.String } element => element.GetString()!,
+                    null => throw new ArgumentException(
+                        $"Argument '{declaration.Name}' cannot be null.",
+                        nameof(arguments)
+                    ),
+                    _ => throw new ArgumentException(
+                        $"Argument '{declaration.Name}' must be a string.",
+                        nameof(arguments)
+                    ),
+                };
+                ValidateValue(declaration, value);
+                command
+                    .Append(' ')
+                    .Append(declaration.Flag)
+                    .Append(' ')
+                    .Append(
+                        OperatingSystem.IsWindows() ? QuotePowerShell(value) : QuotePosix(value)
+                    );
+            }
+
+            await using var shell = CreateExecutor(
+                _workspacePath,
+                acknowledgeUnsafe: false,
+                _timeout,
+                _maxOutputBytes
+            );
+            var result = await shell.RunAsync(command.ToString(), cancellationToken);
+            var serializerOptions = TandemJson.CreateTypedContract();
+            serializerOptions.WriteIndented = true;
+            return JsonSerializer.SerializeToElement(result, serializerOptions);
+        }
+
+        private static void ValidateValue(AgentCommandArgumentDescriptor declaration, string value)
+        {
+            if (declaration.MaxLength is { } maximum && value.Length > maximum)
+            {
+                throw new ArgumentException(
+                    $"Argument '{declaration.Name}' exceeds its maximum length."
+                );
+            }
+            if (
+                declaration.Pattern is { } pattern
+                && !System.Text.RegularExpressions.Regex.IsMatch(
+                    value,
+                    $"\\A(?:{pattern})\\z",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant,
+                    _regexTimeout
+                )
+            )
+            {
+                throw new ArgumentException(
+                    $"Argument '{declaration.Name}' does not match its pattern."
+                );
+            }
+            if (
+                declaration.AllowedValues is { } allowed
+                && !allowed.Contains(value, StringComparer.Ordinal)
+            )
+            {
+                throw new ArgumentException(
+                    $"Argument '{declaration.Name}' is not an allowed value."
+                );
+            }
+        }
+
+        private static JsonElement CreateSchema(
+            IReadOnlyList<AgentCommandArgumentDescriptor> arguments
+        )
+        {
+            var properties = new Dictionary<string, object?>(StringComparer.Ordinal);
+            foreach (var argument in arguments)
+            {
+                var property = new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["type"] = "string",
+                    ["description"] = argument.Description,
+                };
+                if (argument.MaxLength is { } maximum)
+                {
+                    property["maxLength"] = maximum;
+                }
+                if (argument.Pattern is { } pattern)
+                {
+                    property["pattern"] = $"^(?:{pattern})$";
+                }
+                else
+                {
+                    property["enum"] = argument.AllowedValues;
+                }
+                properties.Add(argument.Name, property);
+            }
+            return JsonSerializer.SerializeToElement(
+                new Dictionary<string, object?>
+                {
+                    ["type"] = "object",
+                    ["properties"] = properties,
+                    ["additionalProperties"] = false,
+                }
+            );
+        }
+
+        // MAF uses these same dialect-specific forms internally, but does not expose them publicly.
+        private static string QuotePowerShell(string value) =>
+            $"'{value.Replace("'", "''", StringComparison.Ordinal)}'";
+
+        private static string QuotePosix(string value) =>
+            $"'{value.Replace("'", "'\\''", StringComparison.Ordinal)}'";
     }
 
     private static ToolResultEvidenceDescriptor.Process? ToProcessEvidence(object? result)
@@ -582,7 +770,7 @@ internal static class WorkspaceShellTools
         bool Truncated
     );
 
-    private static LocalShellExecutor CreateExecutor(
+    internal static LocalShellExecutor CreateExecutor(
         string workspacePath,
         bool acknowledgeUnsafe,
         TimeSpan? timeout,
@@ -592,6 +780,7 @@ internal static class WorkspaceShellTools
             new LocalShellExecutorOptions
             {
                 Mode = ShellMode.Stateless,
+                Shell = OperatingSystem.IsWindows() ? "powershell.exe" : null,
                 WorkingDirectory = workspacePath,
                 ConfineWorkingDirectory = true,
                 Timeout = timeout ?? TimeSpan.FromMinutes(10),
@@ -778,14 +967,13 @@ internal sealed class GitExcludedFileStore(AgentFileStore inner) : AgentFileStor
         ],
         StringComparer.OrdinalIgnoreCase
     );
-    private const int MaximumReadCharacters = 64 * 1024;
+    private const string SearchTruncationMarker = "\n[...additional search results omitted...]";
     private const int MaximumListEntries = 200;
     private const int MaximumSearchResults = 10;
     private const int MaximumMatchesPerResult = 5;
     private const int MaximumPathCharacters = 1024;
     private const int MaximumSnippetCharacters = 2048;
     private const int MaximumMatchCharacters = 1024;
-    private const string TruncationMarker = "\n[...truncated by Tandem...]";
 
     public override Task WriteAsync(
         string path,
@@ -798,11 +986,10 @@ internal sealed class GitExcludedFileStore(AgentFileStore inner) : AgentFileStor
         return inner.WriteAsync(path, normalized, cancellationToken);
     }
 
-    public override async Task<string?> ReadAsync(string path, CancellationToken cancellationToken)
+    public override Task<string?> ReadAsync(string path, CancellationToken cancellationToken)
     {
         RejectGitPath(path);
-        var content = await inner.ReadAsync(path, cancellationToken);
-        return content is null ? null : Truncate(content, MaximumReadCharacters);
+        return inner.ReadAsync(path, cancellationToken);
     }
 
     public override Task<bool> DeleteAsync(string path, CancellationToken cancellationToken)
@@ -875,7 +1062,7 @@ internal sealed class GitExcludedFileStore(AgentFileStore inner) : AgentFileStor
             bounded.Add(
                 new FileSearchResult
                 {
-                    FileName = "[...truncated by Tandem...]",
+                    FileName = "[...additional search results omitted...]",
                     Snippet = "Narrow the directory, regex, or glob pattern for more results.",
                 }
             );
@@ -944,8 +1131,8 @@ internal sealed class GitExcludedFileStore(AgentFileStore inner) : AgentFileStor
         value.Length <= maximumCharacters
             ? value
             : string.Concat(
-                value.AsSpan(0, maximumCharacters - TruncationMarker.Length),
-                TruncationMarker
+                value.AsSpan(0, maximumCharacters - SearchTruncationMarker.Length),
+                SearchTruncationMarker
             );
 }
 

@@ -161,6 +161,13 @@ public static partial class NodePipelineBridge
                             Observer = liveObserver,
                             Run = options,
                             RunCancellation = terminalCancellation,
+                            Display = new TerminalDisplayOptions
+                            {
+                                TruncatedToolNames = new HashSet<string>(
+                                    definition.Terminal?.TruncatedToolNames ?? [],
+                                    StringComparer.Ordinal
+                                ),
+                            },
                             TerminalizingAsync = store is null
                                 ? null
                                 : async (completion, token) =>

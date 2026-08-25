@@ -11,6 +11,8 @@ export async function runCli<TState>(
 ): Promise<never> {
   let exitCode = 2;
   let pipelineCompleted = false;
+  process.on("SIGINT", () => closeCli(130));
+  process.on("SIGTERM", () => closeCli(143));
   try {
     const { formatResult, ...runOptions } = options;
     const result = await run(graph, initial, { ...runOptions, presentation: "terminal" });

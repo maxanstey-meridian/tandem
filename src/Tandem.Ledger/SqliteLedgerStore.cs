@@ -271,7 +271,8 @@ public sealed class SqliteLedgerStore
                 value,
                 _serializerOptions
             );
-            return record is not null && PipelineJournal.IsAccepted(record);
+            return record is not null
+                && (PipelineJournal.IsAccepted(record) || IsReadableCommand(record));
         }
         catch (Exception exception) when (exception is JsonException or NotSupportedException)
         {
@@ -279,6 +280,26 @@ public sealed class SqliteLedgerStore
                 "The runtime journal contains a malformed record.",
                 exception
             );
+        }
+    }
+
+    private static bool IsReadableCommand(RuntimeJournalRecord record)
+    {
+        if (record is { Kind: RuntimeJournalKind.CommandCompleted, Payload: not null })
+        {
+            return true;
+        }
+        if (record is not { Kind: RuntimeJournalKind.ActionCompleted, Payload: { } payload })
+        {
+            return false;
+        }
+        try
+        {
+            return payload.Deserialize<PipelineActionProcessPayload>() is not null;
+        }
+        catch (JsonException)
+        {
+            return false;
         }
     }
 
@@ -559,7 +580,7 @@ public sealed class SqliteLedgerStore
         command.CommandText = """
             UPDATE runs
             SET status = 'Running', updated_at = $now, ended_at = NULL
-            WHERE run_id = $run_id AND status IN ('Failed', 'Faulted', 'Interrupted');
+            WHERE run_id = $run_id;
             """;
         command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
         command.Parameters.AddWithValue("$now", now.ToUnixTimeMilliseconds());

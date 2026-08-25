@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 const directory = mkdtempSync(join(tmpdir(), "tandem-capability-fixture-"));
+const terminalPresentation = process.argv[2] === "terminal";
 const logPath = join(directory, "requests.jsonl");
 const server = spawn(
   process.execPath,
@@ -81,8 +82,16 @@ try {
   let accepted = null;
   let error = null;
   try {
-    accepted = (await run(graph, { prompt: "from-typescript-capability-state", accepted: false }))
-      .state.accepted;
+    accepted = (
+      await run(
+        graph,
+        { prompt: "from-typescript-capability-state", accepted: false },
+        {
+          presentation: terminalPresentation ? "terminal" : undefined,
+          terminal: terminalPresentation ? { truncatedToolNames: ["accept"] } : undefined,
+        },
+      )
+    ).state.accepted;
   } catch (caught) {
     error = String(caught);
   }

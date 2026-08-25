@@ -38,7 +38,7 @@ public sealed class GitExcludedFileStoreTests
     }
 
     [Fact]
-    public async Task ReadAsync_TruncatesLargeFilesBeforeReturningToolContent()
+    public async Task ReadAsync_ReturnsCompleteLargeContent()
     {
         var directory = Path.Combine(
             Path.GetTempPath(),
@@ -55,9 +55,7 @@ public sealed class GitExcludedFileStoreTests
 
             var content = await store.ReadAsync("large.txt", CancellationToken.None);
 
-            content.Should().NotBeNull();
-            content!.Length.Should().BeLessThan(70_000);
-            content.Should().EndWith("[...truncated by Tandem...]");
+            content.Should().Be(new string('x', 1_000_000));
         }
         finally
         {
@@ -96,7 +94,9 @@ public sealed class GitExcludedFileStoreTests
             );
 
             characters.Should().BeLessThan(100_000);
-            results.Should().Contain(result => result.FileName == "[...truncated by Tandem...]");
+            results
+                .Should()
+                .Contain(result => result.FileName == "[...additional search results omitted...]");
         }
         finally
         {

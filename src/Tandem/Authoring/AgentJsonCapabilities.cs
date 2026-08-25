@@ -118,7 +118,10 @@ internal sealed class JsonCapabilityFunction<TState>(
             capabilityId,
             invocation.State,
             request
-        );
+        )
+        {
+            ToolInvocations = invocation.ToolInvocations,
+        };
         return await CapabilityAcceptanceRuntime.AcceptAsync(
             invocation,
             capabilityId,

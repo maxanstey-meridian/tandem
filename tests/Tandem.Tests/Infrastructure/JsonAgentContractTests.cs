@@ -112,7 +112,7 @@ public sealed class JsonAgentContractTests
     {
         var client = new ScriptedChatClient([
             Response("not json"),
-            .. Enumerable.Repeat(Response("[]"), 99),
+            .. Enumerable.Repeat(Response("[]"), 2),
         ]);
         var mappings = 0;
         var agent = Agent
@@ -135,7 +135,7 @@ public sealed class JsonAgentContractTests
 
         result.Status.Should().Be(PipelineRunStatus.Failed);
         mappings.Should().Be(0);
-        client.CallCount.Should().Be(100);
+        client.CallCount.Should().Be(3);
     }
 
     [Fact]
@@ -382,6 +382,103 @@ public sealed class JsonAgentContractTests
         invocation.Accepted.Should().BeNull();
         await function.InvokeAsync(Arguments(4));
         invocation.Accepted!.State.Value.Should().Be(4);
+    }
+
+    [Fact]
+    public async Task JsonCapability_AdvancedAcceptanceReceivesSharedInvocationProjection()
+    {
+        IReadOnlyList<ToolInvocationObservation>? observations = null;
+        var invocation = Invocation();
+        var collector = new Tandem.Infrastructure.Blocks.ToolOutcomeCollector();
+        invocation.AttachToolOutcomeCollector(collector);
+        AddInvocation(
+            collector,
+            new Tandem.Infrastructure.ToolInvocationObservationDescriptor(
+                "failed",
+                new Tandem.Infrastructure.ToolSemantics(
+                    Tandem.Infrastructure.ToolEffect.ProcessExecution
+                ),
+                JsonDocument.Parse("{\"value\":1}").RootElement.Clone(),
+                Tandem.Infrastructure.ToolInvocationStatus.Failed,
+                new Tandem.Infrastructure.ToolResultEvidenceDescriptor.Process(
+                    7,
+                    "stdout",
+                    "stderr",
+                    TimeSpan.FromSeconds(2),
+                    true,
+                    true
+                )
+            )
+        );
+        AddInvocation(
+            collector,
+            new Tandem.Infrastructure.ToolInvocationObservationDescriptor(
+                "blocked",
+                null,
+                JsonDocument.Parse("{}").RootElement.Clone(),
+                Tandem.Infrastructure.ToolInvocationStatus.Blocked,
+                null
+            )
+        );
+        AddInvocation(
+            collector,
+            new Tandem.Infrastructure.ToolInvocationObservationDescriptor(
+                "faulted",
+                null,
+                JsonDocument.Parse("{}").RootElement.Clone(),
+                Tandem.Infrastructure.ToolInvocationStatus.Faulted,
+                null
+            )
+        );
+        var capability = AgentCapabilities
+            .CreateJson(JsonCapabilityDefinition(_ => [], _ => "accepted"), (state, _) => state)
+            .WithAcceptance(
+                (context, _) =>
+                {
+                    observations = context.ToolInvocations;
+                    return ValueTask.CompletedTask;
+                }
+            );
+
+        await capability.Bind(invocation).InvokeAsync(Arguments(1));
+
+        observations.Should().NotBeNull();
+        observations!
+            .Select(item => item.Status)
+            .Should()
+            .Equal(
+                ToolInvocationStatus.Failed,
+                ToolInvocationStatus.Blocked,
+                ToolInvocationStatus.Faulted
+            );
+        var process = observations[0]
+            .Result.Should()
+            .BeOfType<ToolResultEvidence.Process>()
+            .Subject;
+        process
+            .Should()
+            .Be(
+                new ToolResultEvidence.Process(
+                    7,
+                    "stdout",
+                    "stderr",
+                    TimeSpan.FromSeconds(2),
+                    true,
+                    true
+                )
+            );
+        observations[0].Arguments.GetProperty("value").GetInt32().Should().Be(1);
+        observations[1].Result.Should().BeNull();
+        observations[2].Result.Should().BeNull();
+    }
+
+    private static void AddInvocation(
+        Tandem.Infrastructure.Blocks.ToolOutcomeCollector collector,
+        Tandem.Infrastructure.ToolInvocationObservationDescriptor observation
+    )
+    {
+        var reservation = collector.ReserveToolInvocation();
+        collector.CompleteToolInvocation(reservation, observation);
     }
 
     [Fact]

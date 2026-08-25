@@ -86,22 +86,28 @@ public sealed class AgentSessionTests
         client.Requests.Should().HaveCount(2);
         client
             .Instructions.Should()
-            .OnlyContain(instructions =>
-                instructions.Contains(
-                    "one bounded node in a Tandem pipeline",
-                    StringComparison.Ordinal
-                )
-                && !instructions.Contains("repository", StringComparison.OrdinalIgnoreCase)
-                && !instructions.Contains("workspace", StringComparison.OrdinalIgnoreCase)
-                && !instructions.Contains("packet", StringComparison.OrdinalIgnoreCase)
-                && !instructions.Contains("mutation", StringComparison.OrdinalIgnoreCase)
-                && !instructions.Contains("planner", StringComparison.OrdinalIgnoreCase)
-                && !instructions.Contains("reviewer", StringComparison.OrdinalIgnoreCase)
-                && !instructions.Contains("executor", StringComparison.OrdinalIgnoreCase)
-                && !instructions.Contains("verification", StringComparison.OrdinalIgnoreCase)
-                && !instructions.Contains("coding evidence", StringComparison.OrdinalIgnoreCase)
-                && !instructions.Contains("publication", StringComparison.OrdinalIgnoreCase)
-            );
+            .AllSatisfy(instructions =>
+            {
+                instructions
+                    .Should()
+                    .Contain("autonomous coding agent operating in Tandem")
+                    .And.Contain("multi-agent software-delivery workflow");
+                instructions
+                    .Should()
+                    .Contain("The authored objective defines what is required")
+                    .And.Contain("Mechanically supplied state governs lifecycle")
+                    .And.Contain("The repository")
+                    .And.Contain("implementation and behavior facts")
+                    .And.Contain("Verification records which configured commands passed");
+                instructions
+                    .Should()
+                    .Contain("ledger is a journal of previous agents' claims and actions")
+                    .And.Contain("not a record of truth")
+                    .And.Contain("Ledger acceptance authenticates an event, not the truth");
+                instructions.Should().NotContain("one bounded participant");
+                instructions.Should().NotContain("accepted history");
+                instructions.Should().NotContain("available evidence sources");
+            });
         var retained = client
             .Requests[1]
             .Any(message =>
