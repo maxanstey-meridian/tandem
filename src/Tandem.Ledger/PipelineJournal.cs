@@ -134,6 +134,19 @@ public sealed class SqlitePipelineObserver : IPipelinePersistenceObserver
                     ? null
                     : JsonSerializer.SerializeToElement(value.Process)
             ),
+            PipelineStructuredOutputRejected value => new RuntimeJournalRecord(
+                RuntimeJournalKind.StructuredOutputRejected,
+                value.StepId,
+                Identity: value.Attempt.ToString(),
+                ValueType: typeof(StructuredOutputRejectionEvidence).FullName,
+                Payload: JsonSerializer.SerializeToElement(
+                    new StructuredOutputRejectionEvidence(
+                        value.Attempt,
+                        value.Problems,
+                        value.RawResponse
+                    )
+                )
+            ),
             PipelineStructuredOutputAccepted value => new RuntimeJournalRecord(
                 RuntimeJournalKind.StructuredOutputAccepted,
                 value.StepId,
@@ -161,6 +174,8 @@ public sealed class SqlitePipelineObserver : IPipelinePersistenceObserver
     private static string? EntryId(PipelineObservation observation, Guid executionAttemptId) =>
         observation switch
         {
+            PipelineStructuredOutputRejected value =>
+                $"{executionAttemptId:N}:rejected-output--{value.StepId}--{value.Attempt}",
             PipelineStructuredOutputAccepted value =>
                 $"{executionAttemptId:N}:accepted-output--{value.AcceptedOutputId}",
             PipelineCapabilityAccepted value =>

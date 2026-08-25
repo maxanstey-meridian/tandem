@@ -43,7 +43,7 @@ test("runCli maps faults and cancellation to exit 2 without semantic output", as
   assert.equal(fault.code, 2);
   assert.match(fault.stderr, /fixture fault/);
   assert.doesNotMatch(fault.stdout, /FORMAT_MARKER/);
-  assert.doesNotMatch(fault.stderr, /TandemRuntimeError|\n\s+at /);
+  assert.match(fault.stderr, /\n\s+at /);
 
   const cancellation = await child("cancel");
   assert.equal(cancellation.code, 2);
@@ -56,5 +56,7 @@ test("runCli distinguishes post-success result formatting failure", async () => 
   assert.equal(result.code, 2);
   assert.match(result.stdout, /pipeline Succeeded: complete/);
   assert.match(result.stderr, /Pipeline completed, but result output failed: formatter failed/);
+  assert.match(result.stderr, /formatter failed\n\s+at /);
+  assert.match(result.stderr, /Caused by: formatter cause\n\s+at /);
   assert.doesNotMatch(result.stdout, /FORMAT_MARKER/);
 });

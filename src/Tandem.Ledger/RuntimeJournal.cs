@@ -16,6 +16,7 @@ public enum RuntimeJournalKind
     UsageRecorded,
     ActionAttempted,
     ActionCompleted,
+    StructuredOutputRejected,
     StructuredOutputAccepted,
     CapabilityAccepted,
 }
@@ -34,4 +35,10 @@ public sealed record RuntimeJournalRecord(
     string? ValueType = null,
     JsonElement? Payload = null,
     int? ContextWindowTokens = null
+);
+
+public sealed record StructuredOutputRejectionEvidence(
+    int Attempt,
+    IReadOnlyList<PipelineStructuredOutputProblem> Problems,
+    string RawResponse
 );

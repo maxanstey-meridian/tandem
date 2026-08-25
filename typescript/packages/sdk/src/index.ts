@@ -1341,6 +1341,14 @@ export type RunObservation =
       readonly outputTokens: number;
       readonly currentContextTokens: number;
       readonly contextWindowTokens: number | null;
+    }
+  | {
+      readonly version: 1;
+      readonly kind: "structuredOutputRejected";
+      readonly stepId: string;
+      readonly attempt: number;
+      readonly problems: readonly { readonly field: string; readonly message: string }[];
+      readonly rawResponse: string;
     };
 export interface TerminalPresentationOptions {
   readonly truncatedToolNames?: readonly string[];
@@ -1407,6 +1415,16 @@ const runObservationSchema = z.discriminatedUnion("kind", [
       outputTokens: z.number().int().nonnegative(),
       currentContextTokens: z.number().int().nonnegative(),
       contextWindowTokens: z.number().int().nonnegative().nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      version: z.literal(1),
+      kind: z.literal("structuredOutputRejected"),
+      stepId: z.string().min(1),
+      attempt: z.number().int().positive(),
+      problems: z.array(z.object({ field: z.string(), message: z.string().min(1) }).strict()),
+      rawResponse: z.string(),
     })
     .strict(),
 ]);

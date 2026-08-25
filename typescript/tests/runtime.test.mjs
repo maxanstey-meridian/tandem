@@ -332,6 +332,11 @@ test("planner preflight and model requests proceed through a local protocol fixt
   assert.equal(result.applications, 1);
   assert(result.observations.some((event) => event.kind === "agentText"));
   assert(result.observations.some((event) => event.kind === "agentUsage"));
+  const rejection = result.observations.find((event) => event.kind === "structuredOutputRejected");
+  assert.equal(rejection.stepId, "planner");
+  assert.equal(rejection.attempt, 1);
+  assert.deepEqual(rejection.problems, [{ field: "$.answer", message: "42 needs confirmation" }]);
+  assert.match(rejection.rawResponse, /42/);
   const usage = result.observations.find((event) => event.kind === "agentUsage");
   assert(Number.isInteger(usage.inputTokens));
   assert(Number.isInteger(usage.outputTokens));

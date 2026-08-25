@@ -38,7 +38,7 @@ await runCli(
     signal: mode === "cancel" ? AbortSignal.timeout(10) : undefined,
     formatResult: async (result) => {
       if (mode === "format-fault") {
-        throw new Error("formatter failed");
+        throw new Error("formatter failed", { cause: new Error("formatter cause") });
       }
       return `FORMAT_MARKER semantic=${result.state.value}`;
     },

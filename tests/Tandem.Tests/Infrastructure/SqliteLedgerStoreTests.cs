@@ -492,6 +492,65 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task RuntimeJournal_PersistsStructuredOutputRejectionsWithoutAcceptingThem()
+    {
+        var path = DatabasePath();
+        var store = await CreateStoreAsync(path);
+        var runId = Guid.CreateVersion7();
+        await store.CreateRunAsync(runId, "delivery");
+        var observer = new SqlitePipelineObserver(store.ForRun(runId));
+        var first = new PipelineStructuredOutputRejected(
+            runId,
+            "planner",
+            1,
+            [new PipelineStructuredOutputProblem("$.decision", "decision is required")],
+            "{\"decision\":null}"
+        );
+        var second = new PipelineStructuredOutputRejected(
+            runId,
+            "planner",
+            2,
+            [new PipelineStructuredOutputProblem("$.reason", "reason is required")],
+            "{\"decision\":\"proceed\"}"
+        );
+
+        await observer.ObserveAsync(first, CancellationToken.None);
+        await observer.ObserveAsync(second, CancellationToken.None);
+        await observer.ObserveAsync(second, CancellationToken.None);
+
+        var reopened = await CreateStoreAsync(path);
+        var records = await reopened.ForRun(runId).ReadAsync(PipelineJournal.Stream);
+        records
+            .Select(record => record.Value.Kind)
+            .Should()
+            .OnlyContain(kind => kind == RuntimeJournalKind.StructuredOutputRejected);
+        records.Select(record => record.EntryId).Should().HaveCount(2).And.OnlyHaveUniqueItems();
+        records.Select(record => record.Value.Identity).Should().Equal("1", "2");
+        records
+            .Select(record =>
+                record.Value.Payload!.Value.Deserialize<StructuredOutputRejectionEvidence>(
+                    TandemJson.CreateTypedContract()
+                )!
+            )
+            .Should()
+            .BeEquivalentTo(
+                [
+                    new StructuredOutputRejectionEvidence(1, first.Problems, first.RawResponse),
+                    new StructuredOutputRejectionEvidence(2, second.Problems, second.RawResponse),
+                ],
+                options => options.WithStrictOrdering()
+            );
+        (
+            await reopened.ReadLatestAcceptedAsync<StructuredOutputRejectionEvidence>(
+                runId,
+                "planner"
+            )
+        )
+            .Should()
+            .BeNull();
+    }
+
+    [Fact]
     public async Task RuntimeJournal_PersistsCapabilityPayloadIdempotently()
     {
         var store = await CreateStoreAsync(DatabasePath());
@@ -807,6 +866,34 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         await act.Should().ThrowAsync<OperationCanceledException>();
         var reopened = await CreateStoreAsync(path);
         (await reopened.GetRunAsync(runId)).Status.Should().Be(LedgerRunStatus.Cancelled);
+    }
+
+    [Fact]
+    public async Task SqliteRunOptions_SurfaceCancellationTerminalizationFailure()
+    {
+        var path = DatabasePath();
+        var runId = Guid.CreateVersion7();
+        var stage = new WaitForeverStage();
+        var pipeline = Pipeline.Start(stage, "sqlite-cancelled-run").Build(stage);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        var act = async () =>
+            await new PipelineRunner().RunAsync(
+                pipeline,
+                new RunnerState(4),
+                new SqlitePipelineRunOptions(
+                    path,
+                    runId,
+                    Observer: new BreakLedgerAfterCancellationObserver(path)
+                ),
+                cancellation.Token
+            );
+
+        var failure = await act.Should().ThrowAsync<AggregateException>();
+        failure
+            .Which.InnerExceptions.Should()
+            .Contain(error => error is OperationCanceledException);
+        failure.Which.InnerExceptions.Should().Contain(error => error is SqliteException);
     }
 
     [Fact]
@@ -1158,6 +1245,26 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         )
         {
             observations.Add(observation);
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class BreakLedgerAfterCancellationObserver(string databasePath)
+        : IPipelineObserver
+    {
+        public ValueTask ObserveAsync(
+            PipelineObservation observation,
+            CancellationToken cancellationToken
+        )
+        {
+            if (observation is PipelineStepCancelled)
+            {
+                foreach (var suffix in new[] { "", "-shm", "-wal" })
+                {
+                    File.Delete(databasePath + suffix);
+                }
+                Directory.CreateDirectory(databasePath);
+            }
             return ValueTask.CompletedTask;
         }
     }

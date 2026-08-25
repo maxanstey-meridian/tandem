@@ -56,6 +56,16 @@ public sealed class RegisteredObservationObserverTests
                 new PipelineAgentUsage(Guid.Empty, "agent", 10, 5, 15),
                 """{"version":1,"kind":"agentUsage","stepId":"agent","inputTokens":10,"outputTokens":5,"currentContextTokens":15,"contextWindowTokens":null}"""
             },
+            {
+                new PipelineStructuredOutputRejected(
+                    Guid.Empty,
+                    "agent",
+                    2,
+                    [new PipelineStructuredOutputProblem("$.answer", "answer is required")],
+                    "{\"answer\":null}"
+                ),
+                """{"version":1,"kind":"structuredOutputRejected","stepId":"agent","attempt":2,"problems":[{"field":"$.answer","message":"answer is required"}],"rawResponse":"{\u0022answer\u0022:null}"}"""
+            },
         };
 
     [Theory]

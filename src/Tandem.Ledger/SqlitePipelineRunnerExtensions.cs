@@ -44,6 +44,7 @@ public static class SqlitePipelineRunnerExtensions
             : new CompositePersistenceObserver(persistenceObserver, options.Observer);
         LedgerRunStatus? terminalStatus = null;
         var preserveActiveFailure = false;
+        Exception? activeFailure = null;
 
         try
         {
@@ -64,16 +65,18 @@ public static class SqlitePipelineRunnerExtensions
             };
             return result;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception)
         {
             terminalStatus = LedgerRunStatus.Cancelled;
             preserveActiveFailure = true;
+            activeFailure = exception;
             throw;
         }
-        catch
+        catch (Exception exception)
         {
             terminalStatus = LedgerRunStatus.Faulted;
             preserveActiveFailure = true;
+            activeFailure = exception;
             throw;
         }
         finally
@@ -84,9 +87,13 @@ public static class SqlitePipelineRunnerExtensions
                 {
                     await store.CompleteRunAsync(runId, status, CancellationToken.None);
                 }
-                catch when (preserveActiveFailure)
+                catch (Exception terminalizationFailure) when (preserveActiveFailure)
                 {
-                    // Preserve the execution failure when best-effort terminalization also fails.
+                    throw new AggregateException(
+                        "Pipeline execution and ledger terminalization both failed.",
+                        activeFailure!,
+                        terminalizationFailure
+                    );
                 }
             }
         }

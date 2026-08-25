@@ -37,7 +37,14 @@ internal static class HarnessAgentImplementation
             {
                 WorkspaceFileReadTools.Add(context.ChatOptions, workspace.Path);
             }
-            if (selectedFileToolNames.Count > 0)
+            if (selectedFileToolNames.Contains(FileAccessProvider.GrepToolName))
+            {
+                WorkspaceGrepTools.Add(context.ChatOptions, workspace.Path);
+            }
+            var mafFileToolNames = selectedFileToolNames
+                .Where(name => name != FileAccessProvider.GrepToolName)
+                .ToHashSet(StringComparer.Ordinal);
+            if (mafFileToolNames.Count > 0)
             {
                 providers.Add(
                     new FilteringAIContextProvider(
@@ -50,7 +57,7 @@ internal static class HarnessAgentImplementation
                                 DisableWriteToolApproval = true,
                             }
                         ),
-                        selectedFileToolNames
+                        mafFileToolNames
                     )
                 );
             }

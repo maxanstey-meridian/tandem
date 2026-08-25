@@ -18,3 +18,4 @@ Tandem.Ledger.SqliteLedgerStore
 Tandem.Ledger.SqlitePipelineObserver
 Tandem.Ledger.SqlitePipelineRunnerExtensions
 Tandem.Ledger.SqlitePipelineRunOptions
+Tandem.Ledger.StructuredOutputRejectionEvidence

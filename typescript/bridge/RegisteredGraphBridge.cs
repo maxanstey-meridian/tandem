@@ -134,6 +134,7 @@ public static partial class NodePipelineBridge
         LedgerRunStatus? terminalStatus = null;
         string? terminalSummary = null;
         var preserveActiveFailure = false;
+        Exception? activeFailure = null;
         try
         {
             var options = new PipelineRunOptions(
@@ -198,7 +199,8 @@ public static partial class NodePipelineBridge
             terminalStatus = LedgerRunStatus.Faulted;
             terminalSummary = exception.Message;
             preserveActiveFailure = true;
-            throw CallbackContractFailure(exception, exception);
+            activeFailure = CallbackContractFailure(exception, exception);
+            throw activeFailure;
         }
         catch (PipelineRunException exception)
         {
@@ -207,18 +209,21 @@ public static partial class NodePipelineBridge
             preserveActiveFailure = true;
             if (FindCallbackContractException(exception) is { } contract)
             {
-                throw CallbackContractFailure(contract, exception);
+                activeFailure = CallbackContractFailure(contract, exception);
+                throw activeFailure;
             }
-            throw new InvalidOperationException(
+            activeFailure = new InvalidOperationException(
                 exception.InnerException?.ToString() ?? exception.ToString(),
                 exception
             );
+            throw activeFailure;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception)
         {
             terminalStatus = LedgerRunStatus.Cancelled;
             terminalSummary = "Pipeline cancelled";
             preserveActiveFailure = true;
+            activeFailure = exception;
             throw;
         }
         catch (Exception exception)
@@ -226,6 +231,7 @@ public static partial class NodePipelineBridge
             terminalStatus = LedgerRunStatus.Faulted;
             terminalSummary = exception.Message;
             preserveActiveFailure = true;
+            activeFailure = exception;
             throw;
         }
         finally
@@ -240,9 +246,13 @@ public static partial class NodePipelineBridge
                 {
                     await store.CompleteRunAsync(runId, status, CancellationToken.None);
                 }
-                catch when (preserveActiveFailure)
+                catch (Exception terminalizationFailure) when (preserveActiveFailure)
                 {
-                    // Preserve the active run failure when best-effort terminalization also fails.
+                    throw new AggregateException(
+                        "Pipeline execution and ledger terminalization both failed.",
+                        activeFailure!,
+                        terminalizationFailure
+                    );
                 }
             }
         }

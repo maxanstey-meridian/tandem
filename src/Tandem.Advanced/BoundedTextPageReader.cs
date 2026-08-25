@@ -23,23 +23,29 @@ internal static class BoundedTextPageReader
     internal const int MaximumLimit = 64 * 1024;
 
     internal static async Task<TextPage> ReadAsync(
+        IAsyncEnumerable<string> chunks,
+        int offset = 0,
+        int limit = DefaultLimit,
+        CancellationToken cancellationToken = default
+    )
+    {
+        ValidateBounds(offset, limit);
+        var accumulator = new StreamedPageAccumulator(offset, limit);
+        await foreach (var chunk in chunks.WithCancellation(cancellationToken))
+        {
+            accumulator.Append(chunk);
+        }
+        return accumulator.Complete();
+    }
+
+    internal static async Task<TextPage> ReadAsync(
         string path,
         int offset = 0,
         int limit = DefaultLimit,
         CancellationToken cancellationToken = default
     )
     {
-        if (offset < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(offset), "Offset cannot be negative.");
-        }
-        if (limit is < 1 or > MaximumLimit)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(limit),
-                $"Limit must be from 1 to {MaximumLimit}."
-            );
-        }
+        ValidateBounds(offset, limit);
 
         await using var stream = new FileStream(
             path,
@@ -138,5 +144,101 @@ internal static class BoundedTextPageReader
             hasMore,
             hasMore ? nextOffset : null
         );
+    }
+
+    private static void ValidateBounds(int offset, int limit)
+    {
+        if (offset < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset), "Offset cannot be negative.");
+        }
+        if (limit is < 1 or > MaximumLimit)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(limit),
+                $"Limit must be from 1 to {MaximumLimit}."
+            );
+        }
+    }
+
+    private sealed class StreamedPageAccumulator(int offset, int limit)
+    {
+        private readonly StringBuilder _page = new(Math.Min(limit, 4096));
+        private int _total;
+        private char? _characterBeforeOffset;
+        private char? _characterAtOffset;
+        private char? _previousCharacter;
+
+        internal void Append(string value)
+        {
+            var start = _total;
+            _total = checked(_total + value.Length);
+            if (start <= offset && offset < _total)
+            {
+                _characterAtOffset = value[offset - start];
+                _characterBeforeOffset =
+                    offset > start ? value[offset - start - 1] : _previousCharacter;
+            }
+            var from = Math.Max(offset, start);
+            var to = (int)Math.Min(_total, (long)offset + limit);
+            if (from < to)
+            {
+                _page.Append(value.AsSpan(from - start, to - from));
+            }
+            if (value.Length > 0)
+            {
+                _previousCharacter = value[^1];
+            }
+        }
+
+        internal TextPage Complete()
+        {
+            if (offset > _total)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(offset),
+                    $"Offset {offset} is beyond the text length {_total}."
+                );
+            }
+            if (
+                offset > 0
+                && _characterAtOffset is { } first
+                && char.IsLowSurrogate(first)
+                && _characterBeforeOffset is { } before
+                && char.IsHighSurrogate(before)
+            )
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(offset),
+                    "Offset cannot split a Unicode surrogate pair."
+                );
+            }
+            if (
+                _page.Length > 0
+                && char.IsHighSurrogate(_page[^1])
+                && offset + _page.Length < _total
+            )
+            {
+                _page.Length--;
+                if (_page.Length == 0)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(limit),
+                        "Limit is too small to return the Unicode character at this offset."
+                    );
+                }
+            }
+            var content = _page.ToString();
+            var nextOffset = offset + content.Length;
+            var hasMore = nextOffset < _total;
+            return new TextPage(
+                content,
+                offset,
+                content.Length,
+                _total,
+                hasMore,
+                hasMore ? nextOffset : null
+            );
+        }
     }
 }

@@ -87,6 +87,19 @@ internal sealed class RegisteredObservationObserver(
                     ? value.ContextWindowTokens
                     : (int?)null,
             },
+            PipelineStructuredOutputRejected value => new
+            {
+                version = 1,
+                kind = "structuredOutputRejected",
+                value.StepId,
+                value.Attempt,
+                problems = value.Problems.Select(problem => new
+                {
+                    field = problem.Field,
+                    message = problem.Message,
+                }),
+                value.RawResponse,
+            },
             _ => null,
         };
 }
