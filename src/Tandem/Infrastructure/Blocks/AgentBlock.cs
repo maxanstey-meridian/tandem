@@ -251,7 +251,10 @@ internal sealed class AgentBlock<TState>(
                                         liveUsage.CurrentInputTokens,
                                         liveUsage.CurrentOutputTokens,
                                         liveUsage.CurrentContextTokens,
-                                        liveUsage.ContextWindowTokens
+                                        liveUsage.ContextWindowTokens,
+                                        ReasoningTokens: (int)(
+                                            usageContent.Details.ReasoningTokenCount ?? 0
+                                        )
                                     ),
                                     cts.Token
                                 );

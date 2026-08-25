@@ -29,7 +29,8 @@ const checkpointBase = {
   message: () => "Checkpoint.",
 };
 const definitions = [
-  { ...base, client: { ...base.client, reasoningEffort: "minimal" } },
+  { ...base, reasoning: { effort: "minimal" } },
+  { ...base, reasoning: { maxTokens: 1023 } },
   { ...base, temperature: -0.1 },
   { ...base, temperature: 2.1 },
   { ...base, temperature: Number.NaN },

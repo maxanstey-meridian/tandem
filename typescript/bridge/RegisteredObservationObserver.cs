@@ -82,6 +82,7 @@ internal sealed class RegisteredObservationObserver(
                 value.StepId,
                 value.InputTokens,
                 value.OutputTokens,
+                value.ReasoningTokens,
                 value.CurrentContextTokens,
                 contextWindowTokens = value.ContextWindowTokens > 0
                     ? value.ContextWindowTokens

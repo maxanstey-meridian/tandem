@@ -10,7 +10,8 @@ internal static class OpenAiCompatibleChatClients
 {
     public static async Task<IChatClient> CreateAsync(
         RegisteredChatClientContract descriptor,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        int? reasoningMaxTokens = null
     )
     {
         var endpoint = new Uri(descriptor.Endpoint!, UriKind.Absolute);
@@ -45,7 +46,8 @@ internal static class OpenAiCompatibleChatClients
         if (
             descriptor.WireApi == "completions"
             && (
-                endpoint.Host.Equals("openrouter.ai", StringComparison.OrdinalIgnoreCase)
+                reasoningMaxTokens is not null
+                || endpoint.Host.Equals("openrouter.ai", StringComparison.OrdinalIgnoreCase)
                 || endpoint.Host.EndsWith(".openrouter.ai", StringComparison.OrdinalIgnoreCase)
             )
         )

@@ -2,6 +2,7 @@
 T Tandem.OpenAICompatible.OpenRouterReasoningChatClient
 C (Microsoft.Extensions.AI.IChatClient inner)
 M System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.AI.ChatResponseUpdate> GetStreamingResponseAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, Microsoft.Extensions.AI.ChatOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
+M System.Threading.Tasks.Task<Microsoft.Extensions.AI.ChatResponse> GetResponseAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, Microsoft.Extensions.AI.ChatOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
 T Tandem.OpenAICompatible.StreamRetryChatClient
 C (Microsoft.Extensions.AI.IChatClient innerClient, System.Int32 maxAttempts = 4, System.Nullable<System.TimeSpan>? retryDelay = default)
 M System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.AI.ChatResponseUpdate> GetStreamingResponseAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, Microsoft.Extensions.AI.ChatOptions? options = null, System.Threading.CancellationToken cancellationToken = default)

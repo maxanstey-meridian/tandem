@@ -33,6 +33,7 @@ internal sealed record RegisteredNodeContract(
     string[]? SkillDirectories,
     double? Temperature,
     int? MaxOutputTokens,
+    RegisteredReasoningContract? Reasoning,
     bool ContinueSession,
     double? TimeoutMilliseconds,
     bool? Persist,
@@ -41,6 +42,8 @@ internal sealed record RegisteredNodeContract(
     RegisteredWorkspaceContract? Workspace = null,
     RegisteredCheckpointContract? Checkpoint = null
 );
+
+internal sealed record RegisteredReasoningContract(string? Effort, int? MaxTokens);
 
 internal sealed record RegisteredCheckpointContract(
     int ContextWindowTokens,
@@ -78,7 +81,6 @@ internal sealed record RegisteredChatClientContract(
     string? Model,
     string? WireApi,
     string? ApiKeyEnvironmentVariable,
-    string? ReasoningEffort,
     bool VerifyModel
 );
 

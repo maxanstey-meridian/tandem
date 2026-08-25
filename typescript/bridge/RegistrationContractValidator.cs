@@ -339,6 +339,8 @@ internal static partial class RegistrationContractValidator
                 errors.Add($"{path}.temperature is forbidden.");
             if (node.MaxOutputTokens is not null)
                 errors.Add($"{path}.maxOutputTokens is forbidden.");
+            if (node.Reasoning is not null)
+                errors.Add($"{path}.reasoning is forbidden.");
             if (node.ContinueSession)
                 errors.Add($"{path}.continueSession is forbidden for kind '{node.Kind}'.");
             if (node.TimeoutMilliseconds is not null)
@@ -371,6 +373,22 @@ internal static partial class RegistrationContractValidator
             errors.Add($"{path}.temperature must be a finite number between 0 and 2.");
         if (node.MaxOutputTokens is <= 0)
             errors.Add($"{path}.maxOutputTokens must be a positive integer.");
+        if (node.Reasoning is { } reasoning)
+        {
+            var hasEffort = reasoning.Effort is not null;
+            var hasMaxTokens = reasoning.MaxTokens is not null;
+            if (hasEffort == hasMaxTokens)
+                errors.Add($"{path}.reasoning must specify exactly one of effort or maxTokens.");
+            if (
+                reasoning.Effort is not null
+                && reasoning.Effort is not ("none" or "low" or "medium" or "high")
+            )
+                errors.Add($"{path}.reasoning.effort must be 'none', 'low', 'medium', or 'high'.");
+            if (reasoning.MaxTokens is < 1024)
+                errors.Add($"{path}.reasoning.maxTokens must be at least 1024.");
+            if (hasMaxTokens && node.Client?.WireApi != "completions")
+                errors.Add($"{path}.reasoning.maxTokens requires a completions client.");
+        }
         if (node.Workspace is { } workspace)
             ValidateWorkspace(errors, workspace, $"{path}.workspace");
         if (node.Checkpoint is { } checkpoint)
@@ -620,11 +638,6 @@ internal static partial class RegistrationContractValidator
         Required(errors, $"{path}.model", client.Model);
         if (client.WireApi is not ("completions" or "responses"))
             errors.Add($"{path}.wireApi must be 'completions' or 'responses'.");
-        if (
-            client.ReasoningEffort is not null
-            && client.ReasoningEffort is not ("none" or "low" or "medium" or "high")
-        )
-            errors.Add($"{path}.reasoningEffort must be 'none', 'low', 'medium', or 'high'.");
         if (
             client.ApiKeyEnvironmentVariable is not null
             && !EnvironmentVariableName().IsMatch(client.ApiKeyEnvironmentVariable)

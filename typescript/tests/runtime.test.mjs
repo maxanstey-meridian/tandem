@@ -52,9 +52,10 @@ test("rejects invalid model request controls while authoring", async () => {
     { timeout: 15_000 },
   );
   const errors = JSON.parse(stdout.trim());
-  assert.equal(errors.length, 11);
+  assert.equal(errors.length, 12);
   assert(errors.every((error) => error.name === "TandemError"));
   assert(errors.some((error) => /reasoning effort/.test(error.message)));
+  assert(errors.some((error) => /reasoning maxTokens/.test(error.message)));
   assert(errors.filter((error) => /temperature/.test(error.message)).length >= 3);
   assert(errors.filter((error) => /maxOutputTokens/.test(error.message)).length >= 3);
   assert(errors.some((error) => /contextWindowTokens/.test(error.message)));

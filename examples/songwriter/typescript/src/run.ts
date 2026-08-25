@@ -18,7 +18,6 @@ const localSolClient = {
   endpoint: "http://127.0.0.1:10531/v1",
   model: "gpt-5.6-sol",
   wireApi: "responses",
-  reasoningEffort: "low",
   verifyModel: true,
 } as const satisfies ChatClient;
 

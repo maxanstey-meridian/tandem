@@ -16,6 +16,7 @@ export const reviewerAgent = (client: ChatClient) =>
     id: "reviewer",
     instructions: reviewerInstructions,
     client,
+    reasoning: { effort: "low" },
     message: reviewerMessage,
     output: {
       instructions: "Return Accept or RequestChanges with a concise summary and concrete findings.",

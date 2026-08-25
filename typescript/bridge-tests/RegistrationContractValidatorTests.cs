@@ -743,14 +743,48 @@ public sealed class RegistrationContractValidatorTests
     {
         var value = ContractObject();
         var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
-        var client = (Dictionary<string, object?>)agent["client"]!;
-        client["reasoningEffort"] = "none";
+        agent["reasoning"] = new Dictionary<string, object?> { ["effort"] = "none" };
 
         var contract = RegistrationContractValidator.ParseAndValidate(
             JsonSerializer.Serialize(value)
         );
 
-        Assert.Equal("none", contract.Nodes![0].Client!.ReasoningEffort);
+        Assert.Equal("none", contract.Nodes![0].Reasoning!.Effort);
+    }
+
+    [Fact]
+    public void AcceptsReasoningTokenBudget()
+    {
+        var value = ContractObject();
+        var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        var client = Client("https://openrouter.ai/api/v1", "TANDEM_TEST_OPENROUTER_KEY");
+        client["wireApi"] = "completions";
+        agent["client"] = client;
+        agent["reasoning"] = new Dictionary<string, object?> { ["maxTokens"] = 1024 };
+
+        var contract = RegistrationContractValidator.ParseAndValidate(
+            JsonSerializer.Serialize(value)
+        );
+
+        Assert.Equal(1024, contract.Nodes![0].Reasoning!.MaxTokens);
+    }
+
+    [Theory]
+    [InlineData(1023)]
+    [InlineData(0)]
+    public void RejectsReasoningTokenBudgetBelowOpenRouterMinimum(int maxTokens)
+    {
+        var value = ContractObject();
+        var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        agent["reasoning"] = new Dictionary<string, object?> { ["maxTokens"] = maxTokens };
+
+        var message = Assert
+            .Throws<InvalidOperationException>(() =>
+                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
+            )
+            .Message;
+
+        Assert.Contains("reasoning.maxTokens must be at least 1024", message);
     }
 
     private static string ValidContract() => JsonSerializer.Serialize(ContractObject());

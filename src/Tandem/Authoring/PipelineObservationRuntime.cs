@@ -121,7 +121,8 @@ public sealed record PipelineAgentUsage(
     int InputTokens,
     int OutputTokens,
     int CurrentContextTokens,
-    int ContextWindowTokens = 0
+    int ContextWindowTokens = 0,
+    int ReasoningTokens = 0
 ) : PipelineObservation(RunId, StepId);
 
 public sealed record PipelineActionAttempted(

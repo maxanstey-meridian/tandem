@@ -99,7 +99,6 @@ const client = {
   endpoint: "http://localhost:10531/v1",
   model: "test",
   wireApi: "responses",
-  reasoningEffort: "none",
 } as const;
 const meridian = skill({ directory: "/skills/meridian" });
 type WorkspaceState = { workspacePath: string; mutationAuthorized: boolean };

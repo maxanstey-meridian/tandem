@@ -590,10 +590,15 @@ export interface OpenAiCompatibleChatClient {
   readonly model: string;
   readonly wireApi: "completions" | "responses";
   readonly apiKeyEnvironmentVariable?: string;
-  readonly reasoningEffort?: "none" | "low" | "medium" | "high";
   readonly verifyModel?: boolean;
 }
 export type ChatClient = OpenAiCompatibleChatClient;
+export type AgentReasoning =
+  | {
+      readonly effort: "none" | "low" | "medium" | "high";
+      readonly maxTokens?: never;
+    }
+  | { readonly maxTokens: number; readonly effort?: never };
 export interface AgentSkill {
   readonly directory: string;
 }
@@ -896,6 +901,7 @@ export interface AgentDefinition<TState, TOutput = never> {
   readonly workspace?: AgentWorkspaceConfiguration<TState>;
   readonly temperature?: number;
   readonly maxOutputTokens?: number;
+  readonly reasoning?: AgentReasoning;
   readonly continueSession?: boolean;
   readonly checkpoint?: {
     readonly contextWindowTokens: number;
@@ -934,6 +940,7 @@ class AgentImplementation<TState, TOutput>
     readonly workspace: AgentWorkspaceConfiguration<TState> | undefined,
     readonly temperature: number | undefined,
     readonly maxOutputTokens: number | undefined,
+    readonly reasoning: AgentReasoning | undefined,
     readonly continueSession: boolean,
     readonly checkpoint: AgentDefinition<TState>["checkpoint"],
     readonly timeoutMs?: number,
@@ -945,11 +952,32 @@ export function agent<TState, TOutput = never>(
   definition: AgentDefinition<TState, TOutput>,
 ): Agent<TState> {
   requireInstructions(definition.instructions, `Agent '${definition.id}' instructions`);
+  const reasoningEffort = definition.reasoning?.effort;
+  const reasoningMaxTokens = definition.reasoning?.maxTokens;
   if (
-    definition.client.reasoningEffort !== undefined &&
-    !["none", "low", "medium", "high"].includes(definition.client.reasoningEffort)
+    definition.reasoning &&
+    (reasoningEffort !== undefined) === (reasoningMaxTokens !== undefined)
+  ) {
+    throw new TandemError(
+      `Agent '${definition.id}' reasoning must specify exactly one of effort or maxTokens.`,
+    );
+  }
+  if (
+    reasoningEffort !== undefined &&
+    !["none", "low", "medium", "high"].includes(reasoningEffort)
   ) {
     throw new TandemError(`Agent '${definition.id}' has an invalid reasoning effort.`);
+  }
+  if (reasoningMaxTokens !== undefined) {
+    if (
+      !Number.isSafeInteger(reasoningMaxTokens) ||
+      reasoningMaxTokens < 1024 ||
+      reasoningMaxTokens > 2_147_483_647
+    ) {
+      throw new TandemError(
+        `Agent '${definition.id}' reasoning maxTokens must be a 32-bit integer of at least 1024.`,
+      );
+    }
   }
   if (definition.output) {
     requireInstructions(
@@ -1065,6 +1093,7 @@ export function agent<TState, TOutput = never>(
     definition.workspace,
     definition.temperature,
     definition.maxOutputTokens,
+    definition.reasoning,
     definition.continueSession ?? false,
     definition.checkpoint,
     definition.timeoutMs,
@@ -1339,6 +1368,7 @@ export type RunObservation =
       readonly stepId: string;
       readonly inputTokens: number;
       readonly outputTokens: number;
+      readonly reasoningTokens: number;
       readonly currentContextTokens: number;
       readonly contextWindowTokens: number | null;
     }
@@ -1413,6 +1443,7 @@ const runObservationSchema = z.discriminatedUnion("kind", [
       stepId: z.string().min(1),
       inputTokens: z.number().int().nonnegative(),
       outputTokens: z.number().int().nonnegative(),
+      reasoningTokens: z.number().int().nonnegative(),
       currentContextTokens: z.number().int().nonnegative(),
       contextWindowTokens: z.number().int().nonnegative().nullable(),
     })
@@ -1722,6 +1753,7 @@ function compileNode<TState>(
       skillDirectories: implementation.skills.map((item) => item.directory),
       temperature: implementation.temperature,
       maxOutputTokens: implementation.maxOutputTokens,
+      reasoning: implementation.reasoning,
       continueSession: implementation.continueSession,
       checkpoint: implementation.checkpoint
         ? {

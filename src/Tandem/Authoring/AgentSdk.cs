@@ -96,7 +96,8 @@ public sealed class AgentModelRequestOptions
     public AgentModelRequestOptions(
         AgentReasoningEffort? reasoningEffort = null,
         float? temperature = null,
-        int? maxOutputTokens = null
+        int? maxOutputTokens = null,
+        int? reasoningMaxTokens = null
     )
     {
         if (reasoningEffort is { } effort && !Enum.IsDefined(effort))
@@ -111,13 +112,25 @@ public sealed class AgentModelRequestOptions
         {
             throw new ArgumentOutOfRangeException(nameof(maxOutputTokens));
         }
+        if (reasoningMaxTokens is < 1024)
+        {
+            throw new ArgumentOutOfRangeException(nameof(reasoningMaxTokens));
+        }
+        if (reasoningEffort is not null && reasoningMaxTokens is not null)
+        {
+            throw new ArgumentException(
+                "Reasoning effort and reasoning max tokens are mutually exclusive."
+            );
+        }
 
         ReasoningEffort = reasoningEffort;
+        ReasoningMaxTokens = reasoningMaxTokens;
         Temperature = temperature;
         MaxOutputTokens = maxOutputTokens;
     }
 
     public AgentReasoningEffort? ReasoningEffort { get; }
+    public int? ReasoningMaxTokens { get; }
     public float? Temperature { get; }
     public int? MaxOutputTokens { get; }
 }
@@ -692,6 +705,11 @@ public sealed class AgentBuilder<TState>
                 },
             }
             : null;
+        if (request.ReasoningMaxTokens is { } reasoningMaxTokens)
+        {
+            options.AdditionalProperties ??= [];
+            options.AdditionalProperties["reasoningMaxTokens"] = reasoningMaxTokens;
+        }
         options.Temperature = request.Temperature;
         options.MaxOutputTokens = request.MaxOutputTokens;
     }

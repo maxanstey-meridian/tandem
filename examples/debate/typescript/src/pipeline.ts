@@ -50,6 +50,7 @@ export const createPipeline = (clients: {
     instructions:
       "Act as the debate critic. Assess the latest proposal against the question. Accept only a persuasive, well-supported argument; otherwise explain the concrete revision needed.",
     client: clients.critic,
+    reasoning: { effort: "low" },
     message: (state) =>
       `Question: ${state.question}\nRound: ${state.round}\nDebate so far:\n${transcript(state)}`,
     output: {
@@ -73,6 +74,7 @@ export const createPipeline = (clients: {
     instructions:
       "Judge the accepted argument against the question. You must conclude by calling submit_verdict with a clear verdict and reason.",
     client: clients.judge,
+    reasoning: { effort: "low" },
     message: (state) =>
       `Question: ${state.question}\nAccepted debate transcript:\n${transcript(state)}`,
     capabilities: [submitVerdict],

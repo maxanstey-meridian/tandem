@@ -154,7 +154,11 @@ internal static class RegisteredParticipantFactory
             .Create<JavaScriptState>(
                 node.Id!,
                 node.Instructions!,
-                await OpenAiCompatibleChatClients.CreateAsync(node.Client!, cancellationToken)
+                await OpenAiCompatibleChatClients.CreateAsync(
+                    node.Client!,
+                    cancellationToken,
+                    node.Reasoning?.MaxTokens
+                )
             )
             .WithMessage(state => callbacks.Invoke(node.MessageCallback!, state.Json, ""));
         var capabilities = new Dictionary<string, AgentCapability<JavaScriptState>>(
@@ -162,7 +166,7 @@ internal static class RegisteredParticipantFactory
         );
         builder.WithModelRequestOptions(
             new AgentModelRequestOptions(
-                node.Client!.ReasoningEffort switch
+                reasoningEffort: node.Reasoning?.Effort switch
                 {
                     null => null,
                     "none" => AgentReasoningEffort.None,
@@ -171,8 +175,9 @@ internal static class RegisteredParticipantFactory
                     "high" => AgentReasoningEffort.High,
                     _ => throw new UnreachableException(),
                 },
-                node.Temperature is { } temperature ? (float)temperature : null,
-                node.MaxOutputTokens
+                temperature: node.Temperature is { } temperature ? (float)temperature : null,
+                maxOutputTokens: node.MaxOutputTokens,
+                reasoningMaxTokens: node.Reasoning?.MaxTokens
             )
         );
         foreach (var directory in node.SkillDirectories ?? [])

@@ -156,6 +156,7 @@ public sealed class AgentSessionTests
         execution.IsCompleted.Should().BeFalse();
         usage.InputTokens.Should().Be(47_000);
         usage.OutputTokens.Should().Be(250);
+        usage.ReasoningTokens.Should().Be(125);
         usage.CurrentContextTokens.Should().Be(47_250);
         usage.ContextWindowTokens.Should().Be(200_000);
 
@@ -337,7 +338,12 @@ public sealed class AgentSessionTests
             var response = new ChatResponse(new ChatMessage(ChatRole.Assistant, "response"))
             {
                 FinishReason = ChatFinishReason.Stop,
-                Usage = new UsageDetails { InputTokenCount = 47_000, OutputTokenCount = 250 },
+                Usage = new UsageDetails
+                {
+                    InputTokenCount = 47_000,
+                    OutputTokenCount = 250,
+                    ReasoningTokenCount = 125,
+                },
             };
             foreach (var update in response.ToChatResponseUpdates())
             {

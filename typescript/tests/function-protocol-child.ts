@@ -31,7 +31,6 @@ const reviewer: ChatClient = {
   endpoint,
   model: "gpt-5.6-sol",
   wireApi: "responses",
-  reasoningEffort: "low",
   verifyModel: true,
 };
 

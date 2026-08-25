@@ -32,6 +32,7 @@ export const createPipeline = (clients: { songwriter: ChatClient; proofreader: C
     id: "proofreader",
     instructions: "Proofread lyrics and either accept them or request changes.",
     client: clients.proofreader,
+    reasoning: { effort: "low" },
     message,
     output: {
       instructions: "Return the proofread decision and actionable feedback.",

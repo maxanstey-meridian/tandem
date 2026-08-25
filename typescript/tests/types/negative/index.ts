@@ -99,11 +99,9 @@ const client = {
 agent<A>({
   id: "bad-reasoning",
   instructions: "Work.",
-  client: {
-    ...client,
-    // @ts-expect-error reasoning effort is a closed set
-    reasoningEffort: "minimal",
-  },
+  client,
+  // @ts-expect-error reasoning effort is a closed set
+  reasoning: { effort: "minimal" },
   message: () => "work",
 });
 agent<A>({
