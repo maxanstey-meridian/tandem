@@ -1130,7 +1130,7 @@ Tandem has one execution model with two authoring surfaces.
 
 TypeScript applications import `@maxanstey-meridian/tandem`; they do not build or manually load .NET assemblies.
 
-See [`typescript/README.md`](typescript/README.md) for TypeScript-specific runtime and packaging details.
+The TypeScript SDK lives in the [`tandem-ts` repository](https://github.com/maxanstey-meridian/tandem-ts); install it from a version tag there.
 
 ## Packet files
 
@@ -1187,10 +1187,10 @@ framework node identities.
 
 ## Examples
 
-Start with the package-backed [C# quickstart](docs/quickstarts/csharp.md) or
-[TypeScript quickstart](docs/quickstarts/typescript.md), then follow the
+Start with the package-backed [C# quickstart](docs/quickstarts/csharp.md), then follow the
 [getting-started progression](examples/getting-started) from one participant through routing,
-deterministic stages, and persistence.
+deterministic stages, and persistence. The TypeScript quickstart lives in the
+[`tandem-ts` repository](https://github.com/maxanstey-meridian/tandem-ts).
 
 The repository contains matching C# and TypeScript examples for:
 
