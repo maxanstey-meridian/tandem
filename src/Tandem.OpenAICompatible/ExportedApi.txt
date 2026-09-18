@@ -1,4 +1,4 @@
 [provider]
-Tandem.OpenAICompatible.OpenRouterReasoningChatClient
+Tandem.OpenAICompatible.ReasoningExtractionChatClient
 Tandem.OpenAICompatible.RequestDeadlineChatClient
 Tandem.OpenAICompatible.StreamRetryChatClient

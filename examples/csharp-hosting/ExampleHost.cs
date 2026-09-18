@@ -220,7 +220,7 @@ public static class ExampleHost
             new ApiKeyCredential(apiKey),
             new OpenAIClientOptions { Endpoint = endpoint }
         );
-        return new OpenRouterReasoningChatClient(client.GetChatClient(model).AsIChatClient());
+        return new ReasoningExtractionChatClient(client.GetChatClient(model).AsIChatClient());
     }
 
 #pragma warning disable OPENAI001

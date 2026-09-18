@@ -6,7 +6,8 @@ Optional provider normalization for Tandem applications using OpenAI-compatible 
 dotnet add package Meridian.Tandem.OpenAICompatible --version 0.1.0-alpha.1
 ```
 
-`OpenRouterReasoningChatClient` preserves streamed OpenRouter reasoning as standard
+`ReasoningExtractionChatClient` preserves streamed reasoning that upstreams emit in
+non-standard fields such as OpenRouter's `delta.reasoning` as standard
 `TextReasoningContent`, allowing Tandem observers and terminal presentation to receive it.
 
 `StreamRetryChatClient` buffers each response and retries transport failures up to

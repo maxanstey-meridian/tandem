@@ -55,7 +55,7 @@ internal static class OpenAiCompatibleChatClients
             )
         )
         {
-            chatClient = new OpenRouterReasoningChatClient(chatClient);
+            chatClient = new ReasoningExtractionChatClient(chatClient);
         }
 
         if (descriptor.RequestTimeoutMs is not null || descriptor.IdleTimeoutMs is not null)

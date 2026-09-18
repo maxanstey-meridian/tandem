@@ -39,7 +39,7 @@ public sealed class PublicApiBoundaryTests
         "src/Tandem.Packets/PublicApiMembers.txt"
     )]
     [InlineData(
-        typeof(Tandem.OpenAICompatible.OpenRouterReasoningChatClient),
+        typeof(Tandem.OpenAICompatible.ReasoningExtractionChatClient),
         "src/Tandem.OpenAICompatible/ExportedApi.txt",
         "src/Tandem.OpenAICompatible/PublicApiMembers.txt"
     )]

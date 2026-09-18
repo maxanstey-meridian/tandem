@@ -317,7 +317,7 @@ public sealed class PackageConsumerTests
             using Tandem.OpenAICompatible;
             using Tandem.Terminal;
 
-            _ = typeof(OpenRouterReasoningChatClient);
+            _ = typeof(ReasoningExtractionChatClient);
             _ = typeof(TerminalPipelineRunner);
             """
         );

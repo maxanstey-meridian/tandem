@@ -22,7 +22,7 @@ public sealed class OpenAiCompatibleChatClientsTests
             AdditionalProperties = new() { ["reasoningMaxTokens"] = 1024 },
         };
 
-        typeof(OpenRouterReasoningChatClient)
+        typeof(ReasoningExtractionChatClient)
             .GetMethod("ConfigureReasoningBudget", BindingFlags.Static | BindingFlags.NonPublic)!
             .Invoke(null, [options]);
 
@@ -52,8 +52,8 @@ public sealed class OpenAiCompatibleChatClientsTests
             );
 
             Assert.IsType<StreamRetryChatClient>(client);
-            Assert.IsType<OpenRouterReasoningChatClient>(
-                client.GetService(typeof(OpenRouterReasoningChatClient))
+            Assert.IsType<ReasoningExtractionChatClient>(
+                client.GetService(typeof(ReasoningExtractionChatClient))
             );
         }
         finally
@@ -70,7 +70,7 @@ public sealed class OpenAiCompatibleChatClientsTests
             new ApiKeyCredential("test-key"),
             new OpenAIClientOptions { Endpoint = new Uri(server.BaseUrl) }
         );
-        using IChatClient client = new OpenRouterReasoningChatClient(
+        using IChatClient client = new ReasoningExtractionChatClient(
             openAi.GetChatClient("model").AsIChatClient()
         );
         var updates = new List<ChatResponseUpdate>();
@@ -110,7 +110,7 @@ public sealed class OpenAiCompatibleChatClientsTests
             new ApiKeyCredential("test-key"),
             new OpenAIClientOptions { Endpoint = new Uri(server.BaseUrl) }
         );
-        using IChatClient client = new OpenRouterReasoningChatClient(
+        using IChatClient client = new ReasoningExtractionChatClient(
             openAi.GetChatClient("model").AsIChatClient()
         );
 

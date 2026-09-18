@@ -10,7 +10,7 @@ namespace Tandem.OpenAICompatible;
 
 #pragma warning disable SCME0001
 
-public sealed class OpenRouterReasoningChatClient(IChatClient inner) : DelegatingChatClient(inner)
+public sealed class ReasoningExtractionChatClient(IChatClient inner) : DelegatingChatClient(inner)
 {
     private const string ReasoningMaxTokensKey = "reasoningMaxTokens";
     private static readonly PropertyInfo? _patchProperty =

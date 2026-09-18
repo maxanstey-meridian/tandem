@@ -17,7 +17,7 @@ public sealed class ExampleHostTests
             "test-key"
         );
 
-        client.Should().BeOfType<OpenRouterReasoningChatClient>();
+        client.Should().BeOfType<ReasoningExtractionChatClient>();
     }
 
     [Fact]
