@@ -1,6 +1,6 @@
 {
   "name": "@maxanstey-meridian/tandem-packets",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0",
   "description": "Typed Markdown and YAML packet file parsing for Tandem applications",
   "homepage": "https://github.com/maxanstey-meridian/tandem#readme",
   "license": "MIT",

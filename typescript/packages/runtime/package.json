@@ -1,6 +1,6 @@
 {
   "name": "@maxanstey-meridian/tandem-runtime",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0",
   "description": "Platform loader for the Tandem TypeScript SDK",
   "homepage": "https://github.com/maxanstey-meridian/tandem#readme",
   "license": "MIT",
@@ -25,7 +25,7 @@
     "access": "public"
   },
   "optionalDependencies": {
-    "@maxanstey-meridian/tandem-runtime-darwin-arm64": "0.1.0-alpha.1"
+    "@maxanstey-meridian/tandem-runtime-darwin-arm64": "0.1.0"
   },
   "engines": {
     "node": ">=22"
