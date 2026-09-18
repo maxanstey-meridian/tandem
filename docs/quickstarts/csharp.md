@@ -9,8 +9,8 @@
 ```sh
 dotnet new console --framework net10.0 --name TandemQuickstart
 cd TandemQuickstart
-dotnet add package Meridian.Tandem --version 0.1.0-preview.1
-dotnet add package Meridian.Tandem.Generators --version 0.1.0-preview.1
+dotnet add package Meridian.Tandem --version 0.1.0
+dotnet add package Meridian.Tandem.Generators --version 0.1.0
 ```
 
 Replace `Program.cs` with:
