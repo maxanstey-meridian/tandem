@@ -37,20 +37,19 @@ public static class SqlitePipelineRunnerExtensions
 
         var runId = options.RunId ?? Guid.CreateVersion7();
         var store = new SqliteLedgerStore(options.LedgerPath);
-        var persistenceObserver = await store.CreateObserverAsync(
-            runId,
-            pipeline,
-            cancellationToken
-        );
-        IPipelineObserver observer = options.Observer is null
-            ? persistenceObserver
-            : new CompositePersistenceObserver(persistenceObserver, options.Observer);
         LedgerRunStatus? terminalStatus = null;
         var preserveActiveFailure = false;
         Exception? activeFailure = null;
-
         try
         {
+            // Run-row creation is bookkeeping, not pipeline work: once RunAsync is entered
+            // the row must exist so terminalization always finds the run, even when
+            // cancellation fires during startup.
+            var persistenceObserver = await store.CreateObserverAsync(runId, pipeline);
+            IPipelineObserver observer = options.Observer is null
+                ? persistenceObserver
+                : new CompositePersistenceObserver(persistenceObserver, options.Observer);
+
             var result = await runner.RunAsync(
                 pipeline,
                 initialState,

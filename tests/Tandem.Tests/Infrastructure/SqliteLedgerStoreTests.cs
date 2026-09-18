@@ -869,6 +869,31 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task SqliteRunOptions_PreservesCancellationWhenItFiresDuringRunCreation()
+    {
+        var path = DatabasePath();
+        var runId = Guid.CreateVersion7();
+        var stage = new WaitForeverStage();
+        var pipeline = Pipeline.Start(stage, "sqlite-cancelled-startup").Build(stage);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(1));
+        // The store deliberately initializes slowly so the cancellation fires while the
+        // run row is still being created; the run must still exist and be Cancelled.
+        await new SqliteLedgerStore(path).InitializeAsync();
+
+        var act = async () =>
+            await new PipelineRunner().RunAsync(
+                pipeline,
+                new RunnerState(4),
+                new SqlitePipelineRunOptions(path, runId),
+                cancellation.Token
+            );
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        var reopened = await CreateStoreAsync(path);
+        (await reopened.GetRunAsync(runId)).Status.Should().Be(LedgerRunStatus.Cancelled);
+    }
+
+    [Fact]
     public async Task SqliteRunOptions_SurfaceCancellationTerminalizationFailure()
     {
         var path = DatabasePath();
