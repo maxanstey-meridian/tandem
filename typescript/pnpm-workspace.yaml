@@ -1,9 +1,0 @@
-packages:
-  - "packages/*"
-  - "../examples/*/typescript"
-
-linkWorkspacePackages: true
-
-allowBuilds:
-  esbuild: true
-  vue-demi: true
