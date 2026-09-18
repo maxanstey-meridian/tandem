@@ -58,4 +58,3 @@ try {
   server.kill();
   rmSync(directory, { recursive: true, force: true });
 }
-process.exit(0);

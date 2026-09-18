@@ -65,11 +65,12 @@ public sealed class PipelineParallel<TState> : IStandardOutcomePipelineStep<TSta
         string id,
         Func<TState, TState> clone,
         IReadOnlyList<PipelineBranch<TState>> branches,
-        Func<PipelineParallelMerge<TState>, TState> merge
+        Func<PipelineParallelMerge<TState>, TState> merge,
+        int? max = null
     )
     {
         Id = id;
-        Descriptor = new PipelineParallelDescriptor<TState>(id, clone, branches, merge);
+        Descriptor = new PipelineParallelDescriptor<TState>(id, clone, branches, merge, max);
     }
 
     public string Id { get; }
@@ -80,6 +81,7 @@ public sealed class PipelineParallel<TState> : IStandardOutcomePipelineStep<TSta
 
 internal sealed class PipelineParallelDescriptor<TState> : PipelineNodeDescriptor
 {
+    private readonly int? _max;
     private readonly string _id;
     private readonly Func<TState, TState> _clone;
     private readonly IReadOnlyList<PipelineBranch<TState>> _branches;
@@ -89,7 +91,8 @@ internal sealed class PipelineParallelDescriptor<TState> : PipelineNodeDescripto
         string id,
         Func<TState, TState> clone,
         IReadOnlyList<PipelineBranch<TState>> branches,
-        Func<PipelineParallelMerge<TState>, TState> merge
+        Func<PipelineParallelMerge<TState>, TState> merge,
+        int? max = null
     )
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
@@ -127,6 +130,11 @@ internal sealed class PipelineParallelDescriptor<TState> : PipelineNodeDescripto
             );
         }
 
+        if (max is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(max), "Parallel max must be positive.");
+        }
+        _max = max;
         _id = id;
         _clone = clone;
         _branches = branches.ToArray();
@@ -145,7 +153,8 @@ internal sealed class PipelineParallelDescriptor<TState> : PipelineNodeDescripto
         var fork = new ParallelForkExecutor<TState>(
             _id,
             _clone,
-            _branches.Select(branch => branch.Id).ToArray()
+            _branches.Select(branch => branch.Id).ToArray(),
+            _max
         ).BindExecutor();
         var adapters = _branches
             .Select(
@@ -233,7 +242,8 @@ internal sealed record ParallelBranchContext<TState>(
     string OccurrenceId,
     string BranchId,
     int Index,
-    PipelineMessage<TState> Baseline
+    PipelineMessage<TState> Baseline,
+    SemaphoreSlim? Slots = null
 );
 
 internal sealed record ParallelBranchResult<TState>(
@@ -251,7 +261,8 @@ internal sealed record ParallelBranchResult<TState>(
 internal sealed class ParallelForkExecutor<TState>(
     string id,
     Func<TState, TState> clone,
-    IReadOnlyList<string> branchIds
+    IReadOnlyList<string> branchIds,
+    int? max
 )
     : Executor<PipelineMessage<TState>, ParallelPreparedMessage<TState>>(
         id + "--fork",
@@ -273,6 +284,7 @@ internal sealed class ParallelForkExecutor<TState>(
         var occurrenceId = input.Runtime.NextInvocationId(id);
         var runtime = input.Runtime.IncrementInvocations(id);
         var baseline = input with { Runtime = runtime };
+        var slots = max is { } cap ? new SemaphoreSlim(cap, cap) : null;
         var branches = Enumerable
             .Range(0, branchIds.Count)
             .Select(index =>
@@ -285,7 +297,8 @@ internal sealed class ParallelForkExecutor<TState>(
                         occurrenceId,
                         branchIds[index],
                         index,
-                        baseline
+                        baseline,
+                        slots
                     ),
                 }
             )
@@ -539,4 +552,22 @@ internal sealed class ParallelJoinExecutor<TState>
             cancellationToken
         );
     }
+}
+
+internal sealed class ParallelBranchLease(SemaphoreSlim slots) : IDisposable
+{
+    public static async ValueTask<ParallelBranchLease?> EnterAsync(
+        SemaphoreSlim? slots,
+        CancellationToken cancellationToken
+    )
+    {
+        if (slots is null)
+        {
+            return null;
+        }
+        await slots.WaitAsync(cancellationToken);
+        return new ParallelBranchLease(slots);
+    }
+
+    public void Dispose() => slots.Release();
 }

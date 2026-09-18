@@ -5,7 +5,10 @@ public sealed record SqlitePipelineRunOptions(
     Guid? RunId = null,
     PipelineInteractionHandlers? Interactions = null,
     IPipelineObserver? Observer = null
-);
+)
+{
+    public bool EnableLedgerTools { get; init; }
+}
 
 public static class SqlitePipelineRunnerExtensions
 {
@@ -53,7 +56,7 @@ public static class SqlitePipelineRunnerExtensions
                 initialState,
                 new PipelineRunOptions(runId, options.Interactions, observer)
                 {
-                    Ledger = store.ForRun(runId),
+                    Ledger = options.EnableLedgerTools ? store.ForRun(runId) : null,
                 },
                 cancellationToken
             );

@@ -13,7 +13,8 @@ internal sealed record RegisteredGraphContract(
     string? Presentation,
     RegisteredTerminalPresentationContract? Terminal,
     string? ObservationCallback,
-    RegisteredInteractionHandlerContract[]? InteractionHandlers
+    RegisteredInteractionHandlerContract[]? InteractionHandlers,
+    bool EnableLedgerTools = false
 );
 
 internal sealed record RegisteredTerminalPresentationContract(string[]? TruncatedToolNames);
@@ -40,7 +41,8 @@ internal sealed record RegisteredNodeContract(
     RegisteredParallelBranchContract[]? Branches = null,
     string? MergeCallback = null,
     RegisteredWorkspaceContract? Workspace = null,
-    RegisteredCheckpointContract? Checkpoint = null
+    RegisteredCheckpointContract? Checkpoint = null,
+    int? Max = null
 );
 
 internal sealed record RegisteredReasoningContract(string? Effort, int? MaxTokens);
@@ -81,7 +83,10 @@ internal sealed record RegisteredChatClientContract(
     string? Model,
     string? WireApi,
     string? ApiKeyEnvironmentVariable,
-    bool VerifyModel
+    bool VerifyModel,
+    int? RequestTimeoutMs = null,
+    int? IdleTimeoutMs = null,
+    int? MaxAttempts = null
 );
 
 internal sealed record RegisteredAgentOutputContract(

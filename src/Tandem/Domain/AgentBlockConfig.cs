@@ -24,7 +24,14 @@ internal sealed record AgentBlockConfig<TState>(
     TimeSpan? Timeout = null,
     IReadOnlyList<AgentStateGuardDescriptor<TState>>? StateGuards = null,
     IReadOnlyList<AgentLatchedGateDescriptor>? LatchedGates = null,
-    IReadOnlyList<AgentSkillDescriptor>? Skills = null
+    IReadOnlyList<AgentSkillDescriptor>? Skills = null,
+    AgentContextBudgetDescriptor? ContextBudget = null
+);
+
+internal sealed record AgentContextBudgetDescriptor(
+    int ContextWindowTokens,
+    int MaxOutputTokens,
+    bool DisableCompaction
 );
 
 internal sealed record AgentWorkspaceDescriptor<TState>(
@@ -111,7 +118,8 @@ internal sealed record AgentStructuredOutputDescriptor<TState>(
     Type? OutputType = null,
     string? ValueType = null,
     string? Instructions = null,
-    Func<TState, IReadOnlyList<AgentOutputExampleDescriptor>>? Examples = null
+    Func<TState, IReadOnlyList<AgentOutputExampleDescriptor>>? Examples = null,
+    JsonElement? JsonSchema = null
 );
 
 internal sealed record AgentOutputExampleDescriptor(string Input, string Output);

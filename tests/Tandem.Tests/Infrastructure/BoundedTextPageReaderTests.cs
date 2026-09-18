@@ -1,6 +1,5 @@
 using System.Text;
 using FluentAssertions;
-using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 #pragma warning disable MAAI001
 
@@ -98,35 +97,17 @@ public sealed class BoundedTextPageReaderTests
             WorkspaceFileReadTools.Add(options, directory);
             var tool = (AIFunction)options.Tools!.Single();
 
-            tool.Name.Should().Be(FileAccessProvider.ReadFileToolName);
             tool.JsonSchema.GetProperty("properties")
                 .EnumerateObject()
                 .Select(p => p.Name)
                 .Should()
-                .BeEquivalentTo("path", "offset", "limit");
-            var properties = tool.JsonSchema.GetProperty("properties");
-            properties.GetProperty("offset").GetProperty("default").GetInt32().Should().Be(0);
-            properties.GetProperty("limit").GetProperty("default").GetInt32().Should().Be(65_536);
-            properties
-                .GetProperty("offset")
-                .GetProperty("description")
-                .GetString()
-                .Should()
-                .Contain("UTF-16");
-            properties
-                .GetProperty("limit")
-                .GetProperty("description")
-                .GetString()
-                .Should()
-                .Contain("65536");
+                .BeEquivalentTo("path", "startLine", "lineCount", "cursor");
             var result = await tool.InvokeAsync(new AIFunctionArguments { ["path"] = "small.txt" });
             var json = result.Should().BeOfType<System.Text.Json.JsonElement>().Subject;
-            json.GetProperty("content").GetString().Should().Be("small");
-            json.GetProperty("offset").GetInt32().Should().Be(0);
-            json.GetProperty("length").GetInt32().Should().Be(5);
-            json.GetProperty("totalLength").GetInt32().Should().Be(5);
+            json.GetProperty("lines")[0].GetProperty("text").GetString().Should().Be("small");
+            json.GetProperty("lines")[0].GetProperty("line").GetInt32().Should().Be(1);
+            json.GetProperty("totalLines").GetInt32().Should().Be(1);
             json.GetProperty("hasMore").GetBoolean().Should().BeFalse();
-            json.TryGetProperty("nextOffset", out _).Should().BeFalse();
         }
         finally
         {

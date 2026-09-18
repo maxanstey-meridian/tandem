@@ -5,6 +5,7 @@ import {
   capability,
   interaction,
   interactions,
+  inspectPipeline,
   pipeline,
   parallel,
   route,
@@ -16,9 +17,10 @@ import {
   type Stage,
   type RunOptions,
   type RunObservation,
+  type PipelineInspection,
 } from "@maxanstey-meridian/tandem";
 import { parsePacketFile, type PacketFile } from "@maxanstey-meridian/tandem-packets";
-import { closeCli, runCli, type RunCliOptions } from "@maxanstey-meridian/tandem/cli";
+import { runCli, type RunCliOptions } from "@maxanstey-meridian/tandem/cli";
 import { z } from "zod";
 const PacketSchema = z.object({ count: z.string().transform(Number) });
 const packet: PacketFile<{ count: number }> = parsePacketFile("---\ncount: '2'\n---", PacketSchema);
@@ -65,6 +67,8 @@ const graph = pipeline({
   routes: [route({ from: increment, to: done, label: "done" })],
   outputs: [done],
 });
+const inspection: PipelineInspection = inspectPipeline(graph);
+inspection.start satisfies string;
 const cliOptions: RunCliOptions<State> = {
   signal: AbortSignal.timeout(1_000),
   formatResult: async (result) => String(result.state.count),
@@ -230,4 +234,3 @@ const observe = (event: RunObservation, { signal }: { readonly signal: AbortSign
 };
 const observedRun: RunOptions = { observe };
 void observedRun;
-void closeCli;

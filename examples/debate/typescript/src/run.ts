@@ -1,5 +1,5 @@
 import { type ChatClient } from "@maxanstey-meridian/tandem";
-import { closeCli, runCli } from "@maxanstey-meridian/tandem/cli";
+import { runCli } from "@maxanstey-meridian/tandem/cli";
 import { createPipeline } from "./pipeline.js";
 import type { State } from "./state.js";
 
@@ -36,17 +36,18 @@ const initialState: State = {
 
 if (!process.env.OPENROUTER_API_KEY) {
   process.stderr.write("OPENROUTER_API_KEY is required to run the Debate example.\n");
-  closeCli(2);
+  process.exitCode = 2;
+} else {
+  await runCli(
+    createPipeline({
+      proposer: openRouterDs4Client,
+      critic: localSolClient,
+      judge: localSolClient,
+    }),
+    initialState,
+    {
+      signal: AbortSignal.timeout(600_000),
+      formatResult: (result) => `Verdict: ${JSON.stringify(result.state.verdict)}`,
+    },
+  );
 }
-await runCli(
-  createPipeline({
-    proposer: openRouterDs4Client,
-    critic: localSolClient,
-    judge: localSolClient,
-  }),
-  initialState,
-  {
-    signal: AbortSignal.timeout(600_000),
-    formatResult: (result) => `Verdict: ${JSON.stringify(result.state.verdict)}`,
-  },
-);

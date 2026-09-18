@@ -663,6 +663,30 @@ public static class AdvancedAgentBuilderExtensions
         );
     }
 
+    public static AgentBuilder<TState> UseHarness<TState>(
+        this AgentBuilder<TState> builder,
+        string harnessInstructions,
+        int maxContextWindowTokens,
+        int maxOutputTokens,
+        bool disableCompaction = false
+    )
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(harnessInstructions);
+        if (maxContextWindowTokens <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxContextWindowTokens));
+        }
+
+        if (maxOutputTokens <= 0 || maxOutputTokens >= maxContextWindowTokens)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxOutputTokens));
+        }
+
+        return builder
+            .ConfigureContextBudget(maxContextWindowTokens, maxOutputTokens, disableCompaction)
+            .UseHarness(harnessInstructions);
+    }
+
     public static AgentBuilder<TState> WithMessageFromContext<TState>(
         this AgentBuilder<TState> builder,
         AdvancedAgentMessage<TState> message

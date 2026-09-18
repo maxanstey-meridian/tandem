@@ -65,7 +65,11 @@ public sealed class ReadOnlyGitToolsTests
         var show = await git.ShowAsync(sha, "tracked.txt");
         var blame = await git.BlameAsync("tracked.txt", sha, 1, 1);
 
-        status.Should().Contain("tracked.txt").And.Contain("untracked.txt");
+        System
+            .Text.Json.JsonSerializer.Serialize(status)
+            .Should()
+            .Contain("tracked.txt")
+            .And.Contain("untracked.txt");
         staged.Content.Should().Contain("+staged");
         unstaged.Content.Should().Contain("+unstaged");
         log.Should().Contain(sha).And.Contain("base");

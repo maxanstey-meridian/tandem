@@ -20,7 +20,7 @@ internal sealed record AgentStructuredOutputResult<TState>(
 {
     public bool Success => Outcome is not null;
 
-    public string CorrectionPrompt()
+    public string CorrectionPrompt(JsonElement? schema)
     {
         var problems = string.Join(
             Environment.NewLine,
@@ -31,7 +31,27 @@ internal sealed record AgentStructuredOutputResult<TState>(
 
             {problems}
 
+            {AgentStructuredOutputPrompt.Schema(schema)}
+
             Reply with only the corrected JSON object.
             """;
     }
+}
+
+internal static class AgentStructuredOutputPrompt
+{
+    public static string Initial<TState>(AgentStructuredOutputDescriptor<TState> output) =>
+        $"""
+            {output.Instructions}
+
+            {Schema(output.JsonSchema)}
+            """;
+
+    public static string Schema(JsonElement? schema) =>
+        schema is null
+            ? ""
+            : $"""
+                Return a JSON object matching this schema:
+                {schema.Value.GetRawText()}
+                """;
 }

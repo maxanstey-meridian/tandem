@@ -168,7 +168,12 @@ public sealed record PipelineStructuredOutputRejected(
     int Attempt,
     IReadOnlyList<PipelineStructuredOutputProblem> Problems,
     string RawResponse
-) : PipelineObservation(RunId, StepId);
+) : PipelineObservation(RunId, StepId)
+{
+    // Attempts restart on each agent visit. Identify the observation itself so a
+    // later rejection is distinct, while redelivery (including a record copy) is idempotent.
+    internal Guid RejectionId { get; } = Guid.CreateVersion7();
+}
 
 public sealed record PipelineStructuredOutputProblem(string Field, string Message);
 
@@ -235,7 +240,7 @@ internal sealed class PipelineRunContext(
 )
 {
     private readonly SemaphoreSlim _observationGate = new(1, 1);
-    private readonly SemaphoreSlim _unitOfWorkGate = new(1, 1);
+    private readonly AsyncLocal<bool> _insideAcceptance = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<
         string,
         byte
@@ -291,6 +296,12 @@ internal sealed class PipelineRunContext(
         {
             return;
         }
+        // Acceptance already owns this gate and its ambient ledger transaction.
+        if (_insideAcceptance.Value)
+        {
+            await observer.ObserveAsync(observation, cancellationToken);
+            return;
+        }
         await _observationGate.WaitAsync(cancellationToken);
         try
         {
@@ -307,18 +318,20 @@ internal sealed class PipelineRunContext(
         CancellationToken cancellationToken
     )
     {
-        if (unitOfWork is null)
+        if (unitOfWork is null || _insideAcceptance.Value)
         {
             return await operation(cancellationToken);
         }
-        await _unitOfWorkGate.WaitAsync(cancellationToken);
+        await _observationGate.WaitAsync(cancellationToken);
         try
         {
+            _insideAcceptance.Value = true;
             return await unitOfWork.ExecuteAsync(operation, cancellationToken);
         }
         finally
         {
-            _unitOfWorkGate.Release();
+            _insideAcceptance.Value = false;
+            _observationGate.Release();
         }
     }
 }

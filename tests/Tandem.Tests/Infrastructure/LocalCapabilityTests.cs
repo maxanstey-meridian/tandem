@@ -72,7 +72,7 @@ public sealed class LocalCapabilityTests
                 .AdvertisedTools.Should()
                 .ContainSingle()
                 .Which.Should()
-                .BeEquivalentTo(["increment", "read_ledger", "search_ledger"]);
+                .BeEquivalentTo(["increment", "read_ledger", "read_ledger_entry", "search_ledger"]);
             var descriptions = client.AdvertisedToolDescriptions.Should().ContainSingle().Subject;
             descriptions["read_ledger"]
                 .Should()

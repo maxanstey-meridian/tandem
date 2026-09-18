@@ -591,6 +591,10 @@ export interface OpenAiCompatibleChatClient {
   readonly wireApi: "completions" | "responses";
   readonly apiKeyEnvironmentVariable?: string;
   readonly verifyModel?: boolean;
+  /** Per-attempt transport limits; omitted preserves provider defaults. */
+  readonly requestTimeoutMs?: number;
+  readonly idleTimeoutMs?: number;
+  readonly maxAttempts?: number;
 }
 export type ChatClient = OpenAiCompatibleChatClient;
 export type AgentReasoning =
@@ -1108,6 +1112,8 @@ type ParallelDefinition<TState, TBranches extends ParallelBranches<TState>> = {
     baseline: TState,
     results: { readonly [K in keyof TBranches]: TState },
   ) => TState;
+  /** Maximum active branches per invocation; omitted means all branches. */
+  readonly max?: number;
   readonly persist?: boolean;
 };
 class ParallelImplementation<TState, TBranches extends ParallelBranches<TState>>
@@ -1119,6 +1125,7 @@ class ParallelImplementation<TState, TBranches extends ParallelBranches<TState>>
     id: string,
     persist: boolean | undefined,
     readonly branches: TBranches,
+    readonly max: number | undefined,
     readonly merge: (
       baseline: TState,
       results: { readonly [K in keyof TBranches]: TState },
@@ -1148,6 +1155,14 @@ export function parallel<TState>(
 function createParallel<TState, TBranches extends ParallelBranches<TState>>(
   definition: ParallelDefinition<TState, TBranches>,
 ): Parallel<TState> {
+  if (
+    definition.max !== undefined &&
+    (!Number.isInteger(definition.max) || definition.max < 1 || definition.max > 2147483647)
+  ) {
+    throw new TandemError(
+      `Parallel group '${definition.id}' max must be a positive 32-bit integer.`,
+    );
+  }
   const entries = Object.entries(definition.branches);
   if (entries.length < 2) {
     throw new TandemError(`Parallel group '${definition.id}' requires at least two branches.`);
@@ -1162,6 +1177,7 @@ function createParallel<TState, TBranches extends ParallelBranches<TState>>(
     definition.id,
     definition.persist,
     definition.branches,
+    definition.max,
     definition.merge,
   );
 }
@@ -1328,6 +1344,115 @@ export function pipeline<TState>(definition: {
   return { ...definition, persist: definition.persist ?? false };
 }
 
+export interface PipelineInspection {
+  readonly name: string;
+  readonly stateSchema: unknown;
+  readonly start: string;
+  readonly persist: boolean;
+  readonly nodes: readonly InspectedNode[];
+  readonly routes: readonly InspectedRoute[];
+  readonly outputs: readonly string[];
+}
+export interface InspectedRoute {
+  readonly id: string;
+  readonly source: string;
+  readonly target: string;
+  readonly label: string;
+  readonly order: number;
+  readonly outcome?: "success" | "failed";
+  readonly conditional: boolean;
+}
+export interface InspectedNode {
+  readonly id: string;
+  readonly kind: "stage" | "interaction" | "agent" | "parallel" | "completion" | "failure";
+  readonly persist?: boolean;
+  readonly interaction?: { readonly requestSchema: unknown; readonly responseSchema: unknown };
+  readonly agent?: {
+    readonly capabilities: readonly { readonly name: string; readonly requestSchema: unknown }[];
+    readonly outputSchema?: unknown;
+    readonly workspace: boolean;
+  };
+  readonly max?: number;
+  readonly branches?: readonly { readonly id: string; readonly participant: InspectedNode }[];
+}
+
+/** Projects an instantiated pipeline without compiling, registering, or invoking callbacks. */
+export function inspectPipeline<TState>(graph: Pipeline<TState>): PipelineInspection {
+  const inspectNode = (node: Node<TState>): InspectedNode => {
+    const implementation = node as NodeImplementation<TState>;
+    const persist = implementation.persist;
+    if (node.kind === "interaction") {
+      const interaction = implementation as InteractionImplementation<TState, unknown, unknown>;
+      return {
+        id: node.id,
+        kind: "interaction",
+        persist,
+        interaction: {
+          requestSchema: z.toJSONSchema(interaction.requestSchema, { io: "input" }),
+          responseSchema: z.toJSONSchema(interaction.responseSchema, { io: "input" }),
+        },
+      };
+    }
+    if (node.kind === "agent") {
+      const agent = implementation as AgentImplementation<TState, unknown>;
+      return {
+        id: node.id,
+        kind: "agent",
+        persist,
+        agent: {
+          capabilities: agent.granted.map((item) => ({
+            name: item.name,
+            requestSchema: JSON.parse(
+              (item as CapabilityImplementation<TState, unknown>).requestJsonSchema,
+            ) as unknown,
+          })),
+          ...(agent.output
+            ? { outputSchema: z.toJSONSchema(agent.output.schema, { io: "input" }) }
+            : {}),
+          workspace: agent.workspace !== undefined,
+        },
+      };
+    }
+    if (node.kind === "parallel") {
+      const parallel = implementation as ParallelImplementation<TState, ParallelBranches<TState>>;
+      return {
+        id: node.id,
+        kind: "parallel",
+        persist,
+        ...(parallel.max !== undefined ? { max: parallel.max } : {}),
+        branches: Object.entries(parallel.branches as ParallelBranches<TState>).map(
+          ([id, participant]) => ({
+            id,
+            participant: inspectNode(participant),
+          }),
+        ),
+      };
+    }
+    if (node.kind === "terminal") {
+      const terminal = implementation as TerminalImplementation<TState>;
+      return { id: node.id, kind: terminal.failed ? "failure" : "completion", persist };
+    }
+    return { id: node.id, kind: "stage", persist };
+  };
+  return {
+    name: graph.name,
+    stateSchema: z.toJSONSchema(graph.state, { io: "input" }),
+    start: graph.start.id,
+    persist: graph.persist,
+    nodes: graph.nodes.map(inspectNode),
+    routes: graph.routes.map((item, order) => ({
+      id: `route:${order}`,
+      source: item.from.id,
+      target: item.to.id,
+      label: item.label,
+      order,
+      ...(item.outcome === undefined ? {} : { outcome: item.outcome }),
+      conditional: item.when !== undefined,
+    })),
+    outputs: graph.outputs.map((item) => item.id),
+  };
+}
+
 export interface RunResult<TState> {
   readonly runId: string;
   readonly succeeded: boolean;
@@ -1385,6 +1510,8 @@ export interface TerminalPresentationOptions {
 }
 export interface RunOptions {
   readonly ledgerPath?: string;
+  /** Expose ledger read/search tools to agents. Disabled by default; does not affect logging. */
+  readonly enableLedgerTools?: boolean;
   readonly signal?: AbortSignal;
   readonly interactions?: InteractionHandlers;
   readonly presentation?: "terminal";
@@ -1600,6 +1727,7 @@ export async function run<TState>(
         initialState,
         persist: graph.persist,
         ledgerPath: options.ledgerPath,
+        enableLedgerTools: options.enableLedgerTools ?? false,
         presentation: options.presentation,
         terminal: options.terminal,
         observationCallback,
@@ -1818,6 +1946,7 @@ function compileNode<TState>(
     return {
       ...base,
       kind: "parallel",
+      ...(implementation.max !== undefined ? { max: implementation.max } : {}),
       branches: entries.map(([id, participant]) => ({
         id,
         participant: compileNode(participant, stateSchema, callbacks),

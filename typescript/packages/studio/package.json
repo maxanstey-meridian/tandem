@@ -1,0 +1,54 @@
+{
+  "name": "@maxanstey-meridian/tandem-studio",
+  "version": "0.1.0-alpha.1",
+  "description": "Local TypeScript pipeline viewer and source editor for Tandem",
+  "license": "MIT",
+  "bin": {
+    "tandem-studio": "./dist/cli.js"
+  },
+  "files": [
+    "app",
+    "dist",
+    "server",
+    "src",
+    "nuxt.config.ts",
+    "studio.oxfmtrc.json"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && nuxt prepare",
+    "typecheck": "tsc -p tsconfig.json && nuxt typecheck",
+    "test": "node --import tsx --test tests/*.test.ts && vitest run"
+  },
+  "dependencies": {
+    "@codemirror/lang-javascript": "^6.2.4",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.38.8",
+    "@maxanstey-meridian/tandem": "0.1.0-alpha.1",
+    "@vue-flow/background": "^1.3.2",
+    "@vue-flow/controls": "^1.1.3",
+    "@vue-flow/core": "^1.48.2",
+    "@vue-flow/minimap": "^1.5.4",
+    "chokidar": "^4.0.3",
+    "codemirror": "^6.0.2",
+    "elkjs": "^0.11.0",
+    "jiti": "^2.6.1",
+    "nuxt": "^4.2.2",
+    "oxfmt": "^0.62.0",
+    "ts-morph": "^27.0.2",
+    "vue": "^3.5.25"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/test-utils": "^2.5.0",
+    "happy-dom": "^20.11.12",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "vue-tsc": "^3.1.5"
+  }
+}

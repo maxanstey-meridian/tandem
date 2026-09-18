@@ -51,7 +51,10 @@ public sealed class OpenAiCompatibleChatClientsTests
                 CancellationToken.None
             );
 
-            Assert.IsType<OpenRouterReasoningChatClient>(client);
+            Assert.IsType<StreamRetryChatClient>(client);
+            Assert.IsType<OpenRouterReasoningChatClient>(
+                client.GetService(typeof(OpenRouterReasoningChatClient))
+            );
         }
         finally
         {

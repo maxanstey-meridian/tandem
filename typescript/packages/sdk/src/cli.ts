@@ -8,7 +8,7 @@ export async function runCli<TState>(
   graph: Pipeline<TState>,
   initial: unknown,
   options: RunCliOptions<TState>,
-): Promise<never> {
+): Promise<void> {
   let exitCode = 2;
   let signalExitCode: number | null = null;
   let pipelineCompleted = false;
@@ -41,7 +41,7 @@ export async function runCli<TState>(
   } finally {
     process.removeListener("SIGINT", onSigInt);
     process.removeListener("SIGTERM", onSigTerm);
-    closeCli(signalExitCode ?? exitCode);
+    process.exitCode = signalExitCode ?? exitCode;
   }
 }
 
@@ -69,8 +69,4 @@ function write(stream: NodeJS.WritableStream, value: string): Promise<void> {
   return new Promise((resolve, reject) =>
     stream.write(value, (error) => (error ? reject(error) : resolve())),
   );
-}
-
-export function closeCli(exitCode = 0): never {
-  process.exit(exitCode);
 }

@@ -76,6 +76,7 @@ public sealed class PackageConsumerTests
             await ProveLedgerConsumerAsync(temp, packages, config, version);
             await ProvePacketsConsumerAsync(temp, packages, config, version);
             await ProveOptionalPackagesConsumerAsync(temp, packages, config, version);
+            await ProveGlobalNamespaceStageConsumerAsync(temp, packages, config, version);
         }
         finally
         {
@@ -84,6 +85,76 @@ public sealed class PackageConsumerTests
                 Directory.Delete(temp, recursive: true);
             }
         }
+    }
+
+    private static async Task ProveGlobalNamespaceStageConsumerAsync(
+        string temp,
+        string packages,
+        string config,
+        string version
+    )
+    {
+        var directory = Path.Combine(temp, "GlobalNamespaceStage");
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(
+            Path.Combine(directory, "GlobalNamespaceStage.csproj"),
+            $"""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+              <ItemGroup>
+                <PackageReference Include="Meridian.Tandem" Version="{version}" />
+                <PackageReference Include="Meridian.Tandem.Generators" Version="{version}" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
+              </ItemGroup>
+            </Project>
+            """
+        );
+        await File.WriteAllTextAsync(
+            Path.Combine(directory, "Program.cs"),
+            """
+            using Tandem;
+
+            var normalize = new NormalizeStage();
+            var result = await new PipelineRunner().RunAsync(
+                Pipeline.Start(normalize, "global-namespace-stage").Build(normalize),
+                new ConsumerState("  Hello  ")
+            );
+            Console.WriteLine(result.State.Value);
+
+            public sealed record ConsumerState(string Value);
+
+            [PipelineStage("normalize")]
+            public sealed partial class NormalizeStage
+            {
+                public ValueTask<ConsumerState> ExecuteAsync(
+                    ConsumerState state,
+                    CancellationToken cancellationToken
+                ) => ValueTask.FromResult(state with { Value = state.Value.Trim() });
+            }
+            """
+        );
+        var project = Path.Combine(directory, "GlobalNamespaceStage.csproj");
+        await RunAsync(
+            directory,
+            "dotnet",
+            "restore",
+            project,
+            "--configfile",
+            config,
+            "--packages",
+            packages,
+            "--force",
+            "--no-cache"
+        );
+        await RunAsync(
+            directory,
+            "dotnet",
+            "run",
+            "--project",
+            project,
+            "--configuration",
+            "Release",
+            "--no-restore"
+        );
     }
 
     private static async Task ProvePacketsConsumerAsync(

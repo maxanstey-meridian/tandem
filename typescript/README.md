@@ -336,6 +336,42 @@ Code Writer stores accepted values in
 completion to leave the terminal view and print the run ID and absolute ledger path.
 Use `inspectAccepted` to inspect that run from application code.
 
+## Local Tandem Studio
+
+A TypeScript application exposes one pipeline from its nearest `tandem.config.ts`:
+
+```ts
+import { createPipeline } from "./src/pipeline.js";
+
+export const tandem = {
+  createPipeline: () => createPipeline(clients),
+};
+```
+
+`createPipeline` must be synchronous and return the application's ordinary Tandem pipeline. Importing
+the config and constructing that pipeline are the inspection boundary: Studio does not call `run`,
+execute callbacks, or invent dependencies. The config should assemble real application dependencies
+normally. Import and construction failures are shown as diagnostics. Studio loads trusted local code
+with your environment and user permissions; the child process provides reload isolation, not a
+security sandbox.
+
+The debate example includes a working conventional config. From the repository root:
+
+```sh
+pnpm --dir typescript install --frozen-lockfile
+(cd examples/debate/typescript && pnpm exec tandem-studio)
+```
+
+Studio discovers the nearest config from its working directory. To select one explicitly:
+
+```sh
+pnpm --dir typescript exec tandem-studio --config ../examples/debate/typescript/tandem.config.ts
+```
+
+The command starts a local browser application. Pipeline code remains authoritative; graph edits are
+written to unambiguously owned TypeScript and published only after typechecking and successful pipeline
+reconstruction.
+
 ## Develop
 
 Run the complete TypeScript gate from this directory:
@@ -349,10 +385,23 @@ The test builds and typechecks the SDK, checks negative type cases, runs the C# 
 and Node integration suites, and installs the packed packages into a clean external
 consumer.
 
-CLI programs should await every `run` and inspection call before calling `closeCli`.
-The current `node-api-dotnet` host has no shutdown API, so `closeCli` exits the process;
-long-running Node applications do not use it.
+Applications should await every `run` and inspection call. Completed runs release their
+run-scoped callbacks and resources, so ordinary applications and `runCli` return naturally.
+`runCli` sets `process.exitCode` after awaited cancellation, formatting, and output rather than
+forcing process termination.
 
 ## License
 
 [MIT](../LICENSE)
+
+### Agent access to the run ledger
+
+Persisting a run records history for inspection; it does not grant agents ledger tools.
+`read_ledger` and `search_ledger` are disabled by default. Supply all required facts
+in each agent's message unless that agent needs historical retrieval.
+
+To explicitly grant ledger tools for a run, use `enableLedgerTools: true` alongside
+`ledgerPath` in TypeScript, or `EnableLedgerTools = true` on C#
+`SqlitePipelineRunOptions`. This grants access to all agents in that run. Native
+callers can also explicitly attach a reader with `WithRunLedger`. Logging and
+accepted-value inspection work independently of this option.

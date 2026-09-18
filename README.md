@@ -705,6 +705,8 @@ var pipeline = Pipeline
     .Build(done, failed);
 ```
 
+Set `max: 5` on a TypeScript `parallel` definition (or `max: 5` on C# `PipelineNodes.Parallel`) to run at most five branches at once. Each completed branch frees a slot immediately; this does not split execution into fixed waves. Omitting `max` keeps all branches concurrent. The limit belongs to each invocation of the group, not to a provider or the whole process. Queued branches honor cancellation. `max` must be a positive 32-bit integer.
+
 Branches may be agents or stages. Terminals, interactions, nested parallel groups, and branch subgraphs are not supported.
 Branch participants belong to the group and cannot also appear elsewhere in the parent graph. Branch observations can
 arrive in any order, and external side effects are not rolled back if a sibling fails. Caller cancellation reaches active
@@ -1258,3 +1260,19 @@ For more detail, see:
 ## License
 
 [MIT](LICENSE)
+
+### Agent access to the run ledger
+
+Persisting a run records history for inspection; it does not grant agents ledger tools.
+`read_ledger`, `search_ledger` and `read_ledger_entry` are disabled by default. Supply all required facts
+in each agent's message unless that agent needs historical retrieval.
+
+To explicitly grant ledger tools for a run, use `enableLedgerTools: true` alongside
+`ledgerPath` in TypeScript, or `EnableLedgerTools = true` on C#
+`SqlitePipelineRunOptions`. This grants access to all agents in that run. Native
+callers can also explicitly attach a reader with `WithRunLedger`. Logging and
+accepted-value inspection work independently of this option.
+
+`read_ledger` and `search_ledger` return bounded record excerpts. Use an entry's cursor with
+`read_ledger_entry` to retrieve the complete value; follow `nextOffset` until `hasMore` is false.
+Entry retrieval enforces the same run and readable-record restrictions as listing/search.

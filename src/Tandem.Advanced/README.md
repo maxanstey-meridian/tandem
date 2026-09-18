@@ -11,3 +11,28 @@ Harness workspace authority, output-acceptance policy, or invocation context. Or
 state, participants, capabilities, interactions, and routes belong to `Meridian.Tandem`.
 
 See the [Tandem repository](https://github.com/maxanstey-meridian/tandem) for usage and examples.
+
+`UseHarness(instructions, maxContextWindowTokens, maxOutputTokens, disableCompaction)`
+configures context and output limits independently of lifecycle checkpoint capabilities.
+The limits also appear in runtime usage observations. `WithCheckpoint` remains optional.
+
+Workspace reads use source line numbers (`startLine`, `lineCount`). Responses contain numbered
+`lines`; an oversized line can span fragments. Copy `nextCursor` into `cursor` with the same path
+and line count to retrieve every fragment, omitting `startLine`. Exact totals are returned only
+at EOF. Changing the file invalidates continuation.
+
+Directory listings, Git status and grep also expose `hasMore` and `nextCursor`. Grep's `limit`
+counts matching records, not characters; obsolete `offset` arguments are rejected. Grep defaults
+to case-insensitive regex matching and pruning common build/dependency directories. Use `literal`,
+`caseSensitive` and `includeExcluded` to change those choices. Explicit path prefixes can select
+normally excluded directories, but never bypass workspace, Git-metadata or symlink restrictions.
+Skipped files and oversized matches are reported; source reads retrieve long matching lines.
+Queries do not promise snapshots across repository edits: restart after edits.
+
+Named commands capture up to 16 MiB per output stream using Tandem's process runner. The model
+receives bounded stdout/stderr previews. When ledger tools are enabled and the action is persisted,
+`diagnostics.entryCursor` identifies captured output: use `read_ledger_entry` with that cursor and
+`stream: "stdout"` or `"stderr"`, following `nextOffset`. `captureTruncated` means the hard capture
+ceiling was reached; `previewTruncated` only means more captured output is available. Without a
+durable reference the response explicitly says retrieval is unavailable. Acceptance-policy process
+evidence is also bounded and marks truncation; full diagnostics remain in the ledger record.

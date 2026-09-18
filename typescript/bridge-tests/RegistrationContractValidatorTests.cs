@@ -113,6 +113,46 @@ public sealed class RegistrationContractValidatorTests
     }
 
     [Theory]
+    [InlineData(1)]
+    [InlineData(5)]
+    public void AcceptsParallelMax(int max)
+    {
+        var value = ParallelContractObject();
+        var node = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        node["max"] = max;
+        var contract = RegistrationContractValidator.ParseAndValidate(
+            JsonSerializer.Serialize(value)
+        );
+        Assert.Equal(max, contract.Nodes![0].Max);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void RejectsNonPositiveParallelMax(int max)
+    {
+        var value = ParallelContractObject();
+        var node = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        node["max"] = max;
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
+        );
+        Assert.Contains("max must be positive", error.Message);
+    }
+
+    [Fact]
+    public void RejectsMaxOnOrdinaryParticipant()
+    {
+        var value = ParallelContractObject();
+        var node = (Dictionary<string, object?>)((object[])value["nodes"]!)[1];
+        node["max"] = 5;
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
+        );
+        Assert.Contains("max is forbidden", error.Message);
+    }
+
+    [Theory]
     [InlineData("one-branch", "branches must contain at least two branches")]
     [InlineData("duplicate-branch", "duplicates branch ID 'one'")]
     [InlineData("duplicate-participant", "duplicates participant ID 'first'")]

@@ -66,3 +66,14 @@ test("parallel executes agent and stage branches through the packaged bridge", a
   assert.equal(result.modelBody.temperature, 0);
   assert.equal(result.modelBody.max_output_tokens, 2048);
 });
+
+for (const mode of ["limited", "serial", "independent", "cancel"]) {
+  test(`parallel max enforces ${mode} execution through the packaged bridge`, async () => {
+    const result = await runChild("parallel-max-child.mjs", mode);
+    assert.equal(result.finished, result.entered);
+    assert.equal(
+      result.inspection.nodes.find((n) => n.id === "limited").max,
+      mode === "serial" ? 1 : 5,
+    );
+  });
+}

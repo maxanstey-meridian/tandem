@@ -24,18 +24,23 @@ internal static class StructuredOutputSchema
 
     public static ChatResponseFormat Create<T>()
     {
+        var schema = CreateJsonSchema<T>();
+        return ChatResponseFormat.ForJsonSchema(schema, typeof(T).Name);
+    }
+
+    public static JsonElement CreateJsonSchema<T>()
+    {
         var schema = new JsonSchemaBuilder().FromType<T>(_configuration).Build();
         var format = ChatResponseFormat.ForJsonSchema(
             JsonSerializer.SerializeToElement(schema),
             typeof(T).Name
         );
-        return ChatResponseFormat.ForJsonSchema(
+        return (
             _transformer.GetOrCreateTransformedSchema((ChatResponseFormatJson)format)
-                ?? throw new InvalidOperationException(
-                    $"Could not transform the {typeof(T).Name} response schema."
-                ),
-            typeof(T).Name
-        );
+            ?? throw new InvalidOperationException(
+                $"Could not transform the {typeof(T).Name} response schema."
+            )
+        ).Clone();
     }
 
     private sealed class StrictObjectRefiner : ISchemaRefiner

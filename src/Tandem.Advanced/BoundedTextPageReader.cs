@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Text;
 using System.Text.Json.Serialization;
+using Tandem.Infrastructure;
 
 namespace Tandem.Advanced;
 
@@ -15,7 +16,18 @@ internal sealed record TextPage(
         JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)
     ]
         int? NextOffset
-);
+)
+{
+    [JsonPropertyName("offsetUnit")]
+    public string OffsetUnit => "UTF-16 code units";
+
+    [JsonPropertyName("maximumLimit")]
+    public int MaximumLimit => BoundedTextPageReader.MaximumLimit;
+
+    [JsonPropertyName("pagination")]
+    public string Pagination =>
+        "Use nextOffset with the same file/search arguments until hasMore is false. Results are recomputed; restart at offset 0 if the input or query changes. totalLength is the current result size, not a snapshot guarantee.";
+}
 
 internal static class BoundedTextPageReader
 {
@@ -103,9 +115,14 @@ internal static class BoundedTextPageReader
 
         if (offset > position)
         {
-            throw new ArgumentOutOfRangeException(
+            throw InvalidPage(
                 nameof(offset),
-                $"Offset {offset} is beyond the text length {position}."
+                $"Offset {offset} exceeds the current result length {position}. Results may have changed, or the offset may belong to another query. Restart at offset 0; then follow nextOffset with unchanged arguments until hasMore is false.",
+                offset,
+                limit,
+                position,
+                0,
+                limit
             );
         }
         if (
@@ -116,9 +133,14 @@ internal static class BoundedTextPageReader
             && char.IsHighSurrogate(before)
         )
         {
-            throw new ArgumentOutOfRangeException(
+            throw InvalidPage(
                 nameof(offset),
-                "Offset cannot split a Unicode surrogate pair."
+                "Offset splits a Unicode surrogate pair. Retry at the preceding complete character boundary.",
+                offset,
+                limit,
+                position,
+                offset - 1,
+                Math.Max(limit, 2)
             );
         }
 
@@ -127,9 +149,14 @@ internal static class BoundedTextPageReader
             page.Length--;
             if (page.Length == 0)
             {
-                throw new ArgumentOutOfRangeException(
+                throw InvalidPage(
                     nameof(limit),
-                    "Limit is too small to return the Unicode character at this offset."
+                    "Limit is too small for the Unicode character at this offset. Retry with a limit of at least 2 UTF-16 code units.",
+                    offset,
+                    limit,
+                    position,
+                    offset,
+                    2
                 );
             }
         }
@@ -146,20 +173,59 @@ internal static class BoundedTextPageReader
         );
     }
 
-    private static void ValidateBounds(int offset, int limit)
+    internal static void ValidateBounds(int offset, int limit)
     {
         if (offset < 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(offset), "Offset cannot be negative.");
+            throw InvalidPage(
+                nameof(offset),
+                "Offset cannot be negative. Retry at offset 0.",
+                offset,
+                limit,
+                null,
+                0,
+                Math.Clamp(limit, 1, MaximumLimit)
+            );
         }
         if (limit is < 1 or > MaximumLimit)
         {
-            throw new ArgumentOutOfRangeException(
+            throw InvalidPage(
                 nameof(limit),
-                $"Limit must be from 1 to {MaximumLimit}."
+                $"Limit must be from 1 to {MaximumLimit} UTF-16 code units.",
+                offset,
+                limit,
+                null,
+                Math.Max(offset, 0),
+                Math.Clamp(limit, 1, MaximumLimit)
             );
         }
     }
+
+    private static PaginationValidationException InvalidPage(
+        string parameter,
+        string message,
+        int offset,
+        int limit,
+        int? totalLength,
+        int retryOffset,
+        int retryLimit
+    ) =>
+        new(
+            parameter,
+            message,
+            new
+            {
+                offset,
+                limit,
+                totalLength,
+                maximumOffset = totalLength,
+                minimumLimit = 1,
+                maximumLimit = MaximumLimit,
+                offsetUnit = "UTF-16 code units",
+                retryOffset,
+                retryLimit,
+            }
+        );
 
     private sealed class StreamedPageAccumulator(int offset, int limit)
     {
@@ -195,9 +261,14 @@ internal static class BoundedTextPageReader
         {
             if (offset > _total)
             {
-                throw new ArgumentOutOfRangeException(
+                throw InvalidPage(
                     nameof(offset),
-                    $"Offset {offset} is beyond the text length {_total}."
+                    $"Offset {offset} exceeds the current result length {_total}. Results may have changed, or the offset may belong to another query. Restart at offset 0; then follow nextOffset with unchanged arguments until hasMore is false.",
+                    offset,
+                    limit,
+                    _total,
+                    0,
+                    limit
                 );
             }
             if (
@@ -208,9 +279,14 @@ internal static class BoundedTextPageReader
                 && char.IsHighSurrogate(before)
             )
             {
-                throw new ArgumentOutOfRangeException(
+                throw InvalidPage(
                     nameof(offset),
-                    "Offset cannot split a Unicode surrogate pair."
+                    "Offset splits a Unicode surrogate pair. Retry at the preceding complete character boundary.",
+                    offset,
+                    limit,
+                    _total,
+                    offset - 1,
+                    Math.Max(limit, 2)
                 );
             }
             if (
@@ -222,9 +298,14 @@ internal static class BoundedTextPageReader
                 _page.Length--;
                 if (_page.Length == 0)
                 {
-                    throw new ArgumentOutOfRangeException(
+                    throw InvalidPage(
                         nameof(limit),
-                        "Limit is too small to return the Unicode character at this offset."
+                        "Limit is too small for the Unicode character at this offset. Retry with a limit of at least 2 UTF-16 code units.",
+                        offset,
+                        limit,
+                        _total,
+                        offset,
+                        2
                     );
                 }
             }

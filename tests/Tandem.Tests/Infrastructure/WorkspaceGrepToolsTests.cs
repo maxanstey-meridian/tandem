@@ -1,38 +1,9 @@
 using FluentAssertions;
-using Microsoft.Extensions.AI;
 
 namespace Tandem.Tests.Infrastructure;
 
 public sealed class WorkspaceGrepToolsTests
 {
-    [Fact]
-    public void Add_RegistersOnePaginatedGrepTool()
-    {
-        var options = new ChatOptions();
-
-        WorkspaceGrepTools.Add(options, ".");
-
-        var tool = options
-            .Tools.Should()
-            .ContainSingle()
-            .Which.Should()
-            .BeAssignableTo<AIFunction>()
-            .Subject;
-        tool.Name.Should().Be("file_access_grep");
-        tool.JsonSchema.GetProperty("properties")
-            .EnumerateObject()
-            .Select(property => property.Name)
-            .Should()
-            .BeEquivalentTo(
-                "regexPattern",
-                "directory",
-                "globPattern",
-                "recursive",
-                "offset",
-                "limit"
-            );
-    }
-
     [Fact]
     public async Task SearchAsync_ReturnsDeterministicNormalizedRecursiveResults()
     {
@@ -53,14 +24,13 @@ public sealed class WorkspaceGrepToolsTests
                 "match",
                 null,
                 true,
-                0,
-                65536
+                null,
+                500
             );
 
             page.Content.Should()
                 .Be("a/one.txt:1:match one\na/one.txt:2:MATCH again\nz/two.txt:2:MATCH two\n");
             page.HasMore.Should().BeFalse();
-            page.TotalLength.Should().Be(page.Content.Length);
         }
         finally
         {
@@ -68,189 +38,60 @@ public sealed class WorkspaceGrepToolsTests
         }
     }
 
-    [Fact]
-    public async Task SearchAsync_PrunesExcludedDirectoriesAndRejectsBinaryAndGlobBeforeDecoding()
+    [Theory]
+    [InlineData(
+        "*.cs",
+        true,
+        "Rivet.Tests/CompilationHelper.cs:1:class CompilationHelper\nRivet.Tests/Nested/Child.cs:1:class CompilationHelper\n"
+    )]
+    [InlineData("*.cs", false, "Rivet.Tests/CompilationHelper.cs:1:class CompilationHelper\n")]
+    [InlineData(
+        "CompilationHelper.cs",
+        true,
+        "Rivet.Tests/CompilationHelper.cs:1:class CompilationHelper\n"
+    )]
+    [InlineData(
+        "Rivet.Tests/*.cs",
+        true,
+        "Rivet.Tests/CompilationHelper.cs:1:class CompilationHelper\n"
+    )]
+    [InlineData(
+        "**/*.cs",
+        true,
+        "Rivet.Tests/CompilationHelper.cs:1:class CompilationHelper\nRivet.Tests/Nested/Child.cs:1:class CompilationHelper\n"
+    )]
+    public async Task SearchAsync_DirectoryScopedGlobsFindOnlySelectedFiles(
+        string glob,
+        bool recursive,
+        string expected
+    )
     {
         var root = CreateDirectory();
         try
         {
-            Directory.CreateDirectory(Path.Combine(root, "obj", "nested"));
-            await File.WriteAllBytesAsync(
-                Path.Combine(root, "obj", "nested", "bad.txt"),
-                [0xff, 0xff]
-            );
-            await File.WriteAllBytesAsync(Path.Combine(root, "bad.dll"), [0xff, 0xff]);
-            await File.WriteAllBytesAsync(Path.Combine(root, "wrong.cs"), [0xff, 0xff]);
-            await File.WriteAllBytesAsync(Path.Combine(root, "binary.txt"), [0, 1, 2, 3, 4, 5]);
-            await File.WriteAllTextAsync(Path.Combine(root, "keep.txt"), "MATCH");
-            var enumerated = new List<string>();
-            var opened = new List<string>();
-            var decoded = new List<string>();
-            var diagnostics = new WorkspaceGrepTools.SearchDiagnostics(
-                enumerated.Add,
-                opened.Add,
-                decoded.Add
-            );
-
-            var page = await WorkspaceGrepTools.SearchAsync(
-                root,
-                "",
-                "MATCH",
-                "*.txt",
-                true,
-                0,
-                65536,
-                diagnostics: diagnostics
-            );
-
-            page.Content.Should().Be("keep.txt:1:MATCH\n");
-            enumerated.Should().NotContain("obj").And.NotContain("obj/nested");
-            opened.Should().NotContain(["bad.dll", "wrong.cs", "obj/nested/bad.txt"]);
-            opened.Should().Contain("binary.txt");
-            decoded.Should().NotContain("binary.txt");
-            decoded.Should().ContainSingle().Which.Should().Be("keep.txt");
-        }
-        finally
-        {
-            Directory.Delete(root, true);
-        }
-    }
-
-    [Fact]
-    public async Task SearchAsync_RespectsNonRecursiveSearchAndEmptyResults()
-    {
-        var root = CreateDirectory();
-        try
-        {
-            Directory.CreateDirectory(Path.Combine(root, "nested"));
-            await File.WriteAllTextAsync(Path.Combine(root, "nested", "match.txt"), "MATCH");
-
-            var page = await WorkspaceGrepTools.SearchAsync(root, "", "MATCH", null, false, 0, 64);
-
-            page.Should().Be(new TextPage("", 0, 0, 0, false, null));
-        }
-        finally
-        {
-            Directory.Delete(root, true);
-        }
-    }
-
-    [Fact]
-    public async Task SearchAsync_PagesWithoutOverlapAndPreservesSurrogates()
-    {
-        var root = CreateDirectory();
-        try
-        {
-            await File.WriteAllTextAsync(
-                Path.Combine(root, "emoji.txt"),
-                "MATCH 😀 value\nMATCH second"
-            );
-            var complete = await WorkspaceGrepTools.SearchAsync(
-                root,
-                "",
-                "MATCH",
-                null,
-                true,
-                0,
-                65536
-            );
-            var pieces = new List<string>();
-            var offset = 0;
-            do
-            {
-                var page = await WorkspaceGrepTools.SearchAsync(
-                    root,
-                    "",
-                    "MATCH",
-                    null,
-                    true,
-                    offset,
-                    10
-                );
-                pieces.Add(page.Content);
-                if (!page.HasMore)
+            Directory.CreateDirectory(Path.Combine(root, "Rivet.Tests", "Nested"));
+            foreach (
+                var path in new[]
                 {
-                    break;
+                    "Outside.cs",
+                    "Rivet.Tests/CompilationHelper.cs",
+                    "Rivet.Tests/Excluded.txt",
+                    "Rivet.Tests/Nested/Child.cs",
                 }
-
-                offset = page.NextOffset!.Value;
-            } while (true);
-
-            string.Concat(pieces).Should().Be(complete.Content);
-            (
-                await WorkspaceGrepTools.SearchAsync(
-                    root,
-                    "",
-                    "MATCH",
-                    null,
-                    true,
-                    complete.TotalLength,
-                    10
-                )
             )
-                .Should()
-                .Be(new TextPage("", complete.TotalLength, 0, complete.TotalLength, false, null));
-        }
-        finally
-        {
-            Directory.Delete(root, true);
-        }
-    }
-
-    [Fact]
-    public async Task SearchAsync_RejectsInvalidInputsAndHonorsCancellation()
-    {
-        var root = CreateDirectory();
-        try
-        {
-            var invalidRegex = () =>
-                WorkspaceGrepTools.SearchAsync(root, "", "[", null, true, 0, 10);
-            await invalidRegex.Should().ThrowAsync<ArgumentException>();
-            var invalidOffset = () =>
-                WorkspaceGrepTools.SearchAsync(root, "", "x", null, true, 1, 10);
-            await invalidOffset.Should().ThrowAsync<ArgumentOutOfRangeException>();
-            using var cancellation = new CancellationTokenSource();
-            cancellation.Cancel();
-            var canceled = () =>
-                WorkspaceGrepTools.SearchAsync(
-                    root,
-                    "",
-                    "x",
-                    null,
-                    true,
-                    0,
-                    10,
-                    cancellation.Token
-                );
-            await canceled.Should().ThrowAsync<OperationCanceledException>();
-        }
-        finally
-        {
-            Directory.Delete(root, true);
-        }
-    }
-
-    [Fact]
-    public async Task SearchAsync_DoubleStarGlobMatchesRootAndNestedPaths()
-    {
-        var root = CreateDirectory();
-        try
-        {
-            Directory.CreateDirectory(Path.Combine(root, "nested"));
-            await File.WriteAllTextAsync(Path.Combine(root, "root.cs"), "MATCH");
-            await File.WriteAllTextAsync(Path.Combine(root, "nested", "child.cs"), "MATCH");
-
+            {
+                await File.WriteAllTextAsync(Path.Combine(root, path), "class CompilationHelper");
+            }
             var page = await WorkspaceGrepTools.SearchAsync(
                 root,
-                "",
-                "MATCH",
-                "**/*.cs",
-                true,
-                0,
-                65536
+                "Rivet.Tests",
+                "class CompilationHelper",
+                glob,
+                recursive,
+                null,
+                500
             );
-
-            page.Content.Should().Be("nested/child.cs:1:MATCH\nroot.cs:1:MATCH\n");
+            page.Content.Should().Be(expected);
         }
         finally
         {
@@ -270,7 +111,7 @@ public sealed class WorkspaceGrepToolsTests
             );
 
             var search = () =>
-                WorkspaceGrepTools.SearchAsync(root, "", "^(a+)+$", null, true, 0, 10);
+                WorkspaceGrepTools.SearchAsync(root, "", "^(a+)+$", null, true, null, 10);
 
             await search
                 .Should()
@@ -290,17 +131,19 @@ public sealed class WorkspaceGrepToolsTests
         Directory.CreateDirectory(root);
         try
         {
-            var escape = () => WorkspaceGrepTools.SearchAsync(root, "..", "x", null, true, 0, 10);
+            var escape = () =>
+                WorkspaceGrepTools.SearchAsync(root, "..", "x", null, true, null, 10);
             await escape.Should().ThrowAsync<UnauthorizedAccessException>();
             var missing = () =>
-                WorkspaceGrepTools.SearchAsync(root, "missing", "x", null, true, 0, 10);
+                WorkspaceGrepTools.SearchAsync(root, "missing", "x", null, true, null, 10);
             await missing.Should().ThrowAsync<DirectoryNotFoundException>();
 
             var outside = Path.Combine(parent, "outside");
             Directory.CreateDirectory(outside);
             var link = Path.Combine(root, "link");
             Directory.CreateSymbolicLink(link, outside);
-            var linked = () => WorkspaceGrepTools.SearchAsync(root, "link", "x", null, true, 0, 10);
+            var linked = () =>
+                WorkspaceGrepTools.SearchAsync(root, "link", "x", null, true, null, 10);
             await linked.Should().ThrowAsync<UnauthorizedAccessException>();
         }
         finally
@@ -309,52 +152,271 @@ public sealed class WorkspaceGrepToolsTests
         }
     }
 
-    [Fact]
-    public async Task SearchAsync_ReportsInaccessibleDirectories()
+    [Theory]
+    [InlineData(
+        "Rivet.Tool/**/*.cs",
+        "Rivet.Tool/Nested/Child.cs:1:MATCH\nRivet.Tool/Program.cs:1:MATCH\n",
+        true
+    )]
+    [InlineData("rivet.tool/program.CS", "Rivet.Tool/Program.cs:1:MATCH\n", false)]
+    [InlineData("Rivet.Tool\\Program.cs", "Rivet.Tool/Program.cs:1:MATCH\n", false)]
+    public async Task SearchAsync_PathGlobsAvoidUnrelatedTraversal(
+        string glob,
+        string expected,
+        bool nested
+    )
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
         var root = CreateDirectory();
-        var blocked = Path.Combine(root, "blocked");
-        Directory.CreateDirectory(blocked);
-        File.SetUnixFileMode(blocked, UnixFileMode.None);
         try
         {
-            var search = () =>
-                WorkspaceGrepTools.SearchAsync(root, "blocked", "x", null, true, 0, 10);
-
-            await search.Should().ThrowAsync<UnauthorizedAccessException>();
+            foreach (
+                var path in new[]
+                {
+                    "Rivet.Tool/Program.cs",
+                    "Rivet.Tool/Nested/Child.cs",
+                    "Unrelated/Other.cs",
+                    "Rivet.Tool/obj/Generated.cs",
+                }
+            )
+            {
+                var fullPath = Path.Combine(root, path);
+                Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+                await File.WriteAllTextAsync(fullPath, "MATCH");
+            }
+            var visited = new List<string>();
+            var opened = new List<string>();
+            var page = await WorkspaceGrepTools.SearchAsync(
+                root,
+                "",
+                "MATCH",
+                glob,
+                true,
+                null,
+                500,
+                diagnostics: new(visited.Add, opened.Add)
+            );
+            page.Content.Should().Be(expected);
+            visited
+                .Should()
+                .BeEquivalentTo(
+                    nested
+                        ? new[] { ".", "Rivet.Tool", "Rivet.Tool/Nested" }
+                        : new[] { ".", "Rivet.Tool" }
+                );
+            opened
+                .Should()
+                .NotContain(path => path.StartsWith("Unrelated/") || path.Contains("/obj/"));
         }
         finally
         {
-            File.SetUnixFileMode(
-                blocked,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Theory]
+    [InlineData("Rivet.Tool", "Outside/File.cs", true)]
+    [InlineData("", "Rivet.Tool/File.cs", false)]
+    [InlineData("", "link/File.cs", true)]
+    [InlineData("", "../Outside/File.cs", true)]
+    public async Task SearchAsync_PathPrefixCannotBypassSearchBoundaries(
+        string directory,
+        string glob,
+        bool recursive
+    )
+    {
+        var root = CreateDirectory();
+        try
+        {
+            foreach (var name in new[] { "Rivet.Tool", "Outside", "obj" })
+            {
+                Directory.CreateDirectory(Path.Combine(root, name));
+                await File.WriteAllTextAsync(Path.Combine(root, name, "File.cs"), "MATCH");
+            }
+            Directory.CreateSymbolicLink(Path.Combine(root, "link"), Path.Combine(root, "Outside"));
+            var opened = new List<string>();
+            var page = await WorkspaceGrepTools.SearchAsync(
+                root,
+                directory,
+                "MATCH",
+                glob,
+                recursive,
+                null,
+                500,
+                diagnostics: new(FileOpened: opened.Add)
             );
+            page.Content.Should().BeEmpty();
+            opened.Should().BeEmpty();
+        }
+        finally
+        {
             Directory.Delete(root, true);
         }
     }
 
     [Fact]
-    public async Task SearchAsync_BoundsReturnedMemoryForLargeFilesAndMatchSets()
+    public async Task SearchAsync_SearchesSourceInsidePackages()
     {
         var root = CreateDirectory();
         try
         {
-            var line = "MATCH " + new string('x', 20_000);
-            await File.WriteAllLinesAsync(
-                Path.Combine(root, "large.txt"),
-                Enumerable.Repeat(line, 2_000)
+            Directory.CreateDirectory(Path.Combine(root, "packages", "sdk"));
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "packages", "sdk", "Source.cs"),
+                "MATCH"
             );
+            var page = await WorkspaceGrepTools.SearchAsync(
+                root,
+                "",
+                "MATCH",
+                "packages/**/*.cs",
+                true,
+                null,
+                500
+            );
+            page.Content.Should().Be("packages/sdk/Source.cs:1:MATCH\n");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
 
-            var page = await WorkspaceGrepTools.SearchAsync(root, "", "MATCH", null, true, 0, 128);
+    [Fact]
+    public async Task Pages_preserve_records_and_skip_completed_files()
+    {
+        var root = CreateDirectory();
+        try
+        {
+            foreach (var name in new[] { "a.txt", "b.txt", "c.txt" })
+            {
+                await File.WriteAllTextAsync(Path.Combine(root, name), "match😀\nmatch2\n");
+            }
 
-            page.Length.Should().BeLessThanOrEqualTo(128);
-            page.Content.Length.Should().Be(page.Length);
-            page.TotalLength.Should().BeGreaterThan(40_000_000);
-            page.HasMore.Should().BeTrue();
+            var opened = new List<string>();
+            var first = await WorkspaceGrepTools.SearchAsync(
+                root,
+                "",
+                "match",
+                null,
+                true,
+                limit: 2,
+                diagnostics: new(FileOpened: opened.Add)
+            );
+            opened.Should().Equal("a.txt", "b.txt");
+            first.Matches.Select(m => m.Text).Should().Equal("match😀", "match2");
+            opened.Clear();
+            var second = await WorkspaceGrepTools.SearchAsync(
+                root,
+                "",
+                "match",
+                null,
+                true,
+                first.NextCursor,
+                2,
+                diagnostics: new(FileOpened: opened.Add)
+            );
+            opened.Should().Equal("b.txt", "c.txt");
+            var third = await WorkspaceGrepTools.SearchAsync(
+                root,
+                "",
+                "match",
+                null,
+                true,
+                second.NextCursor,
+                2
+            );
+            third.HasMore.Should().BeFalse();
+            first
+                .Matches.Concat(second.Matches)
+                .Concat(third.Matches)
+                .Select(m => (m.Path, m.Line))
+                .Should()
+                .OnlyHaveUniqueItems()
+                .And.HaveCount(6);
+            await File.AppendAllTextAsync(Path.Combine(root, "b.txt"), "changed");
+            await FluentActions
+                .Awaiting(() =>
+                    WorkspaceGrepTools.SearchAsync(
+                        root,
+                        "",
+                        "match",
+                        null,
+                        true,
+                        first.NextCursor,
+                        2
+                    )
+                )
+                .Should()
+                .ThrowAsync<ArgumentException>();
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public async Task Exclusions_literal_case_and_skips_are_explicit()
+    {
+        var root = CreateDirectory();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "Library"));
+            await File.WriteAllTextAsync(Path.Combine(root, "Library", "a.cs"), "A(b)\na(b)");
+            await File.WriteAllBytesAsync(Path.Combine(root, "bad.txt"), [0xff, 0xff, 0x20]);
+            var ordinary = await WorkspaceGrepTools.SearchAsync(
+                root,
+                "",
+                "A(b)",
+                null,
+                true,
+                literal: true
+            );
+            ordinary.Matches.Should().BeEmpty();
+            ordinary.SkippedCount.Should().Be(1);
+            var included = await WorkspaceGrepTools.SearchAsync(
+                root,
+                "",
+                "A(b)",
+                null,
+                true,
+                includeExcluded: true,
+                literal: true,
+                caseSensitive: true
+            );
+            included.Matches.Should().ContainSingle().Which.Line.Should().Be(1);
+            var direct = await WorkspaceGrepTools.SearchAsync(
+                root,
+                "",
+                "A(b)",
+                "Library/*.cs",
+                true,
+                literal: true
+            );
+            direct.Matches.Should().HaveCount(2);
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public async Task Oversized_matches_are_identified_instead_of_splitting_records()
+    {
+        var root = CreateDirectory();
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "large.txt"),
+                "MATCH" + new string('x', 90000)
+            );
+            var page = await WorkspaceGrepTools.SearchAsync(root, "", "MATCH", null, true);
+            var match = page.Matches.Should().ContainSingle().Subject;
+            match.Incomplete.Should().BeTrue();
+            match.Path.Should().Be("large.txt");
+            match.Line.Should().Be(1);
+            page.Content.Length.Should().BeLessThan(65536);
         }
         finally
         {

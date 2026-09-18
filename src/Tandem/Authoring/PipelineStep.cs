@@ -68,6 +68,14 @@ public static class PipelineNodes
         IReadOnlyList<PipelineBranch<TState>> branches,
         Func<PipelineParallelMerge<TState>, TState> merge
     ) => new(id, clone, branches, merge);
+
+    public static PipelineParallel<TState> Parallel<TState>(
+        string id,
+        Func<TState, TState> clone,
+        IReadOnlyList<PipelineBranch<TState>> branches,
+        Func<PipelineParallelMerge<TState>, TState> merge,
+        int? max
+    ) => new(id, clone, branches, merge, max);
 }
 
 internal sealed class DynamicStatePipelineStep<TState>(
@@ -332,6 +340,10 @@ internal sealed class GeneratedPassThroughStepExecutor<TState>
         CancellationToken cancellationToken
     )
     {
+        using var lease = await ParallelBranchLease.EnterAsync(
+            pipeline.ParallelContext?.Slots,
+            cancellationToken
+        );
         using var envelope = PipelineExecutionEnvelope.Begin(pipeline);
         return await PipelineObservationPublisher.ExecuteAsync(
             _id,
@@ -384,6 +396,10 @@ internal sealed class GeneratedStateStepExecutor<TState>
         CancellationToken cancellationToken
     )
     {
+        using var lease = await ParallelBranchLease.EnterAsync(
+            pipeline.ParallelContext?.Slots,
+            cancellationToken
+        );
         using var envelope = PipelineExecutionEnvelope.Begin(pipeline);
         return await PipelineObservationPublisher.ExecuteAsync(
             _id,
@@ -441,6 +457,10 @@ internal sealed class GeneratedOutcomeStepExecutor<TState>
         CancellationToken cancellationToken
     )
     {
+        using var lease = await ParallelBranchLease.EnterAsync(
+            pipeline.ParallelContext?.Slots,
+            cancellationToken
+        );
         using var envelope = PipelineExecutionEnvelope.Begin(pipeline);
         return await PipelineObservationPublisher.ExecuteAsync(
             _id,

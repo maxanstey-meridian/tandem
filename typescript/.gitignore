@@ -6,6 +6,8 @@ bridge/out/
 bridge-tests/bin/
 bridge-tests/obj/
 packages/sdk/dist/
+packages/studio/.nuxt/
+packages/studio/dist/
 packages/runtime-darwin-arm64/runtime/
 sample/dist/
 *.sqlite3

@@ -33,7 +33,12 @@ public sealed class AgentCommandObservationTests
         var completed = updates[2].Should().BeOfType<AgentUpdate.ToolCompleted>().Subject;
         completed.CallId.Should().Be(started.CallId);
         completed.Succeeded.Should().BeTrue();
-        completed.Result.Should().Contain("\"exitCode\": 0");
+        JsonDocument
+            .Parse(completed.Result!)
+            .RootElement.GetProperty("exitCode")
+            .GetInt32()
+            .Should()
+            .Be(0);
     }
 
     [Fact]

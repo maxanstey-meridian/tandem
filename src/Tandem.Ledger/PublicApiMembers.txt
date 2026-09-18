@@ -171,6 +171,7 @@ M System.Int32 GetHashCode()
 M System.String ToString()
 M System.Void Deconstruct(out System.String LedgerPath, out System.Nullable<System.Guid>? RunId, out Tandem.PipelineInteractionHandlers? Interactions, out Tandem.IPipelineObserver? Observer)
 M Tandem.Ledger.SqlitePipelineRunOptions <Clone>$()
+P System.Boolean EnableLedgerTools { get; set; }
 P System.Nullable<System.Guid>? RunId { get; set; }
 P System.String LedgerPath { get; set; }
 P Tandem.IPipelineObserver? Observer { get; set; }

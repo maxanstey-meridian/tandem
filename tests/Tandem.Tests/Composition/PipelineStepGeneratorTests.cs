@@ -7,6 +7,43 @@ namespace Tandem.Tests.Composition;
 
 public sealed class PipelineStepGeneratorTests
 {
+    [Fact]
+    public void Generator_SupportsStagesInTheGlobalNamespace()
+    {
+        const string source = """
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+            namespace Tandem
+            {
+                [AttributeUsage(AttributeTargets.Class)]
+                public sealed class PipelineStageAttribute(string id) : Attribute;
+                public sealed class GeneratedStepCompletion;
+                public interface IGeneratedPipelineStep<TState, TResult>;
+                public abstract class PipelineNodeDescriptor;
+                public sealed class GeneratedStateStepDescriptor<TState>(string id, object execute) : PipelineNodeDescriptor;
+            }
+            public sealed record State(string Value);
+            [Tandem.PipelineStage("normalize")]
+            public sealed partial class NormalizeStage
+            {
+                public ValueTask<State> ExecuteAsync(State state, CancellationToken cancellationToken) =>
+                    throw new NotImplementedException();
+            }
+            """;
+
+        var result = RunGenerator(source);
+
+        result.Diagnostics.Should().BeEmpty();
+        var generated = result.Results.Single().GeneratedSources.Single();
+        generated.HintName.Should().Be("NormalizeStage.PipelineStep.g.cs");
+        generated.SourceText.ToString().Should().NotContain("namespace <global namespace>");
+        generated
+            .SourceText.ToString()
+            .Should()
+            .Contain("public sealed partial class NormalizeStage");
+    }
+
     [Theory]
     [InlineData("public sealed class VerificationStage", "TANDEM001")]
     [InlineData("public sealed partial class VerificationStage", "TANDEM001")]

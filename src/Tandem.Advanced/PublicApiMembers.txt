@@ -2,6 +2,7 @@
 T Tandem.Advanced.AdvancedAgentBuilderExtensions
 M static Tandem.AgentBuilder<TState> RequireOutputAcceptance<TState,TOutput>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.OutputAcceptancePolicy<TState,TOutput> acceptance)
 M static Tandem.AgentBuilder<TState> UseHarness<TState>(Tandem.AgentBuilder<TState> builder, System.String harnessInstructions)
+M static Tandem.AgentBuilder<TState> UseHarness<TState>(Tandem.AgentBuilder<TState> builder, System.String harnessInstructions, System.Int32 maxContextWindowTokens, System.Int32 maxOutputTokens, System.Boolean disableCompaction = false)
 M static Tandem.AgentBuilder<TState> WithCheckpoint<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.CheckpointPolicy<TState> policy)
 M static Tandem.AgentBuilder<TState> WithContinuationPolicy<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.AgentTurnPolicy<TState> policy)
 M static Tandem.AgentBuilder<TState> WithConversationPolicy<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.AgentConversationPolicy<TState> policy)

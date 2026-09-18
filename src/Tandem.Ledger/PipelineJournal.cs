@@ -175,7 +175,7 @@ public sealed class SqlitePipelineObserver : IPipelinePersistenceObserver
         observation switch
         {
             PipelineStructuredOutputRejected value =>
-                $"{executionAttemptId:N}:rejected-output--{value.StepId}--{value.Attempt}",
+                $"{executionAttemptId:N}:rejected-output--{value.RejectionId:N}",
             PipelineStructuredOutputAccepted value =>
                 $"{executionAttemptId:N}:accepted-output--{value.AcceptedOutputId}",
             PipelineCapabilityAccepted value =>

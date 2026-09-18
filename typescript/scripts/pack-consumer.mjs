@@ -1,15 +1,45 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const root = new URL("..", import.meta.url).pathname;
 const fixture = mkdtempSync(join(tmpdir(), "tandem-packed-consumer-"));
 const packetsFixture = mkdtempSync(join(tmpdir(), "tandem-packets-consumer-"));
+const studioExplicitFixture = mkdtempSync(join(tmpdir(), "tandem-studio-explicit-consumer-"));
+async function expectStudioLaunch(cwd, args) {
+  const cli = join(fixture, "node_modules/@maxanstey-meridian/tandem-studio/dist/cli.js");
+  await new Promise((resolveLaunch, rejectLaunch) => {
+    const child = spawn(process.execPath, [cli, ...args], { cwd, env: process.env });
+    let output = "";
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      rejectLaunch(new Error(`Installed Studio did not start. ${output}`));
+    }, 15_000);
+    const receive = (value) => {
+      output += String(value);
+      if (!output.includes("Local:")) {
+        return;
+      }
+      clearTimeout(timeout);
+      child.kill("SIGTERM");
+      child.once("exit", () => resolveLaunch());
+    };
+    child.stdout.on("data", receive);
+    child.stderr.on("data", receive);
+    child.once("exit", (code) => {
+      if (!output.includes("Local:")) {
+        clearTimeout(timeout);
+        rejectLaunch(new Error(`Installed Studio exited ${code}. ${output}`));
+      }
+    });
+  });
+}
 let runtimeTar;
 let loaderTar;
 let sdkTar;
+let studioTar;
 let packetsTar;
 try {
   const packetsPack = execFileSync("npm", ["pack", "./packages/packets", "--json"], {
@@ -76,9 +106,15 @@ console.log(JSON.stringify({ title: input.value.title, context: input.context, n
     encoding: "utf8",
   });
   sdkTar = JSON.parse(sdkPack)[0].filename;
+  const studioPack = execFileSync("npm", ["pack", "./packages/studio", "--json"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  studioTar = JSON.parse(studioPack)[0].filename;
   const runtimeMeta = JSON.parse(runtimePack)[0];
   const loaderMeta = JSON.parse(loaderPack)[0];
   const sdkMeta = JSON.parse(sdkPack)[0];
+  const studioMeta = JSON.parse(studioPack)[0];
   assert.equal(
     runtimeMeta.files.filter((file) => file.path.endsWith("libe_sqlite3.dylib")).length,
     1,
@@ -104,12 +140,27 @@ console.log(JSON.stringify({ title: input.value.title, context: input.context, n
       (file) => file.path.includes("/src/") || file.path.endsWith(".tsbuildinfo"),
     ),
   );
+  for (const path of [
+    "app/pages/index.vue",
+    "dist/cli.js",
+    "dist/loader-child.js",
+    "nuxt.config.ts",
+    "server/api/graph.get.ts",
+    "src/watch.ts",
+    "studio.oxfmtrc.json",
+  ]) {
+    assert(
+      studioMeta.files.some((file) => file.path === path),
+      `Studio package omitted ${path}`,
+    );
+  }
   writeFileSync(
     join(fixture, "package.json"),
     JSON.stringify({
       type: "module",
       dependencies: {
         "@maxanstey-meridian/tandem": `file:${join(root, sdkTar)}`,
+        "@maxanstey-meridian/tandem-studio": `file:${join(root, studioTar)}`,
         "@maxanstey-meridian/tandem-runtime": `file:${join(root, loaderTar)}`,
         "@maxanstey-meridian/tandem-runtime-darwin-arm64": `file:${join(root, runtimeTar)}`,
         zod: "^4.3.6",
@@ -122,6 +173,7 @@ console.log(JSON.stringify({ title: input.value.title, context: input.context, n
     [
       "ls",
       "@maxanstey-meridian/tandem",
+      "@maxanstey-meridian/tandem-studio",
       "@maxanstey-meridian/tandem-runtime",
       "@maxanstey-meridian/tandem-runtime-darwin-arm64",
     ],
@@ -130,6 +182,15 @@ console.log(JSON.stringify({ title: input.value.title, context: input.context, n
       stdio: "inherit",
     },
   );
+  const nearestProject = join(fixture, "studio-project");
+  const nearestChild = join(nearestProject, "nested");
+  mkdirSync(nearestChild, { recursive: true });
+  writeFileSync(join(nearestProject, "tandem.config.ts"), "export const tandem = {};\n");
+  await expectStudioLaunch(nearestChild, []);
+  const explicitConfig = join(fixture, "explicit-tandem.config.ts");
+  writeFileSync(explicitConfig, "export const tandem = {};\n");
+  await expectStudioLaunch(studioExplicitFixture, ["--config", explicitConfig]);
+
   writeFileSync(
     join(fixture, "consumer.mjs"),
     `
@@ -137,7 +198,6 @@ import { inspectAcceptedAsync, runRegisteredGraphAsync } from "@maxanstey-meridi
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { interaction, interactions, output, pipeline, route, run, stage } from "@maxanstey-meridian/tandem";
-import { closeCli } from "@maxanstey-meridian/tandem/cli";
 import { z } from "zod";
 const ledgerPath = new URL("packed.sqlite3", import.meta.url).pathname;
 if (typeof inspectAcceptedAsync !== "function" || typeof runRegisteredGraphAsync !== "function") throw new Error("runtime loader exports are unavailable");
@@ -152,7 +212,6 @@ const db = new DatabaseSync(ledgerPath, { readOnly: true });
 const row = db.prepare("select status, ended_at from runs where run_id = ?").get(result.runId.replaceAll("-", ""));
 db.close();
 console.log(JSON.stringify({ value: result.state.value, status: row.status, terminalized: row.ended_at !== null, sqlite: existsSync(ledgerPath) }));
-await closeCli(0);
 `,
   );
   const consumerOutput = execFileSync("node", ["consumer.mjs"], {
@@ -178,6 +237,7 @@ await closeCli(0);
 } finally {
   rmSync(fixture, { recursive: true, force: true });
   rmSync(packetsFixture, { recursive: true, force: true });
+  rmSync(studioExplicitFixture, { recursive: true, force: true });
   if (runtimeTar) {
     rmSync(join(root, runtimeTar), { force: true });
   }
@@ -186,6 +246,9 @@ await closeCli(0);
   }
   if (sdkTar) {
     rmSync(join(root, sdkTar), { force: true });
+  }
+  if (studioTar) {
+    rmSync(join(root, studioTar), { force: true });
   }
   if (packetsTar) {
     rmSync(join(root, packetsTar), { force: true });

@@ -27,10 +27,13 @@ internal static class OpenAiCompatibleChatClients
             await VerifyModelAsync(endpoint, descriptor.Model!, apiKey, cancellationToken);
         }
 
-        var client = new OpenAIClient(
-            new ApiKeyCredential(apiKey),
-            new OpenAIClientOptions { Endpoint = endpoint }
-        );
+        var clientOptions = new OpenAIClientOptions { Endpoint = endpoint };
+        if (descriptor.MaxAttempts is not null)
+        {
+            // The outer transport wrapper owns the explicit attempt budget.
+            clientOptions.RetryPolicy = new System.ClientModel.Primitives.ClientRetryPolicy(0);
+        }
+        var client = new OpenAIClient(new ApiKeyCredential(apiKey), clientOptions);
         IChatClient chatClient;
         if (descriptor.WireApi == "responses")
         {
@@ -55,7 +58,15 @@ internal static class OpenAiCompatibleChatClients
             chatClient = new OpenRouterReasoningChatClient(chatClient);
         }
 
-        return chatClient;
+        if (descriptor.RequestTimeoutMs is not null || descriptor.IdleTimeoutMs is not null)
+        {
+            chatClient = new RequestDeadlineChatClient(
+                chatClient,
+                descriptor.RequestTimeoutMs is { } total ? TimeSpan.FromMilliseconds(total) : null,
+                descriptor.IdleTimeoutMs is { } idle ? TimeSpan.FromMilliseconds(idle) : null
+            );
+        }
+        return new StreamRetryChatClient(chatClient, maxAttempts: descriptor.MaxAttempts ?? 4);
     }
 
     private static async Task VerifyModelAsync(

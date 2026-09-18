@@ -143,7 +143,7 @@ public static partial class NodePipelineBridge
                 Observer: runObserver
             )
             {
-                Ledger = store?.ForRun(runId),
+                Ledger = definition.EnableLedgerTools ? store?.ForRun(runId) : null,
             };
             if (store is not null)
             {

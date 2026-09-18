@@ -281,7 +281,7 @@ public sealed class WorkspaceAuthorityTests
                     overwrite: false,
                     CancellationToken.None
                 );
-            refuseOverwrite.Should().Throw<IOException>();
+            refuseOverwrite.Should().Throw<ArgumentException>();
             WorkspaceFileMutationTools.Copy(
                 workspace,
                 "source/payload.bin",

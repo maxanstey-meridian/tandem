@@ -28,7 +28,7 @@ internal static class ReadOnlyGitTools
             AIFunctionFactory.Create(
                 repository.StatusAsync,
                 StatusToolName,
-                "Inspect the current branch and every staged, unstaged, and untracked workspace change."
+                "Inspect staged, unstaged and untracked changes as complete records. Follow nextCursor for all changes. Status changes invalidate continuation; restart without cursor."
             ),
             AIFunctionFactory.Create(
                 repository.WorkspaceDiffAsync,
@@ -91,16 +91,104 @@ internal sealed class ReadOnlyGitRepository(
         ["GIT_OPTIONAL_LOCKS"] = "0",
     };
 
-    internal async Task<string> StatusAsync(CancellationToken cancellationToken = default) =>
-        Page(
-            await RunAsync(
-                ["status", "--porcelain=v1", "--branch", "--untracked-files=all"],
-                cancellationToken
-            ),
-            1,
-            500,
-            "(clean workspace)"
+    internal async Task<object> StatusAsync(
+        CancellationToken cancellationToken = default,
+        [Description("Maximum change records, 1 to 500.")] int limit = 200,
+        [Description("Copy nextCursor; restart if workspace status changed.")] string? cursor = null
+    )
+    {
+        if (limit is < 1 or > 500)
+        {
+            throw new ToolInputException("limit must be from 1 to 500.");
+        }
+
+        var output = await RunAsync(
+            ["status", "--porcelain=v1", "-z", "--branch", "--untracked-files=all"],
+            cancellationToken,
+            16 * 1024 * 1024
         );
+        var scope = ToolCursor.Scope("status", _workspacePath, limit, output);
+        var start = cursor is null ? 0 : ToolCursor.Decode<int>(cursor, scope);
+        if (start < 0)
+        {
+            throw new ToolInputException("Invalid status cursor; restart without cursor.");
+        }
+        var fields = output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var changes = new List<object>();
+        string? branch = null;
+        var index = 0;
+        var returned = 0;
+        var characters = 0;
+        for (var i = 0; i < fields.Length; i++)
+        {
+            var field = fields[i];
+            if (field.StartsWith("## ", StringComparison.Ordinal))
+            {
+                branch = field[3..];
+                continue;
+            }
+            if (field.Length < 3)
+            {
+                throw new InvalidDataException("Invalid Git status record.");
+            }
+
+            var status = field[..2];
+            var path = field[3..];
+            string? originalPath = null;
+            if (status.Contains('R') || status.Contains('C'))
+            {
+                if (++i >= fields.Length)
+                {
+                    throw new InvalidDataException("Incomplete Git rename record.");
+                }
+
+                originalPath = fields[i];
+            }
+            if (index++ < start)
+            {
+                continue;
+            }
+
+            if (
+                returned >= limit
+                || (returned > 0 && characters + path.Length + (originalPath?.Length ?? 0) > 64000)
+            )
+            {
+                return new
+                {
+                    branch,
+                    changes,
+                    returnedCount = returned,
+                    hasMore = true,
+                    nextCursor = ToolCursor.Encode(scope, start + returned),
+                };
+            }
+
+            changes.Add(
+                new
+                {
+                    status,
+                    path,
+                    originalPath,
+                }
+            );
+            returned++;
+            characters += path.Length + (originalPath?.Length ?? 0);
+        }
+        if (start < 0 || start > index)
+        {
+            throw new ToolInputException("Invalid status cursor; restart without cursor.");
+        }
+
+        return new
+        {
+            branch,
+            changes,
+            returnedCount = returned,
+            hasMore = false,
+            nextCursor = (string?)null,
+        };
+    }
 
     internal async Task<TextPage> WorkspaceDiffAsync(
         [Description("Whether to inspect staged changes instead of unstaged changes.")]
@@ -325,7 +413,8 @@ internal sealed class ReadOnlyGitRepository(
 
     private async Task<string> RunAsync(
         IReadOnlyList<string> arguments,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        int maximumOutputBytes = MaximumOutputBytesPerStream
     )
     {
         var result = await LocalProcess.RunAsync(
@@ -334,7 +423,7 @@ internal sealed class ReadOnlyGitRepository(
                 ["-c", "core.fsmonitor=false", .. arguments],
                 _workspacePath,
                 _timeout,
-                MaximumOutputBytesPerStream,
+                maximumOutputBytes,
                 _gitEnvironment
             ),
             cancellationToken
@@ -351,6 +440,17 @@ internal sealed class ReadOnlyGitRepository(
         }
         if (result.ExitCode != 0)
         {
+            if (
+                result.Stderr.Contains("bad object", StringComparison.OrdinalIgnoreCase)
+                || result.Stderr.Contains("bad revision", StringComparison.OrdinalIgnoreCase)
+                || result.Stderr.Contains("unknown revision", StringComparison.OrdinalIgnoreCase)
+            )
+            {
+                throw new ToolInputException(
+                    $"Unknown Git revision. Use git_log to obtain a valid revision. {result.Stderr.Trim()}"
+                );
+            }
+
             throw new InvalidOperationException(
                 $"Read-only Git inspection failed: {result.Stderr.Trim()}"
             );
@@ -408,6 +508,7 @@ internal sealed class ReadOnlyGitRepository(
         CancellationToken cancellationToken
     )
     {
+        BoundedTextPageReader.ValidateBounds(offset, limit);
         var tempPath = _createTempFile();
         try
         {
@@ -448,6 +549,20 @@ internal sealed class ReadOnlyGitRepository(
             }
             if (result.ExitCode != 0)
             {
+                if (
+                    result.Stderr.Contains("bad object", StringComparison.OrdinalIgnoreCase)
+                    || result.Stderr.Contains("bad revision", StringComparison.OrdinalIgnoreCase)
+                    || result.Stderr.Contains(
+                        "unknown revision",
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                )
+                {
+                    throw new ToolInputException(
+                        $"Unknown Git revision. Use git_log to obtain a valid revision. {result.Stderr.Trim()}"
+                    );
+                }
+
                 throw new InvalidOperationException(
                     $"Read-only Git inspection failed: {result.Stderr.Trim()}"
                 );

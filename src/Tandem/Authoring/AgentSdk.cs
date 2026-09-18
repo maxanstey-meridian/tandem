@@ -150,6 +150,7 @@ public sealed class AgentBuilder<TState>
     private AgentWorkspaceDescriptor<TState>? _workspace;
     private AgentStructuredOutputDescriptor<TState>? _structuredOutput;
     private AgentCheckpointDescriptor<TState>? _checkpoint;
+    private AgentContextBudgetDescriptor? _contextBudget;
     private IReadOnlyList<
         Func<PipelineMessage<TState>, CancellationToken, ValueTask<string?>>
     > _messageAugmentations = [];
@@ -301,6 +302,7 @@ public sealed class AgentBuilder<TState>
     {
         ArgumentNullException.ThrowIfNull(output);
         ArgumentNullException.ThrowIfNull(apply);
+        var jsonSchema = StructuredOutputSchema.CreateJsonSchema<TOutput>();
         _structuredOutput = new AgentStructuredOutputDescriptor<TState>(
             (response, state) =>
                 AgentStructuredOutputPolicy.Parse<TOutput, TState>(
@@ -322,6 +324,7 @@ public sealed class AgentBuilder<TState>
                 ),
             OutputType: typeof(TOutput),
             Instructions: output.Instructions,
+            JsonSchema: jsonSchema,
             Examples: state =>
                 output
                     .Examples(state)
@@ -340,7 +343,10 @@ public sealed class AgentBuilder<TState>
                     .ToArray()
         );
         _configureChatOptions = options =>
-            options.ResponseFormat = StructuredOutputSchema.Create<TOutput>();
+            options.ResponseFormat = ChatResponseFormat.ForJsonSchema(
+                jsonSchema,
+                typeof(TOutput).Name
+            );
         return this;
     }
 
@@ -373,7 +379,8 @@ public sealed class AgentBuilder<TState>
             Apply: (state, candidate) => apply(state, (JsonElement)candidate),
             OutputType: typeof(JsonElement),
             ValueType: output.ValueType,
-            Instructions: output.Instructions
+            Instructions: output.Instructions,
+            JsonSchema: jsonSchema
         );
         _configureChatOptions = options =>
             options.ResponseFormat = ChatResponseFormat.ForJsonSchema(jsonSchema);
@@ -567,6 +574,16 @@ public sealed class AgentBuilder<TState>
         return this;
     }
 
+    internal AgentBuilder<TState> ConfigureContextBudget(
+        int contextWindowTokens,
+        int maxOutputTokens,
+        bool disableCompaction
+    )
+    {
+        _contextBudget = new(contextWindowTokens, maxOutputTokens, disableCompaction);
+        return this;
+    }
+
     internal AgentBuilder<TState> ConfigureCheckpoint(AgentCheckpointDescriptor<TState> policy)
     {
         _checkpoint = policy;
@@ -666,7 +683,8 @@ public sealed class AgentBuilder<TState>
             _timeout,
             _stateGuards,
             _latchedGates,
-            _skills
+            _skills,
+            _contextBudget
         );
 
         return new AgentDefinition<TState>(

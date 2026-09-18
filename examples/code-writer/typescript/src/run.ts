@@ -1,5 +1,5 @@
 import { inspectAccepted, type ChatClient } from "@maxanstey-meridian/tandem";
-import { closeCli, runCli } from "@maxanstey-meridian/tandem/cli";
+import { runCli } from "@maxanstey-meridian/tandem/cli";
 import { resolve } from "node:path";
 import { createPipeline } from "./pipeline.js";
 import type { State } from "./state.js";
@@ -38,23 +38,24 @@ const initialState: State = {
 
 if (!process.env.OPENROUTER_API_KEY) {
   process.stderr.write("OPENROUTER_API_KEY is required to run the Code Writer example.\n");
-  closeCli(2);
-}
-const ledgerPath = resolve(process.env.TANDEM_LEDGER_PATH ?? "code-writer.sqlite3");
-await runCli(
-  createPipeline({ implementer: openRouterDs4Client, reviewer: localSolClient }),
-  initialState,
-  {
-    ledgerPath,
-    signal: AbortSignal.timeout(600_000),
-    formatResult: async (result) => {
-      const accepted = await inspectAccepted({ ledgerPath, runId: result.runId });
-      return [
-        `Implementation:\n${result.state.implementation?.source ?? ""}`,
-        `Ledger: ${ledgerPath}`,
-        `Run: ${result.runId}`,
-        `Accepted: ${accepted.length}`,
-      ].join("\n");
+  process.exitCode = 2;
+} else {
+  const ledgerPath = resolve(process.env.TANDEM_LEDGER_PATH ?? "code-writer.sqlite3");
+  await runCli(
+    createPipeline({ implementer: openRouterDs4Client, reviewer: localSolClient }),
+    initialState,
+    {
+      ledgerPath,
+      signal: AbortSignal.timeout(600_000),
+      formatResult: async (result) => {
+        const accepted = await inspectAccepted({ ledgerPath, runId: result.runId });
+        return [
+          `Implementation:\n${result.state.implementation?.source ?? ""}`,
+          `Ledger: ${ledgerPath}`,
+          `Run: ${result.runId}`,
+          `Accepted: ${accepted.length}`,
+        ].join("\n");
+      },
     },
-  },
-);
+  );
+}

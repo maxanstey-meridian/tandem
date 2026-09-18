@@ -6,3 +6,4 @@ linkWorkspacePackages: true
 
 allowBuilds:
   esbuild: true
+  vue-demi: true

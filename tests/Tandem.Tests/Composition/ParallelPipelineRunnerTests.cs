@@ -6,6 +6,149 @@ namespace Tandem.Tests.Composition;
 
 public sealed class ParallelPipelineRunnerTests
 {
+    [Theory]
+    [InlineData(1)]
+    [InlineData(5)]
+    public async Task MaxBoundsActiveBranchesAndPreservesAllResults(int max)
+    {
+        var active = 0;
+        var peak = 0;
+        var sync = new object();
+        var branches = Enumerable
+            .Range(0, 15)
+            .Select(index =>
+                PipelineBranch.Create(
+                    index.ToString(),
+                    PipelineNodes.Stage<ParallelState>(
+                        $"limited-{index}",
+                        async (state, token) =>
+                        {
+                            var count = Interlocked.Increment(ref active);
+                            lock (sync)
+                            {
+                                peak = Math.Max(peak, count);
+                            }
+                            try
+                            {
+                                await Task.Delay(index == 0 ? 120 : 15, token);
+                                return state with { Values = [index.ToString()] };
+                            }
+                            finally
+                            {
+                                Interlocked.Decrement(ref active);
+                            }
+                        }
+                    )
+                )
+            )
+            .ToArray();
+        var group = PipelineNodes.Parallel(
+            "limited",
+            state => state with { Values = [.. state.Values] },
+            branches,
+            results =>
+                results.Baseline with
+                {
+                    Values = [.. results.BranchIds.SelectMany(id => results.State(id).Values)],
+                },
+            max: max
+        );
+        var done = PipelineNodes.Stage<ParallelState>(
+            "done",
+            (state, _) => ValueTask.FromResult(state)
+        );
+        var pipeline = Pipeline
+            .Start(group, "limited-parallel")
+            .Route(group.Success, done, "done")
+            .Build(done);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var result = await new PipelineRunner().RunAsync(
+            pipeline,
+            new ParallelState([]),
+            cancellationToken: timeout.Token
+        );
+        result.Succeeded.Should().BeTrue();
+        peak.Should().Be(max);
+        active.Should().Be(0);
+        result.State.Values.Should().Equal(Enumerable.Range(0, 15).Select(i => i.ToString()));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void MaxRejectsNonPositiveLimits(int max)
+    {
+        var first = PipelineNodes.Stage<ParallelState>(
+            "first",
+            (state, _) => ValueTask.FromResult(state)
+        );
+        var second = PipelineNodes.Stage<ParallelState>(
+            "second",
+            (state, _) => ValueTask.FromResult(state)
+        );
+        var create = () =>
+            PipelineNodes.Parallel(
+                "bad",
+                state => state,
+                [PipelineBranch.Create("first", first), PipelineBranch.Create("second", second)],
+                results => results.Baseline,
+                max: max
+            );
+        create.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public async Task CappedDeclaredFailuresReleaseSlotsAndSkipMerge()
+    {
+        var entered = 0;
+        var mergeCalled = false;
+        var branches = Enumerable
+            .Range(0, 8)
+            .Select(index =>
+                PipelineBranch.Create(
+                    index.ToString(),
+                    new InlineOutcomeStep(
+                        $"failure-{index}",
+                        new FailureEvidence("failure", "Expected failure"),
+                        _ =>
+                        {
+                            Interlocked.Increment(ref entered);
+                            return ValueTask.CompletedTask;
+                        }
+                    )
+                )
+            )
+            .ToArray();
+        var group = PipelineNodes.Parallel(
+            "limited",
+            state => state,
+            branches,
+            results =>
+            {
+                mergeCalled = true;
+                return results.Baseline;
+            },
+            max: 1
+        );
+        var done = PipelineNodes.Stage<ParallelState>(
+            "handled",
+            (state, _) => ValueTask.FromResult(state)
+        );
+        var pipeline = Pipeline
+            .Start(group, "limited-failure")
+            .Route(group.Failed, done, "handled")
+            .Build(done);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var result = await new PipelineRunner().RunAsync(
+            pipeline,
+            new ParallelState([]),
+            cancellationToken: timeout.Token
+        );
+        entered.Should().Be(8);
+        mergeCalled.Should().BeFalse();
+        result.Succeeded.Should().BeTrue();
+    }
+
     [Fact]
     public async Task BranchesOverlapAndMergeInDeclarationOrder()
     {

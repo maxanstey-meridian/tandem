@@ -87,7 +87,8 @@ internal static class RegisteredParticipantFactory
                         JsonSerializer.Serialize(states, TandemJson.CreateTypedContract())
                     )
                 );
-            }
+            },
+            max: node.Max
         );
 
         static JsonElement ParseElement(string json)

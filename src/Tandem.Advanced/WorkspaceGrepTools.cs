@@ -1,6 +1,6 @@
-using System.Buffers;
 using System.ComponentModel;
 using System.Text;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -12,7 +12,6 @@ namespace Tandem.Advanced;
 internal static class WorkspaceGrepTools
 {
     private static readonly TimeSpan _regexTimeout = TimeSpan.FromSeconds(1);
-    private static readonly UTF8Encoding _strictUtf8 = new(false, true);
     private static readonly HashSet<string> _excludedDirectories = new(
         [
             ".angular",
@@ -71,7 +70,6 @@ internal static class WorkspaceGrepTools
             "node_modules",
             "obj",
             "out",
-            "packages",
             "Pods",
             "Saved",
             "site-packages",
@@ -147,29 +145,33 @@ internal static class WorkspaceGrepTools
 
     internal static void Add(ChatOptions options, string workspacePath)
     {
-        var tools = options.Tools?.ToList() ?? [];
-        if (tools.Any(tool => tool.Name == FileAccessProvider.GrepToolName))
-        {
-            throw new InvalidOperationException(
-                $"Agent already exposes tool '{FileAccessProvider.GrepToolName}'."
-            );
-        }
-
-        tools.Add(
+        options.Tools ??= [];
+        options.Tools.Add(
             AIFunctionFactory.Create(
                 (
-                    [Description("Regular expression pattern (case-insensitive).")]
-                        string regexPattern,
-                    [Description("Optional repository-relative directory to search.")]
+                    [Description("Pattern; regular expression by default.")] string regexPattern,
+                    [Description(
+                        "Repository-relative directory; explicitly named directories are searched."
+                    )]
                         string directory = "",
                     [Description(
-                        "Optional glob applied to repository-relative paths before files are opened."
+                        "Slashless glob matches filenames; path globs are repository-relative."
                     )]
                         string? globPattern = null,
-                    [Description("Whether to descend recursively.")] bool recursive = true,
-                    [Description("Zero-based UTF-16 output offset.")] int offset = 0,
-                    [Description("Maximum UTF-16 code units to return, from 1 to 65536.")]
-                        int limit = BoundedTextPageReader.DefaultLimit,
+                    bool recursive = true,
+                    [Description(
+                        "Maximum matching records, 1 to 500. Output is also size bounded."
+                    )]
+                        int limit = 100,
+                    [Description("Copy nextCursor with unchanged search arguments.")]
+                        string? cursor = null,
+                    [Description(
+                        "Search normally excluded build/dependency directories; Git metadata and links stay excluded."
+                    )]
+                        bool includeExcluded = false,
+                    [Description("Treat regexPattern as literal text.")] bool literal = false,
+                    [Description("Case-sensitive matching; default is case-insensitive.")]
+                        bool caseSensitive = false,
                     CancellationToken cancellationToken = default
                 ) =>
                     SearchAsync(
@@ -178,37 +180,88 @@ internal static class WorkspaceGrepTools
                         regexPattern,
                         globPattern,
                         recursive,
-                        offset,
+                        cursor,
                         limit,
-                        cancellationToken
+                        cancellationToken,
+                        includeExcluded: includeExcluded,
+                        literal: literal,
+                        caseSensitive: caseSensitive
                     ),
                 FileAccessProvider.GrepToolName,
-                "Search workspace text files and return deterministic path:line:text records. Follow nextOffset until hasMore is false."
+                "Search text files, returning path/line/text records. Follow nextCursor; no total scan for counts. "
+                    + "By default skip binary files, symlinks and build/dependency/cache directories (including "
+                    + string.Join(", ", _excludedDirectories.Order())
+                    + "; bazel-*; cmake-build-*). Explicit path prefixes override performance exclusions, never .git/link boundaries. "
+                    + "Skipped files are reported. Incomplete oversized matches can be read with file_access_read at their line."
             )
         );
-        options.Tools = tools;
     }
 
-    internal static Task<TextPage> SearchAsync(
+    internal sealed record Match(
+        [property: JsonPropertyName("path")] string Path,
+        [property: JsonPropertyName("line")] int Line,
+        [property: JsonPropertyName("text")] string Text,
+        [property: JsonPropertyName("incomplete")] bool Incomplete = false
+    );
+
+    internal sealed record GrepPage(
+        [property: JsonPropertyName("matches")] IReadOnlyList<Match> Matches,
+        [property: JsonPropertyName("nextCursor")] string? NextCursor,
+        [property: JsonPropertyName("skippedCount")] int SkippedCount,
+        [property: JsonPropertyName("skipped")] IReadOnlyList<string> Skipped,
+        [property: JsonPropertyName("exclusionsApplied")] bool ExclusionsApplied
+    )
+    {
+        [JsonPropertyName("hasMore")]
+        public bool HasMore => NextCursor is not null;
+
+        [JsonPropertyName("returnedCount")]
+        public int ReturnedCount => Matches.Count;
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public string Content =>
+            string.Concat(Matches.Select(m => $"{m.Path}:{m.Line}:{m.Text}\n"));
+    }
+
+    private sealed record Continuation(
+        string Path,
+        long Position,
+        int Line,
+        TextFileVersion Version
+    );
+
+    internal static Task<GrepPage> SearchAsync(
         string workspacePath,
         string directory,
         string regexPattern,
         string? globPattern,
         bool recursive,
-        int offset,
-        int limit,
+        string? cursor = null,
+        int limit = 100,
         CancellationToken cancellationToken = default,
-        SearchDiagnostics? diagnostics = null
+        SearchDiagnostics? diagnostics = null,
+        bool includeExcluded = false,
+        bool literal = false,
+        bool caseSensitive = false
     )
     {
+        if (limit is < 1 or > 500)
+        {
+            throw new Tandem.Infrastructure.ToolInputException(
+                "limit must be from 1 to 500 matching records."
+            );
+        }
+
         var regex = new Regex(
-            regexPattern,
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+            literal ? Regex.Escape(regexPattern) : regexPattern,
+            RegexOptions.CultureInvariant
+                | (caseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase),
             _regexTimeout
         );
-        Regex? glob = string.IsNullOrEmpty(globPattern) ? null : GlobRegex(globPattern);
+        var glob = string.IsNullOrEmpty(globPattern) ? null : GlobRegex(globPattern);
+        var workspace = Path.GetFullPath(workspacePath);
         var root = WorkspacePathAuthority.Resolve(
-            workspacePath,
+            workspace,
             string.IsNullOrEmpty(directory) ? "." : directory,
             "search"
         );
@@ -216,89 +269,310 @@ internal static class WorkspaceGrepTools
         {
             throw new DirectoryNotFoundException($"Search directory does not exist: {directory}");
         }
-        return BoundedTextPageReader.ReadAsync(
-            SearchDirectoryAsync(
-                Path.GetFullPath(workspacePath),
+
+        var scope = ToolCursor.Scope(
+            "grep",
+            workspace,
+            root,
+            regexPattern,
+            globPattern,
+            recursive,
+            limit,
+            includeExcluded,
+            literal,
+            caseSensitive
+        );
+        var resume = cursor is null ? null : ToolCursor.Decode<Continuation>(cursor, scope);
+        if (resume is not null)
+        {
+            if (
+                resume.Line < 1
+                || resume.Position < 0
+                || resume.Version is null
+                || string.IsNullOrWhiteSpace(resume.Path)
+            )
+            {
+                throw new Tandem.Infrastructure.ToolInputException("Invalid search continuation.");
+            }
+
+            resume.Version.Validate(
+                WorkspacePathAuthority.Resolve(workspace, resume.Path, "search")
+            );
+        }
+        var skipped = new List<string>();
+        var skippedCount = 0;
+        void Skip(string path, string reason)
+        {
+            skippedCount++;
+            if (skipped.Count < 20)
+            {
+                skipped.Add($"{path}: {reason}");
+            }
+        }
+        var matches = new List<Match>();
+        var characters = 0;
+        foreach (
+            var path in SearchFiles(
+                workspace,
                 root,
-                regex,
-                glob,
+                LiteralPathPrefix(globPattern),
                 recursive,
+                includeExcluded,
+                resume?.Path,
+                Skip,
                 diagnostics,
                 cancellationToken
-            ),
-            offset,
-            limit,
-            cancellationToken
+            )
+        )
+        {
+            var relative = Path.GetRelativePath(workspace, path).Replace('\\', '/');
+            if (glob is not null && !glob.IsMatch(relative))
+            {
+                continue;
+            }
+
+            if (_binaryExtensions.Contains(Path.GetExtension(path)))
+            {
+                Skip(relative, "binary extension");
+                continue;
+            }
+            PositionedTextReader? reader = null;
+            try
+            {
+                diagnostics?.FileOpened?.Invoke(relative);
+                var version = TextFileVersion.Read(path);
+                reader = new PositionedTextReader(
+                    path,
+                    resume?.Path == relative ? resume.Position : null,
+                    cancellationToken
+                );
+                diagnostics?.TextDecodingStarted?.Invoke(relative);
+                var line = resume?.Path == relative ? resume.Line : 1;
+                while (!reader.End)
+                {
+                    var position = reader.Position;
+                    var part = reader.Fragment(1024 * 1024);
+                    if (!part.LineEnded)
+                    {
+                        Skip(
+                            $"{relative}:{line}",
+                            "line exceeds 1 MiB search bound; use file_access_read to inspect it"
+                        );
+                        while (!part.LineEnded)
+                        {
+                            part = reader.Fragment(4096);
+                        }
+
+                        line++;
+                        continue;
+                    }
+                    if (regex.IsMatch(part.Text))
+                    {
+                        // A single oversized match remains identifiable and fully readable by line.
+                        var excerpt = part.Text.Length > 32000 ? part.Text[..32000] : part.Text;
+                        if (excerpt.Length > 0 && char.IsHighSurrogate(excerpt[^1]))
+                        {
+                            excerpt = excerpt[..^1];
+                        }
+
+                        if (
+                            matches.Count == limit
+                            || characters + relative.Length + excerpt.Length + 32 > 64000
+                        )
+                        {
+                            version.Validate(path);
+                            return Task.FromResult(
+                                new GrepPage(
+                                    matches,
+                                    ToolCursor.Encode(
+                                        scope,
+                                        new Continuation(relative, position, line, version)
+                                    ),
+                                    skippedCount,
+                                    skipped,
+                                    !includeExcluded
+                                )
+                            );
+                        }
+                        matches.Add(
+                            new Match(relative, line, excerpt, excerpt.Length != part.Text.Length)
+                        );
+                        characters += relative.Length + excerpt.Length + 32;
+                    }
+                    line++;
+                }
+                version.Validate(path);
+            }
+            catch (Exception e)
+                when (e
+                        is DecoderFallbackException
+                            or InvalidDataException
+                            or FileNotFoundException
+                            or DirectoryNotFoundException
+                            or UnauthorizedAccessException
+                )
+            {
+                Skip(relative, e.Message);
+            }
+            finally
+            {
+                reader?.Dispose();
+            }
+        }
+        return Task.FromResult(
+            new GrepPage(matches, null, skippedCount, skipped, !includeExcluded)
         );
     }
 
-    private static async IAsyncEnumerable<string> SearchDirectoryAsync(
-        string workspaceRoot,
+    private static IEnumerable<string> SearchFiles(
+        string workspace,
         string directory,
-        Regex regex,
-        Regex? glob,
+        string[] prefix,
         bool recursive,
+        bool includeExcluded,
+        string? after,
+        Action<string, string> skip,
         SearchDiagnostics? diagnostics,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken
+        CancellationToken cancellationToken
     )
     {
         cancellationToken.ThrowIfCancellationRequested();
-        diagnostics?.DirectoryEnumerated?.Invoke(
-            Path.GetRelativePath(workspaceRoot, directory).Replace('\\', '/')
-        );
-        var entries = Directory.GetFileSystemEntries(directory);
-        Array.Sort(entries, StringComparer.Ordinal);
+        var relative = Path.GetRelativePath(workspace, directory).Replace('\\', '/');
+        var components = relative == "." ? [] : relative.Split('/');
+        for (var i = 0; i < Math.Min(components.Length, prefix.Length); i++)
+        {
+            if (!string.Equals(components[i], prefix[i], StringComparison.OrdinalIgnoreCase))
+            {
+                yield break;
+            }
+        }
+
+        diagnostics?.DirectoryEnumerated?.Invoke(relative);
+        string[] entries;
+        try
+        {
+            entries = Directory.GetFileSystemEntries(
+                directory,
+                components.Length < prefix.Length ? prefix[components.Length] : "*",
+                new EnumerationOptions
+                {
+                    MatchType = MatchType.Simple,
+                    MatchCasing = MatchCasing.CaseInsensitive,
+                    AttributesToSkip = 0,
+                    IgnoreInaccessible = false,
+                }
+            );
+            Array.Sort(entries, StringComparer.Ordinal);
+        }
+        catch (Exception e) when (e is UnauthorizedAccessException or DirectoryNotFoundException)
+        {
+            skip(relative, e.Message);
+            yield break;
+        }
         foreach (var entry in entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var attributes = File.GetAttributes(entry);
+            var rel = Path.GetRelativePath(workspace, entry).Replace('\\', '/');
+            if (
+                after is not null
+                && ComparePaths(rel, after) < 0
+                && !after.StartsWith(rel + "/", StringComparison.Ordinal)
+            )
+            {
+                continue;
+            }
+
+            FileAttributes attributes;
+            try
+            {
+                attributes = File.GetAttributes(entry);
+            }
+            catch (Exception e)
+                when (e
+                        is FileNotFoundException
+                            or DirectoryNotFoundException
+                            or UnauthorizedAccessException
+                )
+            {
+                skip(rel, e.Message);
+                continue;
+            }
+            if (string.Equals(Path.GetFileName(entry), ".git", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             if ((attributes & FileAttributes.ReparsePoint) != 0)
             {
+                skip(rel, "symbolic link");
                 continue;
             }
             if ((attributes & FileAttributes.Directory) != 0)
             {
-                var name = Path.GetFileName(entry);
-                if (recursive && !IsExcludedDirectory(name))
+                if (
+                    recursive
+                    && (
+                        includeExcluded
+                        || components.Length < prefix.Length
+                        || !IsExcludedDirectory(Path.GetFileName(entry))
+                    )
+                )
                 {
-                    await foreach (
-                        var record in SearchDirectoryAsync(
-                            workspaceRoot,
+                    foreach (
+                        var file in SearchFiles(
+                            workspace,
                             entry,
-                            regex,
-                            glob,
+                            prefix,
                             true,
+                            includeExcluded,
+                            after,
+                            skip,
                             diagnostics,
                             cancellationToken
                         )
                     )
                     {
-                        yield return record;
+                        yield return file;
                     }
                 }
-                continue;
             }
-            var relative = Path.GetRelativePath(workspaceRoot, entry).Replace('\\', '/');
-            if (
-                _binaryExtensions.Contains(Path.GetExtension(entry))
-                || glob is not null && !glob.IsMatch(relative)
-            )
+            else
             {
-                continue;
-            }
-            await foreach (
-                var record in SearchFileAsync(
-                    entry,
-                    relative,
-                    regex,
-                    diagnostics,
-                    cancellationToken
-                )
-            )
-            {
-                yield return record;
+                yield return entry;
             }
         }
+    }
+
+    private static int ComparePaths(string left, string right)
+    {
+        var a = left.Split('/');
+        var b = right.Split('/');
+        for (var i = 0; i < Math.Min(a.Length, b.Length); i++)
+        {
+            var comparison = StringComparer.Ordinal.Compare(a[i], b[i]);
+            if (comparison != 0)
+            {
+                return comparison;
+            }
+        }
+        return a.Length.CompareTo(b.Length);
+    }
+
+    private static string[] LiteralPathPrefix(string? glob)
+    {
+        if (string.IsNullOrEmpty(glob) || (!glob.Contains('/') && !glob.Contains('\\')))
+        {
+            return [];
+        }
+        // Slashless globs match filenames at every depth. Path globs are repository-relative.
+        return glob.Replace('\\', '/')
+            .Split('/')
+            .TakeWhile(component =>
+                component.Length > 0
+                && component is not ("." or "..")
+                && component.IndexOfAny(['*', '?']) < 0
+            )
+            .ToArray();
     }
 
     private static bool IsExcludedDirectory(string name) =>
@@ -306,71 +580,13 @@ internal static class WorkspaceGrepTools
         || name.StartsWith("bazel-", StringComparison.OrdinalIgnoreCase)
         || name.StartsWith("cmake-build-", StringComparison.OrdinalIgnoreCase);
 
-    private static async IAsyncEnumerable<string> SearchFileAsync(
-        string path,
-        string relative,
-        Regex regex,
-        SearchDiagnostics? diagnostics,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken
-    )
-    {
-        diagnostics?.FileOpened?.Invoke(relative);
-        await using var stream = new FileStream(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete,
-            4096,
-            FileOptions.Asynchronous | FileOptions.SequentialScan
-        );
-        var probe = ArrayPool<byte>.Shared.Rent(8192);
-        try
-        {
-            var count = await stream.ReadAsync(probe.AsMemory(0, 8192), cancellationToken);
-            if (LooksBinary(probe.AsSpan(0, count)))
-            {
-                yield break;
-            }
-            stream.Position = 0;
-            diagnostics?.TextDecodingStarted?.Invoke(relative);
-            using var reader = new StreamReader(stream, _strictUtf8, true, 4096, false);
-            var lineNumber = 0;
-            while (await reader.ReadLineAsync(cancellationToken) is { } line)
-            {
-                lineNumber++;
-                if (regex.IsMatch(line))
-                {
-                    yield return $"{relative}:{lineNumber}:{line}\n";
-                }
-            }
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(probe);
-        }
-    }
-
-    private static bool LooksBinary(ReadOnlySpan<byte> bytes)
-    {
-        var suspicious = 0;
-        foreach (var value in bytes)
-        {
-            if (value == 0)
-            {
-                return true;
-            }
-
-            if (value < 32 && value is not (9 or 10 or 13 or 12 or 8))
-            {
-                suspicious++;
-            }
-        }
-        return bytes.Length > 0 && suspicious >= 4 && suspicious * 100 >= bytes.Length;
-    }
-
     private static Regex GlobRegex(string glob)
     {
         var pattern = new StringBuilder("\\A");
+        if (!glob.Contains('/') && !glob.Contains('\\'))
+        {
+            pattern.Append("(?:.*/)?");
+        }
         for (var i = 0; i < glob.Length; i++)
         {
             if (glob[i] == '*')

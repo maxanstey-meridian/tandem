@@ -95,7 +95,9 @@ internal sealed class AgentBlock<TState>(
             .ToArray();
         if (
             message.RunContext?.Ledger is not null
-            && capabilityFunctions.Any(tool => tool.Name is "read_ledger" or "search_ledger")
+            && capabilityFunctions.Any(tool =>
+                tool.Name is "read_ledger" or "search_ledger" or "read_ledger_entry"
+            )
         )
         {
             throw new InvalidOperationException(
@@ -127,7 +129,9 @@ internal sealed class AgentBlock<TState>(
                     new[]
                     {
                         config.SystemInstructions,
-                        config.StructuredOutput?.Instructions,
+                        config.StructuredOutput is { } structuredOutput
+                            ? AgentStructuredOutputPrompt.Initial(structuredOutput)
+                            : null,
                     }.Where(value => !string.IsNullOrWhiteSpace(value))
                 );
             var tools = capabilityFunctions.Cast<AITool>().ToList();
@@ -448,7 +452,9 @@ internal sealed class AgentBlock<TState>(
                     }
 
                     structuredAttempt++;
-                    userMessage = structuredResult.CorrectionPrompt();
+                    userMessage = structuredResult.CorrectionPrompt(
+                        config.StructuredOutput.JsonSchema
+                    );
                     if (
                         !string.IsNullOrWhiteSpace(
                             config.StructuredOutput.CorrectionRequiredToolName
@@ -627,7 +633,8 @@ internal sealed class AgentBlock<TState>(
     )
     {
         var policy = config.Checkpoint;
-        var contextWindow = policy?.ContextWindowTokens ?? 0;
+        var contextWindow =
+            config.ContextBudget?.ContextWindowTokens ?? policy?.ContextWindowTokens ?? 0;
         var checkpointAt = policy?.CheckpointAtTokens ?? 0;
 
         var input = (int)(inputTokens ?? 0);
@@ -873,7 +880,20 @@ internal sealed class AgentBlock<TState>(
                     object? result;
                     try
                     {
+                        ToolInputValidation.ValidateArguments(
+                            ficContext.Function,
+                            ficContext.Arguments
+                        );
                         result = await next(ficContext, ct);
+                    }
+                    catch (PaginationValidationException exception)
+                    {
+                        result = exception.ToolResult;
+                    }
+                    catch (Exception exception)
+                        when (ToolInputValidation.IsExpected(ficContext.Function.Name, exception))
+                    {
+                        result = ToolInputValidation.Error(exception.Message);
                     }
                     catch (Exception exception)
                     {
@@ -965,7 +985,14 @@ internal sealed class AgentBlock<TState>(
                             isToolError
                                 ? ToolInvocationStatus.Failed
                                 : ToolInvocationStatus.Completed,
-                            resultEvidence
+                            resultEvidence is ToolResultEvidenceDescriptor.Process captured
+                                ? captured with
+                                {
+                                    Stdout = DiagnosticPreview(captured.Stdout),
+                                    Stderr = DiagnosticPreview(captured.Stderr),
+                                Truncated = captured.Truncated,
+                                }
+                                : resultEvidence
                         )
                     );
                     if (message.RunContext is { } completedRunContext)
@@ -991,6 +1018,42 @@ internal sealed class AgentBlock<TState>(
                                     : null
                             ),
                             ct
+                        );
+                    }
+                    if (resultEvidence is ToolResultEvidenceDescriptor.Process diagnostic)
+                    {
+                        var entryCursor = message.RunContext?.Ledger is { } outputLedger
+                            ? await outputLedger.FindActionEntryAsync(
+                                config.StepId,
+                                actionInvocationId,
+                                ct
+                            )
+                            : null;
+                        result = JsonSerializer.SerializeToElement(
+                            new
+                            {
+                                exitCode = diagnostic.ExitCode,
+                                stdout = DiagnosticPreview(diagnostic.Stdout),
+                                stderr = DiagnosticPreview(diagnostic.Stderr),
+                                diagnostic.Duration,
+                                timedOut = diagnostic.TimedOut,
+                                captureTruncated = diagnostic.Truncated,
+                                previewTruncated = diagnostic.Stdout.Length > 8000
+                                    || diagnostic.Stderr.Length > 8000,
+                                stdoutCapturedCharacters = diagnostic.Stdout.Length,
+                                stderrCapturedCharacters = diagnostic.Stderr.Length,
+                                diagnostics = entryCursor is { } reference
+                                    ? new
+                                    {
+                                        entryCursor = reference,
+                                        tool = "read_ledger_entry",
+                                        streams = new[] { "stdout", "stderr" },
+                                    }
+                                    : null,
+                                retrieval = entryCursor is null
+                                    ? "No durable diagnostic reference is available; this is a bounded inline preview."
+                                    : "Use read_ledger_entry with entryCursor and stream stdout or stderr; follow nextOffset.",
+                            }
                         );
                     }
                     await PublishUpdateAsync(
@@ -1043,6 +1106,22 @@ internal sealed class AgentBlock<TState>(
                     && text.EndsWith("' not found.", StringComparison.Ordinal) => true,
             _ => IsFileNotFoundResult(result),
         };
+
+    private static string DiagnosticPreview(string text)
+    {
+        if (text.Length <= 8000)
+        {
+            return text;
+        }
+
+        var start = text.Length - 8000;
+        if (char.IsLowSurrogate(text[start]) && char.IsHighSurrogate(text[start - 1]))
+        {
+            start++;
+        }
+
+        return text[start..];
+    }
 
     private static bool IsFailedProcessExecution(object? result) =>
         result is JsonElement { ValueKind: JsonValueKind.Object } element
@@ -1238,14 +1317,32 @@ internal sealed class AgentBlock<TState>(
         bool configureStructuredOutput = true
     )
     {
-        var chatOptions = new ChatOptions
-        {
-            Instructions = $"{GenericAgentInstructions.Value}\n\n{instructions}",
-            Tools = tools.ToList(),
-        };
+        var chatOptions = new ChatOptions { Instructions = instructions, Tools = tools.ToList() };
         configureModelRequestOptions?.Invoke(chatOptions);
         if (message.RunContext?.Ledger is { } ledger)
         {
+            chatOptions.Tools.Add(
+                AIFunctionFactory.Create(
+                    (
+                        long entryCursor,
+                        int offset = 0,
+                        int limit = 16000,
+                        string? stream = null,
+                        CancellationToken cancellationToken = default
+                    ) =>
+                        stream is null
+                            ? ledger.ReadEntryAsync(entryCursor, offset, limit, cancellationToken)
+                            : ledger.ReadDiagnosticAsync(
+                                entryCursor,
+                                stream,
+                                offset,
+                                limit,
+                                cancellationToken
+                            ),
+                    "read_ledger_entry",
+                    "Read a durable entry using entryCursor from a command result or ledger listing. For readable command output specify stream stdout or stderr, then follow nextOffset until hasMore is false. Omit stream to read the raw record. Offsets are UTF-16 code units; captureTruncated indicates output lost at the hard capture limit."
+                )
+            );
             chatOptions.Tools.Add(
                 AIFunctionFactory.Create(
                     (
@@ -1297,6 +1394,7 @@ internal sealed class AgentBlock<TState>(
         }
         if (message.RunContext?.Ledger is not null)
         {
+            toolEffects.Add("read_ledger_entry", ToolEffect.Read);
             toolEffects.Add("read_ledger", ToolEffect.Read);
             toolEffects.Add("search_ledger", ToolEffect.Read);
         }
@@ -1310,9 +1408,9 @@ internal sealed class AgentBlock<TState>(
             workspace,
             toolEffects,
             config.Skills ?? [],
-            config.Checkpoint?.ContextWindowTokens,
-            config.Checkpoint?.MaxOutputTokens,
-            config.Checkpoint?.DisableCompaction ?? false
+            config.ContextBudget?.ContextWindowTokens ?? config.Checkpoint?.ContextWindowTokens,
+            config.ContextBudget?.MaxOutputTokens ?? config.Checkpoint?.MaxOutputTokens,
+            config.ContextBudget?.DisableCompaction ?? config.Checkpoint?.DisableCompaction ?? false
         );
         var agent = config.ImplementationFactory is null
             ? new ChatClientAgent(

@@ -174,6 +174,7 @@ M static Tandem.IPipelineNode<TState> Complete<TState>(Tandem.IPipelineCompletio
 M static Tandem.IPipelineNode<TState> Failed<TState>(Tandem.IPipelineFailure<TState> failure)
 M static Tandem.PipelineInteraction<TState,TRequest,TResponse> WaitFor<TState,TRequest,TResponse>(System.String id, System.Func<TState,TRequest> createRequest, System.Func<TState,TResponse,TState> applyResponse)
 M static Tandem.PipelineParallel<TState> Parallel<TState>(System.String id, System.Func<TState,TState> clone, System.Collections.Generic.IReadOnlyList<Tandem.PipelineBranch<TState>> branches, System.Func<Tandem.PipelineParallelMerge<TState>,TState> merge)
+M static Tandem.PipelineParallel<TState> Parallel<TState>(System.String id, System.Func<TState,TState> clone, System.Collections.Generic.IReadOnlyList<Tandem.PipelineBranch<TState>> branches, System.Func<Tandem.PipelineParallelMerge<TState>,TState> merge, System.Nullable<System.Int32>? max)
 T Tandem.PipelineOutcomeSelector<TState>
 C (Tandem.IStandardOutcomePipelineStep<TState> source, System.Boolean failed)
 T Tandem.PipelineParallelBranchInspection

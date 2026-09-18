@@ -192,23 +192,47 @@ public sealed class SqliteLedgerStore
     {
         if (cursor < 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(cursor));
+            throw new Tandem.Infrastructure.PaginationValidationException(
+                nameof(cursor),
+                "Cursor cannot be negative. Restart with a null cursor; subsequently use nextCursor from the preceding page.",
+                new { cursor, retryCursor = (long?)null }
+            );
         }
         if (limit is < 1 or > 50)
         {
-            throw new ArgumentOutOfRangeException(
+            throw new Tandem.Infrastructure.PaginationValidationException(
                 nameof(limit),
-                "Ledger page size must be 1 to 50."
+                "Ledger page size must be 1 to 50.",
+                new
+                {
+                    limit,
+                    minimumLimit = 1,
+                    maximumLimit = 50,
+                    retryLimit = Math.Clamp(limit, 1, 50),
+                }
             );
         }
         if (query is not null)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(query);
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                throw new Tandem.Infrastructure.PaginationValidationException(
+                    nameof(query),
+                    "Supply nonblank search text, or use read_ledger to browse without a query.",
+                    new { minimumQueryLength = 1, maximumQueryLength = 1024 }
+                );
+            }
             if (query.Length > 1_024)
             {
-                throw new ArgumentOutOfRangeException(
+                throw new Tandem.Infrastructure.PaginationValidationException(
                     nameof(query),
-                    "Ledger search query cannot exceed 1024 characters."
+                    "Ledger search query cannot exceed 1024 characters. Shorten the query and restart with a null cursor.",
+                    new
+                    {
+                        queryLength = query.Length,
+                        maximumQueryLength = 1024,
+                        retryCursor = (long?)null,
+                    }
                 );
             }
         }
@@ -257,6 +281,163 @@ public sealed class SqliteLedgerStore
             pageCharacters += formatted.Length;
         }
         return new PipelineLedgerPage(entries, hasMore ? entries[^1].Cursor : null);
+    }
+
+    internal async ValueTask<long?> FindActionEntryAsync(
+        Guid runId,
+        string stepId,
+        string invocationId,
+        CancellationToken cancellationToken
+    )
+    {
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT rowid, payload FROM run_entries WHERE run_id = $run AND stream = $stream ORDER BY rowid DESC;";
+        command.Parameters.AddWithValue("$run", runId.ToString("N"));
+        command.Parameters.AddWithValue("$stream", PipelineJournal.Stream.Name);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var record = JsonSerializer.Deserialize<RuntimeJournalRecord>(
+                (byte[])reader[1],
+                _serializerOptions
+            );
+            if (
+                record is { Kind: RuntimeJournalKind.ActionCompleted, Payload: not null }
+                && record.StepId == stepId
+                && record.Identity == invocationId
+            )
+            {
+                return reader.GetInt64(0);
+            }
+        }
+        return null;
+    }
+
+    internal async ValueTask<object> ReadEntryPageAsync(
+        Guid runId,
+        long entryCursor,
+        int offset,
+        int limit,
+        CancellationToken cancellationToken,
+        string? diagnosticStream = null
+    )
+    {
+        if (entryCursor <= 0 || offset < 0 || limit is < 2 or > 65536)
+        {
+            throw new Tandem.Infrastructure.PaginationValidationException(
+                "page",
+                "entryCursor must be positive, offset nonnegative, and limit from 2 to 65536.",
+                new
+                {
+                    entryCursor,
+                    retryOffset = 0,
+                    retryLimit = Math.Clamp(limit, 2, 65536),
+                }
+            );
+        }
+
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT stream, payload FROM run_entries WHERE run_id = $run_id AND rowid = $cursor;";
+        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
+        command.Parameters.AddWithValue("$cursor", entryCursor);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new Tandem.Infrastructure.PaginationValidationException(
+                nameof(entryCursor),
+                "No readable entry at this cursor in the current run. Use read_ledger or search_ledger to obtain an entry cursor.",
+                new { entryCursor }
+            );
+        }
+
+        var value = System.Text.Encoding.UTF8.GetString((byte[])reader[1]);
+        if (!IsAgentReadableLedgerEntry(reader.GetString(0), value))
+        {
+            throw new Tandem.Infrastructure.PaginationValidationException(
+                nameof(entryCursor),
+                "This record is not agent-readable. Use a cursor from read_ledger or search_ledger.",
+                new { entryCursor }
+            );
+        }
+
+        bool? captureTruncated = null;
+        if (diagnosticStream is not null)
+        {
+            if (diagnosticStream is not ("stdout" or "stderr"))
+            {
+                throw new Tandem.Infrastructure.ToolInputException(
+                    "stream must be stdout or stderr."
+                );
+            }
+
+            var record =
+                reader.GetString(0) == PipelineJournal.Stream.Name
+                    ? JsonSerializer.Deserialize<RuntimeJournalRecord>(value, _serializerOptions)
+                    : null;
+            if (
+                record
+                is not { Kind: RuntimeJournalKind.ActionCompleted, Payload: { } processPayload }
+            )
+            {
+                throw new Tandem.Infrastructure.ToolInputException(
+                    "This entry has no process diagnostics. Read it without stream."
+                );
+            }
+
+            var process =
+                processPayload.Deserialize<PipelineActionProcessPayload>()
+                ?? throw new LedgerDataException("Missing process output.");
+            value = diagnosticStream == "stdout" ? process.Stdout : process.Stderr;
+            captureTruncated = process.Truncated;
+        }
+
+        if (
+            offset > value.Length
+            || (
+                offset > 0
+                && offset < value.Length
+                && char.IsLowSurrogate(value[offset])
+                && char.IsHighSurrogate(value[offset - 1])
+            )
+        )
+        {
+            throw new Tandem.Infrastructure.PaginationValidationException(
+                nameof(offset),
+                "Offset exceeds the entry or splits a Unicode character. Restart at offset 0 and follow nextOffset.",
+                new { totalLength = value.Length, retryOffset = 0 }
+            );
+        }
+
+        var length = Math.Min(limit, value.Length - offset);
+        if (
+            length > 0
+            && offset + length < value.Length
+            && char.IsHighSurrogate(value[offset + length - 1])
+        )
+        {
+            length--;
+        }
+
+        var next = offset + length;
+        return new
+        {
+            entryCursor,
+            stream = diagnosticStream,
+            captureTruncated,
+            content = value.Substring(offset, length),
+            offset,
+            length,
+            totalLength = value.Length,
+            hasMore = next < value.Length,
+            nextOffset = next < value.Length ? (int?)next : null,
+            offsetUnit = "UTF-16 code units",
+        };
     }
 
     private bool IsAgentReadableLedgerEntry(string stream, string value)

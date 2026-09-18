@@ -41,8 +41,17 @@ internal static class HarnessAgentImplementation
             {
                 WorkspaceGrepTools.Add(context.ChatOptions, workspace.Path);
             }
+            if (selectedFileToolNames.Contains(FileAccessProvider.LsToolName))
+            {
+                WorkspaceListTools.Add(context.ChatOptions, workspace.Path);
+            }
+
             var mafFileToolNames = selectedFileToolNames
-                .Where(name => name != FileAccessProvider.GrepToolName)
+                .Where(name =>
+                    name != FileAccessProvider.GrepToolName
+                    && name != FileAccessProvider.LsToolName
+                    && name != FileAccessProvider.ReadFileToolName
+                )
                 .ToHashSet(StringComparer.Ordinal);
             if (mafFileToolNames.Count > 0)
             {
@@ -251,22 +260,27 @@ internal static class WorkspaceFileReadTools
                 async (
                     [System.ComponentModel.Description("Repository-relative text file path.")]
                         string path,
-                    [System.ComponentModel.Description("Zero-based UTF-16 text offset.")]
-                        int offset = 0,
                     [System.ComponentModel.Description(
-                        "Maximum UTF-16 code units to return, from 1 to 65536."
+                        "One-based first line to read; use line numbers from grep."
                     )]
-                        int limit = BoundedTextPageReader.DefaultLimit,
+                        int startLine = 1,
+                    [System.ComponentModel.Description("Maximum lines to return, from 1 to 2000.")]
+                        int lineCount = 200,
+                    [System.ComponentModel.Description(
+                        "Copy nextCursor to continue with the same path; lineCount may change between pages. Omit startLine."
+                    )]
+                        string? cursor = null,
                     CancellationToken cancellationToken = default
                 ) =>
-                    await BoundedTextPageReader.ReadAsync(
+                    await BoundedLinePageReader.ReadAsync(
                         WorkspacePathAuthority.Resolve(workspacePath, path, "read"),
-                        offset,
-                        limit,
-                        cancellationToken
+                        startLine,
+                        lineCount,
+                        cancellationToken,
+                        cursor
                     ),
                 FileAccessProvider.ReadFileToolName,
-                "Read a bounded page of a workspace text file. Follow nextOffset until hasMore is false. Offsets and lengths are UTF-16 code units."
+                "Read source lines using startLine from grep. Follow nextCursor for more, including the remainder of oversized lines. Exact totalLines is only known at EOF. Cursor continuation uses the same path, without startLine; lineCount may change between pages."
             )
         );
         options.Tools = tools;
@@ -280,7 +294,7 @@ internal static class WorkspacePathAuthority
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         if (Path.IsPathRooted(path))
         {
-            throw new UnauthorizedAccessException("File paths must be relative to the workspace.");
+            throw new WorkspacePathException("File paths must be relative to the workspace.");
         }
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(workspacePath));
         var fullPath = Path.GetFullPath(Path.Combine(root, path));
@@ -291,7 +305,7 @@ internal static class WorkspacePathAuthority
             || relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal)
         )
         {
-            throw new UnauthorizedAccessException("File paths must remain within the workspace.");
+            throw new WorkspacePathException("File paths must remain within the workspace.");
         }
         if (
             relative
@@ -302,7 +316,7 @@ internal static class WorkspacePathAuthority
                 .Any(segment => string.Equals(segment, ".git", StringComparison.OrdinalIgnoreCase))
         )
         {
-            throw new UnauthorizedAccessException("Access to Git metadata is not allowed.");
+            throw new WorkspacePathException("Access to Git metadata is not allowed.");
         }
         var current = root;
         foreach (
@@ -317,7 +331,7 @@ internal static class WorkspacePathAuthority
             {
                 if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
                 {
-                    throw new UnauthorizedAccessException(
+                    throw new WorkspacePathException(
                         $"Workspace {operation} paths cannot contain symbolic links or reparse points."
                     );
                 }
@@ -420,7 +434,7 @@ internal static class WorkspaceFileMutationTools
         cancellationToken.ThrowIfCancellationRequested();
         var source = Resolve(workspacePath, sourceFileName);
         var destination = Resolve(workspacePath, destinationFileName);
-        File.Copy(source, destination, overwrite);
+        Transfer(() => File.Copy(source, destination, overwrite), destination, overwrite);
         return $"Copied '{sourceFileName}' to '{destinationFileName}'.";
     }
 
@@ -435,8 +449,23 @@ internal static class WorkspaceFileMutationTools
         cancellationToken.ThrowIfCancellationRequested();
         var source = Resolve(workspacePath, sourceFileName);
         var destination = Resolve(workspacePath, destinationFileName);
-        File.Move(source, destination, overwrite);
+        Transfer(() => File.Move(source, destination, overwrite), destination, overwrite);
         return $"Moved '{sourceFileName}' to '{destinationFileName}'.";
+    }
+
+    private static void Transfer(Action transfer, string destination, bool overwrite)
+    {
+        try
+        {
+            transfer();
+        }
+        catch (IOException exception)
+            when (!overwrite && (File.Exists(destination) || Directory.Exists(destination)))
+        {
+            throw new ToolInputException(
+                $"Destination already exists: {Path.GetFileName(destination)}. Nothing was overwritten. Choose another destination or explicitly allow overwrite. {exception.Message}"
+            );
+        }
     }
 
     internal static string CreateDirectory(
@@ -531,7 +560,7 @@ internal static class WorkspaceShellTools
         ResolvedAgentWorkspace workspace,
         ToolEffectRegistry effects,
         TimeSpan? timeout = null,
-        int maxOutputBytes = 64 * 1024
+        int maxOutputBytes = 16 * 1024 * 1024
     )
     {
         var tools = options.Tools?.ToList() ?? [];
@@ -639,16 +668,35 @@ internal static class WorkspaceShellTools
                     );
             }
 
-            await using var shell = CreateExecutor(
-                _workspacePath,
-                acknowledgeUnsafe: false,
-                _timeout,
-                _maxOutputBytes
+            var fileName =
+                OperatingSystem.IsWindows() ? "powershell.exe"
+                : OperatingSystem.IsMacOS() ? "/bin/zsh"
+                : "/bin/bash";
+            string[] processArguments = OperatingSystem.IsWindows()
+                ? ["-NoProfile", "-NonInteractive", "-Command", command.ToString()]
+                : ["-lc", command.ToString()];
+            var result = await LocalProcess.RunAsync(
+                new LocalProcessRequest(
+                    fileName,
+                    processArguments,
+                    _workspacePath,
+                    _timeout ?? TimeSpan.FromMinutes(10),
+                    _maxOutputBytes
+                ),
+                cancellationToken
             );
-            var result = await shell.RunAsync(command.ToString(), cancellationToken);
-            var serializerOptions = TandemJson.CreateTypedContract();
-            serializerOptions.WriteIndented = true;
-            return JsonSerializer.SerializeToElement(result, serializerOptions);
+            return JsonSerializer.SerializeToElement(
+                new
+                {
+                    ExitCode = result.TimedOut ? 124 : result.ExitCode,
+                    result.Stdout,
+                    result.Stderr,
+                    result.Duration,
+                    result.TimedOut,
+                    Truncated = result.StdoutTruncated || result.StderrTruncated,
+                },
+                TandemJson.CreateTypedContract()
+            );
         }
 
         private static void ValidateValue(AgentCommandArgumentDescriptor declaration, string value)
@@ -810,8 +858,9 @@ internal sealed class BomlessFileSystemAgentFileStore(string rootPath) : AgentFi
     )
     {
         var normalized = content.Length > 0 && content[0] == '\uFEFF' ? content[1..] : content;
-        await _inner.WriteAsync(path, normalized, cancellationToken);
-        var fullPath = Path.GetFullPath(Path.Combine(_rootPath, path));
+        var fullPath = WorkspacePathAuthority.Resolve(_rootPath, path, "write");
+        cancellationToken.ThrowIfCancellationRequested();
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         await File.WriteAllTextAsync(fullPath, normalized, _utf8WithoutBom, cancellationToken);
     }
 
@@ -901,7 +950,6 @@ internal sealed class GitExcludedFileStore(AgentFileStore inner) : AgentFileStor
             "node_modules",
             "obj",
             "out",
-            "packages",
             "Pods",
             "Saved",
             "site-packages",
@@ -975,7 +1023,6 @@ internal sealed class GitExcludedFileStore(AgentFileStore inner) : AgentFileStor
         StringComparer.OrdinalIgnoreCase
     );
     private const string SearchTruncationMarker = "\n[...additional search results omitted...]";
-    private const int MaximumListEntries = 200;
     private const int MaximumSearchResults = 10;
     private const int MaximumMatchesPerResult = 5;
     private const int MaximumPathCharacters = 1024;
@@ -1011,7 +1058,6 @@ internal sealed class GitExcludedFileStore(AgentFileStore inner) : AgentFileStor
     ) =>
         (await inner.ListChildrenAsync(directory, cancellationToken))
             .Where(entry => !string.Equals(entry.Name, ".git", StringComparison.OrdinalIgnoreCase))
-            .Take(MaximumListEntries)
             .ToList();
 
     public override Task<bool> FileExistsAsync(string path, CancellationToken cancellationToken)
@@ -1125,7 +1171,7 @@ internal sealed class GitExcludedFileStore(AgentFileStore inner) : AgentFileStor
     {
         if (ContainsGitSegment(path))
         {
-            throw new UnauthorizedAccessException($"Access to '.git' paths is denied: {path}");
+            throw new WorkspacePathException($"Access to '.git' paths is denied: {path}");
         }
     }
 

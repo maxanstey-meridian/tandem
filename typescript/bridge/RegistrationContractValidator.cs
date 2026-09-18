@@ -251,6 +251,8 @@ internal static partial class RegistrationContractValidator
             errors.Add($"{path}.kind '{node.Kind}' is unsupported in a parallel branch.");
         if (node.Kind == "parallel")
         {
+            if (node.Max is <= 0)
+                errors.Add($"{path}.max must be positive.");
             if (nested)
                 return;
             if (node.Branches is null)
@@ -299,6 +301,8 @@ internal static partial class RegistrationContractValidator
         }
         else
         {
+            if (node.Max is not null)
+                errors.Add($"{path}.max is forbidden.");
             if (node.Branches is not null)
                 errors.Add($"{path}.branches is forbidden.");
             if (node.MergeCallback is not null)
@@ -630,6 +634,14 @@ internal static partial class RegistrationContractValidator
         string path
     )
     {
+        if (
+            client.RequestTimeoutMs is <= 0
+            || client.IdleTimeoutMs is <= 0
+            || client.MaxAttempts is <= 0
+        )
+            errors.Add(
+                $"{path} requestTimeoutMs, idleTimeoutMs and maxAttempts must be positive integers."
+            );
         if (client.Kind != "openai-compatible")
             errors.Add($"{path}.kind must be 'openai-compatible'.");
         if (client.Version != 1)
