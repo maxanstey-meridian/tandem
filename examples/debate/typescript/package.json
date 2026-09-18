@@ -7,7 +7,7 @@
     "typecheck": "tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext --types node --typeRoots ../../../typescript/node_modules/@types src/*.ts tandem.config.ts"
   },
   "dependencies": {
-    "@maxanstey-meridian/tandem": "0.1.0",
+    "@maxanstey-meridian/tandem": "0.1.0-preview.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
