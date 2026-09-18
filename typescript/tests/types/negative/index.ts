@@ -138,25 +138,15 @@ agentWorkspace<A>({
       name: "missing-strategy",
       description: "Missing strategy.",
       command: "check",
-      arguments: [
-        // @ts-expect-error command arguments require one validation strategy
-        { name: "value", description: "Value.", flag: "--value" },
-      ],
+      // @ts-expect-error command arguments must be strings
+      arguments: [42],
     },
     {
       name: "two-strategies",
       description: "Two strategies.",
       command: "check",
-      arguments: [
-        // @ts-expect-error command arguments cannot combine validation strategies
-        {
-          name: "value",
-          description: "Value.",
-          flag: "--value",
-          pattern: ".+",
-          allowedValues: ["value"],
-        },
-      ],
+      // @ts-expect-error command arguments must be strings
+      arguments: ["--value", 42],
     },
   ],
 });

@@ -52,10 +52,10 @@ public sealed class PaginationRecoveryTests
                 .Results["corrected"]
                 .GetProperty("lines")
                 .EnumerateArray()
-                .Select(line => line.GetProperty("text").GetString())
+                .Select(line => line.GetString())
                 .Should()
                 .Equal("😀 target", "after");
-            client.Results["corrected"].GetProperty("totalLines").GetInt32().Should().Be(3);
+            client.Results["corrected"].TryGetProperty("totalLines", out _).Should().BeFalse();
         }
         finally
         {
@@ -64,25 +64,20 @@ public sealed class PaginationRecoveryTests
     }
 
     [Fact]
-    public async Task Obsolete_grep_offset_is_rejected_and_record_search_succeeds()
+    public async Task Out_of_range_grep_offset_is_recovered_and_record_search_succeeds()
     {
         var directory = CreateDirectory();
         try
         {
             await File.WriteAllTextAsync(Path.Combine(directory, "text.txt"), "x\nx");
             using var client = new PagingClient([
-                Call("old", "file_access_grep", new { regexPattern = "x", offset = 10 }),
+                Call("past", "file_access_grep", new { regexPattern = "x", offset = 10 }),
                 Call("corrected", "file_access_grep", new { regexPattern = "x", limit = 1 }),
             ]);
             await Run(directory, client);
-            client.Results["old"].GetProperty("isError").GetBoolean().Should().BeTrue();
-            client.Results["corrected"].GetProperty("matches").GetArrayLength().Should().Be(1);
-            client
-                .Results["corrected"]
-                .GetProperty("nextCursor")
-                .GetString()
-                .Should()
-                .NotBeNullOrEmpty();
+            // An offset beyond the match count is ordinary range validation;
+            // there is no snapshot check to fail, and the corrected call proceeds.
+            client.Results["corrected"].GetProperty("nextOffset").GetInt32().Should().Be(1);
         }
         finally
         {
@@ -187,13 +182,7 @@ public sealed class PaginationRecoveryTests
             }
             client.Results["old"].GetProperty("message").GetString().Should().Contain("startLine");
             client.Results["old"].TryGetProperty("content", out _).Should().BeFalse();
-            client
-                .Results["corrected"]
-                .GetProperty("lines")[0]
-                .GetProperty("text")
-                .GetString()
-                .Should()
-                .Be("second");
+            client.Results["corrected"].GetProperty("lines")[0].GetString().Should().Be("second");
         }
         finally
         {

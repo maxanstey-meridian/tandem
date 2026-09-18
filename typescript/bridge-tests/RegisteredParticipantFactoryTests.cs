@@ -61,7 +61,7 @@ public sealed class RegisteredParticipantFactoryTests
     }
 
     [Fact]
-    public void ParseCommands_PreservesParameterizedCommandContract()
+    public void ParseCommands_PreservesStringArrayArgumentContract()
     {
         var commands = RegisteredParticipantFactory.ParseCommands(
             """
@@ -69,10 +69,7 @@ public sealed class RegisteredParticipantFactoryTests
               "name":"review",
               "description":"Run review.",
               "command":"review",
-              "arguments":[
-                {"name":"path","description":"Path.","flag":"--path","pattern":"src/.+","allowedValues":null,"maxLength":200},
-                {"name":"mode","description":"Mode.","flag":"--mode","pattern":null,"allowedValues":["fast","thorough"],"maxLength":20}
-              ]
+              "arguments":["--path","src/review.cs"]
             }]
             """
         );
@@ -82,17 +79,11 @@ public sealed class RegisteredParticipantFactoryTests
             command.Arguments,
             argument =>
             {
-                Assert.Equal("path", argument.Name);
-                Assert.Equal("src/.+", argument.Pattern);
-                Assert.Null(argument.AllowedValues);
-                Assert.Equal(200, argument.MaxLength);
+                Assert.Equal("--path", argument);
             },
             argument =>
             {
-                Assert.Equal("mode", argument.Name);
-                Assert.Null(argument.Pattern);
-                Assert.Equal(["fast", "thorough"], argument.AllowedValues);
-                Assert.Equal(20, argument.MaxLength);
+                Assert.Equal("src/review.cs", argument);
             }
         );
     }

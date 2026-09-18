@@ -1,68 +1,51 @@
+using System.Text.Json.Serialization;
 using Tandem.Infrastructure;
 
 namespace Tandem.Advanced;
+
+internal sealed record LinePage(
+    [property: JsonPropertyName("startLine")] int StartLine,
+    [property: JsonPropertyName("lines")] IReadOnlyList<string> Lines,
+    [property:
+        JsonPropertyName("nextStartLine"),
+        JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)
+    ]
+        int? NextStartLine,
+    [property:
+        JsonPropertyName("nextCharacterOffset"),
+        JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)
+    ]
+        int? NextCharacterOffset
+);
 
 internal static class BoundedLinePageReader
 {
     internal const int MaximumCharacters = 65536;
 
-    private sealed record Continuation(
-        TextFileVersion Version,
-        long Position,
-        int Line,
-        bool Fragment
-    );
-
-    internal static Task<object> ReadAsync(
+    internal static Task<LinePage> ReadAsync(
         string path,
         int startLine = 1,
         int lineCount = 200,
-        CancellationToken cancellationToken = default,
-        string? cursor = null
+        int characterOffset = 0,
+        CancellationToken cancellationToken = default
     )
     {
-        if (startLine < 1 || lineCount is < 1 or > 2000)
+        if (startLine < 1 || lineCount is < 1 or > 2000 || characterOffset < 0)
         {
             throw new PaginationValidationException(
                 nameof(startLine),
-                "startLine must be at least 1; lineCount must be from 1 to 2000.",
+                "startLine must be at least 1; lineCount must be from 1 to 2000; characterOffset cannot be negative.",
                 new
                 {
                     retryStartLine = Math.Max(1, startLine),
                     retryLineCount = Math.Clamp(lineCount, 1, 2000),
+                    retryCharacterOffset = Math.Max(0, characterOffset),
                 }
             );
         }
 
-        if (cursor is not null && startLine != 1)
-        {
-            throw new ToolInputException(
-                "Use cursor alone with path and lineCount to continue; omit startLine."
-            );
-        }
-
-        var scope = ToolCursor.Scope("read", Path.GetFullPath(path));
-        var continuation = cursor is null ? null : ToolCursor.Decode<Continuation>(cursor, scope);
-        if (
-            continuation is not null
-            && (continuation.Version is null || continuation.Position < 0 || continuation.Line < 1)
-        )
-        {
-            throw new ToolInputException("Invalid file continuation. Restart without cursor.");
-        }
-        continuation?.Version.Validate(path);
-        var version = TextFileVersion.Read(path);
-        using var reader = new PositionedTextReader(
-            path,
-            continuation?.Position,
-            cancellationToken
-        );
-        var line = continuation?.Line ?? 1;
-        if (line < 1)
-        {
-            throw new ToolInputException("Invalid line continuation.");
-        }
-
+        using var reader = new PositionedTextReader(path, cancellationToken);
+        var line = 1;
         while (line < startLine && !reader.End)
         {
             if (reader.Fragment(4096).LineEnded)
@@ -79,50 +62,100 @@ internal static class BoundedLinePageReader
             );
         }
 
+        var lines = new List<string>();
         var characters = 0;
-        var fragments = new List<object>();
-        var returned = 0;
-        var inFragment = continuation?.Fragment ?? false;
+        var pending = "";
+        var consumedInLine = 0;
         var firstLine = line;
-        while (!reader.End && returned < lineCount && characters < MaximumCharacters - 64)
+        if (characterOffset > 0)
+        {
+            var crossed = false;
+            var skipped = 0;
+            while (!reader.End)
+            {
+                var part = reader.Fragment(MaximumCharacters - 64);
+                skipped += part.Text.Length;
+                if (skipped >= characterOffset)
+                {
+                    crossed = true;
+                    var index = part.Text.Length - (skipped - characterOffset);
+                    if (index > 0 && char.IsHighSurrogate(part.Text[index - 1]))
+                    {
+                        throw new PaginationValidationException(
+                            nameof(characterOffset),
+                            "characterOffset splits a Unicode surrogate pair. Retry at the preceding complete character boundary.",
+                            new
+                            {
+                                retryStartLine = startLine,
+                                retryCharacterOffset = characterOffset - 1,
+                            }
+                        );
+                    }
+
+                    pending = part.Text[index..];
+                    if (part.LineEnded)
+                    {
+                        if (pending.Length > 0)
+                        {
+                            lines.Add(pending);
+                            characters += pending.Length + 64;
+                        }
+                        else
+                        {
+                            firstLine = line + 1;
+                        }
+                        pending = "";
+                        line++;
+                    }
+                    else
+                    {
+                        characters = pending.Length;
+                        consumedInLine = characterOffset;
+                    }
+                    break;
+                }
+                if (part.LineEnded)
+                {
+                    break;
+                }
+            }
+            if (!crossed)
+            {
+                throw new PaginationValidationException(
+                    nameof(characterOffset),
+                    "characterOffset exceeds the line. Restart the line at offset 0.",
+                    new { retryStartLine = startLine, retryCharacterOffset = 0 }
+                );
+            }
+        }
+
+        while (!reader.End && lines.Count < lineCount && characters < MaximumCharacters - 64)
         {
             var part = reader.Fragment(MaximumCharacters - characters - 64);
+            pending += part.Text;
             characters += part.Text.Length + 64;
-            fragments.Add(
-                new
-                {
-                    line,
-                    text = part.Text,
-                    continuesPrevious = inFragment,
-                    lineComplete = part.LineEnded,
-                }
-            );
-            returned++;
-            inFragment = !part.LineEnded;
+            consumedInLine += part.Text.Length;
             if (part.LineEnded)
             {
+                lines.Add(pending);
+                pending = "";
+                consumedInLine = 0;
                 line++;
             }
         }
-        version.Validate(path);
+        if (pending.Length > 0)
+        {
+            lines.Add(pending);
+        }
+
         var hasMore = !reader.End;
-        return Task.FromResult<object>(
-            new
-            {
-                startLine = firstLine,
-                returnedLines = returned,
-                // Line numbers remain attached to every fragment.
-                lines = fragments,
-                hasMore,
-                nextCursor = hasMore
-                    ? ToolCursor.Encode(
-                        scope,
-                        new Continuation(version, reader.Position, line, inFragment)
-                    )
-                    : null,
-                totalLines = hasMore ? (int?)null : line - 1,
-                pagination = "Copy nextCursor as cursor with the same path; lineCount may change between pages. Omit startLine. A continued fragment belongs to the same source line. Restart after edits.",
-            }
+        return Task.FromResult(
+            new LinePage(
+                firstLine,
+                lines,
+                hasMore ? line : null,
+                hasMore && pending.Length > 0 ? consumedInLine : null
+            )
         );
     }
 }

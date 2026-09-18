@@ -6,7 +6,6 @@ Tandem.Advanced.AgentCapabilityAcceptanceContext`2
 Tandem.Advanced.AgentCapabilityAcceptanceExtensions
 Tandem.Advanced.AgentCheckpointContext`1
 Tandem.Advanced.AgentCommand
-Tandem.Advanced.AgentCommandArgument
 Tandem.Advanced.AgentConversationDecision
 Tandem.Advanced.AgentConversationPolicy`1
 Tandem.Advanced.AgentConversationRetention
@@ -37,6 +36,8 @@ Tandem.Advanced.OperationResult`1
 Tandem.Advanced.OutputAcceptance`2
 Tandem.Advanced.OutputAcceptanceObservation`2
 Tandem.Advanced.OutputAcceptancePolicy`2
+Tandem.Advanced.PacketCommand
+Tandem.Advanced.PacketValidator
 Tandem.Advanced.PipelineOperation
 Tandem.Advanced.PipelineOperationContext`1
 Tandem.Advanced.StructuredJsonExtractor

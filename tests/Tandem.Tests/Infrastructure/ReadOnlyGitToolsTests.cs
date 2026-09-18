@@ -39,10 +39,10 @@ public sealed class ReadOnlyGitToolsTests
         var empty = await git.CompareAsync(candidateSha, candidateSha);
 
         changed.Content.Should().Contain("feature.txt").And.Contain("deleted.txt");
-        firstPage.HasMore.Should().BeTrue();
+        firstPage.NextOffset.Should().NotBeNull();
         deleted.Content.Should().Contain("-deleted");
-        deleted.HasMore.Should().BeFalse();
-        empty.Should().BeEquivalentTo(new TextPage("", 0, 0, 0, false, null));
+        deleted.NextOffset.Should().BeNull();
+        empty.Should().BeEquivalentTo(new TextPage("", 0, null));
     }
 
     [Fact]
@@ -91,11 +91,11 @@ public sealed class ReadOnlyGitToolsTests
 
         var firstPage = await git.CompareAsync(baseSha, candidateSha, "large.txt", limit: 64);
 
-        firstPage.Length.Should().BeLessThanOrEqualTo(64);
-        firstPage.HasMore.Should().BeTrue();
+        firstPage.Content.Length.Should().BeLessThanOrEqualTo(64);
+        firstPage.NextOffset.Should().NotBeNull();
 
         var fullPage = await git.CompareAsync(baseSha, candidateSha, "large.txt", limit: 65_536);
-        fullPage.HasMore.Should().BeTrue();
+        fullPage.NextOffset.Should().NotBeNull();
     }
 
     [Fact]
@@ -114,8 +114,8 @@ public sealed class ReadOnlyGitToolsTests
 
         var firstPage = await git.CompareAsync(baseSha, candidateSha, limit: 64);
 
-        firstPage.Length.Should().BeLessThanOrEqualTo(64);
-        firstPage.HasMore.Should().BeTrue();
+        firstPage.Content.Length.Should().BeLessThanOrEqualTo(64);
+        firstPage.NextOffset.Should().NotBeNull();
     }
 
     [Fact]
@@ -240,15 +240,13 @@ public sealed class ReadOnlyGitToolsTests
         while (true)
         {
             var page = await read(offset);
-            page.Offset.Should().Be(offset);
-            page.Length.Should().Be(page.Content.Length).And.BeLessThanOrEqualTo(32_768);
+            page.Content.Length.Should().BeLessThanOrEqualTo(32_768);
             content.Append(page.Content);
-            if (!page.HasMore)
+            if (page.NextOffset is null)
             {
-                page.NextOffset.Should().BeNull();
                 return content.ToString();
             }
-            page.NextOffset.Should().Be(offset + page.Length);
+            page.NextOffset.Should().Be(offset + page.Content.Length);
             page.NextOffset.Should().BeGreaterThan(offset);
             offset = page.NextOffset!.Value;
         }

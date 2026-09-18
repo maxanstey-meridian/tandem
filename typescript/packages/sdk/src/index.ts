@@ -619,22 +619,11 @@ export type AgentToolName =
   | "shell"
   | "web_search"
   | "web_fetch";
-interface AgentCommandArgumentBase {
-  readonly name: string;
-  readonly description: string;
-  readonly flag: string;
-  readonly maxLength?: number;
-}
-export type AgentCommandArgument = AgentCommandArgumentBase &
-  (
-    | { readonly pattern: string; readonly allowedValues?: never }
-    | { readonly allowedValues: readonly string[]; readonly pattern?: never }
-  );
 export interface AgentCommand {
   readonly name: string;
   readonly description: string;
   readonly command: string;
-  readonly arguments?: readonly AgentCommandArgument[];
+  readonly arguments?: readonly string[];
 }
 interface AgentCommandSelection {
   readonly [commandSelectionBrand]: object;
@@ -775,11 +764,7 @@ function copyAgentCommand(command: AgentCommand): AgentCommand {
     ? { ...command }
     : {
         ...command,
-        arguments: command.arguments.map((argument) =>
-          argument.pattern !== undefined
-            ? { ...argument }
-            : { ...argument, allowedValues: [...argument.allowedValues] },
-        ),
+        arguments: [...command.arguments],
       };
 }
 
@@ -806,79 +791,22 @@ function validateAgentCommands(
       throw new TandemError(`${commandContext}.command must be non-blank.`);
     }
     if (candidate.arguments !== undefined && !Array.isArray(candidate.arguments)) {
-      throw new TandemError(`${commandContext}.arguments must be an array.`);
+      throw new TandemError(`${commandContext}.arguments must be an array of strings.`);
     }
-    const argumentNames = new Set<string>();
-    for (const [argumentIndex, argument] of (candidate.arguments ?? []).entries()) {
+    const argumentList = candidate.arguments ?? [];
+    if (argumentList.length > 16) {
+      throw new TandemError(`${commandContext}.arguments accepts at most 16 arguments.`);
+    }
+    for (const [argumentIndex, argument] of argumentList.entries()) {
       const argumentContext = `${commandContext}.arguments[${argumentIndex}]`;
-      if (typeof argument !== "object" || argument === null) {
-        throw new TandemError(`${argumentContext} must be an argument.`);
+      if (typeof argument !== "string") {
+        throw new TandemError(`${argumentContext} must be a string.`);
       }
-      const candidateArgument = argument as Partial<AgentCommandArgument>;
-      if (
-        typeof candidateArgument.name !== "string" ||
-        !/^[A-Za-z_][A-Za-z0-9_]*$/.test(candidateArgument.name)
-      ) {
-        throw new TandemError(`${argumentContext}.name must be a valid JSON property identifier.`);
+      if (argument.trim().length === 0) {
+        throw new TandemError(`${argumentContext} must not be blank.`);
       }
-      if (argumentNames.has(candidateArgument.name)) {
-        throw new TandemError(`${argumentContext}.name duplicates '${candidateArgument.name}'.`);
-      }
-      argumentNames.add(candidateArgument.name);
-      if (
-        typeof candidateArgument.description !== "string" ||
-        candidateArgument.description.trim().length === 0
-      ) {
-        throw new TandemError(`${argumentContext}.description must be non-blank.`);
-      }
-      if (
-        typeof candidateArgument.flag !== "string" ||
-        candidateArgument.flag.trim().length === 0 ||
-        /\s/.test(candidateArgument.flag)
-      ) {
-        throw new TandemError(`${argumentContext}.flag must be a whitespace-free switch token.`);
-      }
-      if (
-        candidateArgument.pattern !== undefined &&
-        typeof candidateArgument.pattern !== "string"
-      ) {
-        throw new TandemError(`${argumentContext}.pattern must be a string.`);
-      }
-      if (
-        candidateArgument.allowedValues !== undefined &&
-        !Array.isArray(candidateArgument.allowedValues)
-      ) {
-        throw new TandemError(`${argumentContext}.allowedValues must be an array.`);
-      }
-      const hasPattern = typeof candidateArgument.pattern === "string";
-      const hasAllowedValues = Array.isArray(candidateArgument.allowedValues);
-      if (hasPattern === hasAllowedValues) {
-        throw new TandemError(
-          `${argumentContext} requires exactly one of pattern or allowedValues.`,
-        );
-      }
-      if (
-        candidateArgument.maxLength !== undefined &&
-        (!Number.isSafeInteger(candidateArgument.maxLength) ||
-          candidateArgument.maxLength <= 0 ||
-          candidateArgument.maxLength > 2_147_483_647)
-      ) {
-        throw new TandemError(`${argumentContext}.maxLength must be a positive integer.`);
-      }
-      if (candidateArgument.allowedValues !== undefined) {
-        if (candidateArgument.allowedValues.length === 0) {
-          throw new TandemError(`${argumentContext}.allowedValues must not be empty.`);
-        }
-        const values = new Set<string>();
-        for (const value of candidateArgument.allowedValues) {
-          if (typeof value !== "string" || value.trim().length === 0) {
-            throw new TandemError(`${argumentContext}.allowedValues must be non-blank strings.`);
-          }
-          if (values.has(value)) {
-            throw new TandemError(`${argumentContext}.allowedValues duplicates '${value}'.`);
-          }
-          values.add(value);
-        }
+      if (argument.length > 200) {
+        throw new TandemError(`${argumentContext} must be at most 200 characters.`);
       }
     }
   }
@@ -1994,20 +1922,7 @@ function compileWorkspace<TState>(
             name: z.string(),
             description: z.string(),
             command: z.string(),
-            arguments: z
-              .array(
-                z
-                  .object({
-                    name: z.string(),
-                    description: z.string(),
-                    flag: z.string(),
-                    pattern: z.string().optional(),
-                    allowedValues: z.array(z.string()).optional(),
-                    maxLength: z.number().optional(),
-                  })
-                  .strict(),
-              )
-              .optional(),
+            arguments: z.array(z.string()).optional(),
           })
           .strict(),
       ),

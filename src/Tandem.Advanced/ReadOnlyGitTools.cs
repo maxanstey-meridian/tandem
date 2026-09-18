@@ -28,12 +28,12 @@ internal static class ReadOnlyGitTools
             AIFunctionFactory.Create(
                 repository.StatusAsync,
                 StatusToolName,
-                "Inspect staged, unstaged and untracked changes as complete records. Follow nextCursor for all changes. Status changes invalidate continuation; restart without cursor."
+                "Inspect staged, unstaged and untracked changes as complete records. Continue with the returned nextOffset; results are recomputed, so restart after workspace changes."
             ),
             AIFunctionFactory.Create(
                 repository.WorkspaceDiffAsync,
                 DiffToolName,
-                "Read a bounded staged or unstaged workspace diff page; follow nextOffset until hasMore is false, optionally restricted to one repository-relative path."
+                "Read a bounded staged or unstaged workspace diff page with plain integer offset/limit pagination; follow the returned nextOffset, optionally restricted to one repository-relative path."
             ),
             AIFunctionFactory.Create(
                 repository.LogAsync,
@@ -43,7 +43,7 @@ internal static class ReadOnlyGitTools
             AIFunctionFactory.Create(
                 repository.ShowAsync,
                 ShowToolName,
-                "Read a bounded commit and patch page; follow nextOffset until hasMore is false for one exact Git revision, optionally restricted to one path."
+                "Read a bounded commit and patch page for one exact Git revision with plain integer offset/limit pagination; follow the returned nextOffset, optionally restricted to one path."
             ),
             AIFunctionFactory.Create(
                 repository.BlameAsync,
@@ -53,7 +53,7 @@ internal static class ReadOnlyGitTools
             AIFunctionFactory.Create(
                 repository.ChangedFilesAsync,
                 ChangedFilesToolName,
-                "List every path changed between two exact Git revisions, including additions, deletions, and renames. Follow nextOffset until hasMore is false."
+                "List every path changed between two exact Git revisions, including additions, deletions, and renames. Page through with plain integer offset/limit and the returned nextOffset."
             ),
             AIFunctionFactory.Create(repository.CompareAsync, CompareToolName, CompareDescription),
         };
@@ -94,7 +94,10 @@ internal sealed class ReadOnlyGitRepository(
     internal async Task<object> StatusAsync(
         CancellationToken cancellationToken = default,
         [Description("Maximum change records, 1 to 500.")] int limit = 200,
-        [Description("Copy nextCursor; restart if workspace status changed.")] string? cursor = null
+        [Description(
+            "Zero-based change offset; continue a previous page with the returned nextOffset."
+        )]
+            int offset = 0
     )
     {
         if (limit is < 1 or > 500)
@@ -107,11 +110,13 @@ internal sealed class ReadOnlyGitRepository(
             cancellationToken,
             16 * 1024 * 1024
         );
-        var scope = ToolCursor.Scope("status", _workspacePath, limit, output);
-        var start = cursor is null ? 0 : ToolCursor.Decode<int>(cursor, scope);
-        if (start < 0)
+        if (offset < 0)
         {
-            throw new ToolInputException("Invalid status cursor; restart without cursor.");
+            throw new PaginationValidationException(
+                nameof(offset),
+                "Offset cannot be negative. Retry at offset 0.",
+                new { retryOffset = 0, retryLimit = Math.Clamp(limit, 1, 500) }
+            );
         }
         var fields = output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
         var changes = new List<object>();
@@ -131,7 +136,6 @@ internal sealed class ReadOnlyGitRepository(
             {
                 throw new InvalidDataException("Invalid Git status record.");
             }
-
             var status = field[..2];
             var path = field[3..];
             string? originalPath = null;
@@ -141,14 +145,12 @@ internal sealed class ReadOnlyGitRepository(
                 {
                     throw new InvalidDataException("Incomplete Git rename record.");
                 }
-
                 originalPath = fields[i];
             }
-            if (index++ < start)
+            if (index++ < offset)
             {
                 continue;
             }
-
             if (
                 returned >= limit
                 || (returned > 0 && characters + path.Length + (originalPath?.Length ?? 0) > 64000)
@@ -158,12 +160,9 @@ internal sealed class ReadOnlyGitRepository(
                 {
                     branch,
                     changes,
-                    returnedCount = returned,
-                    hasMore = true,
-                    nextCursor = ToolCursor.Encode(scope, start + returned),
+                    nextOffset = offset + returned,
                 };
             }
-
             changes.Add(
                 new
                 {
@@ -175,18 +174,19 @@ internal sealed class ReadOnlyGitRepository(
             returned++;
             characters += path.Length + (originalPath?.Length ?? 0);
         }
-        if (start < 0 || start > index)
+        if (offset > index)
         {
-            throw new ToolInputException("Invalid status cursor; restart without cursor.");
+            throw new PaginationValidationException(
+                nameof(offset),
+                "Offset exceeds the change count. Restart at offset 0.",
+                new { retryOffset = 0, retryLimit = Math.Clamp(limit, 1, 500) }
+            );
         }
-
         return new
         {
             branch,
             changes,
-            returnedCount = returned,
-            hasMore = false,
-            nextCursor = (string?)null,
+            nextOffset = (int?)null,
         };
     }
 

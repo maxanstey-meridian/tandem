@@ -267,20 +267,20 @@ internal static class WorkspaceFileReadTools
                     [System.ComponentModel.Description("Maximum lines to return, from 1 to 2000.")]
                         int lineCount = 200,
                     [System.ComponentModel.Description(
-                        "Copy nextCursor to continue with the same path; lineCount may change between pages. Omit startLine."
+                        "Zero-based character offset within startLine; continues a truncated line using the returned nextCharacterOffset."
                     )]
-                        string? cursor = null,
+                        int characterOffset = 0,
                     CancellationToken cancellationToken = default
                 ) =>
                     await BoundedLinePageReader.ReadAsync(
                         WorkspacePathAuthority.Resolve(workspacePath, path, "read"),
                         startLine,
                         lineCount,
-                        cancellationToken,
-                        cursor
+                        characterOffset,
+                        cancellationToken
                     ),
                 FileAccessProvider.ReadFileToolName,
-                "Read source lines using startLine from grep. Follow nextCursor for more, including the remainder of oversized lines. Exact totalLines is only known at EOF. Cursor continuation uses the same path, without startLine; lineCount may change between pages."
+                "Read source lines using startLine from grep. Continue with the returned nextStartLine and nextCharacterOffset, including the remainder of oversized lines. Restart after edits."
             )
         );
         options.Tools = tools;
@@ -596,7 +596,6 @@ internal static class WorkspaceShellTools
 
     private sealed class WorkspaceCommandFunction : AIFunction
     {
-        private static readonly TimeSpan _regexTimeout = TimeSpan.FromSeconds(1);
         private readonly AgentCommandDescriptor _command;
         private readonly string _workspacePath;
         private readonly TimeSpan? _timeout;
@@ -614,7 +613,7 @@ internal static class WorkspaceShellTools
             _workspacePath = workspacePath;
             _timeout = timeout;
             _maxOutputBytes = maxOutputBytes;
-            _schema = CreateSchema(command.Arguments);
+            _schema = CreateSchema();
         }
 
         public override string Name => _command.Name;
@@ -626,46 +625,30 @@ internal static class WorkspaceShellTools
             CancellationToken cancellationToken
         )
         {
-            var declarations = _command.Arguments.ToDictionary(
-                value => value.Name,
-                StringComparer.Ordinal
-            );
-            foreach (var name in arguments.Keys)
+            foreach (var key in arguments.Keys)
             {
-                if (!declarations.ContainsKey(name))
+                if (
+                    _command.Arguments.Count == 0
+                    || !string.Equals(key, "arguments", StringComparison.OrdinalIgnoreCase)
+                )
                 {
-                    throw new ArgumentException($"Unknown argument '{name}'.", nameof(arguments));
+                    throw new ArgumentException(
+                        $"Command '{_command.Name}' does not accept an argument named '{key}'.",
+                        nameof(arguments)
+                    );
                 }
             }
-
             var command = new StringBuilder(_command.Command);
-            foreach (var declaration in _command.Arguments)
+            if (arguments.TryGetValue("arguments", out var rawArguments))
             {
-                if (!arguments.TryGetValue(declaration.Name, out var rawValue))
+                var values = ReadStringArray(_command, rawArguments);
+                Func<string, string> quote = OperatingSystem.IsWindows()
+                    ? QuotePowerShell
+                    : QuotePosix;
+                foreach (var value in values)
                 {
-                    continue;
+                    command.Append(' ').Append(quote(value));
                 }
-                var value = rawValue switch
-                {
-                    string text => text,
-                    JsonElement { ValueKind: JsonValueKind.String } element => element.GetString()!,
-                    null => throw new ArgumentException(
-                        $"Argument '{declaration.Name}' cannot be null.",
-                        nameof(arguments)
-                    ),
-                    _ => throw new ArgumentException(
-                        $"Argument '{declaration.Name}' must be a string.",
-                        nameof(arguments)
-                    ),
-                };
-                ValidateValue(declaration, value);
-                command
-                    .Append(' ')
-                    .Append(declaration.Flag)
-                    .Append(' ')
-                    .Append(
-                        OperatingSystem.IsWindows() ? QuotePowerShell(value) : QuotePosix(value)
-                    );
             }
 
             var fileName =
@@ -699,64 +682,77 @@ internal static class WorkspaceShellTools
             );
         }
 
-        private static void ValidateValue(AgentCommandArgumentDescriptor declaration, string value)
-        {
-            if (declaration.MaxLength is { } maximum && value.Length > maximum)
-            {
-                throw new ArgumentException(
-                    $"Argument '{declaration.Name}' exceeds its maximum length."
-                );
-            }
-            if (
-                declaration.Pattern is { } pattern
-                && !System.Text.RegularExpressions.Regex.IsMatch(
-                    value,
-                    $"\\A(?:{pattern})\\z",
-                    System.Text.RegularExpressions.RegexOptions.CultureInvariant,
-                    _regexTimeout
-                )
-            )
-            {
-                throw new ArgumentException(
-                    $"Argument '{declaration.Name}' does not match its pattern."
-                );
-            }
-            if (
-                declaration.AllowedValues is { } allowed
-                && !allowed.Contains(value, StringComparer.Ordinal)
-            )
-            {
-                throw new ArgumentException(
-                    $"Argument '{declaration.Name}' is not an allowed value."
-                );
-            }
-        }
-
-        private static JsonElement CreateSchema(
-            IReadOnlyList<AgentCommandArgumentDescriptor> arguments
+        private static IReadOnlyList<string> ReadStringArray(
+            AgentCommandDescriptor command,
+            object? rawArguments
         )
         {
-            var properties = new Dictionary<string, object?>(StringComparer.Ordinal);
-            foreach (var argument in arguments)
+            if (rawArguments is null)
             {
-                var property = new Dictionary<string, object?>(StringComparer.Ordinal)
+                throw new ArgumentException(
+                    $"Argument 'arguments' of command '{command.Name}' cannot be null.",
+                    nameof(rawArguments)
+                );
+            }
+            var element = rawArguments switch
+            {
+                JsonElement json => json,
+                _ => JsonSerializer.SerializeToElement(
+                    rawArguments,
+                    TandemJson.CreateTypedContract()
+                ),
+            };
+            if (element.ValueKind != JsonValueKind.Array)
+            {
+                throw new ArgumentException(
+                    $"Argument 'arguments' of command '{command.Name}' must be an array of strings.",
+                    nameof(rawArguments)
+                );
+            }
+            var values = new List<string>();
+            foreach (var item in element.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
                 {
-                    ["type"] = "string",
-                    ["description"] = argument.Description,
+                    throw new ArgumentException(
+                        $"Argument 'arguments' of command '{command.Name}' must contain only strings.",
+                        nameof(rawArguments)
+                    );
+                }
+                values.Add(item.GetString()!);
+            }
+            if (values.Count > AgentCommand.MaximumArgumentCount)
+            {
+                throw new ArgumentException(
+                    $"Command '{command.Name}' accepts at most {AgentCommand.MaximumArgumentCount} arguments."
+                );
+            }
+            foreach (var value in values)
+            {
+                if (value.Length > AgentCommand.MaximumArgumentLength)
+                {
+                    throw new ArgumentException(
+                        $"Argument of command '{command.Name}' must be at most {AgentCommand.MaximumArgumentLength} characters."
+                    );
+                }
+            }
+            return values;
+        }
+
+        private JsonElement CreateSchema()
+        {
+            var properties = new Dictionary<string, object?>(StringComparer.Ordinal);
+            if (_command.Arguments.Count > 0)
+            {
+                properties["arguments"] = new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["type"] = "array",
+                    ["items"] = new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["type"] = "string",
+                    },
+                    ["description"] = _command.Description,
                 };
-                if (argument.MaxLength is { } maximum)
-                {
-                    property["maxLength"] = maximum;
-                }
-                if (argument.Pattern is { } pattern)
-                {
-                    property["pattern"] = $"^(?:{pattern})$";
-                }
-                else
-                {
-                    property["enum"] = argument.AllowedValues;
-                }
-                properties.Add(argument.Name, property);
             }
             return JsonSerializer.SerializeToElement(
                 new Dictionary<string, object?>
@@ -892,136 +888,6 @@ internal sealed class BomlessFileSystemAgentFileStore(string rootPath) : AgentFi
 
 internal sealed class GitExcludedFileStore(AgentFileStore inner) : AgentFileStore
 {
-    private static readonly HashSet<string> _excludedSearchDirectories = new(
-        [
-            ".angular",
-            ".build",
-            ".bundle",
-            ".cache",
-            ".dart_tool",
-            ".eggs",
-            ".expo",
-            ".git",
-            ".gradle",
-            ".hg",
-            ".idea",
-            ".mypy_cache",
-            ".next",
-            ".nox",
-            ".nuxt",
-            ".nx",
-            ".nyc_output",
-            ".output",
-            ".parcel-cache",
-            ".pytest_cache",
-            ".pnpm-store",
-            ".ruff_cache",
-            ".sass-cache",
-            ".serverless",
-            ".stack-work",
-            ".svelte-kit",
-            ".svn",
-            ".tox",
-            ".turbo",
-            ".terraform",
-            ".terragrunt-cache",
-            ".venv",
-            ".vite",
-            ".vs",
-            ".yarn",
-            "_build",
-            "__pycache__",
-            "artifacts",
-            "bin",
-            "bower_components",
-            "Binaries",
-            "build",
-            "coverage",
-            "Carthage",
-            "CMakeFiles",
-            "deps",
-            "DerivedData",
-            "DerivedDataCache",
-            "dist",
-            "env",
-            "jspm_packages",
-            "Intermediate",
-            "Library",
-            "node_modules",
-            "obj",
-            "out",
-            "Pods",
-            "Saved",
-            "site-packages",
-            "target",
-            "TestResults",
-            "tmp",
-            "storybook-static",
-            "venv",
-            "vendor",
-        ],
-        StringComparer.OrdinalIgnoreCase
-    );
-    private static readonly HashSet<string> _binarySearchExtensions = new(
-        [
-            ".7z",
-            ".a",
-            ".apk",
-            ".avi",
-            ".bin",
-            ".bmp",
-            ".bz2",
-            ".class",
-            ".db",
-            ".deb",
-            ".dmg",
-            ".dll",
-            ".dylib",
-            ".ear",
-            ".exe",
-            ".flac",
-            ".gif",
-            ".gem",
-            ".gz",
-            ".ico",
-            ".ipa",
-            ".iso",
-            ".jar",
-            ".jpeg",
-            ".jpg",
-            ".mov",
-            ".mp3",
-            ".mp4",
-            ".o",
-            ".otf",
-            ".nupkg",
-            ".pdf",
-            ".pdb",
-            ".png",
-            ".pyc",
-            ".pyo",
-            ".rar",
-            ".rpm",
-            ".so",
-            ".sqlite",
-            ".sqlite3",
-            ".snupkg",
-            ".tar",
-            ".tgz",
-            ".ttf",
-            ".war",
-            ".wasm",
-            ".wav",
-            ".webm",
-            ".webp",
-            ".whl",
-            ".woff",
-            ".woff2",
-            ".xz",
-            ".zip",
-        ],
-        StringComparer.OrdinalIgnoreCase
-    );
     private const string SearchTruncationMarker = "\n[...additional search results omitted...]";
     private const int MaximumSearchResults = 10;
     private const int MaximumMatchesPerResult = 5;
@@ -1124,28 +990,10 @@ internal sealed class GitExcludedFileStore(AgentFileStore inner) : AgentFileStor
     }
 
     internal static bool IsExcludedSearchResult(FileSearchResult result) =>
-        HasExcludedDirectory(result.FileName)
-        || HasBinaryExtension(result.FileName)
+        WorkspaceSearchPolicy.HasExcludedDirectorySegment(result.FileName)
+        || WorkspaceSearchPolicy.HasBinaryExtension(result.FileName)
         || LooksBinary(result.Snippet)
         || result.MatchingLines.Any(match => LooksBinary(match.Line));
-
-    private static bool HasExcludedDirectory(string path)
-    {
-        var segments = path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
-        return segments.Length > 1
-            && segments[..^1]
-                .Any(segment =>
-                    _excludedSearchDirectories.Contains(segment)
-                    || segment.StartsWith("bazel-", StringComparison.OrdinalIgnoreCase)
-                    || segment.StartsWith("cmake-build-", StringComparison.OrdinalIgnoreCase)
-                );
-    }
-
-    private static bool HasBinaryExtension(string path)
-    {
-        var name = path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
-        return name is not null && _binarySearchExtensions.Contains(Path.GetExtension(name));
-    }
 
     private static bool LooksBinary(string content)
     {

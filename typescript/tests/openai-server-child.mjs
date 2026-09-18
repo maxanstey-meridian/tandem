@@ -138,8 +138,9 @@ const server = createServer(async (request, response) => {
                         arguments:
                           mode === "workspace-parameterized"
                             ? JSON.stringify({
-                                value:
+                                arguments: [
                                   "spaces ' \" $() `touch marker` ; New-Item marker ; && || | > <\n* $HOME",
+                                ],
                               })
                             : "{}",
                       },

@@ -57,25 +57,11 @@ M System.Int32 GetHashCode()
 M System.String ToString()
 M Tandem.Advanced.AgentCommand <Clone>$()
 M static Tandem.Advanced.AgentCommand Define(System.String name, System.String description, System.String command)
-M static Tandem.Advanced.AgentCommand Define(System.String name, System.String description, System.String command, System.Collections.Generic.IEnumerable<Tandem.Advanced.AgentCommandArgument> arguments)
-P System.Collections.Generic.IReadOnlyList<Tandem.Advanced.AgentCommandArgument> Arguments { get; }
+M static Tandem.Advanced.AgentCommand Define(System.String name, System.String description, System.String command, System.Collections.Generic.IReadOnlyList<System.String>? arguments)
+P System.Collections.Generic.IReadOnlyList<System.String> Arguments { get; }
 P System.String Command { get; }
 P System.String Description { get; }
 P System.String Name { get; }
-T Tandem.Advanced.AgentCommandArgument
-C (System.String Name, System.String Description, System.String Flag, System.String? Pattern, System.Collections.Generic.IReadOnlyList<System.String>? AllowedValues, System.Nullable<System.Int32>? MaxLength = default)
-M System.Boolean Equals(System.Object? obj)
-M System.Boolean Equals(Tandem.Advanced.AgentCommandArgument? other)
-M System.Int32 GetHashCode()
-M System.String ToString()
-M System.Void Deconstruct(out System.String Name, out System.String Description, out System.String Flag, out System.String? Pattern, out System.Collections.Generic.IReadOnlyList<System.String>? AllowedValues, out System.Nullable<System.Int32>? MaxLength)
-M Tandem.Advanced.AgentCommandArgument <Clone>$()
-P System.Collections.Generic.IReadOnlyList<System.String>? AllowedValues { get; set; }
-P System.Nullable<System.Int32>? MaxLength { get; set; }
-P System.String Description { get; set; }
-P System.String Flag { get; set; }
-P System.String Name { get; set; }
-P System.String? Pattern { get; set; }
 T Tandem.Advanced.AgentConversationDecision
 C (Tandem.Advanced.AgentConversationRetention Retention)
 M System.Boolean Equals(System.Object? obj)
@@ -302,6 +288,21 @@ C (System.Object object, System.IntPtr method)
 M System.IAsyncResult BeginInvoke(Tandem.Advanced.OutputAcceptanceObservation<TState,TOutput> observation, System.Threading.CancellationToken cancellationToken, System.AsyncCallback callback, System.Object object)
 M System.Threading.Tasks.ValueTask EndInvoke(System.IAsyncResult result)
 M System.Threading.Tasks.ValueTask Invoke(Tandem.Advanced.OutputAcceptanceObservation<TState,TOutput> observation, System.Threading.CancellationToken cancellationToken)
+T Tandem.Advanced.PacketCommand
+C (System.String Name, System.String Description, System.String Command, System.Collections.Generic.IReadOnlyList<System.String>? Arguments = null)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.Advanced.PacketCommand? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Name, out System.String Description, out System.String Command, out System.Collections.Generic.IReadOnlyList<System.String>? Arguments)
+M Tandem.Advanced.AgentCommand ToAgentCommand()
+M Tandem.Advanced.PacketCommand <Clone>$()
+P System.Collections.Generic.IReadOnlyList<System.String>? Arguments { get; set; }
+P System.String Command { get; set; }
+P System.String Description { get; set; }
+P System.String Name { get; set; }
+T Tandem.Advanced.PacketValidator
+C ()
 T Tandem.Advanced.PipelineOperation
 M static System.Threading.Tasks.ValueTask<Tandem.Outcome<TState>> RunOutcomeAsync<TState>(TState state, System.Func<Tandem.Advanced.PipelineOperationContext<TState>,System.Threading.Tasks.ValueTask<Tandem.Advanced.OperationResult<TState>>> execute, System.Func<Tandem.Advanced.OperationResult<TState>,Tandem.Outcome<TState>> map)
 T Tandem.Advanced.PipelineOperationContext<TState>

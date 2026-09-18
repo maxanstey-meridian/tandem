@@ -23,19 +23,19 @@ public sealed class AgentToolSurfaceTests
 
             Directory.CreateDirectory(Path.Combine(root, ".git"));
             var names = new List<string>();
-            string? cursor = null;
+            var offset = 0;
             do
             {
                 var page = JsonSerializer.SerializeToElement(
-                    WorkspaceListTools.List(root, limit: 100, cursor: cursor)
+                    WorkspaceListTools.List(root, limit: 100, offset: offset)
                 );
                 names.AddRange(
                     page.GetProperty("entries")
                         .EnumerateArray()
                         .Select(e => e.GetProperty("name").GetString()!)
                 );
-                cursor = page.GetProperty("nextCursor").GetString();
-            } while (cursor is not null);
+                offset = page.TryGetProperty("nextOffset", out var next) ? next.GetInt32() : -1;
+            } while (offset >= 0);
             names.Should().HaveCount(603).And.OnlyHaveUniqueItems().And.BeInAscendingOrder();
         }
         finally
@@ -61,20 +61,32 @@ public sealed class AgentToolSurfaceTests
             File.WriteAllText(Path.Combine(root, odd), "");
             var git = new ReadOnlyGitRepository(root);
             var paths = new List<string>();
-            string? cursor = null;
+            var offset = 0;
+            JsonElement last = default;
             do
             {
                 var page = JsonSerializer.SerializeToElement(
-                    await git.StatusAsync(limit: 97, cursor: cursor)
+                    await git.StatusAsync(limit: 97, offset: offset)
                 );
+                last = page;
                 paths.AddRange(
                     page.GetProperty("changes")
                         .EnumerateArray()
                         .Select(e => e.GetProperty("path").GetString()!)
                 );
-                cursor = page.GetProperty("nextCursor").GetString();
-            } while (cursor is not null);
+                var more =
+                    page.TryGetProperty("nextOffset", out var nextOffset)
+                    && nextOffset.ValueKind != JsonValueKind.Null;
+                offset = more ? nextOffset.GetInt32() : -1;
+            } while (offset >= 0);
             paths.Should().HaveCount(604).And.OnlyHaveUniqueItems().And.Contain(odd);
+            // The final page carries no continuation position: the payload holds
+            // branch and changes without derivable counts or instruction strings.
+            last.GetProperty("nextOffset").ValueKind.Should().Be(JsonValueKind.Null);
+            last.TryGetProperty("hasMore", out _).Should().BeFalse();
+            last.TryGetProperty("returnedCount", out _).Should().BeFalse();
+            last.TryGetProperty("nextCursor", out _).Should().BeFalse();
+            last.TryGetProperty("pagination", out _).Should().BeFalse();
         }
         finally
         {

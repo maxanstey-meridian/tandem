@@ -195,6 +195,44 @@ public sealed class GitExcludedFileStoreTests
         }
     }
 
+    [Theory]
+    [InlineData("packages/sdk/Source.cs")]
+    [InlineData("packages.json")]
+    [InlineData("src/packages/helper.ts")]
+    public void SearchAsync_KeepsPackageDirectoriesPerTheCommittedIntent(string path)
+    {
+        var result = SearchResult(path, "MATCH");
+
+        // "packages" was deliberately removed from the exclusion list; the store
+        // and the shared policy agree on keeping these paths searchable.
+        WorkspaceSearchPolicy.HasExcludedDirectorySegment(path).Should().BeFalse();
+        GitExcludedFileStore.IsExcludedSearchResult(result).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Store_filtering_agrees_with_the_single_shared_policy_owner()
+    {
+        // Every representative excluded path the store rejects is rejected by the
+        // shared policy, so the lists cannot drift between the two consumers.
+        WorkspaceSearchPolicy.ExcludedDirectories.Should().Contain(".git");
+        WorkspaceSearchPolicy.ExcludedDirectories.Count.Should().Be(65);
+        WorkspaceSearchPolicy.BinaryExtensions.Count.Should().Be(55);
+        WorkspaceSearchPolicy.IsExcludedDirectory("bazel-bin").Should().BeTrue();
+        WorkspaceSearchPolicy.IsExcludedDirectory("cmake-build-release").Should().BeTrue();
+        WorkspaceSearchPolicy.IsExcludedDirectory("bin").Should().BeTrue();
+        WorkspaceSearchPolicy.IsExcludedDirectory("binary").Should().BeFalse();
+        WorkspaceSearchPolicy.HasBinaryExtension("lib/video.mp4").Should().BeTrue();
+        WorkspaceSearchPolicy.HasBinaryExtension("lib/video.txt").Should().BeFalse();
+        GitExcludedFileStore
+            .IsExcludedSearchResult(SearchResult("frontend/node_modules/index.js", "MATCH"))
+            .Should()
+            .BeTrue();
+        GitExcludedFileStore
+            .IsExcludedSearchResult(SearchResult("video.txt", "MATCH"))
+            .Should()
+            .BeFalse();
+    }
+
     private static FileSearchResult SearchResult(string path, string content) =>
         new()
         {

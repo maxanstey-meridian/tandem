@@ -69,77 +69,112 @@ public sealed class WorkspaceShellToolsTests
     }
 
     [Fact]
-    public async Task ParameterizedCommand_EmitsSchemaValidatesAndQuotesOneArgument()
+    public async Task ParameterizedCommand_EmitsArraySchemaValidatesAndQuotesArguments()
     {
         using var workspace = TemporaryWorkspace.Create();
         string command;
-        string flag;
         if (OperatingSystem.IsWindows())
         {
-            command = "Set-Content -NoNewline -Path received.txt";
-            flag = "-Value";
+            command = "Set-Content -NoNewline -Path received.txt -Value";
         }
         else
         {
             var script = System.IO.Path.Combine(workspace.Path, "capture.sh");
-            await File.WriteAllTextAsync(script, "#!/bin/sh\nprintf '%s' \"$2\" > received.txt\n");
+            await File.WriteAllTextAsync(script, "#!/bin/sh\nprintf '%s' \"$@\" > received.txt\n");
             File.SetUnixFileMode(
                 script,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
             );
             command = "./capture.sh";
-            flag = "--value";
         }
         var options = new ChatOptions();
         WorkspaceShellTools.Add(
             options,
             ResolvedWorkspace(
                 workspace.Path,
-                [
-                    new AgentCommandDescriptor(
-                        "capture",
-                        "Capture one value.",
-                        command,
-                        [
-                            new AgentCommandArgumentDescriptor(
-                                "value",
-                                "Diagnostic selector.",
-                                flag,
-                                @"[\s\S]*",
-                                null,
-                                200
-                            ),
-                        ]
-                    ),
-                ]
+                [new AgentCommandDescriptor("capture", "Capture one value.", command, ["--value"])]
             ),
             new ToolEffectRegistry()
         );
         var tool = (AIFunction)options.Tools!.Single();
-        var property = tool.JsonSchema.GetProperty("properties").GetProperty("value");
-        property.GetProperty("type").GetString().Should().Be("string");
-        property.GetProperty("description").GetString().Should().Be("Diagnostic selector.");
-        property.GetProperty("maxLength").GetInt32().Should().Be(200);
-        property.GetProperty("pattern").GetString().Should().Be("^(?:[\\s\\S]*)$");
+        var property = tool.JsonSchema.GetProperty("properties").GetProperty("arguments");
+        property.GetProperty("type").GetString().Should().Be("array");
+        property.GetProperty("items").GetProperty("type").GetString().Should().Be("string");
+        property.GetProperty("description").GetString().Should().Be("Capture one value.");
         tool.JsonSchema.GetProperty("additionalProperties").GetBoolean().Should().BeFalse();
 
         const string value =
             "spaces ' \" $() `touch marker` ; New-Item marker ; && || | > <\n* $HOME";
-        await tool.InvokeAsync(new AIFunctionArguments { ["value"] = value });
+        await tool.InvokeAsync(
+            new AIFunctionArguments
+            {
+                ["arguments"] = JsonSerializer.SerializeToElement(new[] { value }),
+            }
+        );
 
         (await File.ReadAllTextAsync(System.IO.Path.Combine(workspace.Path, "received.txt")))
             .Should()
             .Be(value);
         File.Exists(System.IO.Path.Combine(workspace.Path, "marker")).Should().BeFalse();
-        var unknown = async () =>
-            await tool.InvokeAsync(new AIFunctionArguments { ["other"] = "x" });
-        await unknown.Should().ThrowAsync<ArgumentException>();
+        var nonArray = async () =>
+            await tool.InvokeAsync(new AIFunctionArguments { ["arguments"] = "x" });
+        await nonArray.Should().ThrowAsync<ArgumentException>();
+        var nonStringElement = async () =>
+            await tool.InvokeAsync(
+                new AIFunctionArguments
+                {
+                    ["arguments"] = JsonSerializer.SerializeToElement(new object?[] { 42 }),
+                }
+            );
+        await nonStringElement.Should().ThrowAsync<ArgumentException>();
         var explicitNull = async () =>
-            await tool.InvokeAsync(new AIFunctionArguments { ["value"] = null });
+            await tool.InvokeAsync(new AIFunctionArguments { ["arguments"] = null });
         await explicitNull.Should().ThrowAsync<ArgumentException>();
-        var nonString = async () =>
-            await tool.InvokeAsync(new AIFunctionArguments { ["value"] = 42 });
-        await nonString.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task ParameterizedCommand_EnforcesCountAndLengthBoundsAtInvocation()
+    {
+        using var workspace = TemporaryWorkspace.Create();
+        var options = new ChatOptions();
+        WorkspaceShellTools.Add(
+            options,
+            ResolvedWorkspace(
+                workspace.Path,
+                [new AgentCommandDescriptor("capture", "Capture.", "echo", ["--value"])]
+            ),
+            new ToolEffectRegistry()
+        );
+        var tool = (AIFunction)options.Tools!.Single();
+
+        var tooMany = async () =>
+            await tool.InvokeAsync(
+                new AIFunctionArguments
+                {
+                    ["arguments"] = JsonSerializer.SerializeToElement(
+                        Enumerable
+                            .Range(0, AgentCommand.MaximumArgumentCount + 1)
+                            .Select(index => $"arg{index}")
+                            .ToArray()
+                    ),
+                }
+            );
+        await tooMany.Should().ThrowAsync<ArgumentException>();
+
+        var tooLong = async () =>
+            await tool.InvokeAsync(
+                new AIFunctionArguments
+                {
+                    ["arguments"] = JsonSerializer.SerializeToElement(
+                        new[] { new string('x', AgentCommand.MaximumArgumentLength + 1) }
+                    ),
+                }
+            );
+        await tooLong.Should().ThrowAsync<ArgumentException>();
+
+        var unknownProperty = async () =>
+            await tool.InvokeAsync(new AIFunctionArguments { ["other"] = "x" });
+        await unknownProperty.Should().ThrowAsync<ArgumentException>();
     }
 
     [Fact]
@@ -161,46 +196,121 @@ public sealed class WorkspaceShellToolsTests
     }
 
     [Fact]
-    public void PublicCommandArguments_RequireOneValidationStrategyAndCopyAllowedValues()
+    public void PublicCommandArguments_EnforceCountAndLengthBoundsAtDefineTime()
     {
-        var allowedValues = new List<string> { "fast", "thorough" };
-
         var command = AgentCommand.Define(
             "run_review",
             "Run review.",
             "review",
-            [
-                new("path", "Path.", "--path", @"src/.+", null, 200),
-                new("mode", "Mode.", "--mode", null, allowedValues, 20),
-            ]
+            new[] { "src/review.cs", "--thorough" }
         );
-        allowedValues[0] = "mutated";
+        command.Arguments.Should().Equal("src/review.cs", "--thorough");
 
-        command.Arguments.Should().HaveCount(2);
-        command.Arguments[0].Pattern.Should().Be(@"src/.+");
-        command.Arguments[1].AllowedValues.Should().Equal("fast", "thorough");
         FluentActions
             .Invoking(() =>
                 AgentCommand.Define(
                     "invalid",
                     "Invalid.",
                     "invalid",
-                    [new("value", "Value.", "--value", null, null)]
+                    Enumerable
+                        .Range(0, AgentCommand.MaximumArgumentCount + 1)
+                        .Select(index => $"arg{index}")
+                        .ToArray()
                 )
             )
             .Should()
-            .Throw<ArgumentException>();
+            .Throw<ArgumentOutOfRangeException>();
+
         FluentActions
             .Invoking(() =>
                 AgentCommand.Define(
                     "invalid",
                     "Invalid.",
                     "invalid",
-                    [new("value", "Value.", "--value", ".+", ["one"])]
+                    new[] { new string('x', AgentCommand.MaximumArgumentLength + 1) }
                 )
             )
             .Should()
-            .Throw<ArgumentException>();
+            .Throw<ArgumentOutOfRangeException>();
+
+        FluentActions
+            .Invoking(() => AgentCommand.Define("invalid", "Invalid.", "invalid", [null!]))
+            .Should()
+            .Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void PacketCommandAdmission_CarriesOptionalArgumentsThroughToTheToolSchema()
+    {
+        using var workspace = TemporaryWorkspace.Create();
+        var argumented = new PacketCommand(
+            "run_review",
+            "Run review with a path.",
+            "review",
+            ["--path"]
+        ).ToAgentCommand();
+        var labelOnly = new PacketCommand(
+            "where_am_i",
+            "Print the workspace.",
+            CurrentDirectory()
+        ).ToAgentCommand();
+
+        var options = new ChatOptions();
+        WorkspaceShellTools.Add(
+            options,
+            ResolvedWorkspace(
+                workspace.Path,
+                [argumented.ToDescriptor(), labelOnly.ToDescriptor()]
+            ),
+            new ToolEffectRegistry()
+        );
+
+        var tools = options.Tools!.Cast<AIFunction>().ToArray();
+        var reviewTool = tools.Should().ContainSingle(tool => tool.Name == "run_review").Subject;
+        var property = reviewTool.JsonSchema.GetProperty("properties").GetProperty("arguments");
+        property.GetProperty("type").GetString().Should().Be("array");
+        property.GetProperty("items").GetProperty("type").GetString().Should().Be("string");
+        property.GetProperty("description").GetString().Should().Be("Run review with a path.");
+        reviewTool.JsonSchema.GetProperty("additionalProperties").GetBoolean().Should().BeFalse();
+
+        var labelOnlyTool = tools.Should().ContainSingle(tool => tool.Name == "where_am_i").Subject;
+        labelOnlyTool.JsonSchema.GetProperty("properties").EnumerateObject().Should().BeEmpty();
+
+        var validator = new PacketValidator();
+        var tooMany = validator.Validate(
+            new PacketCommand(
+                "run_review",
+                "Run review.",
+                "review",
+                Enumerable
+                    .Range(0, AgentCommand.MaximumArgumentCount + 1)
+                    .Select(index => $"arg{index}")
+                    .ToArray()
+            )
+        );
+        tooMany.IsValid.Should().BeFalse();
+        tooMany
+            .Errors.Should()
+            .Contain(error => error.ErrorMessage.Contains("accepts at most 16 arguments."));
+
+        var blank = validator.Validate(
+            new PacketCommand("run_review", "Run review.", "review", ["  "])
+        );
+        blank.IsValid.Should().BeFalse();
+        blank.Errors.Should().Contain(error => error.ErrorMessage.Contains("must not be blank."));
+
+        var tooLong = validator.Validate(
+            new PacketCommand(
+                "run_review",
+                "Run review.",
+                "review",
+                [new string('x', AgentCommand.MaximumArgumentLength + 1)]
+            )
+        );
+        tooLong.IsValid.Should().BeFalse();
+        tooLong
+            .Errors.Should()
+            .Contain(error => error.ErrorMessage.Contains("must be at most 200 characters."));
     }
 
     [Fact]

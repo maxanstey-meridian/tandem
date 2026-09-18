@@ -5,28 +5,22 @@ const base = {
   description: "Run tests.",
   command: "task test",
 };
-const argument = {
-  name: "value",
-  description: "Value.",
-  flag: "--value",
-  pattern: ".+",
-};
-const definitions = [
-  { ...argument, name: "bad-name" },
-  { ...argument, flag: "--bad flag" },
-  { name: "value", description: "Value.", flag: "--value" },
-  { ...argument, allowedValues: ["one"] },
-  { ...argument, maxLength: 0 },
-  { ...argument, pattern: undefined, allowedValues: [] },
-  { ...argument, pattern: undefined, allowedValues: [" "] },
-  { ...argument, pattern: undefined, allowedValues: ["one", "one"] },
+const candidates = [
+  { arguments: 42 },
+  { arguments: [42] },
+  { arguments: [""] },
+  { arguments: ["a".repeat(201)] },
+  { arguments: Array.from({ length: 17 }, (_, index) => `arg${index}`) },
+  { arguments: [""] },
+  { arguments: ["  "] },
+  { arguments: ["a", "b", "a".repeat(201)] },
 ];
 
-const errors = definitions.map((candidate) => {
+const errors = candidates.map((candidate) => {
   try {
     agentWorkspace({
       path: () => "/tmp",
-      commands: [{ ...base, arguments: [candidate] }],
+      commands: [{ ...base, ...candidate }],
     });
     return null;
   } catch (error) {

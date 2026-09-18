@@ -12,136 +12,6 @@ namespace Tandem.Advanced;
 internal static class WorkspaceGrepTools
 {
     private static readonly TimeSpan _regexTimeout = TimeSpan.FromSeconds(1);
-    private static readonly HashSet<string> _excludedDirectories = new(
-        [
-            ".angular",
-            ".build",
-            ".bundle",
-            ".cache",
-            ".dart_tool",
-            ".eggs",
-            ".expo",
-            ".git",
-            ".gradle",
-            ".hg",
-            ".idea",
-            ".mypy_cache",
-            ".next",
-            ".nox",
-            ".nuxt",
-            ".nx",
-            ".nyc_output",
-            ".output",
-            ".parcel-cache",
-            ".pytest_cache",
-            ".pnpm-store",
-            ".ruff_cache",
-            ".sass-cache",
-            ".serverless",
-            ".stack-work",
-            ".svelte-kit",
-            ".svn",
-            ".tox",
-            ".turbo",
-            ".terraform",
-            ".terragrunt-cache",
-            ".venv",
-            ".vite",
-            ".vs",
-            ".yarn",
-            "_build",
-            "__pycache__",
-            "artifacts",
-            "bin",
-            "bower_components",
-            "Binaries",
-            "build",
-            "coverage",
-            "Carthage",
-            "CMakeFiles",
-            "deps",
-            "DerivedData",
-            "DerivedDataCache",
-            "dist",
-            "env",
-            "jspm_packages",
-            "Intermediate",
-            "Library",
-            "node_modules",
-            "obj",
-            "out",
-            "Pods",
-            "Saved",
-            "site-packages",
-            "target",
-            "TestResults",
-            "tmp",
-            "storybook-static",
-            "venv",
-            "vendor",
-        ],
-        StringComparer.OrdinalIgnoreCase
-    );
-    private static readonly HashSet<string> _binaryExtensions = new(
-        [
-            ".7z",
-            ".a",
-            ".apk",
-            ".avi",
-            ".bin",
-            ".bmp",
-            ".bz2",
-            ".class",
-            ".db",
-            ".deb",
-            ".dmg",
-            ".dll",
-            ".dylib",
-            ".ear",
-            ".exe",
-            ".flac",
-            ".gif",
-            ".gem",
-            ".gz",
-            ".ico",
-            ".ipa",
-            ".iso",
-            ".jar",
-            ".jpeg",
-            ".jpg",
-            ".mov",
-            ".mp3",
-            ".mp4",
-            ".o",
-            ".otf",
-            ".nupkg",
-            ".pdf",
-            ".pdb",
-            ".png",
-            ".pyc",
-            ".pyo",
-            ".rar",
-            ".rpm",
-            ".so",
-            ".sqlite",
-            ".sqlite3",
-            ".snupkg",
-            ".tar",
-            ".tgz",
-            ".ttf",
-            ".war",
-            ".wasm",
-            ".wav",
-            ".webm",
-            ".webp",
-            ".whl",
-            ".woff",
-            ".woff2",
-            ".xz",
-            ".zip",
-        ],
-        StringComparer.OrdinalIgnoreCase
-    );
 
     internal static void Add(ChatOptions options, string workspacePath)
     {
@@ -163,10 +33,12 @@ internal static class WorkspaceGrepTools
                         "Maximum matching records, 1 to 500. Output is also size bounded."
                     )]
                         int limit = 100,
-                    [Description("Copy nextCursor with unchanged search arguments.")]
-                        string? cursor = null,
                     [Description(
-                        "Search normally excluded build/dependency directories; Git metadata and links stay excluded."
+                        "Zero-based match offset; continue a previous page with the returned nextOffset."
+                    )]
+                        int offset = 0,
+                    [Description(
+                        "Search normally excluded directories; Git metadata and links stay excluded."
                     )]
                         bool includeExcluded = false,
                     [Description("Treat regexPattern as literal text.")] bool literal = false,
@@ -180,7 +52,7 @@ internal static class WorkspaceGrepTools
                         regexPattern,
                         globPattern,
                         recursive,
-                        cursor,
+                        offset,
                         limit,
                         cancellationToken,
                         includeExcluded: includeExcluded,
@@ -188,11 +60,10 @@ internal static class WorkspaceGrepTools
                         caseSensitive: caseSensitive
                     ),
                 FileAccessProvider.GrepToolName,
-                "Search text files, returning path/line/text records. Follow nextCursor; no total scan for counts. "
-                    + "By default skip binary files, symlinks and build/dependency/cache directories (including "
-                    + string.Join(", ", _excludedDirectories.Order())
-                    + "; bazel-*; cmake-build-*). Explicit path prefixes override performance exclusions, never .git/link boundaries. "
-                    + "Skipped files are reported. Incomplete oversized matches can be read with file_access_read at their line."
+                "Search text files, returning path/line/text records. Continue with the returned nextOffset; there is no total count scan. "
+                    + "By default skip binary files, symlinks and performance-excluded directories; skipped files are reported in the result. "
+                    + "Explicit path prefixes override performance exclusions, never Git metadata or link boundaries. "
+                    + "Incomplete oversized matches can be read with file_access_read at their line."
             )
         );
     }
@@ -200,35 +71,24 @@ internal static class WorkspaceGrepTools
     internal sealed record Match(
         [property: JsonPropertyName("path")] string Path,
         [property: JsonPropertyName("line")] int Line,
-        [property: JsonPropertyName("text")] string Text,
-        [property: JsonPropertyName("incomplete")] bool Incomplete = false
+        [property: JsonPropertyName("text")] string Text
     );
 
     internal sealed record GrepPage(
         [property: JsonPropertyName("matches")] IReadOnlyList<Match> Matches,
-        [property: JsonPropertyName("nextCursor")] string? NextCursor,
         [property: JsonPropertyName("skippedCount")] int SkippedCount,
         [property: JsonPropertyName("skipped")] IReadOnlyList<string> Skipped,
-        [property: JsonPropertyName("exclusionsApplied")] bool ExclusionsApplied
+        [property:
+            JsonPropertyName("nextOffset"),
+            JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)
+        ]
+            int? NextOffset
     )
     {
-        [JsonPropertyName("hasMore")]
-        public bool HasMore => NextCursor is not null;
-
-        [JsonPropertyName("returnedCount")]
-        public int ReturnedCount => Matches.Count;
-
         [System.Text.Json.Serialization.JsonIgnore]
         public string Content =>
             string.Concat(Matches.Select(m => $"{m.Path}:{m.Line}:{m.Text}\n"));
     }
-
-    private sealed record Continuation(
-        string Path,
-        long Position,
-        int Line,
-        TextFileVersion Version
-    );
 
     internal static Task<GrepPage> SearchAsync(
         string workspacePath,
@@ -236,7 +96,7 @@ internal static class WorkspaceGrepTools
         string regexPattern,
         string? globPattern,
         bool recursive,
-        string? cursor = null,
+        int offset = 0,
         int limit = 100,
         CancellationToken cancellationToken = default,
         SearchDiagnostics? diagnostics = null,
@@ -249,6 +109,14 @@ internal static class WorkspaceGrepTools
         {
             throw new Tandem.Infrastructure.ToolInputException(
                 "limit must be from 1 to 500 matching records."
+            );
+        }
+        if (offset < 0)
+        {
+            throw new Tandem.Infrastructure.PaginationValidationException(
+                nameof(offset),
+                "Offset cannot be negative. Retry at offset 0.",
+                new { retryOffset = 0, retryLimit = Math.Clamp(limit, 1, 500) }
             );
         }
 
@@ -270,35 +138,6 @@ internal static class WorkspaceGrepTools
             throw new DirectoryNotFoundException($"Search directory does not exist: {directory}");
         }
 
-        var scope = ToolCursor.Scope(
-            "grep",
-            workspace,
-            root,
-            regexPattern,
-            globPattern,
-            recursive,
-            limit,
-            includeExcluded,
-            literal,
-            caseSensitive
-        );
-        var resume = cursor is null ? null : ToolCursor.Decode<Continuation>(cursor, scope);
-        if (resume is not null)
-        {
-            if (
-                resume.Line < 1
-                || resume.Position < 0
-                || resume.Version is null
-                || string.IsNullOrWhiteSpace(resume.Path)
-            )
-            {
-                throw new Tandem.Infrastructure.ToolInputException("Invalid search continuation.");
-            }
-
-            resume.Version.Validate(
-                WorkspacePathAuthority.Resolve(workspace, resume.Path, "search")
-            );
-        }
         var skipped = new List<string>();
         var skippedCount = 0;
         void Skip(string path, string reason)
@@ -311,6 +150,7 @@ internal static class WorkspaceGrepTools
         }
         var matches = new List<Match>();
         var characters = 0;
+        var matchIndex = 0;
         foreach (
             var path in SearchFiles(
                 workspace,
@@ -318,7 +158,6 @@ internal static class WorkspaceGrepTools
                 LiteralPathPrefix(globPattern),
                 recursive,
                 includeExcluded,
-                resume?.Path,
                 Skip,
                 diagnostics,
                 cancellationToken
@@ -331,7 +170,7 @@ internal static class WorkspaceGrepTools
                 continue;
             }
 
-            if (_binaryExtensions.Contains(Path.GetExtension(path)))
+            if (WorkspaceSearchPolicy.HasBinaryExtension(relative))
             {
                 Skip(relative, "binary extension");
                 continue;
@@ -340,17 +179,11 @@ internal static class WorkspaceGrepTools
             try
             {
                 diagnostics?.FileOpened?.Invoke(relative);
-                var version = TextFileVersion.Read(path);
-                reader = new PositionedTextReader(
-                    path,
-                    resume?.Path == relative ? resume.Position : null,
-                    cancellationToken
-                );
+                reader = new PositionedTextReader(path, cancellationToken);
                 diagnostics?.TextDecodingStarted?.Invoke(relative);
-                var line = resume?.Path == relative ? resume.Line : 1;
+                var line = 1;
                 while (!reader.End)
                 {
-                    var position = reader.Position;
                     var part = reader.Fragment(1024 * 1024);
                     if (!part.LineEnded)
                     {
@@ -368,40 +201,44 @@ internal static class WorkspaceGrepTools
                     }
                     if (regex.IsMatch(part.Text))
                     {
-                        // A single oversized match remains identifiable and fully readable by line.
-                        var excerpt = part.Text.Length > 32000 ? part.Text[..32000] : part.Text;
-                        if (excerpt.Length > 0 && char.IsHighSurrogate(excerpt[^1]))
+                        if (matchIndex >= offset)
                         {
-                            excerpt = excerpt[..^1];
-                        }
+                            // A single oversized match remains identifiable and fully readable by line.
+                            var excerpt = part.Text.Length > 32000 ? part.Text[..32000] : part.Text;
+                            var truncated = excerpt.Length != part.Text.Length;
+                            if (excerpt.Length > 0 && char.IsHighSurrogate(excerpt[^1]))
+                            {
+                                excerpt = excerpt[..^1];
+                            }
 
-                        if (
-                            matches.Count == limit
-                            || characters + relative.Length + excerpt.Length + 32 > 64000
-                        )
-                        {
-                            version.Validate(path);
-                            return Task.FromResult(
-                                new GrepPage(
-                                    matches,
-                                    ToolCursor.Encode(
-                                        scope,
-                                        new Continuation(relative, position, line, version)
-                                    ),
-                                    skippedCount,
-                                    skipped,
-                                    !includeExcluded
+                            if (truncated)
+                            {
+                                excerpt += "…";
+                            }
+                            if (
+                                matches.Count == limit
+                                || (
+                                    matches.Count > 0
+                                    && characters + relative.Length + excerpt.Length + 32 > 64000
                                 )
-                            );
+                            )
+                            {
+                                return Task.FromResult(
+                                    new GrepPage(
+                                        matches,
+                                        skippedCount,
+                                        skipped,
+                                        offset + matches.Count
+                                    )
+                                );
+                            }
+                            matches.Add(new Match(relative, line, excerpt));
+                            characters += relative.Length + excerpt.Length + 32;
                         }
-                        matches.Add(
-                            new Match(relative, line, excerpt, excerpt.Length != part.Text.Length)
-                        );
-                        characters += relative.Length + excerpt.Length + 32;
+                        matchIndex++;
                     }
                     line++;
                 }
-                version.Validate(path);
             }
             catch (Exception e)
                 when (e
@@ -419,9 +256,7 @@ internal static class WorkspaceGrepTools
                 reader?.Dispose();
             }
         }
-        return Task.FromResult(
-            new GrepPage(matches, null, skippedCount, skipped, !includeExcluded)
-        );
+        return Task.FromResult(new GrepPage(matches, skippedCount, skipped, null));
     }
 
     private static IEnumerable<string> SearchFiles(
@@ -430,7 +265,6 @@ internal static class WorkspaceGrepTools
         string[] prefix,
         bool recursive,
         bool includeExcluded,
-        string? after,
         Action<string, string> skip,
         SearchDiagnostics? diagnostics,
         CancellationToken cancellationToken
@@ -473,15 +307,6 @@ internal static class WorkspaceGrepTools
         {
             cancellationToken.ThrowIfCancellationRequested();
             var rel = Path.GetRelativePath(workspace, entry).Replace('\\', '/');
-            if (
-                after is not null
-                && ComparePaths(rel, after) < 0
-                && !after.StartsWith(rel + "/", StringComparison.Ordinal)
-            )
-            {
-                continue;
-            }
-
             FileAttributes attributes;
             try
             {
@@ -514,7 +339,7 @@ internal static class WorkspaceGrepTools
                     && (
                         includeExcluded
                         || components.Length < prefix.Length
-                        || !IsExcludedDirectory(Path.GetFileName(entry))
+                        || !WorkspaceSearchPolicy.IsExcludedDirectory(Path.GetFileName(entry))
                     )
                 )
                 {
@@ -525,7 +350,6 @@ internal static class WorkspaceGrepTools
                             prefix,
                             true,
                             includeExcluded,
-                            after,
                             skip,
                             diagnostics,
                             cancellationToken
@@ -541,21 +365,6 @@ internal static class WorkspaceGrepTools
                 yield return entry;
             }
         }
-    }
-
-    private static int ComparePaths(string left, string right)
-    {
-        var a = left.Split('/');
-        var b = right.Split('/');
-        for (var i = 0; i < Math.Min(a.Length, b.Length); i++)
-        {
-            var comparison = StringComparer.Ordinal.Compare(a[i], b[i]);
-            if (comparison != 0)
-            {
-                return comparison;
-            }
-        }
-        return a.Length.CompareTo(b.Length);
     }
 
     private static string[] LiteralPathPrefix(string? glob)
@@ -574,11 +383,6 @@ internal static class WorkspaceGrepTools
             )
             .ToArray();
     }
-
-    private static bool IsExcludedDirectory(string name) =>
-        _excludedDirectories.Contains(name)
-        || name.StartsWith("bazel-", StringComparison.OrdinalIgnoreCase)
-        || name.StartsWith("cmake-build-", StringComparison.OrdinalIgnoreCase);
 
     private static Regex GlobRegex(string glob)
     {

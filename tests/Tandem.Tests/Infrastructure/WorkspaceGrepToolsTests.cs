@@ -1,4 +1,9 @@
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using FluentAssertions;
+using Microsoft.Extensions.AI;
+
+#pragma warning disable MAAI001
 
 namespace Tandem.Tests.Infrastructure;
 
@@ -18,19 +23,11 @@ public sealed class WorkspaceGrepToolsTests
                 "match one\nMATCH again\n"
             );
 
-            var page = await WorkspaceGrepTools.SearchAsync(
-                root,
-                "",
-                "match",
-                null,
-                true,
-                null,
-                500
-            );
+            var page = await WorkspaceGrepTools.SearchAsync(root, "", "match", null, true, 0, 500);
 
             page.Content.Should()
                 .Be("a/one.txt:1:match one\na/one.txt:2:MATCH again\nz/two.txt:2:MATCH two\n");
-            page.HasMore.Should().BeFalse();
+            page.NextOffset.Should().BeNull();
         }
         finally
         {
@@ -88,7 +85,7 @@ public sealed class WorkspaceGrepToolsTests
                 "class CompilationHelper",
                 glob,
                 recursive,
-                null,
+                0,
                 500
             );
             page.Content.Should().Be(expected);
@@ -111,7 +108,7 @@ public sealed class WorkspaceGrepToolsTests
             );
 
             var search = () =>
-                WorkspaceGrepTools.SearchAsync(root, "", "^(a+)+$", null, true, null, 10);
+                WorkspaceGrepTools.SearchAsync(root, "", "^(a+)+$", null, true, 0, 10);
 
             await search
                 .Should()
@@ -131,19 +128,17 @@ public sealed class WorkspaceGrepToolsTests
         Directory.CreateDirectory(root);
         try
         {
-            var escape = () =>
-                WorkspaceGrepTools.SearchAsync(root, "..", "x", null, true, null, 10);
+            var escape = () => WorkspaceGrepTools.SearchAsync(root, "..", "x", null, true, 0, 10);
             await escape.Should().ThrowAsync<UnauthorizedAccessException>();
             var missing = () =>
-                WorkspaceGrepTools.SearchAsync(root, "missing", "x", null, true, null, 10);
+                WorkspaceGrepTools.SearchAsync(root, "missing", "x", null, true, 0, 10);
             await missing.Should().ThrowAsync<DirectoryNotFoundException>();
 
             var outside = Path.Combine(parent, "outside");
             Directory.CreateDirectory(outside);
             var link = Path.Combine(root, "link");
             Directory.CreateSymbolicLink(link, outside);
-            var linked = () =>
-                WorkspaceGrepTools.SearchAsync(root, "link", "x", null, true, null, 10);
+            var linked = () => WorkspaceGrepTools.SearchAsync(root, "link", "x", null, true, 0, 10);
             await linked.Should().ThrowAsync<UnauthorizedAccessException>();
         }
         finally
@@ -191,7 +186,7 @@ public sealed class WorkspaceGrepToolsTests
                 "MATCH",
                 glob,
                 true,
-                null,
+                0,
                 500,
                 diagnostics: new(visited.Add, opened.Add)
             );
@@ -240,7 +235,7 @@ public sealed class WorkspaceGrepToolsTests
                 "MATCH",
                 glob,
                 recursive,
-                null,
+                0,
                 500,
                 diagnostics: new(FileOpened: opened.Add)
             );
@@ -270,7 +265,7 @@ public sealed class WorkspaceGrepToolsTests
                 "MATCH",
                 "packages/**/*.cs",
                 true,
-                null,
+                0,
                 500
             );
             page.Content.Should().Be("packages/sdk/Source.cs:1:MATCH\n");
@@ -304,6 +299,7 @@ public sealed class WorkspaceGrepToolsTests
             );
             opened.Should().Equal("a.txt", "b.txt");
             first.Matches.Select(m => m.Text).Should().Equal("match😀", "match2");
+            first.NextOffset.Should().Be(2);
             opened.Clear();
             var second = await WorkspaceGrepTools.SearchAsync(
                 root,
@@ -311,21 +307,25 @@ public sealed class WorkspaceGrepToolsTests
                 "match",
                 null,
                 true,
-                first.NextCursor,
-                2,
+                offset: 2,
+                limit: 2,
                 diagnostics: new(FileOpened: opened.Add)
             );
-            opened.Should().Equal("b.txt", "c.txt");
+            // The deterministic traversal is re-run, so already-visited files are
+            // opened again while their matches are skipped by offset.
+            opened.Should().Equal("a.txt", "b.txt", "c.txt");
+            second.Matches.Select(m => m.Path).Should().Equal("b.txt", "b.txt");
+            second.NextOffset.Should().Be(4);
             var third = await WorkspaceGrepTools.SearchAsync(
                 root,
                 "",
                 "match",
                 null,
                 true,
-                second.NextCursor,
-                2
+                offset: 4,
+                limit: 2
             );
-            third.HasMore.Should().BeFalse();
+            third.NextOffset.Should().BeNull();
             first
                 .Matches.Concat(second.Matches)
                 .Concat(third.Matches)
@@ -333,21 +333,28 @@ public sealed class WorkspaceGrepToolsTests
                 .Should()
                 .OnlyHaveUniqueItems()
                 .And.HaveCount(6);
-            await File.AppendAllTextAsync(Path.Combine(root, "b.txt"), "changed");
-            await FluentActions
-                .Awaiting(() =>
-                    WorkspaceGrepTools.SearchAsync(
-                        root,
-                        "",
-                        "match",
-                        null,
-                        true,
-                        first.NextCursor,
-                        2
-                    )
-                )
+            // Continuation is stateless: after an edit the same offset honestly
+            // reflects the repository instead of failing a version check.
+            await File.AppendAllTextAsync(Path.Combine(root, "b.txt"), "match3\n");
+            var afterEdit = await WorkspaceGrepTools.SearchAsync(
+                root,
+                "",
+                "match",
+                null,
+                true,
+                offset: 2,
+                limit: 500
+            );
+            afterEdit
+                .Matches.Select(m => (m.Path, m.Line, m.Text))
                 .Should()
-                .ThrowAsync<ArgumentException>();
+                .Equal(
+                    ("b.txt", 1, "match😀"),
+                    ("b.txt", 2, "match2"),
+                    ("b.txt", 3, "match3"),
+                    ("c.txt", 1, "match😀"),
+                    ("c.txt", 2, "match2")
+                );
         }
         finally
         {
@@ -413,7 +420,8 @@ public sealed class WorkspaceGrepToolsTests
             );
             var page = await WorkspaceGrepTools.SearchAsync(root, "", "MATCH", null, true);
             var match = page.Matches.Should().ContainSingle().Subject;
-            match.Incomplete.Should().BeTrue();
+            match.Text.Should().EndWith("…");
+            page.SkippedCount.Should().Be(0);
             match.Path.Should().Be("large.txt");
             match.Line.Should().Be(1);
             page.Content.Length.Should().BeLessThan(65536);
@@ -422,6 +430,58 @@ public sealed class WorkspaceGrepToolsTests
         {
             Directory.Delete(root, true);
         }
+    }
+
+    [Fact]
+    public void Grep_page_payload_carries_no_derivable_fields_or_instructions()
+    {
+        var final = JsonSerializer.SerializeToElement(
+            new WorkspaceGrepTools.GrepPage([], 0, [], null)
+        );
+        final
+            .EnumerateObject()
+            .Select(p => p.Name)
+            .Should()
+            .BeEquivalentTo("matches", "skippedCount", "skipped");
+        var continued = JsonSerializer.SerializeToElement(
+            new WorkspaceGrepTools.GrepPage([], 0, [], 2)
+        );
+        continued.GetProperty("nextOffset").GetInt32().Should().Be(2);
+        foreach (var json in new[] { final, continued })
+        {
+            json.TryGetProperty("hasMore", out _).Should().BeFalse();
+            json.TryGetProperty("returnedCount", out _).Should().BeFalse();
+            json.TryGetProperty("exclusionsApplied", out _).Should().BeFalse();
+            json.TryGetProperty("nextCursor", out _).Should().BeFalse();
+            json.TryGetProperty("pagination", out _).Should().BeFalse();
+        }
+    }
+
+    [Fact]
+    public void Grep_schema_describes_skips_in_prose_without_directory_enumeration()
+    {
+        var options = new ChatOptions();
+        WorkspaceGrepTools.Add(options, Path.GetTempPath());
+        var tool = (AIFunction)options.Tools!.Single();
+        var schema = tool.JsonSchema.GetRawText();
+        foreach (var entry in WorkspaceSearchPolicy.ExcludedDirectories)
+        {
+            // Word-boundary matching avoids false positives such as "Output"
+            // containing the directory "out"; dotted names are distinctive enough
+            // for containment matching.
+            var pattern =
+                char.IsLetterOrDigit(entry[0]) || entry[0] == '_'
+                    ? $@"\b{Regex.Escape(entry)}\b"
+                    : Regex.Escape(entry);
+            Regex
+                .IsMatch(schema, pattern, RegexOptions.IgnoreCase)
+                .Should()
+                .BeFalse($"the schema must not enumerate excluded directory '{entry}'");
+        }
+
+        // Skip behavior is documented once per request in the tool description,
+        // not as an inlined directory enumeration in the schema.
+        tool.Description.Should().Contain("reported in the result");
     }
 
     private static string CreateDirectory()

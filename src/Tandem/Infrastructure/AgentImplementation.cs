@@ -42,20 +42,11 @@ internal enum WorkspaceToolKind
     CreateDirectory,
 }
 
-internal sealed record AgentCommandArgumentDescriptor(
-    string Name,
-    string Description,
-    string Flag,
-    string? Pattern,
-    IReadOnlyList<string>? AllowedValues,
-    int? MaxLength
-);
-
 internal sealed record AgentCommandDescriptor(
     string Name,
     string Description,
     string Command,
-    IReadOnlyList<AgentCommandArgumentDescriptor> Arguments
+    IReadOnlyList<string> Arguments
 );
 
 internal static class AgentSkillRuntime

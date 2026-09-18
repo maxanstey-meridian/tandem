@@ -362,14 +362,7 @@ internal static class RegisteredParticipantFactory
                     command.Name,
                     command.Description,
                     command.Command,
-                    (command.Arguments ?? []).Select(argument => new AgentCommandArgument(
-                        argument.Name,
-                        argument.Description,
-                        argument.Flag,
-                        argument.Pattern,
-                        argument.AllowedValues,
-                        argument.MaxLength
-                    ))
+                    command.Arguments
                 )
             )
             .ToArray();
@@ -379,16 +372,7 @@ internal static class RegisteredParticipantFactory
         string Name,
         string Description,
         string Command,
-        RegisteredAgentCommandArgument[]? Arguments
-    );
-
-    private sealed record RegisteredAgentCommandArgument(
-        string Name,
-        string Description,
-        string Flag,
-        string? Pattern,
-        string[]? AllowedValues,
-        int? MaxLength
+        string[]? Arguments
     );
 
     private static void ApplyAgentPolicies(

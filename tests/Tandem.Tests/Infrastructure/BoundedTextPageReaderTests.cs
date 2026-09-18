@@ -24,13 +24,13 @@ public sealed class BoundedTextPageReaderTests
                 char.IsLowSurrogate(page.Content[0]).Should().BeFalse();
                 char.IsHighSurrogate(page.Content[^1]).Should().BeFalse();
                 reconstructed.Append(page.Content);
-                if (!page.HasMore)
+                if (page.NextOffset is null)
                 {
-                    page.NextOffset.Should().BeNull();
                     break;
                 }
-                page.NextOffset.Should().Be(offset + page.Length);
-                offset = page.NextOffset!.Value;
+
+                page.NextOffset.Should().Be(offset + page.Content.Length);
+                offset = page.NextOffset.Value;
             } while (true);
 
             reconstructed.ToString().Should().Be(text);
@@ -42,7 +42,7 @@ public sealed class BoundedTextPageReaderTests
     }
 
     [Fact]
-    public async Task Range_validation_and_end_page_are_explicit()
+    public async Task End_page_and_bounds_validation_are_explicit()
     {
         var path = Path.GetTempFileName();
         await File.WriteAllTextAsync(path, "abc😀");
@@ -50,7 +50,7 @@ public sealed class BoundedTextPageReaderTests
         {
             (await BoundedTextPageReader.ReadAsync(path, 5, 10))
                 .Should()
-                .BeEquivalentTo(new TextPage("", 5, 0, 5, false, null));
+                .BeEquivalentTo(new TextPage("", 5, null));
             await FluentActions
                 .Awaiting(() => BoundedTextPageReader.ReadAsync(path, -1, 1))
                 .Should()
@@ -101,13 +101,17 @@ public sealed class BoundedTextPageReaderTests
                 .EnumerateObject()
                 .Select(p => p.Name)
                 .Should()
-                .BeEquivalentTo("path", "startLine", "lineCount", "cursor");
+                .BeEquivalentTo("path", "startLine", "lineCount", "characterOffset");
             var result = await tool.InvokeAsync(new AIFunctionArguments { ["path"] = "small.txt" });
             var json = result.Should().BeOfType<System.Text.Json.JsonElement>().Subject;
-            json.GetProperty("lines")[0].GetProperty("text").GetString().Should().Be("small");
-            json.GetProperty("lines")[0].GetProperty("line").GetInt32().Should().Be(1);
-            json.GetProperty("totalLines").GetInt32().Should().Be(1);
-            json.GetProperty("hasMore").GetBoolean().Should().BeFalse();
+            json.GetProperty("lines")[0].GetString().Should().Be("small");
+            json.GetProperty("startLine").GetInt32().Should().Be(1);
+            json.TryGetProperty("nextStartLine", out _).Should().BeFalse();
+            json.TryGetProperty("totalLines", out _).Should().BeFalse();
+            json.TryGetProperty("hasMore", out _).Should().BeFalse();
+            json.TryGetProperty("nextCursor", out _).Should().BeFalse();
+            json.TryGetProperty("returnedLines", out _).Should().BeFalse();
+            json.TryGetProperty("pagination", out _).Should().BeFalse();
         }
         finally
         {

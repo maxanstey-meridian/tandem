@@ -17,12 +17,11 @@ configures context and output limits independently of lifecycle checkpoint capab
 The limits also appear in runtime usage observations. `WithCheckpoint` remains optional.
 
 Workspace reads use source line numbers (`startLine`, `lineCount`). Responses contain numbered
-`lines`; an oversized line can span fragments. Copy `nextCursor` into `cursor` with the same path
-and line count to retrieve every fragment, omitting `startLine`. Exact totals are returned only
-at EOF. Changing the file invalidates continuation.
+`lines`; an oversized line can span fragments. Continue with the returned `nextStartLine` and
+`nextCharacterOffset`, omitting `startLine` when resuming mid-line.
 
-Directory listings, Git status and grep also expose `hasMore` and `nextCursor`. Grep's `limit`
-counts matching records, not characters; obsolete `offset` arguments are rejected. Grep defaults
+Directory listings, Git status and grep paginate with plain integer `offset`/`limit`, returning
+`nextOffset`; grep's `limit` counts matching records, not characters. Grep defaults
 to case-insensitive regex matching and pruning common build/dependency directories. Use `literal`,
 `caseSensitive` and `includeExcluded` to change those choices. Explicit path prefixes can select
 normally excluded directories, but never bypass workspace, Git-metadata or symlink restrictions.

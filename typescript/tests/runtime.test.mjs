@@ -93,13 +93,12 @@ test("rejects malformed workspace command arguments while authoring", async () =
   const errors = JSON.parse(stdout.trim());
   assert.equal(errors.length, 8);
   assert(errors.every((error) => error.name === "TandemError"));
-  assert(errors.some((error) => /valid JSON property identifier/.test(error.message)));
-  assert(errors.some((error) => /whitespace-free switch token/.test(error.message)));
-  assert(errors.some((error) => /exactly one/.test(error.message)));
-  assert(errors.some((error) => /positive integer/.test(error.message)));
-  assert(errors.some((error) => /must not be empty/.test(error.message)));
-  assert(errors.some((error) => /non-blank strings/.test(error.message)));
-  assert(errors.some((error) => /duplicates 'one'/.test(error.message)));
+  assert(errors.some((error) => /must be an array of strings/.test(error.message)));
+  assert(errors.some((error) => /must be a string/.test(error.message)));
+  assert(
+    errors.filter((error) => /must be at most 200 characters/.test(error.message)).length >= 2,
+  );
+  assert(errors.some((error) => /accepts at most 16 arguments/.test(error.message)));
 });
 
 test("snapshots static workspace command catalogues", async () => {

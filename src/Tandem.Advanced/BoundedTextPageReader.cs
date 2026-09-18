@@ -7,27 +7,13 @@ namespace Tandem.Advanced;
 
 internal sealed record TextPage(
     [property: JsonPropertyName("content")] string Content,
-    [property: JsonPropertyName("offset")] int Offset,
-    [property: JsonPropertyName("length")] int Length,
     [property: JsonPropertyName("totalLength")] int TotalLength,
-    [property: JsonPropertyName("hasMore")] bool HasMore,
     [property:
         JsonPropertyName("nextOffset"),
         JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)
     ]
         int? NextOffset
-)
-{
-    [JsonPropertyName("offsetUnit")]
-    public string OffsetUnit => "UTF-16 code units";
-
-    [JsonPropertyName("maximumLimit")]
-    public int MaximumLimit => BoundedTextPageReader.MaximumLimit;
-
-    [JsonPropertyName("pagination")]
-    public string Pagination =>
-        "Use nextOffset with the same file/search arguments until hasMore is false. Results are recomputed; restart at offset 0 if the input or query changes. totalLength is the current result size, not a snapshot guarantee.";
-}
+);
 
 internal static class BoundedTextPageReader
 {
@@ -117,7 +103,7 @@ internal static class BoundedTextPageReader
         {
             throw InvalidPage(
                 nameof(offset),
-                $"Offset {offset} exceeds the current result length {position}. Results may have changed, or the offset may belong to another query. Restart at offset 0; then follow nextOffset with unchanged arguments until hasMore is false.",
+                $"Offset {offset} exceeds the current result length {position}. Results may have changed, or the offset may belong to another query. Restart at offset 0, then continue with returned nextOffset values.",
                 offset,
                 limit,
                 position,
@@ -163,14 +149,7 @@ internal static class BoundedTextPageReader
         var content = page.ToString();
         var nextOffset = offset + content.Length;
         var hasMore = nextOffset < position;
-        return new TextPage(
-            content,
-            offset,
-            content.Length,
-            position,
-            hasMore,
-            hasMore ? nextOffset : null
-        );
+        return new TextPage(content, position, hasMore ? nextOffset : null);
     }
 
     internal static void ValidateBounds(int offset, int limit)
@@ -218,10 +197,6 @@ internal static class BoundedTextPageReader
                 offset,
                 limit,
                 totalLength,
-                maximumOffset = totalLength,
-                minimumLimit = 1,
-                maximumLimit = MaximumLimit,
-                offsetUnit = "UTF-16 code units",
                 retryOffset,
                 retryLimit,
             }
@@ -263,7 +238,7 @@ internal static class BoundedTextPageReader
             {
                 throw InvalidPage(
                     nameof(offset),
-                    $"Offset {offset} exceeds the current result length {_total}. Results may have changed, or the offset may belong to another query. Restart at offset 0; then follow nextOffset with unchanged arguments until hasMore is false.",
+                    $"Offset {offset} exceeds the current result length {_total}. Results may have changed, or the offset may belong to another query. Restart at offset 0, then continue with returned nextOffset values.",
                     offset,
                     limit,
                     _total,
@@ -312,14 +287,7 @@ internal static class BoundedTextPageReader
             var content = _page.ToString();
             var nextOffset = offset + content.Length;
             var hasMore = nextOffset < _total;
-            return new TextPage(
-                content,
-                offset,
-                content.Length,
-                _total,
-                hasMore,
-                hasMore ? nextOffset : null
-            );
+            return new TextPage(content, _total, hasMore ? nextOffset : null);
         }
     }
 }

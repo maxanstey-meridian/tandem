@@ -113,16 +113,7 @@ const repository = agentWorkspace<WorkspaceState>({
       name: "run_tests",
       description: `Test from ${state.workspacePath}`,
       command: "task test",
-      arguments: [
-        { name: "path", description: "Path.", flag: "--path", pattern: "src/.+" },
-        {
-          name: "mode",
-          description: "Mode.",
-          flag: "--mode",
-          allowedValues: ["fast", "thorough"],
-          maxLength: 20,
-        },
-      ],
+      arguments: ["--path", "src/review.cs", "--thorough"],
     },
   ],
 });

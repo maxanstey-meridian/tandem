@@ -35,7 +35,7 @@ const State = z.object({ workspacePath: z.string() });
 if (mode === "parameterized") {
   writeFileSync(
     join(directory, "capture.mjs"),
-    "import { writeFileSync } from 'node:fs'; writeFileSync('received.txt', process.argv[3]);\n",
+    "import { writeFileSync } from 'node:fs'; writeFileSync('received.txt', process.argv.slice(2).join(' '));\n",
   );
 }
 const commands = [
@@ -44,15 +44,7 @@ const commands = [
         name: "run_tests",
         description: "Capture one validated argument.",
         command: "node capture.mjs",
-        arguments: [
-          {
-            name: "value",
-            description: "Diagnostic value.",
-            flag: "--value",
-            pattern: "[\\s\\S]*",
-            maxLength: 200,
-          },
-        ],
+        arguments: ["--value"],
       }
     : {
         name: "run_tests",

@@ -14,34 +14,59 @@ public sealed class LinePageReaderTests
         var path = Path.GetTempFileName();
         try
         {
-            var first = new string('x', 65500) + "😀" + new string('y', 90000);
+            var first = new string('x', 65500) + "\uD83D\uDE00" + new string('y', 90000);
             await File.WriteAllTextAsync(
                 path,
                 first + "\r\nlast",
                 utf16 ? Encoding.Unicode : new UTF8Encoding(false)
             );
-            var reconstructed = new StringBuilder();
-            string? cursor = null;
-            do
+            var builders = new Dictionary<int, StringBuilder>();
+            var startLine = 1;
+            var characterOffset = 0;
+            var midLineResumes = 0;
+            while (true)
             {
-                var page = JsonSerializer.SerializeToElement(
-                    await BoundedLinePageReader.ReadAsync(path, cursor: cursor)
+                var page = await BoundedLinePageReader.ReadAsync(
+                    path,
+                    startLine: startLine,
+                    lineCount: 2000,
+                    characterOffset: characterOffset
                 );
-                foreach (var line in page.GetProperty("lines").EnumerateArray())
+                page.StartLine.Should().Be(startLine);
+                for (var i = 0; i < page.Lines.Count; i++)
                 {
-                    if (line.GetProperty("line").GetInt32() == 1)
+                    var line = page.StartLine + i;
+                    if (!builders.TryGetValue(line, out var builder))
                     {
-                        reconstructed.Append(line.GetProperty("text").GetString());
+                        builder = new StringBuilder();
+                        builders[line] = builder;
                     }
+
+                    builder.Append(page.Lines[i]);
                 }
 
-                cursor = page.GetProperty("nextCursor").GetString();
-                if (cursor is null)
+                if (page.NextStartLine is null)
                 {
-                    page.GetProperty("totalLines").GetInt32().Should().Be(2);
+                    page.NextCharacterOffset.Should().BeNull();
+                    break;
                 }
-            } while (cursor is not null);
-            reconstructed.ToString().Should().Be(first);
+
+                if (page.NextCharacterOffset is not null)
+                {
+                    midLineResumes++;
+                    page.Lines.Should().NotBeEmpty();
+                }
+
+                startLine = page.NextStartLine.Value;
+                characterOffset = page.NextCharacterOffset ?? 0;
+            }
+
+            // The first line exceeds 155,000 characters, so mid-line resume positions
+            // must be followed more than once across pages.
+            midLineResumes.Should().BeGreaterThan(1);
+            builders.Should().HaveCount(2);
+            builders[1].ToString().Should().Be(first);
+            builders[2].ToString().Should().Be("last");
         }
         finally
         {
@@ -50,7 +75,7 @@ public sealed class LinePageReaderTests
     }
 
     [Fact]
-    public async Task Continuation_allows_page_size_changes_but_rejects_another_file()
+    public async Task Continuation_supports_changing_page_sizes_and_is_independent_per_file()
     {
         var path = Path.GetTempFileName();
         var otherPath = Path.GetTempFileName();
@@ -60,34 +85,30 @@ public sealed class LinePageReaderTests
             await File.WriteAllLinesAsync(path, expected);
             await File.WriteAllLinesAsync(otherPath, expected);
             var actual = new List<string>();
-            string? cursor = null;
+            var startLine = 1;
+            int? nextStartLine = null;
             foreach (var count in new[] { 130, 120, 200 })
             {
-                var page = JsonSerializer.SerializeToElement(
-                    await BoundedLinePageReader.ReadAsync(path, lineCount: count, cursor: cursor)
+                var page = await BoundedLinePageReader.ReadAsync(
+                    path,
+                    startLine: startLine,
+                    lineCount: count
                 );
-                actual.AddRange(
-                    page.GetProperty("lines")
-                        .EnumerateArray()
-                        .Select(line => line.GetProperty("text").GetString()!)
-                );
-                cursor = page.GetProperty("nextCursor").GetString();
-                if (cursor is not null)
-                {
-                    await FluentActions
-                        .Awaiting(() =>
-                            BoundedLinePageReader.ReadAsync(
-                                otherPath,
-                                lineCount: count,
-                                cursor: cursor
-                            )
-                        )
-                        .Should()
-                        .ThrowAsync<ArgumentException>();
-                }
+                actual.AddRange(page.Lines);
+                nextStartLine = page.NextStartLine;
+                startLine = page.NextStartLine ?? startLine;
             }
-            cursor.Should().BeNull();
+
+            nextStartLine.Should().BeNull();
             actual.Should().Equal(expected);
+            // Continuation is stateless: an identical ordinal on another file is an
+            // independent read, not a continuation rejection.
+            var other = await BoundedLinePageReader.ReadAsync(
+                otherPath,
+                startLine: 131,
+                lineCount: 120
+            );
+            other.Lines.First().Should().Be("line 131");
         }
         finally
         {
@@ -97,7 +118,7 @@ public sealed class LinePageReaderTests
     }
 
     [Fact]
-    public async Task Short_page_does_not_decode_the_entire_suffix_and_rejects_stale_continuation()
+    public async Task Short_page_stops_without_decoding_the_entire_suffix_and_continuation_is_ordinary_validation()
     {
         var path = Path.GetTempFileName();
         try
@@ -107,14 +128,25 @@ public sealed class LinePageReaderTests
             var page = JsonSerializer.SerializeToElement(
                 await BoundedLinePageReader.ReadAsync(path, lineCount: 1)
             );
-            page.GetProperty("lines")[0].GetProperty("text").GetString().Should().Be("one");
-            page.GetProperty("totalLines").ValueKind.Should().Be(JsonValueKind.Null);
-            var cursor = page.GetProperty("nextCursor").GetString();
+            page.GetProperty("lines")[0].GetString().Should().Be("one");
+            page.GetProperty("startLine").GetInt32().Should().Be(1);
+            page.GetProperty("nextStartLine").GetInt32().Should().Be(2);
+            page.TryGetProperty("totalLines", out _).Should().BeFalse();
+            page.TryGetProperty("hasMore", out _).Should().BeFalse();
+            page.TryGetProperty("pagination", out _).Should().BeFalse();
+            page.TryGetProperty("nextCursor", out _).Should().BeFalse();
+            // After an edit there is no version state to invalidate: the stale line
+            // ordinal honestly reflects the new repository as an empty final page.
             await File.WriteAllTextAsync(path, "changed");
+            var after = await BoundedLinePageReader.ReadAsync(path, startLine: 2);
+            after.StartLine.Should().Be(2);
+            after.Lines.Should().BeEmpty();
+            after.NextStartLine.Should().BeNull();
+            // A request beyond the file is ordinary argument validation.
             await FluentActions
-                .Awaiting(() => BoundedLinePageReader.ReadAsync(path, lineCount: 1, cursor: cursor))
+                .Awaiting(() => BoundedLinePageReader.ReadAsync(path, startLine: 5))
                 .Should()
-                .ThrowAsync<ArgumentException>();
+                .ThrowAsync<ArgumentOutOfRangeException>();
         }
         finally
         {
@@ -131,7 +163,9 @@ public sealed class LinePageReaderTests
             var page = JsonSerializer.SerializeToElement(
                 await BoundedLinePageReader.ReadAsync(path)
             );
-            page.GetProperty("totalLines").GetInt32().Should().Be(0);
+            page.GetProperty("startLine").GetInt32().Should().Be(1);
+            page.GetProperty("lines").GetArrayLength().Should().Be(0);
+            page.TryGetProperty("nextStartLine", out _).Should().BeFalse();
             await File.WriteAllTextAsync(path, "one\ntwo");
             await FluentActions
                 .Awaiting(() => BoundedLinePageReader.ReadAsync(path, 4))
