@@ -12,6 +12,7 @@ Tandem.AgentSkill
 Tandem.FailureEvidence
 Tandem.IAgentCapabilityDefinition`2
 Tandem.IAgentOutputDefinition`2
+Tandem.IAgentRawOutputDefinition`2
 Tandem.Outcome`1
 Tandem.Outcome`1+Failed
 Tandem.Outcome`1+Success

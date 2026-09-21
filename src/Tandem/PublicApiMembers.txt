@@ -8,6 +8,7 @@ M Tandem.AgentBuilder<TState> WithJsonOutput(Tandem.AgentJsonOutputDefinition<TS
 M Tandem.AgentBuilder<TState> WithMessage(System.Func<TState,System.String> message)
 M Tandem.AgentBuilder<TState> WithModelRequestOptions(Tandem.AgentModelRequestOptions options)
 M Tandem.AgentBuilder<TState> WithOutput<TOutput>(Tandem.IAgentOutputDefinition<TState,TOutput> output, System.Func<TState,TOutput,TState> apply)
+M Tandem.AgentBuilder<TState> WithRawOutput<TOutput>(Tandem.IAgentRawOutputDefinition<TState,TOutput> output, System.Func<TState,TOutput,TState> apply)
 M Tandem.AgentBuilder<TState> WithSkill(Tandem.AgentSkill skill)
 M Tandem.AgentBuilder<TState> WithSkills(params Tandem.AgentSkill[] skills)
 M Tandem.AgentBuilder<TState> WithTimeout(System.TimeSpan timeout)
@@ -67,6 +68,11 @@ P System.String ToolName { get; }
 T Tandem.IAgentOutputDefinition<TState,TOutput>
 M FluentValidation.IValidator<TOutput>? ValidatorFor(TState state)
 M System.Collections.Generic.IReadOnlyList<Tandem.AgentOutputExample<TOutput>> Examples(TState state)
+P FluentValidation.IValidator<TOutput> Validator { get; }
+P System.String Instructions { get; }
+T Tandem.IAgentRawOutputDefinition<TState,TOutput>
+M FluentValidation.IValidator<TOutput>? ValidatorFor(TState state)
+M TOutput Parse(System.String response)
 P FluentValidation.IValidator<TOutput> Validator { get; }
 P System.String Instructions { get; }
 T Tandem.IPipelineCompletion<TState>

@@ -95,7 +95,9 @@ internal sealed record RegisteredAgentOutputContract(
     string? ValidateCallback,
     string? ValidateForCallback,
     string? ApplyCallback,
-    string? ValueType
+    string? ValueType,
+    bool Raw = false,
+    string? RawParseCallback = null
 );
 
 internal sealed record RegisteredCapabilityContract(

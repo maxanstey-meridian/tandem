@@ -423,8 +423,27 @@ internal static partial class RegistrationContractValidator
         {
             Required(errors, $"{path}.output.instructions", output.Instructions);
             Required(errors, $"{path}.output.valueType", output.ValueType);
-            Json(errors, $"{path}.output.jsonSchema", output.JsonSchema, objectRoot: true);
-            Required(errors, $"{path}.output.validateCallback", output.ValidateCallback);
+            if (output.Raw)
+            {
+                Required(errors, $"{path}.output.rawParseCallback", output.RawParseCallback);
+                if (output.JsonSchema is not null)
+                {
+                    errors.Add($"{path}.output.jsonSchema is forbidden for raw output.");
+                }
+                if (output.ValidateCallback is not null)
+                {
+                    errors.Add($"{path}.output.validateCallback is forbidden for raw output.");
+                }
+            }
+            else
+            {
+                Json(errors, $"{path}.output.jsonSchema", output.JsonSchema, objectRoot: true);
+                Required(errors, $"{path}.output.validateCallback", output.ValidateCallback);
+                if (output.RawParseCallback is not null)
+                {
+                    errors.Add($"{path}.output.rawParseCallback is forbidden.");
+                }
+            }
             Required(errors, $"{path}.output.applyCallback", output.ApplyCallback);
             OptionalCallback(
                 errors,

@@ -91,6 +91,88 @@ internal static class AgentStructuredOutputPolicy
         string message
     ) => new(null, [new AgentStructuredOutputProblem(field, message)], raw);
 
+    /// <summary>
+    /// Parses a free-text model response through the raw output definition, then applies
+    /// the same intrinsic and contextual validation chain as JSON-schema outputs.
+    /// </summary>
+    public static AgentStructuredOutputResult<TState> ParseRaw<T, TState>(
+        string response,
+        IAgentRawOutputDefinition<TState, T> definition,
+        IValidator<T>? contextualValidator = null
+    )
+    {
+        T? value;
+        try
+        {
+            value = definition.Parse(response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return Failure<TState>(response, "$", exception.Message);
+        }
+
+        if (value is null)
+        {
+            return Failure<TState>(response, "$", "Response did not produce an output value.");
+        }
+
+        return ValidateRaw<T, TState>(response, value, definition.Validator, contextualValidator);
+    }
+
+    private static AgentStructuredOutputResult<TState> ValidateRaw<T, TState>(
+        string response,
+        T value,
+        IValidator<T> validator,
+        IValidator<T>? contextualValidator
+    )
+    {
+        var validation = validator.Validate(value);
+        if (!validation.IsValid)
+        {
+            return new AgentStructuredOutputResult<TState>(
+                null,
+                validation
+                    .Errors.Select(error => new AgentStructuredOutputProblem(
+                        ToCamelCase(error.PropertyName),
+                        error.ErrorMessage
+                    ))
+                    .ToArray(),
+                response,
+                value
+            );
+        }
+
+        if (contextualValidator is not null)
+        {
+            validation = contextualValidator.Validate(value);
+            if (!validation.IsValid)
+            {
+                return new AgentStructuredOutputResult<TState>(
+                    null,
+                    validation
+                        .Errors.Select(error => new AgentStructuredOutputProblem(
+                            ToCamelCase(error.PropertyName),
+                            error.ErrorMessage
+                        ))
+                        .ToArray(),
+                    response,
+                    value
+                );
+            }
+        }
+
+        return new AgentStructuredOutputResult<TState>(
+            new AgentStructuredOutcome<TState>(
+                StandardOutcomeKinds.Success,
+                "Succeeded",
+                JsonSerializer.SerializeToElement(value, TandemJson.TypedContract)
+            ),
+            [],
+            response,
+            value
+        );
+    }
+
     private static string ToCamelCase(string path) =>
         string.IsNullOrEmpty(path) ? path : char.ToLowerInvariant(path[0]) + path[1..];
 }
