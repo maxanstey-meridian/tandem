@@ -3,7 +3,7 @@
 Optional observation-driven terminal presentation for Tandem pipelines.
 
 ```sh
-dotnet add package Meridian.Tandem.Terminal --version 0.1.0-alpha.1
+dotnet add package Meridian.Tandem.Terminal --version 0.1.0
 ```
 
 ```csharp

@@ -632,9 +632,8 @@ internal static class WorkspaceShellTools
                     || !string.Equals(key, "arguments", StringComparison.OrdinalIgnoreCase)
                 )
                 {
-                    throw new ArgumentException(
-                        $"Command '{_command.Name}' does not accept an argument named '{key}'.",
-                        nameof(arguments)
+                    throw new ToolInputException(
+                        $"Command '{_command.Name}' does not accept an argument named '{key}'."
                     );
                 }
             }
@@ -689,9 +688,8 @@ internal static class WorkspaceShellTools
         {
             if (rawArguments is null)
             {
-                throw new ArgumentException(
-                    $"Argument 'arguments' of command '{command.Name}' cannot be null.",
-                    nameof(rawArguments)
+                throw new ToolInputException(
+                    $"Argument 'arguments' of command '{command.Name}' cannot be null."
                 );
             }
             var element = rawArguments switch
@@ -704,9 +702,8 @@ internal static class WorkspaceShellTools
             };
             if (element.ValueKind != JsonValueKind.Array)
             {
-                throw new ArgumentException(
-                    $"Argument 'arguments' of command '{command.Name}' must be an array of strings.",
-                    nameof(rawArguments)
+                throw new ToolInputException(
+                    $"Argument 'arguments' of command '{command.Name}' must be an array of strings."
                 );
             }
             var values = new List<string>();
@@ -714,16 +711,15 @@ internal static class WorkspaceShellTools
             {
                 if (item.ValueKind != JsonValueKind.String)
                 {
-                    throw new ArgumentException(
-                        $"Argument 'arguments' of command '{command.Name}' must contain only strings.",
-                        nameof(rawArguments)
+                    throw new ToolInputException(
+                        $"Argument 'arguments' of command '{command.Name}' must contain only strings."
                     );
                 }
                 values.Add(item.GetString()!);
             }
             if (values.Count > AgentCommand.MaximumArgumentCount)
             {
-                throw new ArgumentException(
+                throw new ToolInputException(
                     $"Command '{command.Name}' accepts at most {AgentCommand.MaximumArgumentCount} arguments."
                 );
             }
@@ -731,7 +727,7 @@ internal static class WorkspaceShellTools
             {
                 if (value.Length > AgentCommand.MaximumArgumentLength)
                 {
-                    throw new ArgumentException(
+                    throw new ToolInputException(
                         $"Argument of command '{command.Name}' must be at most {AgentCommand.MaximumArgumentLength} characters."
                     );
                 }
@@ -739,30 +735,38 @@ internal static class WorkspaceShellTools
             return values;
         }
 
-        private JsonElement CreateSchema()
-        {
-            var properties = new Dictionary<string, object?>(StringComparer.Ordinal);
-            if (_command.Arguments.Count > 0)
-            {
-                properties["arguments"] = new Dictionary<string, object?>(StringComparer.Ordinal)
-                {
-                    ["type"] = "array",
-                    ["items"] = new Dictionary<string, object?>(StringComparer.Ordinal)
+        private JsonElement CreateSchema() =>
+            _command.Arguments.Count == 0
+                ? JsonSerializer.SerializeToElement(
+                    new
                     {
-                        ["type"] = "string",
-                    },
-                    ["description"] = _command.Description,
-                };
-            }
-            return JsonSerializer.SerializeToElement(
-                new Dictionary<string, object?>
-                {
-                    ["type"] = "object",
-                    ["properties"] = properties,
-                    ["additionalProperties"] = false,
-                }
-            );
-        }
+                        type = "object",
+                        properties = new { },
+                        additionalProperties = false,
+                    }
+                )
+                : JsonSerializer.SerializeToElement(
+                    new
+                    {
+                        type = "object",
+                        properties = new
+                        {
+                            arguments = new
+                            {
+                                type = "array",
+                                items = new
+                                {
+                                    type = "string",
+                                    maxLength = AgentCommand.MaximumArgumentLength,
+                                },
+                                description = _command.Description,
+                                examples = new[] { _command.Arguments },
+                                maxItems = AgentCommand.MaximumArgumentCount,
+                            },
+                        },
+                        additionalProperties = false,
+                    }
+                );
 
         // MAF uses these same dialect-specific forms internally, but does not expose them publicly.
         private static string QuotePowerShell(string value) =>

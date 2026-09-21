@@ -33,7 +33,11 @@ internal sealed record AgentStructuredOutputResult<TState>(
 
             {AgentStructuredOutputPrompt.Schema(schema)}
 
-            Reply with only the corrected JSON object.
+            {(
+                schema is null
+                    ? "Reply with only the corrected response in the requested format."
+                    : "Reply with only the corrected JSON object."
+            )}
             """;
     }
 }

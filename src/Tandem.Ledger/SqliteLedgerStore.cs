@@ -29,7 +29,9 @@ public sealed class SqliteLedgerStore
         {
             DataSource = _databasePath,
             Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared,
+            // WAL permits readers alongside a writer. Shared cache adds table
+            // locks that defeat that isolation between concurrent run stores.
+            Cache = SqliteCacheMode.Private,
             Pooling = false,
         }.ToString();
         _timeProvider = timeProvider ?? TimeProvider.System;

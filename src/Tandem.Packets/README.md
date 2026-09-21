@@ -4,7 +4,7 @@
 application-owned C# types.
 
 ```sh
-dotnet add package Meridian.Tandem.Packets --version 0.1.0-alpha.1
+dotnet add package Meridian.Tandem.Packets --version 0.1.0
 ```
 
 ```csharp

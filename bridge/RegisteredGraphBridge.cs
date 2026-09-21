@@ -1,3 +1,4 @@
+using System.Runtime.Loader;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Tandem.Advanced;
@@ -85,6 +86,35 @@ public static partial class NodePipelineBridge
             invokeSyncCallback,
             invokeAsyncCallback,
             runCancellationToken
+        );
+        // SQLite's async APIs perform synchronous I/O. A busy wait must not block
+        // Node's thread while another run needs a JS callback to finish acceptance.
+        // CallbackDispatcher already marshals authored callbacks to that thread.
+        return await Task.Run(
+            () =>
+                RunRegisteredGraphCoreAsync(
+                    definition,
+                    callbacks,
+                    terminalCancellation,
+                    runCancellationToken,
+                    cancellationToken
+                ),
+            cancellationToken
+        );
+    }
+
+    private static async Task<string> RunRegisteredGraphCoreAsync(
+        RegisteredGraphContract definition,
+        CallbackDispatcher callbacks,
+        CancellationTokenSource? terminalCancellation,
+        CancellationToken runCancellationToken,
+        CancellationToken cancellationToken
+    )
+    {
+        // MAF resolves interaction payload types by assembly-qualified name. Keep
+        // that resolution in the bridge's load context when running off Node's thread.
+        using var reflectionScope = AssemblyLoadContext.EnterContextualReflection(
+            typeof(NodePipelineBridge).Assembly
         );
         var nodes = new Dictionary<string, RegisteredParticipant>(StringComparer.Ordinal);
         foreach (var node in definition.Nodes!)

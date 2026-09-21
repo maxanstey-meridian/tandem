@@ -38,51 +38,7 @@ internal static class AgentStructuredOutputPolicy
             return Failure<TState>(response, "$", "Response must contain a JSON object.");
         }
 
-        var validation = validator.Validate(value);
-        if (!validation.IsValid)
-        {
-            return new AgentStructuredOutputResult<TState>(
-                null,
-                validation
-                    .Errors.Select(error => new AgentStructuredOutputProblem(
-                        ToCamelCase(error.PropertyName),
-                        error.ErrorMessage
-                    ))
-                    .ToArray(),
-                response,
-                value
-            );
-        }
-
-        if (contextualValidator is not null)
-        {
-            validation = contextualValidator.Validate(value);
-            if (!validation.IsValid)
-            {
-                return new AgentStructuredOutputResult<TState>(
-                    null,
-                    validation
-                        .Errors.Select(error => new AgentStructuredOutputProblem(
-                            ToCamelCase(error.PropertyName),
-                            error.ErrorMessage
-                        ))
-                        .ToArray(),
-                    response,
-                    value
-                );
-            }
-        }
-
-        return new AgentStructuredOutputResult<TState>(
-            new AgentStructuredOutcome<TState>(
-                StandardOutcomeKinds.Success,
-                "Succeeded",
-                JsonSerializer.SerializeToElement(value, options)
-            ),
-            [],
-            response,
-            value
-        );
+        return Validate<T, TState>(response, value, options, validator, contextualValidator);
     }
 
     private static AgentStructuredOutputResult<TState> Failure<TState>(
@@ -97,14 +53,15 @@ internal static class AgentStructuredOutputPolicy
     /// </summary>
     public static AgentStructuredOutputResult<TState> ParseRaw<T, TState>(
         string response,
-        IAgentRawOutputDefinition<TState, T> definition,
+        Func<string, T> parse,
+        IValidator<T> validator,
         IValidator<T>? contextualValidator = null
     )
     {
         T? value;
         try
         {
-            value = definition.Parse(response);
+            value = parse(response);
         }
         catch (InvalidOperationException exception)
         {
@@ -116,12 +73,19 @@ internal static class AgentStructuredOutputPolicy
             return Failure<TState>(response, "$", "Response did not produce an output value.");
         }
 
-        return ValidateRaw<T, TState>(response, value, definition.Validator, contextualValidator);
+        return Validate<T, TState>(
+            response,
+            value,
+            TandemJson.TypedContract,
+            validator,
+            contextualValidator
+        );
     }
 
-    private static AgentStructuredOutputResult<TState> ValidateRaw<T, TState>(
+    private static AgentStructuredOutputResult<TState> Validate<T, TState>(
         string response,
         T value,
+        JsonSerializerOptions options,
         IValidator<T> validator,
         IValidator<T>? contextualValidator
     )
@@ -165,7 +129,7 @@ internal static class AgentStructuredOutputPolicy
             new AgentStructuredOutcome<TState>(
                 StandardOutcomeKinds.Success,
                 "Succeeded",
-                JsonSerializer.SerializeToElement(value, TandemJson.TypedContract)
+                JsonSerializer.SerializeToElement(value, options)
             ),
             [],
             response,

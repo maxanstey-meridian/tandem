@@ -387,42 +387,6 @@ public sealed class AgentBuilder<TState>
         return this;
     }
 
-    /// <summary>
-    /// Configures a raw-text structured-output contract. No response format is sent to
-    /// the provider and no schema instructions are appended; the definition parses the
-    /// free-text response and the validator chain runs on the parsed value.
-    /// </summary>
-    public AgentBuilder<TState> WithRawOutput<TOutput>(
-        IAgentRawOutputDefinition<TState, TOutput> output,
-        Func<TState, TOutput, TState> apply
-    )
-    {
-        ArgumentNullException.ThrowIfNull(output);
-        ArgumentNullException.ThrowIfNull(apply);
-        _structuredOutput = new AgentStructuredOutputDescriptor<TState>(
-            (response, state) =>
-                AgentStructuredOutputPolicy.ParseRaw<TOutput, TState>(
-                    response,
-                    output,
-                    output.ValidatorFor(state)
-                ),
-            Apply: (state, candidate) => apply(state, (TOutput)candidate),
-            EmitAccepted: (runId, stepId, acceptedOutputId, kind, payload, candidate) =>
-                new OutputAccepted<TOutput>(
-                    runId,
-                    stepId,
-                    acceptedOutputId,
-                    kind,
-                    typeof(TOutput).FullName,
-                    payload,
-                    (TOutput)candidate
-                ),
-            OutputType: typeof(TOutput)
-        );
-        _configureChatOptions = options => { };
-        return this;
-    }
-
     private static AgentStructuredOutputResult<TState> ParseJsonOutput(
         string response,
         TState state,

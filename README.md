@@ -332,7 +332,7 @@ Each agent receives only the groups passed to its own `WithWorkspace` call.
 predicate from current state before each visit. `"git:ro"` expands to bounded status,
 diff, log, show, blame, changed-file, and exact-comparison tools.
 
-`repository.Commands` selects the complete fixed command catalogue. Each command is
+`repository.Commands` selects the complete fixed command catalogue. By default each command is
 a parameterless model tool: the model can choose `run_tests`, but it cannot alter
 `task test` or append another argument. Successful command calls can be required by
 output acceptance as `ProcessExecution` observations. A later failed call of the same
@@ -1212,24 +1212,10 @@ Start and authenticate the local Sol endpoint:
 npx --yes openai-oauth@latest
 ```
 
-Run a TypeScript example from the repository root:
+The TypeScript SDK and example run instructions live in the
+[tandem-ts repository](https://github.com/maxanstey-meridian/tandem-ts).
 
-```sh
-# Install once.
-pnpm --dir typescript install --frozen-lockfile
-
-OPENROUTER_API_KEY=... pnpm --dir typescript run:code-writer
-
-OPENROUTER_API_KEY=... \
-  pnpm --dir typescript run:debate -- \
-  "Should cities remove downtown parking?"
-
-OPENROUTER_API_KEY=... \
-  pnpm --dir typescript run:songwriter -- \
-  "A hopeful song about coming home"
-```
-
-Or run the matching C# examples:
+Run the C# examples from this repository root:
 
 ```sh
 OPENROUTER_API_KEY=... \
@@ -1253,7 +1239,7 @@ can query it with `SqliteLedgerStore`.
 
 For more detail, see:
 
-* [`typescript/README.md`](typescript/README.md) — TypeScript SDK requirements, packages, chat clients, persistence, and
+* [TypeScript SDK](https://github.com/maxanstey-meridian/tandem-ts) — TypeScript SDK requirements, packages, chat clients, persistence, and
   development; and
 * [`CONTRIBUTING.md`](CONTRIBUTING.md) — architecture boundaries and invariants for contributors.
 

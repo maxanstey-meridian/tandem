@@ -3,8 +3,8 @@
 Typed, in-process agentic pipelines built on Microsoft Agent Framework.
 
 ```sh
-dotnet add package Meridian.Tandem --version 0.1.0-alpha.1
-dotnet add package Meridian.Tandem.Generators --version 0.1.0-alpha.1
+dotnet add package Meridian.Tandem --version 0.1.0
+dotnet add package Meridian.Tandem.Generators --version 0.1.0
 ```
 
 ```csharp

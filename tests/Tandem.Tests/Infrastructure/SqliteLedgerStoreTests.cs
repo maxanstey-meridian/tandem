@@ -338,6 +338,37 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task WalReader_DoesNotBlockAnotherStoreFromAppending()
+    {
+        var path = DatabasePath();
+        var runId = Guid.CreateVersion7();
+        var stream = new LedgerStream<ProbeEntry>("snapshot", "test.probe");
+        var setup = await CreateStoreAsync(path);
+        await setup.CreateRunAsync(runId, "test");
+        await setup.ForRun(runId).AppendAsync(stream, "first", new ProbeEntry("first", 1));
+
+        await using var reader = new SqliteConnection(
+            $"Data Source={path};Cache=Shared;Pooling=False"
+        );
+        await reader.OpenAsync();
+        await using var snapshot = reader.BeginTransaction(deferred: true);
+        await using var command = reader.CreateCommand();
+        command.Transaction = snapshot;
+        command.CommandText = "SELECT COUNT(*) FROM run_entries;";
+        Convert.ToInt64(await command.ExecuteScalarAsync()).Should().Be(1);
+
+        var writer = new SqliteLedgerStore(
+            path,
+            options: new SqliteLedgerOptions(TimeSpan.FromMilliseconds(20), 0, TimeSpan.Zero)
+        );
+        await writer.ForRun(runId).AppendAsync(stream, "second", new ProbeEntry("second", 2));
+
+        Convert.ToInt64(await command.ExecuteScalarAsync()).Should().Be(1);
+        await snapshot.CommitAsync();
+        (await setup.ForRun(runId).ReadAsync(stream)).Should().HaveCount(2);
+    }
+
+    [Fact]
     public async Task StorageNames_RejectAnotherContractKindNameOrVersion()
     {
         var store = await CreateStoreAsync(DatabasePath());

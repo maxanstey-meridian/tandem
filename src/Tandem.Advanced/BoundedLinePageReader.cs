@@ -110,7 +110,7 @@ internal static class BoundedLinePageReader
                     else
                     {
                         characters = pending.Length;
-                        consumedInLine = characterOffset;
+                        consumedInLine = characterOffset + pending.Length;
                     }
                     break;
                 }

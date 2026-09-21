@@ -243,17 +243,17 @@ public sealed class WorkspaceShellToolsTests
     public void PacketCommandAdmission_CarriesOptionalArgumentsThroughToTheToolSchema()
     {
         using var workspace = TemporaryWorkspace.Create();
-        var argumented = new PacketCommand(
+        var argumented = AgentCommand.Define(
             "run_review",
             "Run review with a path.",
             "review",
             ["--path"]
-        ).ToAgentCommand();
-        var labelOnly = new PacketCommand(
+        );
+        var labelOnly = AgentCommand.Define(
             "where_am_i",
             "Print the workspace.",
             CurrentDirectory()
-        ).ToAgentCommand();
+        );
 
         var options = new ChatOptions();
         WorkspaceShellTools.Add(
@@ -270,47 +270,12 @@ public sealed class WorkspaceShellToolsTests
         var property = reviewTool.JsonSchema.GetProperty("properties").GetProperty("arguments");
         property.GetProperty("type").GetString().Should().Be("array");
         property.GetProperty("items").GetProperty("type").GetString().Should().Be("string");
-        property.GetProperty("description").GetString().Should().Be("Run review with a path.");
+        property.GetProperty("examples")[0][0].GetString().Should().Be("--path");
+        property.GetProperty("maxItems").GetInt32().Should().Be(16);
         reviewTool.JsonSchema.GetProperty("additionalProperties").GetBoolean().Should().BeFalse();
 
         var labelOnlyTool = tools.Should().ContainSingle(tool => tool.Name == "where_am_i").Subject;
         labelOnlyTool.JsonSchema.GetProperty("properties").EnumerateObject().Should().BeEmpty();
-
-        var validator = new PacketValidator();
-        var tooMany = validator.Validate(
-            new PacketCommand(
-                "run_review",
-                "Run review.",
-                "review",
-                Enumerable
-                    .Range(0, AgentCommand.MaximumArgumentCount + 1)
-                    .Select(index => $"arg{index}")
-                    .ToArray()
-            )
-        );
-        tooMany.IsValid.Should().BeFalse();
-        tooMany
-            .Errors.Should()
-            .Contain(error => error.ErrorMessage.Contains("accepts at most 16 arguments."));
-
-        var blank = validator.Validate(
-            new PacketCommand("run_review", "Run review.", "review", ["  "])
-        );
-        blank.IsValid.Should().BeFalse();
-        blank.Errors.Should().Contain(error => error.ErrorMessage.Contains("must not be blank."));
-
-        var tooLong = validator.Validate(
-            new PacketCommand(
-                "run_review",
-                "Run review.",
-                "review",
-                [new string('x', AgentCommand.MaximumArgumentLength + 1)]
-            )
-        );
-        tooLong.IsValid.Should().BeFalse();
-        tooLong
-            .Errors.Should()
-            .Contain(error => error.ErrorMessage.Contains("must be at most 200 characters."));
     }
 
     [Fact]

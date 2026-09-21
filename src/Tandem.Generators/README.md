@@ -8,7 +8,7 @@ private so it does not become part of the application's published API:
 ```xml
 <PackageReference
     Include="Meridian.Tandem.Generators"
-    Version="0.1.0-alpha.1"
+    Version="0.1.0"
     PrivateAssets="all"
     IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive"
 />

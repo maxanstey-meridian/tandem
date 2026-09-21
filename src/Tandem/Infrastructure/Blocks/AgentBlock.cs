@@ -891,7 +891,11 @@ internal sealed class AgentBlock<TState>(
                         result = exception.ToolResult;
                     }
                     catch (Exception exception)
-                        when (ToolInputValidation.IsExpected(ficContext.Function.Name, exception))
+                        when (ToolInputValidation.IsExpected(
+                                exception,
+                                classified ? semantics : null
+                            )
+                        )
                     {
                         result = ToolInputValidation.Error(exception.Message);
                     }
@@ -990,7 +994,10 @@ internal sealed class AgentBlock<TState>(
                                 {
                                     Stdout = DiagnosticPreview(captured.Stdout),
                                     Stderr = DiagnosticPreview(captured.Stderr),
-                                Truncated = captured.Truncated,
+                                    Truncated =
+                                        captured.Truncated
+                                        || captured.Stdout.Length > 8000
+                                        || captured.Stderr.Length > 8000,
                                 }
                                 : resultEvidence
                         )

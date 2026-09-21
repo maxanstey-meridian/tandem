@@ -203,6 +203,11 @@ T Tandem.Advanced.CheckpointSessionBehavior
 F System.Int32 value__
 F static Tandem.Advanced.CheckpointSessionBehavior Reset
 F static Tandem.Advanced.CheckpointSessionBehavior Retain
+T Tandem.Advanced.IAgentRawOutputDefinition<TState,TOutput>
+M FluentValidation.IValidator<TOutput>? ValidatorFor(TState state)
+M TOutput Parse(System.String response)
+P FluentValidation.IValidator<TOutput> Validator { get; }
+P System.String Instructions { get; }
 T Tandem.Advanced.IPipelineAcceptanceUnitOfWork
 M System.Threading.Tasks.ValueTask<T> ExecuteAsync<T>(System.Func<System.Threading.CancellationToken,System.Threading.Tasks.ValueTask<T>> operation, System.Threading.CancellationToken cancellationToken)
 T Tandem.Advanced.LocalProcess
@@ -288,21 +293,6 @@ C (System.Object object, System.IntPtr method)
 M System.IAsyncResult BeginInvoke(Tandem.Advanced.OutputAcceptanceObservation<TState,TOutput> observation, System.Threading.CancellationToken cancellationToken, System.AsyncCallback callback, System.Object object)
 M System.Threading.Tasks.ValueTask EndInvoke(System.IAsyncResult result)
 M System.Threading.Tasks.ValueTask Invoke(Tandem.Advanced.OutputAcceptanceObservation<TState,TOutput> observation, System.Threading.CancellationToken cancellationToken)
-T Tandem.Advanced.PacketCommand
-C (System.String Name, System.String Description, System.String Command, System.Collections.Generic.IReadOnlyList<System.String>? Arguments = null)
-M System.Boolean Equals(System.Object? obj)
-M System.Boolean Equals(Tandem.Advanced.PacketCommand? other)
-M System.Int32 GetHashCode()
-M System.String ToString()
-M System.Void Deconstruct(out System.String Name, out System.String Description, out System.String Command, out System.Collections.Generic.IReadOnlyList<System.String>? Arguments)
-M Tandem.Advanced.AgentCommand ToAgentCommand()
-M Tandem.Advanced.PacketCommand <Clone>$()
-P System.Collections.Generic.IReadOnlyList<System.String>? Arguments { get; set; }
-P System.String Command { get; set; }
-P System.String Description { get; set; }
-P System.String Name { get; set; }
-T Tandem.Advanced.PacketValidator
-C ()
 T Tandem.Advanced.PipelineOperation
 M static System.Threading.Tasks.ValueTask<Tandem.Outcome<TState>> RunOutcomeAsync<TState>(TState state, System.Func<Tandem.Advanced.PipelineOperationContext<TState>,System.Threading.Tasks.ValueTask<Tandem.Advanced.OperationResult<TState>>> execute, System.Func<Tandem.Advanced.OperationResult<TState>,Tandem.Outcome<TState>> map)
 T Tandem.Advanced.PipelineOperationContext<TState>
@@ -310,6 +300,8 @@ M System.Threading.Tasks.ValueTask ObserveCommandOutputAsync(System.String stepI
 P System.Guid RunId { get; }
 P TState State { get; }
 P Tandem.Advanced.OperationOutcome? LatestOutcome { get; }
+T Tandem.Advanced.RawOutputExtensions
+M static Tandem.AgentBuilder<TState> WithRawOutput<TState,TOutput>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.IAgentRawOutputDefinition<TState,TOutput> output, System.Func<TState,TOutput,TState> apply, System.String? valueType = null)
 T Tandem.Advanced.StructuredJsonExtractor
 M static System.String Extract(System.String text)
 T Tandem.Advanced.StructuredOutcome<TState>

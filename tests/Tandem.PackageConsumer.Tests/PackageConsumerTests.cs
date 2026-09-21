@@ -809,5 +809,20 @@ public sealed class PackageConsumerTests
             new DebateState("JSON capability", [], 0, null)
         );
         if (!capabilityResult.Succeeded) throw new Exception("JSON capability package proof failed.");
+
+        var raw = Agent.Create<string>("raw", "Return accepted.", new ScriptedChatClient(ScriptedChatClient.Text("accepted")))
+            .WithMessage(_ => "Decide.")
+            .WithRawOutput(new RawWord(), (_, word) => word)
+            .Build();
+        var rawResult = await new PipelineRunner().RunAsync(Pipeline.Start(raw, "raw-proof").Build(raw), "initial");
+        if (rawResult.State != "accepted") throw new Exception("Advanced raw output package proof failed.");
+
+        sealed class RawWord : IAgentRawOutputDefinition<string, string>
+        {
+            public string Instructions => "Return accepted.";
+            public IValidator<string> Validator { get; } = new InlineValidator<string>();
+            public string Parse(string response) => response;
+        }
+
         """;
 }

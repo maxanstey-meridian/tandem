@@ -124,6 +124,32 @@ public sealed class CallbackDispatcherTests
         Assert.Equal(0, callbackCalls);
     }
 
+    [Fact]
+    public async Task InvokeAsync_CancelledBeforeDelayedDispatch_DoesNotStartCallback()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var context = new DelayedSynchronizationContext();
+        var callbackCalls = 0;
+        var dispatcher = new CallbackDispatcher(
+            context,
+            (_, _, _) => Success("unexpected"),
+            (_, _, _, _) =>
+            {
+                callbackCalls++;
+                return Task.FromResult(Success("late"));
+            },
+            cancellation.Token
+        );
+        var invocation = dispatcher.InvokeAsync("callback", "state", "input", cancellation.Token);
+        await context.Posted.WaitAsync(TimeSpan.FromSeconds(5));
+
+        cancellation.Cancel();
+        context.Dispatch();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => invocation);
+        Assert.Equal(0, callbackCalls);
+    }
+
     private static string Success(string value) =>
         System.Text.Json.JsonSerializer.Serialize(new { succeeded = true, value });
 

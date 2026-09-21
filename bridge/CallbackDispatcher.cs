@@ -18,7 +18,12 @@ internal sealed class CallbackDispatcher(
         InvokeResultAsync(
             NodePipelineBridge.InvokeOnJavaScriptThreadAsync(
                 context,
-                () => invokeAsync(callback, state, input, cancellationToken)
+                () =>
+                {
+                    // Work can be cancelled while queued for Node's thread.
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return invokeAsync(callback, state, input, cancellationToken);
+                }
             )
         );
 

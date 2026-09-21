@@ -222,3 +222,11 @@ exported types require a deliberate update to the owning `ExportedApi.txt`.
 Generator ABI remains hidden with `EditorBrowsable(Never)`, and the analyzer must
 remain under `analyzers/dotnet/cs` in `Tandem.Generators`. `task check` runs the
 package restore, execution, analyzer-delivery, and dependency-isolation proof.
+
+The solution includes the Node bridge and its tests. Bridge builds and release bundles use project
+references to the SDK in the same checkout; packed-consumer tests separately prove NuGet delivery.
+The TypeScript SDK and its tests live in the [tandem-ts repository](https://github.com/maxanstey-meridian/tandem-ts).
+For a local macOS ARM64 bundle, run `dotnet publish bridge/Tandem.NodeApiSpike.Bridge.csproj -c Release
+-r osx-arm64 --self-contained false --output .runtime-publish`, then `node scripts/stage-runtime.mjs`.
+Tag releases pass the tag version to MSBuild and bundle the same source revision without waiting
+for NuGet publication.

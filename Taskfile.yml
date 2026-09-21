@@ -16,11 +16,6 @@ tasks:
     cmds:
       - dotnet test {{.ROOT_DIR}}/tests/Tandem.PackageConsumer.Tests/Tandem.PackageConsumer.Tests.csproj --configuration Release
 
-  typescript:test:
-    dir: "{{.ROOT_DIR}}/typescript"
-    cmds:
-      - pnpm test
-
   format:
     cmds:
       - dotnet tool restore
@@ -37,5 +32,4 @@ tasks:
     cmds:
       - task: format:check
       - task: test
-      - task: typescript:test
       - task: build

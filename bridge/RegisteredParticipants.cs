@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
 using FluentValidation;
-using FluentValidation.Results;
 using Tandem.Advanced;
 
 namespace Tandem.NodeApiSpike;
@@ -189,20 +188,20 @@ internal static class RegisteredParticipantFactory
         }
         if (node.Output is { } outputContract)
         {
-            Func<JavaScriptState, JsonElement, JavaScriptState> apply =
-                (state, candidate) =>
-                    new(
-                        callbacks.Invoke(
-                            outputContract.ApplyCallback!,
-                            state.Json,
-                            candidate.GetRawText()
-                        )
-                    );
+            Func<JavaScriptState, JsonElement, JavaScriptState> apply = (state, candidate) =>
+                new(
+                    callbacks.Invoke(
+                        outputContract.ApplyCallback!,
+                        state.Json,
+                        candidate.GetRawText()
+                    )
+                );
             if (outputContract.Raw)
             {
                 builder.WithRawOutput(
                     CreateRawOutputDefinition(outputContract, callbacks),
-                    apply
+                    apply,
+                    outputContract.ValueType
                 );
             }
             else
@@ -420,28 +419,37 @@ internal static class RegisteredParticipantFactory
             ) ?? [];
     }
 
-    private static IAgentRawOutputDefinition<JavaScriptState, JsonElement> CreateRawOutputDefinition(
+    private static IAgentRawOutputDefinition<
+        JavaScriptState,
+        JsonElement
+    > CreateRawOutputDefinition(
         RegisteredAgentOutputContract contract,
         CallbackDispatcher callbacks
     )
     {
-        Func<JavaScriptState, Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>>>?
-            validateFor =
-            contract.ValidateForCallback is null
-                ? null
-                : state =>
-                    candidate =>
-                        ParseValidationProblems(
-                            callbacks.Invoke(
-                                contract.ValidateForCallback,
-                                state.Json,
-                                candidate.GetRawText()
-                            )
-                        );
+        Func<
+            JavaScriptState,
+            Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>>
+        >? validateFor = contract.ValidateForCallback is null
+            ? null
+            : state =>
+                candidate =>
+                    ParseValidationProblems(
+                        callbacks.Invoke(
+                            contract.ValidateForCallback,
+                            state.Json,
+                            candidate.GetRawText()
+                        )
+                    );
         return new RawOutputDefinition(
             contract.Instructions!,
-            text => JsonDocument.Parse(callbacks.Invoke(contract.RawParseCallback!, "", text))
-                .RootElement.Clone(),
+            text =>
+            {
+                using var document = JsonDocument.Parse(
+                    callbacks.Invoke(contract.RawParseCallback!, "", text)
+                );
+                return document.RootElement.Clone();
+            },
             validateFor
         );
     }
@@ -449,72 +457,39 @@ internal static class RegisteredParticipantFactory
     private sealed class RawOutputDefinition(
         string instructions,
         Func<string, JsonElement> parse,
-        Func<JavaScriptState, Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>>>?
-            validateFor
+        Func<
+            JavaScriptState,
+            Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>>
+        >? validateFor
     ) : IAgentRawOutputDefinition<JavaScriptState, JsonElement>
     {
         public string Instructions => instructions;
 
-        public JsonElement Parse(string response)
+        public JsonElement Parse(string response) => parse(response);
+
+        public IValidator<JsonElement> Validator { get; } = new InlineValidator<JsonElement>();
+
+        public IValidator<JsonElement>? ValidatorFor(JavaScriptState state)
         {
-            try
+            if (validateFor is null)
             {
-                return parse(response);
+                return null;
             }
-            catch (Exception exception) when (exception is not InvalidOperationException)
-            {
-                throw new InvalidOperationException(exception.Message, exception);
-            }
-        }
-
-        public IValidator<JsonElement> Validator { get; } =
-            new InlineValidator<JsonElement>();
-
-        public IValidator<JsonElement>? ValidatorFor(JavaScriptState state) =>
-            validateFor is null
-                ? null
-                : new DelegateValidator(validateFor(state));
-    }
-
-    private sealed class DelegateValidator(
-        Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>> validate
-    ) : IValidator<JsonElement>, IValidator
-    {
-        public ValidationResult Validate(JsonElement instance)
-        {
-            var result = new ValidationResult();
-            foreach (var problem in validate(instance))
-            {
-                result.Errors.Add(new ValidationFailure(problem.Field, problem.Message));
-            }
-            return result;
-        }
-
-        public Task<ValidationResult> ValidateAsync(
-            JsonElement instance,
-            CancellationToken cancellation = default
-        ) => Task.FromResult(Validate(instance));
-
-        ValidationResult IValidator.Validate(IValidationContext context)
-        {
-            if (context.InstanceToValidate is not JsonElement instance)
-            {
-                throw new InvalidOperationException(
-                    "Raw output validation requires a JsonElement instance."
+            var validate = validateFor(state);
+            var validator = new InlineValidator<JsonElement>();
+            validator
+                .RuleFor(value => value)
+                .Custom(
+                    (value, context) =>
+                    {
+                        foreach (var problem in validate(value))
+                        {
+                            context.AddFailure(problem.Field, problem.Message);
+                        }
+                    }
                 );
-            }
-            return Validate(instance);
+            return validator;
         }
-
-        Task<ValidationResult> IValidator.ValidateAsync(
-            IValidationContext context,
-            CancellationToken cancellation
-        ) => Task.FromResult(((IValidator)this).Validate(context));
-
-        public IValidatorDescriptor CreateDescriptor() =>
-            new InlineValidator<JsonElement>().CreateDescriptor();
-
-        public bool CanValidateInstancesOfType(Type type) => type == typeof(JsonElement);
     }
 }
 
