@@ -258,6 +258,11 @@ public sealed class GeneratedOutcomeStepDescriptor<TState>(
 {
     internal override ExecutorBinding Bind() => Bind(new StandardOutcomeRouteAwareness<TState>());
 
+    internal ValueTask<PipelineMessage<TState>> ExecuteScopedAsync(
+        PipelineMessage<TState> message,
+        CancellationToken token
+    ) => new GeneratedOutcomeStepExecutor<TState>(id, execute, new()).ExecuteAsync(message, token);
+
     internal ExecutorBinding Bind(StandardOutcomeRouteAwareness<TState> routeAwareness) =>
         new GeneratedOutcomeStepExecutor<TState>(id, execute, routeAwareness).Bind();
 }
@@ -455,6 +460,11 @@ internal sealed class GeneratedOutcomeStepExecutor<TState>
         PipelineMessage<TState> pipeline,
         IWorkflowContext context,
         CancellationToken cancellationToken
+    ) => await ExecuteAsync(pipeline, cancellationToken);
+
+    internal async ValueTask<PipelineMessage<TState>> ExecuteAsync(
+        PipelineMessage<TState> pipeline,
+        CancellationToken cancellationToken
     )
     {
         using var lease = await ParallelBranchLease.EnterAsync(
@@ -578,7 +588,12 @@ internal static class PipelineExecutionEnvelope
         return scope.Message with { State = state };
     }
 
-    internal interface IScope;
+    internal interface IScope
+    {
+        public string? VisitId { get; }
+    }
+
+    internal static string? VisitId => _current.Value?.VisitId;
 
     internal sealed class PipelineExecutionScope<TState>(
         IScope? parent,
@@ -589,6 +604,7 @@ internal static class PipelineExecutionEnvelope
         private int _operationActive;
 
         public PipelineMessage<TState> Message { get; set; } = message;
+        public string? VisitId => Message.Runtime.ObservationVisitId;
 
         public bool TryEnterOperation() =>
             Interlocked.CompareExchange(ref _operationActive, 1, 0) == 0;
@@ -628,6 +644,7 @@ public sealed class Pipeline<TState>
     private readonly IReadOnlySet<string> _persistentStepIds;
     private readonly IReadOnlyList<PipelineParallelInspection> _parallelGroups;
     private readonly IReadOnlyDictionary<string, string> _physicalSemanticIds;
+    private readonly IReadOnlyList<PipelineCollectionInspection> _collections;
 
     internal Pipeline(
         Workflow workflow,
@@ -636,10 +653,12 @@ public sealed class Pipeline<TState>
         IReadOnlyList<PipelineInteractionInspection> interactions,
         IReadOnlySet<string>? persistentStepIds = null,
         IReadOnlyList<PipelineParallelInspection>? parallelGroups = null,
-        IReadOnlyDictionary<string, string>? physicalSemanticIds = null
+        IReadOnlyDictionary<string, string>? physicalSemanticIds = null,
+        IReadOnlyList<PipelineCollectionInspection>? collections = null
     )
     {
         Workflow = workflow;
+        _collections = collections ?? [];
         _outputStepIds = outputStepIds;
         _routes = routes;
         _interactions = interactions;
@@ -694,6 +713,7 @@ public sealed class Pipeline<TState>
             .ToArray();
         var stepIds = physicalStepIds
             .Select(SemanticId)
+            .Concat(_collections.SelectMany(collection => collection.AgentIds))
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)
             .ToArray();
@@ -739,6 +759,7 @@ public sealed class Pipeline<TState>
         )
         {
             ParallelGroups = _parallelGroups,
+            Collections = _collections,
         };
     }
 
@@ -839,7 +860,14 @@ public sealed record PipelineInspection(
 )
 {
     public IReadOnlyList<PipelineParallelInspection> ParallelGroups { get; init; } = [];
+    public IReadOnlyList<PipelineCollectionInspection> Collections { get; init; } = [];
 }
+
+public sealed record PipelineCollectionInspection(
+    string Id,
+    int Max,
+    IReadOnlyList<string> AgentIds
+);
 
 public sealed record PipelineParallelInspection(
     string Id,
@@ -915,6 +943,7 @@ public sealed class PipelineBuilder<TState>
         PipelineStepReferenceComparer.Instance
     );
     private readonly List<PipelineParallelInspection> _parallelGroups = [];
+    private readonly List<PipelineCollectionInspection> _collections = [];
     private readonly Dictionary<string, string> _physicalSemanticIds = new(StringComparer.Ordinal);
     private readonly Dictionary<
         IPipelineInteractionDefinition,
@@ -969,6 +998,7 @@ public sealed class PipelineBuilder<TState>
         var result = new PipelineBuilder<TState>(workflowBuilder);
         result._bindings.Add(start, binding);
         result._descriptors.Add(start, descriptor);
+        result.RegisterCollection(start, descriptor);
         if (awareness is not null)
         {
             result._failureRouteAwareness.Add(start, awareness);
@@ -1230,7 +1260,8 @@ public sealed class PipelineBuilder<TState>
                 .ToArray(),
             ResolvePersistentStepIds(),
             _parallelGroups.ToArray(),
-            new Dictionary<string, string>(_physicalSemanticIds, StringComparer.Ordinal)
+            new Dictionary<string, string>(_physicalSemanticIds, StringComparer.Ordinal),
+            _collections.ToArray()
         );
         _built = true;
         return pipeline;
@@ -1403,6 +1434,7 @@ public sealed class PipelineBuilder<TState>
         }
 
         var descriptor = node.Descriptor;
+        RegisterCollection(node, descriptor);
         if (descriptor is PipelineParallelDescriptor<TState> parallel)
         {
             var awareness = new StandardOutcomeRouteAwareness<TState>();
@@ -1430,6 +1462,31 @@ public sealed class PipelineBuilder<TState>
         _bindings.Add(node, binding);
         _descriptors.Add(node, descriptor);
         return binding;
+    }
+
+    private void RegisterCollection(IPipelineNode node, PipelineNodeDescriptor descriptor)
+    {
+        if (descriptor is ICollectionDescriptor collection)
+        {
+            foreach (var agent in collection.Agents)
+            {
+                if (
+                    agent.Id == node.Id
+                    || _physicalSemanticIds.ContainsKey(agent.Id)
+                    || _descriptors.Keys.Any(existing => existing.Id == agent.Id)
+                    || !_ownedParallelBranches.Add(agent)
+                )
+                {
+                    throw new InvalidOperationException(
+                        $"Collection agent '{agent.Id}' must have unique ownership."
+                    );
+                }
+                _descriptors.Add(agent, agent.Descriptor);
+            }
+            _collections.Add(
+                new(node.Id, collection.Max, collection.Agents.Select(agent => agent.Id).ToArray())
+            );
+        }
     }
 
     private ExecutorBinding BindInput(IPipelineNode node)

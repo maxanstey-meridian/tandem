@@ -56,15 +56,24 @@ internal sealed class AgentOperation<TState>
         );
 }
 
-public sealed class AgentDefinition<TState> : IStandardOutcomePipelineStep<TState>
+public sealed class AgentDefinition<TState>
+    : IStandardOutcomePipelineStep<TState>,
+        ICollectionAgent,
+        ICollectionAgentBinding
 {
     private readonly GeneratedOutcomeStepDescriptor<TState> _descriptor;
 
-    internal AgentDefinition(string id, AgentOperation<TState> operation)
+    private readonly Func<string, AgentOperation<TState>> _create;
+
+    internal AgentDefinition(string id, Func<string, AgentOperation<TState>> create)
     {
         Id = id;
-        _descriptor = new GeneratedOutcomeStepDescriptor<TState>(id, operation.RunAsync);
+        _create = create;
+        _descriptor = new GeneratedOutcomeStepDescriptor<TState>(id, create(id).RunAsync);
     }
+
+    ICollectionAgent ICollectionAgentBinding.BindTo(string id) =>
+        new AgentDefinition<TState>(id, _create);
 
     public string Id { get; }
 
@@ -185,7 +194,7 @@ public sealed class AgentBuilder<TState>
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         ArgumentException.ThrowIfNullOrWhiteSpace(profile);
-        ArgumentException.ThrowIfNullOrWhiteSpace(instructions);
+        ArgumentNullException.ThrowIfNull(instructions);
         _id = id;
         _profile = profile;
         _instructions = instructions;
@@ -653,6 +662,10 @@ public sealed class AgentBuilder<TState>
 
     public AgentDefinition<TState> Build()
     {
+        if (_structuredOutput is not { JsonSchema: null })
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(_instructions);
+        }
         if (_message is null && _contextMessage is null)
         {
             throw new InvalidOperationException($"Agent '{_id}' must configure a user message.");
@@ -689,9 +702,12 @@ public sealed class AgentBuilder<TState>
 
         return new AgentDefinition<TState>(
             _id,
-            new AgentOperation<TState>(
+            id => new AgentOperation<TState>(
                 new AgentBlock<TState>(
-                    config,
+                    config with
+                    {
+                        StepId = id,
+                    },
                     _chatClient,
                     onUpdate: null,
                     _toolInterceptor,

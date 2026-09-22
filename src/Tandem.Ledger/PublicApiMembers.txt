@@ -133,6 +133,7 @@ P System.String? Name { get; set; }
 P System.String? OutcomeKind { get; set; }
 P System.String? Result { get; set; }
 P System.String? ValueType { get; set; }
+P System.String? VisitId { get; set; }
 P Tandem.Ledger.RuntimeJournalKind Kind { get; set; }
 T Tandem.Ledger.SqliteLedgerOptions
 C (System.TimeSpan BusyTimeout, System.Int32 LockRetryAttempts, System.TimeSpan LockRetryDelay)

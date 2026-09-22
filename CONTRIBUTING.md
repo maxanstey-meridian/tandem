@@ -28,7 +28,11 @@ Preserve these invariants when designing any new abstraction.
 Tandem is a typed agentic pipeline SDK, not a workflow engine, Harness, or
 orchestration framework exposed to users. Agents, ordinary C# stages, and human
 interactions are first-class pipeline participants. Agents are modeled nodes in
-the graph, not arbitrary services that application code calls. MAF, provider APIs,
+the graph, not arbitrary services that application code calls. A native collection may own a
+scoped procedural item operation that sequentially invokes its explicitly declared
+agents. The collection remains a modeled participant; its scope cannot invoke
+undeclared agents, outlive its item, or schedule nested parallel agent work.
+This is the narrow exception to expressing every model visit as a graph route. MAF, provider APIs,
 function-calling and MCP transport, executor bindings, persistence mechanics, and
 other runtime machinery belong below the ordinary public seam.
 

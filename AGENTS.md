@@ -15,7 +15,9 @@ Runtime mechanics below the seam.
 
 Tandem is a typed agentic pipeline SDK. The configured pipeline is the lifecycle;
 agents, ordinary C# stages, and human interactions are modeled graph participants,
-not services called by an application-level coordinator. MAF owns live workflow
+not services called by an application-level coordinator. Native collections may
+sequence their explicitly declared agents inside one scoped item operation;
+the collection owns concurrency, cancellation and observation. MAF owns live workflow
 execution, agent loops, sessions, and tool dispatch. Active runs are process-owned;
 do not reintroduce generalized durability.
 
@@ -30,7 +32,7 @@ commodity behavior.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **tandem** (5285 symbols, 13489 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **tandem** (4273 symbols, 11971 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 

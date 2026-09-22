@@ -258,7 +258,7 @@ public sealed class GeneratedAuthoringVerticalTests
     {
         var definition = new AgentDefinition<CounterState>(
             "reused-agent",
-            new AgentOperation<CounterState>(
+            _ => new AgentOperation<CounterState>(
                 (pipeline, _) =>
                     ValueTask.FromResult(
                         pipeline with

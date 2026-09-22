@@ -25,6 +25,11 @@ internal static class RegisteredParticipantFactory
             "interaction" => CreateInteraction(node, callbacks),
             "agent" => await CreateAgentAsync(node, callbacks, cancellationToken),
             "parallel" => await CreateParallelAsync(node, callbacks, cancellationToken),
+            "collection" => await RegisteredCollection.CreateAsync(
+                node,
+                callbacks,
+                cancellationToken
+            ),
             "completion" => RegisteredParticipant.ForNode(
                 node,
                 PipelineNodes.Complete(
@@ -521,7 +526,8 @@ internal abstract record RegisteredParticipant(RegisteredNodeContract Contract)
 
 internal sealed record RegisteredStage(
     RegisteredNodeContract Contract,
-    IGeneratedPipelineStep<JavaScriptState, GeneratedStepCompletion> Stage
+    IGeneratedPipelineStep<JavaScriptState, GeneratedStepCompletion> Stage,
+    IReadOnlyList<RegisteredParticipant>? Owned = null
 ) : RegisteredParticipant(Contract);
 
 internal sealed record RegisteredStandard(

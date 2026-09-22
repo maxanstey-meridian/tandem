@@ -240,7 +240,15 @@ internal static partial class RegistrationContractValidator
     {
         if (
             node.Kind
-            is not ("stage" or "interaction" or "agent" or "completion" or "failure" or "parallel")
+            is not (
+                "stage"
+                or "interaction"
+                or "agent"
+                or "completion"
+                or "failure"
+                or "parallel"
+                or "collection"
+            )
         )
         {
             if (!string.IsNullOrWhiteSpace(node.Kind))
@@ -249,6 +257,32 @@ internal static partial class RegistrationContractValidator
         }
         if (nested && node.Kind is not ("stage" or "agent"))
             errors.Add($"{path}.kind '{node.Kind}' is unsupported in a parallel branch.");
+        if (node.Kind == "collection")
+        {
+            if (node.Max is null or <= 0)
+                errors.Add($"{path}.max must be positive.");
+            Required(errors, $"{path}.itemsCallback", node.ItemsCallback);
+            if (node.Agents is null)
+                errors.Add($"{path}.agents is required.");
+            foreach (var agent in node.Agents ?? [])
+            {
+                if (agent is null || agent.Kind != "agent")
+                {
+                    errors.Add($"{path}.agents must contain agents.");
+                    continue;
+                }
+                Required(errors, $"{path}.agent.id", agent.Id);
+                if (!authoredIds.Add(node.Id + "/" + agent.Id))
+                    errors.Add($"{path}.agent.id must be unique.");
+                ValidateNode(errors, agent, $"{path}.agents", true, authoredIds);
+            }
+            if (node.Branches is not null || node.MergeCallback is not null)
+                errors.Add($"{path} cannot contain parallel branches.");
+        }
+        else if (node.ItemsCallback is not null || node.Agents is not null)
+        {
+            errors.Add($"{path} cannot contain collection fields.");
+        }
         if (node.Kind == "parallel")
         {
             if (node.Max is <= 0)
@@ -299,7 +333,7 @@ internal static partial class RegistrationContractValidator
                 );
             }
         }
-        else
+        else if (node.Kind != "collection")
         {
             if (node.Max is not null)
                 errors.Add($"{path}.max is forbidden.");
@@ -308,9 +342,15 @@ internal static partial class RegistrationContractValidator
             if (node.MergeCallback is not null)
                 errors.Add($"{path}.mergeCallback is forbidden.");
         }
-        Field(errors, path, "runCallback", node.RunCallback, node.Kind == "stage");
+        Field(errors, path, "runCallback", node.RunCallback, node.Kind is "stage" or "collection");
         Field(errors, path, "requestCallback", node.RequestCallback, node.Kind == "interaction");
-        Field(errors, path, "applyCallback", node.ApplyCallback, node.Kind == "interaction");
+        Field(
+            errors,
+            path,
+            "applyCallback",
+            node.ApplyCallback,
+            node.Kind is "interaction" or "collection"
+        );
         Field(
             errors,
             path,
@@ -320,7 +360,10 @@ internal static partial class RegistrationContractValidator
         );
         Field(errors, path, "messageCallback", node.MessageCallback, node.Kind == "agent");
         if (node.Kind == "agent")
-            Required(errors, $"{path}.instructions", node.Instructions);
+        {
+            if (node.Output?.Raw != true || node.Instructions is null)
+                Required(errors, $"{path}.instructions", node.Instructions);
+        }
         else if (node.Instructions is not null)
             errors.Add($"{path}.instructions is forbidden.");
         if (node.Kind == "agent")
@@ -421,7 +464,8 @@ internal static partial class RegistrationContractValidator
         }
         if (node.Output is { } output)
         {
-            Required(errors, $"{path}.output.instructions", output.Instructions);
+            if (!output.Raw || output.Instructions is null)
+                Required(errors, $"{path}.output.instructions", output.Instructions);
             Required(errors, $"{path}.output.valueType", output.ValueType);
             if (output.Raw)
             {
@@ -639,6 +683,10 @@ internal static partial class RegistrationContractValidator
             if (node is null)
                 continue;
             yield return node;
+            foreach (var agent in node.Agents ?? [])
+            {
+                yield return agent;
+            }
             foreach (var branch in node.Branches ?? [])
             {
                 if (branch?.Participant is not null)

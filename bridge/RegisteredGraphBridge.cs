@@ -52,6 +52,7 @@ public static partial class NodePipelineBridge
                     {
                         kind = record.Kind.ToString(),
                         record.StepId,
+                        record.VisitId,
                         record.ValueType,
                         record.Payload,
                     }
@@ -374,10 +375,15 @@ public static partial class NodePipelineBridge
         foreach (var participant in participants)
         {
             yield return participant;
-            if (participant is RegisteredStandard standard)
+            var children = participant switch
             {
-                foreach (var owned in Flatten(standard.Owned))
-                    yield return owned;
+                RegisteredStandard standard => standard.Owned,
+                RegisteredStage stage => stage.Owned ?? [],
+                _ => [],
+            };
+            foreach (var child in Flatten(children))
+            {
+                yield return child;
             }
         }
     }

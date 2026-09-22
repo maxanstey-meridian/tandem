@@ -35,7 +35,10 @@ public sealed record RuntimeJournalRecord(
     string? ValueType = null,
     JsonElement? Payload = null,
     int? ContextWindowTokens = null
-);
+)
+{
+    public string? VisitId { get; init; }
+}
 
 public sealed record StructuredOutputRejectionEvidence(
     int Attempt,

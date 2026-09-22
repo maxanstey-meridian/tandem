@@ -42,7 +42,9 @@ internal sealed record RegisteredNodeContract(
     string? MergeCallback = null,
     RegisteredWorkspaceContract? Workspace = null,
     RegisteredCheckpointContract? Checkpoint = null,
-    int? Max = null
+    int? Max = null,
+    string? ItemsCallback = null,
+    RegisteredNodeContract[]? Agents = null
 );
 
 internal sealed record RegisteredReasoningContract(string? Effort, int? MaxTokens);

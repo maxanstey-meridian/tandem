@@ -38,6 +38,9 @@ internal sealed record PipelineRuntime(
     HashSet<string> GateLatches
 )
 {
+    public string? InvocationScope { get; init; }
+    public string? ObservationVisitId { get; init; }
+
     public static PipelineRuntime Create(Guid runId) =>
         new(
             runId,
@@ -58,7 +61,11 @@ internal sealed record PipelineRuntime(
             new Dictionary<string, int>(InvocationCounts),
             new Dictionary<string, AgentProfileSelection>(AgentProfiles),
             new HashSet<string>(GateLatches, StringComparer.Ordinal)
-        );
+        )
+        {
+            InvocationScope = InvocationScope,
+            ObservationVisitId = ObservationVisitId,
+        };
 
     public static PipelineRuntime Merge(
         PipelineRuntime baseline,
@@ -197,7 +204,7 @@ internal sealed record PipelineRuntime(
     }
 
     public string NextInvocationId(string stepId) =>
-        $"{RunId:N}--{stepId}--{InvocationCounts.GetValueOrDefault(stepId) + 1}";
+        $"{InvocationScope ?? RunId.ToString("N")}--{stepId}--{InvocationCounts.GetValueOrDefault(stepId) + 1}";
 
     public PipelineRuntime IncrementInvocations(string stepId) =>
         this with

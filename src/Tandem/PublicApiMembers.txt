@@ -47,6 +47,8 @@ F static Tandem.AgentReasoningEffort None
 T Tandem.AgentSkill
 M static Tandem.AgentSkill FromDirectory(System.String directoryPath)
 P System.String DirectoryPath { get; }
+T Tandem.CollectionContext
+M System.Threading.Tasks.ValueTask<TState> RunAsync<TState>(Tandem.AgentDefinition<TState> agent, TState state)
 T Tandem.FailureEvidence
 C (System.String Code, System.String Summary, System.String? Detail = null)
 M System.Boolean Equals(System.Object? obj)
@@ -69,6 +71,7 @@ M FluentValidation.IValidator<TOutput>? ValidatorFor(TState state)
 M System.Collections.Generic.IReadOnlyList<Tandem.AgentOutputExample<TOutput>> Examples(TState state)
 P FluentValidation.IValidator<TOutput> Validator { get; }
 P System.String Instructions { get; }
+T Tandem.ICollectionAgent
 T Tandem.IPipelineCompletion<TState>
 M System.String Summarize(TState state)
 M TState Complete(TState state)
@@ -136,6 +139,22 @@ M Tandem.PipelineBuilder<TState> Route<TSourceResult,TRequest,TResponse>(System.
 M Tandem.PipelineBuilder<TState> Route<TSourceResult,TRequest,TResponse>(Tandem.IGeneratedPipelineStep<TState,TSourceResult> on, Tandem.PipelineInteraction<TState,TRequest,TResponse> to, System.String label)
 M Tandem.PipelineBuilder<TState> Route<TSourceResult>(System.Func<TState,System.Boolean> when, Tandem.IGeneratedPipelineStep<TState,TSourceResult> from, Tandem.IPipelineNode<TState> to, System.String label)
 M Tandem.PipelineBuilder<TState> Route<TSourceResult>(Tandem.IGeneratedPipelineStep<TState,TSourceResult> on, Tandem.IPipelineNode<TState> to, System.String label)
+T Tandem.PipelineCollection
+M static Tandem.PipelineCollection<TState,TItem,TResult> Create<TState,TItem,TResult>(System.String id, System.Func<TState,System.Collections.Generic.IReadOnlyList<TItem>> items, System.Collections.Generic.IReadOnlyList<Tandem.ICollectionAgent> agents, System.Func<TItem,Tandem.CollectionContext,System.Threading.CancellationToken,System.Threading.Tasks.ValueTask<TResult>> execute, System.Func<TState,System.Collections.Generic.IReadOnlyList<TResult>,TState> apply, System.Int32 max)
+T Tandem.PipelineCollectionInspection
+C (System.String Id, System.Int32 Max, System.Collections.Generic.IReadOnlyList<System.String> AgentIds)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.PipelineCollectionInspection? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Id, out System.Int32 Max, out System.Collections.Generic.IReadOnlyList<System.String> AgentIds)
+M Tandem.PipelineCollectionInspection <Clone>$()
+P System.Collections.Generic.IReadOnlyList<System.String> AgentIds { get; set; }
+P System.Int32 Max { get; set; }
+P System.String Id { get; set; }
+T Tandem.PipelineCollection<TState,TItem,TResult>
+P System.String Id { get; }
+P Tandem.PipelineNodeDescriptor Descriptor { get; }
 T Tandem.PipelineInspection
 C (System.String Name, System.String? Description, System.String StartStepId, System.Collections.Generic.IReadOnlyList<System.String> StepIds, System.Collections.Generic.IReadOnlyList<Tandem.PipelineInteractionInspection> Interactions, System.Collections.Generic.IReadOnlyList<Tandem.PipelineRouteInspection> Routes, System.Collections.Generic.IReadOnlyList<System.String> OutputStepIds, System.Collections.Generic.IReadOnlyList<System.String> PersistentStepIds, System.String Mermaid, System.String Dot)
 M System.Boolean Equals(System.Object? obj)
@@ -147,6 +166,7 @@ M Tandem.PipelineInspection <Clone>$()
 P System.Collections.Generic.IReadOnlyList<System.String> OutputStepIds { get; set; }
 P System.Collections.Generic.IReadOnlyList<System.String> PersistentStepIds { get; set; }
 P System.Collections.Generic.IReadOnlyList<System.String> StepIds { get; set; }
+P System.Collections.Generic.IReadOnlyList<Tandem.PipelineCollectionInspection> Collections { get; set; }
 P System.Collections.Generic.IReadOnlyList<Tandem.PipelineInteractionInspection> Interactions { get; set; }
 P System.Collections.Generic.IReadOnlyList<Tandem.PipelineParallelInspection> ParallelGroups { get; set; }
 P System.Collections.Generic.IReadOnlyList<Tandem.PipelineRouteInspection> Routes { get; set; }
@@ -541,6 +561,7 @@ M System.Void Deconstruct(out System.Guid RunId, out System.String StepId)
 M Tandem.PipelineObservation <Clone>$()
 P System.Guid RunId { get; set; }
 P System.String StepId { get; set; }
+P System.String? VisitId { get; set; }
 T Tandem.PipelineRunException
 C (System.String message, System.Exception? inner = null)
 T Tandem.PipelineRunOptions

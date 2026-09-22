@@ -26,8 +26,9 @@ internal sealed class RegisteredObservationObserver(
         }
     }
 
-    internal static object? Project(PipelineObservation observation) =>
-        observation switch
+    internal static object? Project(PipelineObservation observation)
+    {
+        object? projected = observation switch
         {
             PipelineStepStarted value => new
             {
@@ -103,6 +104,14 @@ internal sealed class RegisteredObservationObserver(
             },
             _ => null,
         };
+        if (projected is null || observation.VisitId is null)
+        {
+            return projected;
+        }
+        var scoped = JsonSerializer.SerializeToNode(projected, _json)!.AsObject();
+        scoped["visitId"] = observation.VisitId;
+        return scoped;
+    }
 }
 
 internal static class RegisteredRunObserver

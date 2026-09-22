@@ -18,7 +18,10 @@ internal sealed record TranscriptEntry(
     string? ToolName = null,
     bool? Succeeded = null,
     string? WorkingDirectory = null
-);
+)
+{
+    public string? VisitId { get; init; }
+};
 
 internal sealed record StepVisit(
     string StepId,
@@ -27,7 +30,10 @@ internal sealed record StepVisit(
     string? Outcome = null,
     string? Summary = null,
     TimeSpan? Duration = null
-);
+)
+{
+    public string? VisitId { get; init; }
+};
 
 internal sealed record TerminalSnapshot(
     string PipelineName,
@@ -63,6 +69,7 @@ internal sealed class TerminalModel(
 )
 {
     private readonly object _gate = new();
+    private readonly Dictionary<string, string> _stepNames = new(StringComparer.Ordinal);
     private readonly List<StepVisit> _visits = [];
     private readonly List<TranscriptEntry> _transcript = [];
     private int _characters;
@@ -102,44 +109,52 @@ internal sealed class TerminalModel(
         }
         lock (_gate)
         {
+            var key = observation.VisitId ?? observation.StepId;
+            _stepNames[key] = observation.StepId;
             switch (observation)
             {
                 case PipelineStepStarted started:
-                    _activeSteps.Add(started.StepId);
-                    _activeStep = started.StepId;
-                    _modelName = _models.GetValueOrDefault(started.StepId);
-                    ApplyUsage(started.StepId);
-                    _visits.Add(new(started.StepId, timeProvider.GetUtcNow()));
+                    _activeSteps.Add(key);
+                    _usageOrder[key] = ++_usageSequence;
+                    _activeStep = key;
+                    _modelName = _models.GetValueOrDefault(key);
+                    ApplyUsage(key);
+                    _visits.Add(
+                        new(observation.StepId, timeProvider.GetUtcNow())
+                        {
+                            VisitId = observation.VisitId,
+                        }
+                    );
                     break;
                 case PipelineStepCompleted completed:
                     Complete(
-                        completed.StepId,
+                        key,
                         completed.Outcome.Kind,
                         completed.Outcome.Summary,
                         completed.Outcome.Duration
                     );
                     break;
                 case PipelineStepFaulted faulted:
-                    Complete(faulted.StepId, "faulted", faulted.Error, null);
+                    Complete(key, "faulted", faulted.Error, null);
                     break;
                 case PipelineStepCancelled cancelled:
-                    Complete(cancelled.StepId, "cancelled", null, null);
+                    Complete(key, "cancelled", null, null);
                     break;
                 case PipelineAgentUpdated { Update: AgentUpdate.Text text } update:
-                    Append(update.StepId, TranscriptKind.Text, text.Value);
+                    Append(key, TranscriptKind.Text, text.Value);
                     break;
                 case PipelineAgentUpdated { Update: AgentUpdate.Reasoning reasoning } update:
-                    Append(update.StepId, TranscriptKind.Reasoning, reasoning.Value);
+                    Append(key, TranscriptKind.Reasoning, reasoning.Value);
                     break;
                 case PipelineAgentUpdated { Update: AgentUpdate.ModelSelected selected } update:
-                    _activeStep = update.StepId;
-                    _models[update.StepId] = selected.ModelId;
+                    _activeStep = key;
+                    _models[key] = selected.ModelId;
                     _modelName = selected.ModelId;
                     break;
                 case PipelineAgentUpdated { Update: AgentUpdate.ToolStarted tool } update:
                     _toolNames[tool.CallId] = tool.Name;
                     Append(
-                        update.StepId,
+                        key,
                         TranscriptKind.ToolStarted,
                         DisplayArguments(tool, _truncatedToolNames),
                         tool.Name,
@@ -149,7 +164,7 @@ internal sealed class TerminalModel(
                 case PipelineAgentUpdated { Update: AgentUpdate.ToolCompleted tool } update:
                     _toolNames.Remove(tool.CallId, out var toolName);
                     Append(
-                        update.StepId,
+                        key,
                         TranscriptKind.ToolCompleted,
                         tool.Error ?? tool.Result ?? toolName ?? tool.CallId,
                         toolName,
@@ -158,7 +173,7 @@ internal sealed class TerminalModel(
                     break;
                 case PipelineCommandOutput command:
                     Append(
-                        command.StepId,
+                        key,
                         TranscriptKind.Command,
                         $"{command.Command}\n{command.Output}",
                         succeeded: command.ExitCode == 0
@@ -166,25 +181,25 @@ internal sealed class TerminalModel(
                     break;
                 case PipelineActionCompleted action when action.Result != "Completed":
                     Append(
-                        action.StepId,
+                        key,
                         TranscriptKind.Action,
                         $"{action.ActionName}: {action.Result}",
                         succeeded: false
                     );
                     break;
                 case PipelineCapabilityAccepted accepted:
-                    Append(accepted.StepId, TranscriptKind.Text, accepted.Summary);
+                    Append(key, TranscriptKind.Text, accepted.Summary);
                     if (accepted.Payload is { } capabilityPayload)
                     {
-                        AppendSemantic(accepted.StepId, capabilityPayload);
+                        AppendSemantic(key, capabilityPayload);
                     }
                     break;
                 case PipelineStructuredOutputAccepted { Payload: { } payload } accepted:
-                    AppendSemantic(accepted.StepId, payload);
+                    AppendSemantic(key, payload);
                     break;
                 case PipelineStructuredOutputRejected rejected:
                     Append(
-                        rejected.StepId,
+                        key,
                         TranscriptKind.ToolCompleted,
                         System.Text.Json.JsonSerializer.Serialize(
                             new
@@ -200,13 +215,13 @@ internal sealed class TerminalModel(
                 case PipelineAgentUsage usage:
                     _inputTokens += usage.InputTokens;
                     _outputTokens += usage.OutputTokens;
-                    _usage[usage.StepId] = (usage.CurrentContextTokens, usage.ContextWindowTokens);
-                    _usageOrder[usage.StepId] = ++_usageSequence;
-                    if (_activeSteps.Contains(usage.StepId))
+                    _usage[key] = (usage.CurrentContextTokens, usage.ContextWindowTokens);
+                    _usageOrder[key] = ++_usageSequence;
+                    if (_activeSteps.Contains(key))
                     {
-                        _activeStep = usage.StepId;
-                        _modelName = _models.GetValueOrDefault(usage.StepId);
-                        ApplyUsage(usage.StepId);
+                        _activeStep = key;
+                        _modelName = _models.GetValueOrDefault(key);
+                        ApplyUsage(key);
                     }
                     break;
                 case PipelineInteractionRequestedObservation requested:
@@ -249,7 +264,7 @@ internal sealed class TerminalModel(
         }
         if (
             _transcript.LastOrDefault() is { Kind: TranscriptKind.Text } last
-            && last.StepId == stepId
+            && (last.VisitId ?? last.StepId) == stepId
             && JsonEquals(last.Text, value)
         )
         {
@@ -326,7 +341,7 @@ internal sealed class TerminalModel(
                 runId,
                 _status,
                 _summary,
-                _activeStep,
+                _activeStep is null ? null : _stepNames.GetValueOrDefault(_activeStep, _activeStep),
                 _modelName,
                 _startedAt,
                 _completedAt,
@@ -355,12 +370,25 @@ internal sealed class TerminalModel(
     private void Complete(string stepId, string outcome, string? summary, TimeSpan? duration)
     {
         var index = _visits.FindLastIndex(visit =>
-            visit.StepId == stepId && visit.CompletedAt is null
+            (visit.VisitId ?? visit.StepId) == stepId && visit.CompletedAt is null
         );
         var completedAt = timeProvider.GetUtcNow();
         if (index < 0)
         {
-            _visits.Add(new(stepId, completedAt, completedAt, outcome, summary, duration));
+            _visits.Add(
+                new(
+                    _stepNames.GetValueOrDefault(stepId, stepId),
+                    completedAt,
+                    completedAt,
+                    outcome,
+                    summary,
+                    duration
+                )
+                {
+                    VisitId =
+                        _stepNames.GetValueOrDefault(stepId, stepId) == stepId ? null : stepId,
+                }
+            );
         }
         else
         {
@@ -413,7 +441,7 @@ internal sealed class TerminalModel(
         if (
             kind is TranscriptKind.Text or TranscriptKind.Reasoning
             && _transcript.LastOrDefault() is { } last
-            && last.StepId == stepId
+            && (last.VisitId ?? last.StepId) == stepId
             && last.Kind == kind
         )
         {
@@ -421,7 +449,20 @@ internal sealed class TerminalModel(
         }
         else
         {
-            _transcript.Add(new(stepId, kind, text, toolName, succeeded, workingDirectory));
+            _transcript.Add(
+                new(
+                    _stepNames.GetValueOrDefault(stepId, stepId),
+                    kind,
+                    text,
+                    toolName,
+                    succeeded,
+                    workingDirectory
+                )
+                {
+                    VisitId =
+                        _stepNames.GetValueOrDefault(stepId, stepId) == stepId ? null : stepId,
+                }
+            );
         }
         _characters += text.Length;
         while (_transcript.Count > entryCapacity)

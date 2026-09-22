@@ -168,7 +168,14 @@ public sealed class SqlitePipelineObserver : IPipelinePersistenceObserver
         };
         return record is null
             ? ValueTask.CompletedTask
-            : AppendAsync(record, EntryId(observation, _executionAttemptId), cancellationToken);
+            : AppendAsync(
+                record with
+                {
+                    VisitId = observation.VisitId,
+                },
+                EntryId(observation, _executionAttemptId),
+                cancellationToken
+            );
     }
 
     private static string? EntryId(PipelineObservation observation, Guid executionAttemptId) =>

@@ -1,4 +1,9 @@
 [ordinary-authoring]
+Tandem.CollectionContext
+Tandem.ICollectionAgent
+Tandem.PipelineCollection
+Tandem.PipelineCollection`3
+Tandem.PipelineCollectionInspection
 Tandem.AgentBuilder`1
 Tandem.AgentCapabilities
 Tandem.AgentCapability`1

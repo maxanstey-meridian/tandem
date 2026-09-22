@@ -25,7 +25,10 @@ public interface IPipelineObserver
 [EditorBrowsable(EditorBrowsableState.Never)]
 public interface IPipelinePersistenceObserver : IPipelineObserver;
 
-public abstract record PipelineObservation(Guid RunId, string StepId);
+public abstract record PipelineObservation(Guid RunId, string StepId)
+{
+    public string? VisitId { get; init; }
+}
 
 public sealed record PipelineStepStarted(Guid RunId, string StepId)
     : PipelineObservation(RunId, StepId);
@@ -296,6 +299,10 @@ internal sealed class PipelineRunContext(
         {
             return;
         }
+        observation = observation with
+        {
+            VisitId = observation.VisitId ?? PipelineExecutionEnvelope.VisitId,
+        };
         // Acceptance already owns this gate and its ambient ledger transaction.
         if (_insideAcceptance.Value)
         {
