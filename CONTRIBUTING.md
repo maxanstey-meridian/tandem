@@ -173,8 +173,8 @@ unions, or vague `Manager`, `Service`, `Processor`, `Handler`, `Provider`, or
 
 Composition is the complete route map. Route calls immediately add real MAF edges
 and never retain a second execution graph. Inspection projects that executable graph
-into Tandem's semantic nodes and routes; Mermaid and DOT render the same projection
-without private MAF expansion.
+into Tandem's semantic nodes and routes; Mermaid (`PipelineInspection.ToMermaid()`) renders
+the same projection without private MAF expansion.
 
 Use `.Route(on: step, to: next)` for unconditional serial flow and
 `.Route(on: step.Success, when: state => ..., to: next)` for semantic branching.
@@ -221,8 +221,9 @@ task check
 
 Runtime tests use real MAF in-process execution rather than a mocked event loop.
 
-Public package boundaries are also proven through packed consumers. Changes to
-exported types require a deliberate update to the owning `ExportedApi.txt`.
+Public package boundaries are also proven through packed consumers. Public API changes
+fail the build (RS0016/RS0017) until the project's `PublicAPI.Unshipped.txt` is updated;
+move its entries to `PublicAPI.Shipped.txt` at release.
 Generator ABI remains hidden with `EditorBrowsable(Never)`, and the analyzer must
 remain under `analyzers/dotnet/cs` in `Tandem.Generators`. `task check` runs the
 package restore, execution, analyzer-delivery, and dependency-isolation proof.
@@ -230,7 +231,7 @@ package restore, execution, analyzer-delivery, and dependency-isolation proof.
 The solution includes the Node bridge and its tests. Bridge builds and release bundles use project
 references to the SDK in the same checkout; packed-consumer tests separately prove NuGet delivery.
 The TypeScript SDK and its tests live in the [tandem-ts repository](https://github.com/maxanstey-meridian/tandem-ts).
-For a local bridge bundle, run `dotnet publish bridge/Tandem.NodeApiSpike.Bridge.csproj -c Release
+For a local bridge bundle, run `dotnet publish bridge/Tandem.Bridge.csproj -c Release
 -r <RID> --self-contained false --output .runtime-publish`, then `node scripts/stage-runtime.mjs <RID>`.
 Supported bundle RIDs are `osx-arm64` and `linux-x64`.
 Tag releases pass the tag version to MSBuild and bundle the same source revision without waiting

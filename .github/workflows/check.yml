@@ -53,9 +53,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: maxanstey-meridian/tandem-ts
-          # The consumer of this bridge's run envelope and Tandem.Bridge runtime files.
-          # Switch to main once tandem-ts's slop/bridge-envelope branch has merged.
-          ref: slop/bridge-envelope
           path: tandem-ts
 
       - uses: actions/setup-dotnet@v4
@@ -70,10 +67,12 @@ jobs:
         with:
           node-version: 22
 
-      - name: Publish the bridge into tandem-ts's runtime folder
+      - name: Stage the bridge into tandem-ts's runtime folder
         run: |
+          dotnet publish bridge/Tandem.Bridge.csproj -c Release -r ${{ matrix.rid }} --self-contained false --output .runtime-publish
+          node scripts/stage-runtime.mjs ${{ matrix.rid }}
           rm -rf tandem-ts/runtime/${{ matrix.platform }}
-          dotnet publish bridge/Tandem.Bridge.csproj -c Release -r ${{ matrix.rid }} --self-contained false --output tandem-ts/runtime/${{ matrix.platform }}
+          mv bridge-runtime tandem-ts/runtime/${{ matrix.platform }}
 
       - name: Run the tandem-ts suite against it
         working-directory: tandem-ts

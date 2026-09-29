@@ -48,4 +48,4 @@ node index.mjs
 
 Application code installs only `@maxanstey-meridian/tandem`; its package selects the bundled
 runtime for the current platform. Continue with the package-backed
-[getting-started progression](../../examples/getting-started).
+[getting-started progression](https://github.com/maxanstey-meridian/tandem-ts/tree/main/examples/getting-started).

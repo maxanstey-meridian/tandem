@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased — breaking
+## 0.3.0 — breaking
+
+- Release bridge bundles are published for `linux-x64` as well as `osx-arm64`. The bundle's files are derived from the bridge publish's `deps.json` (`node scripts/stage-runtime.mjs <rid>`) instead of a hand-kept allowlist; `scripts/runtime-assets.mjs` is gone. Tag releases run `check.yml` (both platforms, plus the tandem-ts suite against the staged bundle) before publishing, and one `dotnet pack Tandem.slnx` produces the seven packages.
 
 - The Node bridge is renamed from `Tandem.NodeApiSpike` to `Tandem.Bridge`: project `bridge/Tandem.Bridge.csproj`, test project `bridge-tests/Tandem.Bridge.Tests.csproj`, namespace and assembly `Tandem.Bridge`. Published runtime files are `Tandem.Bridge.{dll,mjs,cjs,d.ts,deps.json,runtimeconfig.json}`; the JavaScript export is still `NodePipelineBridge`.
 - The Node bridge's `RunRegisteredGraphAsync` returns a status envelope for every outcome instead of throwing: `{"status":"succeeded"|"failed","runId","state","summary"}`, `{"status":"cancelled","runId"}`, `{"status":"contract","runId","boundary","problems":[{"path","message"}]}` or `{"status":"faulted","runId","message"}`. Callback contract failures, registration-contract and builder-rule failures (boundary `registration contract`), cancellation and faults are classified in one place. A cancelled run reports `cancelled` whatever surfaced while it stopped (`OperationCanceledException`, `TaskCanceledException`, a JavaScript AbortError, or an `AggregateException` of them); an operation cancelled while the run was not, such as a timeout, is a fault. The `TANDEM_CALLBACK_CONTRACT:` message marker is gone. Registration problems now name the contract path separately from the message (`- nodes[0].id: duplicates node ID 'x'.`).

@@ -1,6 +1,6 @@
 # Tandem slop cleanup spec
 
-Status: complete on `slop/integration`; not merged. Owner actions are listed in §10.
+Status: complete; released as 0.3.0 (§10 applied).
 Baseline: `main` @ `b4a824d` (2026-09-29). Line numbers are from that commit; re-locate by symbol name if they have moved.
 **Owner WIP:** the main checkout has uncommitted edits in `.github/workflows/release.yml`, `CONTRIBUTING.md`, `docs/quickstarts/typescript.md`, `scripts/runtime-assets.mjs` and `scripts/stage-runtime.mjs`. All work happens in worktrees branched from `b4a824d`; the main checkout is never touched. No WP edits those five files. X4's script and release parts are deferred until the owner has committed that WIP; record them as follow-ups.
 Source: independent slop hunt (2026-09-29, four read-only agents plus spot verification), cross-checked afterwards against `docs/plans/post-baseline-remediation.md`. Tags: `NEW`, or `ALREADY-COVERED (Mn)` where that plan audited or decided the item.
@@ -545,6 +545,8 @@ NEW
 | Final (W2-7 gate) | complete on `slop/integration`; not merged | vs `b4a824d` at `d391d4e` (last code commit): 222 files +14,635/−18,587; `src`+`bridge` +9,118/−12,658 (net −3,540; without the API text files +7,272/−10,921, net −3,649; `.cs` only +7,224/−10,906, net −3,682: `src` 19,295 → 15,857 lines, `bridge` 2,640 → 2,396); `tests`+`bridge-tests` +4,790/−5,886 (net −1,096); API text files overall: +1,846/−1,737 (12 hand-kept manifests deleted, 7 generated `PublicAPI.Shipped.txt` added) | Per suite, `b4a824d` → `d391d4e`: Tandem.Tests 451 → 452, bridge 85 → 118, Terminal 92 → 98, Packets 7 → 18, ExternalConsumer 8 → 7, PackageConsumer 1 → 1 (644 → 694, all green) | tandem-ts 150/150 against the final osx-arm64 bundle; Cadence 194/194 against a pack of the final code (both W2-7) | — | Plumb `[]`. Nothing merged, pushed or tagged. Owner actions: §10. |
 
 ## 10. Needs owner
+
+**Applied for 0.3.0:** §10.1–§10.4 landed on `slop/integration` on top of the owner's `codex/linux-bridge-bundle` commit (merged in, keeping its linux-x64 matrix), with §10.3 option A. Both RIDs stage the same 56 files as tandem-ts's bundles. `check.yml` now stages through the script and checks out tandem-ts `main`. What follows is the original record.
 
 The cleanup is complete on `slop/integration` but needs these owner edits, because they touch the owner-WIP files (`.github/workflows/release.yml`, `CONTRIBUTING.md`, `scripts/runtime-assets.mjs`, `scripts/stage-runtime.mjs`) or are releases. The diffs are against the committed files at `b4a824d`; apply them on top of the WIP. Sources: X4, K6, W2-4, W2-6 and the integration row.
 

@@ -6,7 +6,11 @@ on:
       - "0.*"
 
 jobs:
+  check:
+    uses: ./.github/workflows/check.yml
+
   publish:
+    needs: check
     runs-on: ubuntu-latest
 
     steps:
@@ -22,17 +26,12 @@ jobs:
 
       - run: dotnet restore
 
-      - run: dotnet test Tandem.slnx --no-restore
-
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
 
       - name: Pack Tandem packages
-        run: |
-          for project in Tandem.Generators Tandem Tandem.Advanced Tandem.Ledger Tandem.OpenAICompatible Tandem.Terminal Tandem.Packets; do
-            dotnet pack src/$project/$project.csproj -c Release -p:Version=${{ steps.version.outputs.VERSION }} --no-restore -o ./nupkgs
-          done
+        run: dotnet pack Tandem.slnx -c Release -p:Version=${{ steps.version.outputs.VERSION }} --no-restore -o ./nupkgs
 
       - name: Push to NuGet
         run: dotnet nuget push ./nupkgs/*.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }} --skip-duplicate
