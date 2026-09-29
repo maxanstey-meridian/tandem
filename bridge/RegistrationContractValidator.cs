@@ -137,17 +137,6 @@ internal static partial class RegistrationContractValidator
 
         foreach (var (index, route) in graph.Routes.Index())
             ValidateRoute(errors, nodes, route, $"routes[{index}]");
-        // Tandem's builder rejects a second unconditional route only for step and interaction
-        // sources, so outcome routes keep this rule here until it moves into the builder.
-        foreach (
-            var group in graph
-                .Routes.Where(route => route.Outcome is not null && route.PredicateCallback is null)
-                .GroupBy(route => (route.Source, route.Outcome))
-                .Where(group => group.Count() > 1)
-        )
-            errors.Add(
-                $"routes from '{group.Key.Source}' for outcome '{group.Key.Outcome?.ToString().ToLowerInvariant()}' contain more than one unconditional route."
-            );
         ValidateInteractionHandlers(errors, nodes, graph.InteractionHandlers ?? []);
         ValidateCallbacks(errors, graph);
         ValidateReachability(errors, graph, nodes);
@@ -187,8 +176,9 @@ internal static partial class RegistrationContractValidator
         ValidateClient(errors, agent.Client, $"{path}.client");
         if (agent.Reasoning is { } reasoning)
         {
-            if ((reasoning.Effort is null) == (reasoning.MaxTokens is null))
-                errors.Add($"{path}.reasoning must specify exactly one of effort or maxTokens.");
+            // Core has no reasoning object to be empty; effort with maxTokens is Core's rule.
+            if (reasoning.Effort is null && reasoning.MaxTokens is null)
+                errors.Add($"{path}.reasoning must specify effort or maxTokens.");
             if (
                 reasoning.MaxTokens is not null
                 && agent.Client.WireApi != RegisteredWireApi.Completions

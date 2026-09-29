@@ -35,6 +35,7 @@
 - JSON outputs (`WithJsonOutput`) publish `OutputAccepted<JsonElement>` (a `PipelineStructuredOutputAccepted`) carrying the accepted value, like typed outputs.
 - `TerminalPipelineRunOptions.Persistence` and `.Observer` are removed. Put the observers on `Run.Observer` (compose several with `PipelineObservers.Compose(...)`); the display observes after them. Previously `Run.Observer` was silently replaced.
 - `read_ledger` and `search_ledger` page entries no longer carry `stream` (always `runtime.journal`) or `entryId` (derived from `sequence`); use `cursor` and `sequence`.
+- `PipelineBuilder.Route(on: step.Success | step.Failed, to, label)` rejects a second unconditional route for the same outcome of one step (`InvalidOperationException`: "Step '…' cannot declare more than one unconditional Success route."). Routes are evaluated in order, so the second was unreachable.
 
 ## Unreleased — fixes and additions
 
@@ -47,3 +48,4 @@
 - Read-only Git tools resolve path arguments through the workspace path authority: `.git` segments are rejected case-insensitively and paths through symbolic links are rejected, as the file tools already did.
 - `git_blame` returns a text page with `offset`/`limit`/`nextOffset` like the other paged Git tools; it previously cut porcelain output at 500 lines with no continuation.
 - The Node bridge's OpenAI-compatible clients always disable the OpenAI SDK's retry policy, so `StreamRetryChatClient` is the only retry layer. A client without `maxAttempts` previously stacked the SDK's three retries on each of its four attempts (16 requests for a persistent 503).
+- Range errors from agent and pipeline authoring (`WithTimeout`, `AgentModelRequestOptions`, `UseHarness` context budgets, `WithCheckpoint`, `AgentTurnPolicy`) state the rule and the rejected value (for example "Temperature must be a finite number from 0 to 2."), instead of the bare "Specified argument was out of the range of valid values." The Node bridge surfaces these messages unchanged.

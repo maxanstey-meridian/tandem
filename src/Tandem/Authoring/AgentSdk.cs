@@ -106,19 +106,35 @@ public sealed class AgentModelRequestOptions
     {
         if (reasoningEffort is { } effort && !Enum.IsDefined(effort))
         {
-            throw new ArgumentOutOfRangeException(nameof(reasoningEffort));
+            throw new ArgumentOutOfRangeException(
+                nameof(reasoningEffort),
+                effort,
+                "Reasoning effort must be None, Low, Medium or High."
+            );
         }
         if (temperature is { } value && (!float.IsFinite(value) || value is < 0 or > 2))
         {
-            throw new ArgumentOutOfRangeException(nameof(temperature));
+            throw new ArgumentOutOfRangeException(
+                nameof(temperature),
+                value,
+                "Temperature must be a finite number from 0 to 2."
+            );
         }
         if (maxOutputTokens is <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(maxOutputTokens));
+            throw new ArgumentOutOfRangeException(
+                nameof(maxOutputTokens),
+                maxOutputTokens,
+                "Max output tokens must be positive."
+            );
         }
         if (reasoningMaxTokens is < 1024)
         {
-            throw new ArgumentOutOfRangeException(nameof(reasoningMaxTokens));
+            throw new ArgumentOutOfRangeException(
+                nameof(reasoningMaxTokens),
+                reasoningMaxTokens,
+                "Reasoning max tokens must be at least 1024."
+            );
         }
         if (reasoningEffort is not null && reasoningMaxTokens is not null)
         {
@@ -241,7 +257,11 @@ public sealed class AgentBuilder<TState>
     {
         if (timeout <= TimeSpan.Zero || timeout > _maximumTimeout)
         {
-            throw new ArgumentOutOfRangeException(nameof(timeout));
+            throw new ArgumentOutOfRangeException(
+                nameof(timeout),
+                timeout,
+                $"An agent timeout must be positive and at most {_maximumTimeout.TotalMilliseconds} milliseconds."
+            );
         }
         _timeout = timeout;
         return this;

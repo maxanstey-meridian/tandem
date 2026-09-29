@@ -130,7 +130,11 @@ public sealed record AgentTurnPolicy<TState>
     {
         if (maxContinuationAttempts < 1)
         {
-            throw new ArgumentOutOfRangeException(nameof(maxContinuationAttempts));
+            throw new ArgumentOutOfRangeException(
+                nameof(maxContinuationAttempts),
+                maxContinuationAttempts,
+                "An agent turn policy needs at least one continuation attempt."
+            );
         }
 
         MaxContinuationAttempts = maxContinuationAttempts;
@@ -519,12 +523,20 @@ public static class AdvancedAgentBuilderExtensions
         ArgumentException.ThrowIfNullOrWhiteSpace(harnessInstructions);
         if (maxContextWindowTokens <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(maxContextWindowTokens));
+            throw new ArgumentOutOfRangeException(
+                nameof(maxContextWindowTokens),
+                maxContextWindowTokens,
+                "The context window must be positive."
+            );
         }
 
         if (maxOutputTokens <= 0 || maxOutputTokens >= maxContextWindowTokens)
         {
-            throw new ArgumentOutOfRangeException(nameof(maxOutputTokens));
+            throw new ArgumentOutOfRangeException(
+                nameof(maxOutputTokens),
+                maxOutputTokens,
+                "Max output tokens must be positive and smaller than the context window."
+            );
         }
 
         return builder
@@ -656,15 +668,27 @@ public static class AdvancedAgentBuilderExtensions
         ArgumentNullException.ThrowIfNull(policy);
         if (policy.ContextWindowTokens <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(policy.ContextWindowTokens));
+            throw new ArgumentOutOfRangeException(
+                nameof(policy.ContextWindowTokens),
+                policy.ContextWindowTokens,
+                "The checkpoint context window must be positive."
+            );
         }
         if (policy.MaxOutputTokens <= 0 || policy.MaxOutputTokens >= policy.ContextWindowTokens)
         {
-            throw new ArgumentOutOfRangeException(nameof(policy.MaxOutputTokens));
+            throw new ArgumentOutOfRangeException(
+                nameof(policy.MaxOutputTokens),
+                policy.MaxOutputTokens,
+                "Checkpoint max output tokens must be positive and smaller than the context window."
+            );
         }
         if (policy.CheckpointAtPercent is <= 0 or >= 100)
         {
-            throw new ArgumentOutOfRangeException(nameof(policy.CheckpointAtPercent));
+            throw new ArgumentOutOfRangeException(
+                nameof(policy.CheckpointAtPercent),
+                policy.CheckpointAtPercent,
+                "The checkpoint threshold must be from 1 to 99 percent of the context window."
+            );
         }
         ArgumentNullException.ThrowIfNull(policy.Capability);
         ArgumentException.ThrowIfNullOrWhiteSpace(policy.Instructions);
@@ -673,7 +697,11 @@ public static class AdvancedAgentBuilderExtensions
         {
             CheckpointSessionBehavior.Retain => false,
             CheckpointSessionBehavior.Reset => true,
-            _ => throw new ArgumentOutOfRangeException(nameof(policy.SessionBehavior)),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(policy.SessionBehavior),
+                policy.SessionBehavior,
+                "Checkpoint session behavior must be Retain or Reset."
+            ),
         };
 
         return builder.ConfigureCheckpoint(

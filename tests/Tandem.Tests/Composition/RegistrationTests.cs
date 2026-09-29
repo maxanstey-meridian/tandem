@@ -8,15 +8,47 @@ namespace Tandem.Tests.Composition;
 public sealed class RegistrationTests
 {
     [Fact]
-    public void AgentTimeout_RejectsUnsupportedDurations()
+    public void AuthoringRangeErrors_StateTheRule()
     {
         var builder = Agent
             .Create<TestState>("agent", "Respond.", new TestChatClient())
             .WithMessage(state => state.Message);
 
-        var tooLong = () => builder.WithTimeout(TimeSpan.MaxValue);
+        void Rejects(Action act, string rule) =>
+            act.Should().Throw<ArgumentOutOfRangeException>().WithMessage($"{rule}*");
 
-        tooLong.Should().Throw<ArgumentOutOfRangeException>();
+        Rejects(
+            () => builder.WithTimeout(TimeSpan.MaxValue),
+            "An agent timeout must be positive and at most 4294967294 milliseconds."
+        );
+        Rejects(
+            () => _ = new AgentModelRequestOptions(temperature: 2.5f),
+            "Temperature must be a finite number from 0 to 2."
+        );
+        Rejects(
+            () => _ = new AgentModelRequestOptions(maxOutputTokens: 0),
+            "Max output tokens must be positive."
+        );
+        Rejects(
+            () => _ = new AgentModelRequestOptions(reasoningMaxTokens: 1023),
+            "Reasoning max tokens must be at least 1024."
+        );
+        Rejects(
+            () => builder.UseHarness("Work.", maxContextWindowTokens: 0, maxOutputTokens: 1),
+            "The context window must be positive."
+        );
+        Rejects(
+            () => builder.UseHarness("Work.", maxContextWindowTokens: 100, maxOutputTokens: 100),
+            "Max output tokens must be positive and smaller than the context window."
+        );
+        Rejects(
+            () =>
+                _ = new AgentTurnPolicy<TestState>(
+                    0,
+                    (_, _) => ValueTask.FromResult<AgentTurnDirective?>(null)
+                ),
+            "An agent turn policy needs at least one continuation attempt."
+        );
     }
 
     [Fact]

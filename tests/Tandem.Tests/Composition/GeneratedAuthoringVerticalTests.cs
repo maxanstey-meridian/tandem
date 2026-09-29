@@ -208,6 +208,27 @@ public sealed class GeneratedAuthoringVerticalTests
             .WithMessage("*cannot mix unconditional and outcome-specific*");
     }
 
+    [Fact]
+    public void Route_RejectsASecondUnconditionalRouteForTheSameOutcome()
+    {
+        var outcome = new StandardOutcomeStage(false);
+        var complete = new StateCompleteStage();
+        var recovery = new RecoveryStage();
+        var builder = Pipeline
+            .Start(at: outcome, name: "duplicate-outcome-routes")
+            .Route(on: outcome.Success, when: state => state.Count > 1, to: recovery, label: "big")
+            .Route(on: outcome.Success, to: complete, label: "success")
+            .Route(on: outcome.Failed, to: recovery, label: "failed");
+
+        var act = () => builder.Route(on: outcome.Success, to: recovery, label: "again");
+
+        act.Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage(
+                "Step 'standard-outcome' cannot declare more than one unconditional Success route."
+            );
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

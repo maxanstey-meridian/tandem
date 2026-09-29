@@ -1214,7 +1214,7 @@ public sealed class PipelineBuilder<TState>
                 && result.CaseId == on.CaseId
                 && (when is null || when(pipeline.State)),
             label,
-            unconditional: false
+            unconditionalCase: when is null ? on.CaseId : null
         );
         return this;
     }
@@ -1224,7 +1224,8 @@ public sealed class PipelineBuilder<TState>
         IPipelineNode target,
         Func<PipelineMessage<TState>, bool> predicate,
         string label,
-        bool unconditional = false
+        bool unconditional = false,
+        string? unconditionalCase = null
     )
     {
         EnsureNotBuilt();
@@ -1241,7 +1242,25 @@ public sealed class PipelineBuilder<TState>
                 $"Step '{source.Id}' cannot declare more than one unconditional route."
             );
         }
-        routes.Add(new PipelineRouteRegistration(target, predicate, label, unconditional));
+        // Routes are evaluated in order, so a second unconditional route for an outcome is dead.
+        if (
+            unconditionalCase is not null
+            && routes.Any(route => route.UnconditionalCase == unconditionalCase)
+        )
+        {
+            throw new InvalidOperationException(
+                $"Step '{source.Id}' cannot declare more than one unconditional {unconditionalCase} route."
+            );
+        }
+        routes.Add(
+            new PipelineRouteRegistration(
+                target,
+                predicate,
+                label,
+                unconditional,
+                unconditionalCase
+            )
+        );
     }
 
     private void TrackFailureRoute(IPipelineNode source, Func<PipelineMessage<TState>, bool>? when)
@@ -1429,7 +1448,8 @@ public sealed class PipelineBuilder<TState>
         IPipelineNode Target,
         Func<PipelineMessage<TState>, bool> Predicate,
         string Label,
-        bool Unconditional
+        bool Unconditional,
+        string? UnconditionalCase = null
     );
 
     private sealed class PipelineStepReferenceComparer : IEqualityComparer<IPipelineNode>

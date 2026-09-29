@@ -552,8 +552,8 @@ public sealed class RegistrationContractValidatorTests
         };
 
         Assert.Contains(
-            "routes from 'agent' for outcome 'success' contain more than one unconditional route",
-            ContractError(value)
+            "routes[1]: Step 'agent' cannot declare more than one unconditional Success route.",
+            BuildError(value)
         );
     }
 
@@ -760,7 +760,7 @@ public sealed class RegistrationContractValidatorTests
 
         agent["temperature"] = 0;
         agent["maxOutputTokens"] = 0;
-        Assert.Contains("(Parameter 'maxOutputTokens')", BuildError(value));
+        Assert.Contains("Max output tokens must be positive.", BuildError(value));
 
         agent["maxOutputTokens"] = 1;
         terminal["temperature"] = 0;
@@ -768,9 +768,18 @@ public sealed class RegistrationContractValidatorTests
     }
 
     [Theory]
-    [InlineData("timeout", "(Parameter 'timeout')")]
-    [InlineData("checkpoint-window", "(Parameter 'MaxOutputTokens')")]
-    [InlineData("checkpoint-percent", "(Parameter 'CheckpointAtPercent')")]
+    [InlineData(
+        "timeout",
+        "An agent timeout must be positive and at most 4294967294 milliseconds."
+    )]
+    [InlineData(
+        "checkpoint-window",
+        "Checkpoint max output tokens must be positive and smaller than the context window."
+    )]
+    [InlineData(
+        "checkpoint-percent",
+        "The checkpoint threshold must be from 1 to 99 percent of the context window."
+    )]
     public void SurfacesBuilderRangeRules(string scenario, string expected)
     {
         var value = ContractObject();
@@ -799,8 +808,7 @@ public sealed class RegistrationContractValidatorTests
                 break;
         }
 
-        Assert.Contains("nodes[0]: Specified argument was out of the range", BuildError(value));
-        Assert.Contains(expected, BuildError(value));
+        Assert.Contains($"nodes[0]: {expected}", BuildError(value));
     }
 
     [Theory]
@@ -931,7 +939,40 @@ public sealed class RegistrationContractValidatorTests
         agent["client"] = client;
         agent["reasoning"] = new Dictionary<string, object?> { ["maxTokens"] = maxTokens };
 
-        Assert.Contains("(Parameter 'reasoningMaxTokens')", BuildError(value));
+        Assert.Contains("Reasoning max tokens must be at least 1024.", BuildError(value));
+    }
+
+    [Fact]
+    public void RejectsAnEmptyReasoningObject()
+    {
+        var value = ContractObject();
+        var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        agent["reasoning"] = new Dictionary<string, object?>();
+
+        Assert.Contains(
+            "nodes[0].reasoning must specify effort or maxTokens.",
+            ContractError(value)
+        );
+    }
+
+    [Fact]
+    public void SurfacesBuilderRejectionOfReasoningEffortWithMaxTokens()
+    {
+        var value = ContractObject();
+        var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        var client = Client("http://127.0.0.1:10531/v1", null);
+        client["wireApi"] = "completions";
+        agent["client"] = client;
+        agent["reasoning"] = new Dictionary<string, object?>
+        {
+            ["effort"] = "low",
+            ["maxTokens"] = 1024,
+        };
+
+        Assert.Contains(
+            "nodes[0]: Reasoning effort and reasoning max tokens are mutually exclusive.",
+            BuildError(value)
+        );
     }
 
     private static string ContractError(object value) =>
