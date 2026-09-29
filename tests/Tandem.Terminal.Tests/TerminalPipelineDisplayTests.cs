@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.Time.Testing;
 using Spectre.Console.Testing;
 
 namespace Tandem.Terminal.Tests;
@@ -195,7 +196,7 @@ public sealed class TerminalPipelineDisplayTests
                 "invocation",
                 "publish",
                 "Write",
-                "Completed"
+                "Rejected"
             ),
             default
         );
@@ -207,9 +208,93 @@ public sealed class TerminalPipelineDisplayTests
             .Contain(
                 $"tool search path=\"src/file.cs\" staged=false in {invocationDirectory} started"
             );
-        console.Output.Should().Contain("command test exited 0: [31mpassed");
-        console.Output.Should().Contain("action publish Completed");
+        console.Output.Should().Contain("verify command passed: test\n[31mpassed");
+        console.Output.Should().Contain("agent action failed: publish: Rejected");
         console.Output.Should().NotContain("\u001b");
+    }
+
+    [Fact]
+    public async Task PlainOutputPrintsTheModelsVisitsAndTranscriptEntries()
+    {
+        var time = new FakeTimeProvider();
+        var console = new TestConsole().Width(240);
+        await using var display = new TerminalPipelineDisplay(
+            Inspection(),
+            _runId,
+            new TerminalDisplayOptions
+            {
+                Console = console,
+                Capabilities = new(false, false),
+                TimeProvider = time,
+            }
+        );
+        await display.StartAsync();
+        using var arguments = JsonDocument.Parse("{\"q\":\"x\"}");
+        PipelineObservation[] observations =
+        [
+            new PipelineStepStarted(_runId, "agent"),
+            new PipelineAgentUpdated(_runId, "agent", new AgentUpdate.Text("hello")),
+            new PipelineAgentUpdated(_runId, "agent", new AgentUpdate.Reasoning("thinking")),
+            new PipelineAgentUpdated(
+                _runId,
+                "agent",
+                new AgentUpdate.ToolStarted("c1", "search", arguments.RootElement)
+            ),
+            new PipelineAgentUpdated(
+                _runId,
+                "agent",
+                new AgentUpdate.ToolCompleted("c1", "a large result", null)
+            ),
+            new PipelineAgentUpdated(
+                _runId,
+                "agent",
+                new AgentUpdate.ToolCompleted("c2", null, "denied")
+            ),
+            new PipelineActionCompleted(_runId, "agent", "i", "publish", "Write", "Rejected"),
+            new PipelineAgentUsage(_runId, "agent", 10, 4, 30, 200),
+        ];
+        foreach (var observation in observations)
+        {
+            await display.Observer.ObserveAsync(observation, default);
+        }
+        time.Advance(TimeSpan.FromSeconds(3));
+        await display.Observer.ObserveAsync(
+            new PipelineStepFaulted(_runId, "agent", "boom"),
+            default
+        );
+        await display.Observer.ObserveAsync(new PipelineStepStarted(_runId, "verify"), default);
+        await display.Observer.ObserveAsync(
+            new PipelineCommandOutput(_runId, "verify", "test", "ok", 0),
+            default
+        );
+        await display.Observer.ObserveAsync(
+            new PipelineStepCompleted(_runId, "verify", Outcome("done", 1)),
+            default
+        );
+        await display.Observer.ObserveAsync(new PipelineStepStarted(_runId, "review"), default);
+        await display.Observer.ObserveAsync(new PipelineStepCancelled(_runId, "review"), default);
+        await display.SucceededAsync("all good");
+        await display.WaitForCleanupAsync();
+
+        console
+            .Lines.Should()
+            .Equal(
+                $"pipeline pipeline run {_runId:N} started",
+                "agent started",
+                "agent text: hello",
+                "agent reasoning: thinking",
+                "agent tool search q=\"x\" started",
+                "agent tool failed: denied",
+                "agent action failed: publish: Rejected",
+                "agent faulted: boom (00:00:03)",
+                "verify started",
+                "verify command passed: test",
+                "ok",
+                "verify tandem.success: done (00:00:01)",
+                "review started",
+                "review cancelled",
+                "pipeline Succeeded: all good"
+            );
     }
 
     [Fact]

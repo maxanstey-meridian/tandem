@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.Time.Testing;
 using Spectre.Console;
 using Spectre.Console.Testing;
 
@@ -79,6 +80,24 @@ public sealed class TerminalRendererTests
     }
 
     [Fact]
+    public void RunHeaderElapsedTimeFollowsTheModelClockAndStopsWhenFinished()
+    {
+        var time = new FakeTimeProvider();
+        var model = new TerminalModel("pipeline", _runId, time, 100, 10_000, null, null);
+        var console = new TestConsole().Width(140).Height(24);
+        var renderer = new TerminalRenderer(console);
+
+        time.Advance(TimeSpan.FromSeconds(65));
+        renderer.Render(model.Snapshot());
+        console.Output.Should().Contain("Running  00:01:05");
+
+        model.Finish(TerminalPipelineStatus.Succeeded);
+        time.Advance(TimeSpan.FromHours(1));
+        renderer.Render(model.Snapshot());
+        console.Output.Should().Contain("Succeeded  00:01:05").And.NotContain("01:01:05");
+    }
+
+    [Fact]
     public void WorkHeaderShowsModelWithoutStateOrParticipant()
     {
         var console = new TestConsole().Width(140).Height(24);
@@ -105,8 +124,7 @@ public sealed class TerminalRendererTests
             _runId,
             TerminalPipelineStatus.Running,
             "deepseek",
-            now,
-            null,
+            TimeSpan.Zero,
             [new("executor", now)],
             [new("executor", TranscriptKind.Text, "working")],
             800,
@@ -232,7 +250,29 @@ public sealed class TerminalRendererTests
         output.Split("[executor]", StringSplitOptions.None).Should().HaveCount(2);
         var brace = output.Split('\n').Single(line => line.Contains('{'));
         var verification = output.Split('\n').Single(line => line.Contains("\"verification\""));
-        verification.IndexOf('"').Should().Be(brace.IndexOf('{') + 2);
+        verification.IndexOf('"').Should().Be(brace.IndexOf('{') + 3);
+    }
+
+    [Theory]
+    [InlineData("", "字")]
+    [InlineData("", "字 ")]
+    [InlineData("a", "🙂")]
+    public void WideCharactersWrapByDisplayWidthWithoutLosingText(string lead, string unit)
+    {
+        var text = lead + string.Concat(Enumerable.Repeat(unit, 30)) + "END";
+        var console = new TestConsole().Width(60).Height(24);
+
+        new TerminalRenderer(console).Render(Model(("executor", text)));
+
+        var output = console.Output;
+        output.Split(unit.Trim()).Length.Should().Be(31);
+        output.Should().Contain("END").And.NotContain("…").And.NotContain("\uFFFD");
+        output
+            .Split('\n')
+            .Where(line => line.Contains(unit.Trim(), StringComparison.Ordinal))
+            .Should()
+            .HaveCountGreaterThan(1)
+            .And.OnlyContain(line => new Spectre.Console.Rendering.Segment(line).CellCount() == 60);
     }
 
     [Fact]
@@ -401,7 +441,6 @@ public sealed class TerminalRendererTests
     {
         var markup = ToolStartFormatter.FormatMarkup(
             "file_access_read path=\"src/Case.cs\" staged=false in ~/work",
-            includesToolName: true,
             includesWorkingDirectory: true
         );
 
@@ -652,28 +691,29 @@ public sealed class TerminalRendererTests
             .Split('\n')
             .Should()
             .Contain(line => line.Contains("custom", StringComparison.Ordinal))
-            .And.Contain(line => line.Contains("value=\"entry-", StringComparison.Ordinal));
+            .And.Contain(line => line.Contains("\"entry-", StringComparison.Ordinal));
     }
 
     [Fact]
-    public void JsonWrappingPreservesEscapesAndStringStyleWithoutRecursiveParsing()
+    public void JsonStringsContainingJsonKeepStringStyleAndEscapesAcrossWrapping()
     {
         const string nested =
             """{"nested":"quote: \" and slash \\ and line \n and unicode \u263A"}""";
-        var line = $"  \"message\": {JsonSerializer.Serialize($"Received: {nested}")}";
+        var json = JsonSerializer.Serialize(new { message = $"Received → {nested}" });
+        var snapshot = Model(("executor", "working")) with
+        {
+            Transcript = [new TranscriptEntry("executor", TranscriptKind.Semantic, json)],
+        };
 
-        var fragments = TerminalRenderer.WrapJsonLine(line, 14);
-        var markup = string.Concat(fragments);
-        var reconstructed = System.Text.RegularExpressions.Regex.Replace(markup, "\\[[^]]+\\]", "");
+        var output = RenderAnsi(snapshot, width: 42);
 
-        reconstructed.Should().Be(line);
-        fragments
+        output
             .Should()
-            .OnlyContain(fragment => !fragment.Contains("[grey]nested", StringComparison.Ordinal));
-        fragments
-            .Should()
-            .OnlyContain(fragment => !fragment.EndsWith("[green]\\[/]", StringComparison.Ordinal));
-        markup.Should().Contain("[green]{[/]").And.NotContain("[cyan]nested[/]");
+            .Contain("\u001b[38;5;14m\"message\"\u001b[0m")
+            .And.NotContain("\u001b[38;5;14m\\\"nested")
+            .And.Contain("\\\"nested\\\"")
+            .And.Contain("→")
+            .And.NotContain("\\u0022");
     }
 
     [Fact]
@@ -753,7 +793,7 @@ public sealed class TerminalRendererTests
             .Contain($"\u001b[38;5;69m{_runId:N}\u001b[0m")
             .And.Contain("\u001b[38;5;141mtitle[unsafe]\u001b[0m")
             .And.Contain($"\u001b[1;38;5;{statusColor}m{status}\u001b[0m")
-            .And.MatchRegex("\\u001b\\[38;5;8m  00:00:0[0-9]\\u001b\\[0m");
+            .And.Contain("\u001b[38;5;8m  00:00:00\u001b[0m");
     }
 
     [Fact]
@@ -836,7 +876,7 @@ public sealed class TerminalRendererTests
             .And.Contain("\u001b[38;5;2m\"value: text\"\u001b[0m")
             .And.Contain("\u001b[38;5;11mtrue\u001b[0m")
             .And.Contain("\u001b[38;5;69m12.5\u001b[0m")
-            .And.MatchRegex("\\u001b\\[38;5;8m +null");
+            .And.Contain("\u001b[38;5;8mnull");
         pretty.Should().Contain("value: text");
     }
 
@@ -918,8 +958,7 @@ public sealed class TerminalRendererTests
             _runId,
             TerminalPipelineStatus.Running,
             "model",
-            now,
-            null,
+            TimeSpan.Zero,
             visits,
             transcript,
             0,

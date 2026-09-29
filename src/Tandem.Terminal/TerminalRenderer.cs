@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using Spectre.Console;
+using Spectre.Console.Json;
 using Spectre.Console.Rendering;
 
 namespace Tandem.Terminal;
@@ -16,6 +17,11 @@ internal sealed class TerminalRenderer(
     private const int MaxScrollbackLines = 2_000;
     private const int PipelineDurationWidth = 8;
     private const int PipelineResultWidth = 9;
+    private static readonly JsonSerializerOptions _displayJson = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+    private static readonly Style _jsonPunctuation = new(Color.Grey);
     private static readonly string[] _stepBackgrounds =
     [
         "#244866",
@@ -40,8 +46,7 @@ internal sealed class TerminalRenderer(
         (pipelineLabels ?? [])
             .Select(TerminalText.Sanitize)
             .DefaultIfEmpty("Pipeline")
-            .MaxBy(label => label.Length)!
-            .Length
+            .Max(CellWidth)
         + PipelineDurationWidth
         + PipelineResultWidth
         + 12;
@@ -126,7 +131,6 @@ internal sealed class TerminalRenderer(
 
     private static IRenderable RenderHeader(TerminalSnapshot model)
     {
-        var elapsed = (model.CompletedAt ?? DateTimeOffset.UtcNow) - model.StartedAt;
         var output = new StringBuilder();
         AppendChrome(output, $"{model.RunId:N}", "cornflowerblue");
         if (!string.IsNullOrEmpty(model.Title))
@@ -136,7 +140,7 @@ internal sealed class TerminalRenderer(
         }
         AppendChrome(output, "  ", "grey");
         AppendChrome(output, $"{model.Status}", StatusColor(model.Status), bold: true);
-        AppendChrome(output, $"  {elapsed:hh\\:mm\\:ss}", "grey");
+        AppendChrome(output, $"  {model.Elapsed:hh\\:mm\\:ss}", "grey");
         return new Panel(new Markup(output.ToString()).Overflow(Overflow.Ellipsis))
             .Border(BoxBorder.Rounded)
             .Padding(1, 0, 1, 0);
@@ -146,10 +150,11 @@ internal sealed class TerminalRenderer(
     {
         var visibleCount = Math.Max(1, paneHeight - 2);
         _viewportHeight = visibleCount;
-        var lines = new List<IRenderable>();
+        var options = RenderOptions.Create(console, console.Profile.Capabilities);
+        var lines = new List<SegmentLine>();
         var stepWidth = Math.Max(
             1,
-            model.Transcript.Select(entry => entry.StepId.Length).DefaultIfEmpty(1).Max()
+            model.Transcript.Select(entry => CellWidth(entry.StepId)).DefaultIfEmpty(1).Max()
         );
 
         for (
@@ -163,17 +168,8 @@ internal sealed class TerminalRenderer(
             {
                 continue;
             }
-            var rendered = RenderLines(entry, stepWidth, paneWidth).ToList();
-            var remaining = MaxScrollbackLines - lines.Count;
-            if (rendered.Count > remaining)
-            {
-                rendered = rendered.TakeLast(remaining).ToList();
-            }
-            lines.InsertRange(0, rendered);
-        }
-        if (lines.Count == 0)
-        {
-            lines.Add(new Text("waiting for activity…", new Style(Color.Grey)));
+            var rendered = RenderEntry(entry, stepWidth, paneWidth, options);
+            lines.InsertRange(0, rendered.TakeLast(MaxScrollbackLines - lines.Count));
         }
         if (_scrollOffset > 0 && model.Transcript.Count > _lastTranscriptCount)
         {
@@ -185,16 +181,16 @@ internal sealed class TerminalRenderer(
         _lastTranscriptCount = model.Transcript.Count;
 
         var start = Math.Max(0, lines.Count - visibleCount - _scrollOffset);
-        var visibleLines = lines.Skip(start).Take(visibleCount).ToList();
+        IRenderable content =
+            lines.Count == 0
+                ? new Text("waiting for activity…", new Style(Color.Grey))
+                : new RenderedLines(lines.Skip(start).Take(visibleCount).ToList());
         var title = FormatWorkHeader(
             model.ModelName,
             model.CurrentContextTokens,
             model.ContextWindowTokens
         );
-        return new Panel(new Rows(visibleLines))
-            .Header($" {title} ")
-            .Border(BoxBorder.Rounded)
-            .Expand();
+        return new Panel(content).Header($" {title} ").Border(BoxBorder.Rounded).Expand();
     }
 
     private static string FormatWorkHeader(
@@ -220,13 +216,14 @@ internal sealed class TerminalRenderer(
     private static string FormatTokens(long tokens) =>
         tokens < 1000 ? tokens.ToString() : $"{tokens / 1000}k";
 
-    private static IEnumerable<IRenderable> RenderLines(
+    private static List<SegmentLine> RenderEntry(
         TranscriptEntry entry,
         int stepWidth,
-        int width
+        int width,
+        RenderOptions options
     )
     {
-        var label = $"[{entry.StepId}]".PadRight(stepWidth + 3);
+        var label = $"[{entry.StepId}]" + new string(' ', stepWidth - CellWidth(entry.StepId) + 1);
         var prefix = entry.Kind switch
         {
             TranscriptKind.Reasoning => "· ",
@@ -234,9 +231,30 @@ internal sealed class TerminalRenderer(
             TranscriptKind.ToolCompleted when entry.Succeeded is true => "✓ ",
             TranscriptKind.ToolCompleted => "✗ ",
             TranscriptKind.Action when entry.Succeeded is false => "✗ ",
-            TranscriptKind.Semantic => "  ",
             _ => "  ",
         };
+        var gutter = label + prefix;
+        var gutterWidth = CellWidth(gutter);
+        var gutterStyle = new Style(Color.White, Color.FromHex(StepBackground(entry.StepId)));
+        var contentWidth = Math.Max(10, width - gutterWidth - 1);
+        var lines = Segment.SplitLines(
+            EntryContent(entry, contentWidth).Render(options, contentWidth),
+            contentWidth
+        );
+        for (var index = 0; index < lines.Count; index++)
+        {
+            lines[index].Prepend(Segment.Padding(1));
+            lines[index]
+                .Prepend(
+                    new Segment(index == 0 ? gutter : new string(' ', gutterWidth), gutterStyle)
+                );
+        }
+        return lines;
+    }
+
+    private static IRenderable EntryContent(TranscriptEntry entry, int width)
+    {
+        var hasWorkingDirectory = !string.IsNullOrWhiteSpace(entry.WorkingDirectory);
         var value =
             entry.Kind == TranscriptKind.ToolStarted
                 ? ToolStartFormatter.Format(
@@ -245,331 +263,104 @@ internal sealed class TerminalRenderer(
                     entry.WorkingDirectory
                 )
                 : entry.Text;
-        var background = StepBackground(entry.StepId);
-        var jsonLines = TryRenderJson(value, label, prefix, background, width);
-        if (jsonLines is not null)
+        if (JsonContent(value) is { } json)
         {
-            foreach (var line in jsonLines)
-            {
-                yield return line;
-            }
-            yield break;
+            return json;
+        }
+        if (entry.Kind == TranscriptKind.ToolStarted)
+        {
+            return new Markup(ToolStartFormatter.FormatMarkup(value, hasWorkingDirectory));
         }
 
-        var coloredGutterWidth = label.Length + prefix.Length;
-        var availableWidth = Math.Max(10, width - coloredGutterWidth - 1);
-        var first = true;
-        foreach (var wrapped in WrapVisibleText(value, availableWidth))
-        {
-            var gutter = first ? label + prefix : new string(' ', coloredGutterWidth);
-            var content =
-                entry.Kind == TranscriptKind.ToolStarted
-                    ? ToolStartFormatter.FormatMarkup(
-                        wrapped,
-                        first,
-                        !string.IsNullOrWhiteSpace(entry.WorkingDirectory)
-                    )
-                    : Markup.Escape(wrapped);
-            if (entry.Kind == TranscriptKind.Reasoning)
-            {
-                content = $"[grey]{content}[/]";
-            }
-            else if (entry.Succeeded is false)
-            {
-                content = $"[red]{content}[/]";
-            }
-            yield return new Markup(
-                $"[white on {background}]{Markup.Escape(gutter)}[/] {content}"
-            ).Overflow(Overflow.Ellipsis);
-            first = false;
-        }
+        var style =
+            entry.Kind == TranscriptKind.Reasoning ? new Style(Color.Grey)
+            : entry.Succeeded is false ? new Style(Color.Red)
+            : Style.Plain;
+        return new Rows(
+            value
+                .Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Replace('\r', '\n')
+                .Split('\n')
+                .Select(line => line.TrimEnd())
+                .Where(line => line.Length > 0)
+                .Select(line =>
+                {
+                    var content = line.TrimStart();
+                    var indent = Math.Min(line.Length - content.Length, width - 1);
+                    return new Padder(new Text(content, style), new Padding(indent, 0, 0, 0));
+                })
+        );
     }
 
-    private static IReadOnlyList<IRenderable>? TryRenderJson(
-        string value,
-        string label,
-        string prefix,
-        string background,
-        int width
-    )
+    private static Rows? JsonContent(string value)
     {
         var candidate = value.Trim();
-        string? preamble = null;
-        if (candidate.StartsWith("```json", StringComparison.OrdinalIgnoreCase))
+        if (
+            candidate.StartsWith("```json", StringComparison.OrdinalIgnoreCase)
+            && candidate.EndsWith("```", StringComparison.Ordinal)
+            && candidate.Length > 10
+        )
         {
-            if (!candidate.EndsWith("```", StringComparison.Ordinal) || candidate.Length <= 10)
-            {
-                return null;
-            }
             candidate = candidate[7..^3].Trim();
         }
-        else
+        var start = candidate.IndexOfAny(['{', '[']);
+        if (start < 0 || candidate[^1] is not ('}' or ']'))
         {
-            var objectStart = candidate.IndexOfAny(['{', '[']);
-            if (objectStart > 0)
-            {
-                preamble = candidate[..objectStart].TrimEnd();
-                candidate = candidate[objectStart..];
-            }
+            return null;
         }
-        if (
-            candidate.Length < 2
-            || candidate[0] is not ('{' or '[')
-            || candidate[^1] is not ('}' or ']')
-        )
+        var documents = JsonDocuments(candidate[start..]);
+        if (documents is null)
         {
             return null;
         }
 
-        IReadOnlyList<string> documents;
+        var preamble = candidate[..start].TrimEnd();
+        return new Rows([
+            .. preamble.Length == 0 ? [] : new[] { new Text(preamble) },
+            .. documents.Select(JsonBlock),
+        ]);
+    }
+
+    private static IReadOnlyList<string>? JsonDocuments(string json)
+    {
+        var reader = new Utf8JsonReader(
+            Encoding.UTF8.GetBytes(json),
+            new JsonReaderOptions { AllowMultipleValues = true }
+        );
+        var documents = new List<string>();
         try
         {
-            documents = ExtractJsonDocuments(candidate);
+            while (reader.Read())
+            {
+                if (reader.TokenType is not (JsonTokenType.StartObject or JsonTokenType.StartArray))
+                {
+                    return null;
+                }
+                documents.Add(
+                    JsonSerializer.Serialize(JsonElement.ParseValue(ref reader), _displayJson)
+                );
+            }
         }
         catch (JsonException)
         {
             return null;
         }
-        var formattedDocuments = new List<string>(documents.Count);
-        foreach (var json in documents)
-        {
-            try
-            {
-                using var document = JsonDocument.Parse(json);
-                formattedDocuments.Add(
-                    JsonSerializer.Serialize(
-                        document.RootElement,
-                        new JsonSerializerOptions
-                        {
-                            WriteIndented = true,
-                            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-                        }
-                    )
-                );
-            }
-            catch (JsonException)
-            {
-                return null;
-            }
-        }
-
-        var formatted = string.Join('\n', formattedDocuments);
-        var gutterWidth = label.Length + prefix.Length;
-        var lines = preamble is null
-            ? formatted.Split('\n')
-            : [.. preamble.Split('\n'), .. formatted.Split('\n')];
-        var jsonStartsAt = preamble?.Split('\n').Length ?? 0;
-        var availableWidth = Math.Max(10, width - gutterWidth - 1);
-        var rendered = new List<IRenderable>();
-        for (var index = 0; index < lines.Length; index++)
-        {
-            var fragments =
-                index < jsonStartsAt
-                    ? WrapVisibleText(lines[index], availableWidth).DefaultIfEmpty("").ToArray()
-                    : WrapJsonLine(lines[index], availableWidth).ToArray();
-            for (var fragmentIndex = 0; fragmentIndex < fragments.Length; fragmentIndex++)
-            {
-                var firstVisualLine = rendered.Count == 0;
-                var gutter = firstVisualLine ? label + prefix : new string(' ', gutterWidth);
-                var markup = new StringBuilder();
-                if (firstVisualLine)
-                {
-                    markup.Append($"[white on {background}]{Markup.Escape(gutter)}[/] ");
-                }
-                else
-                {
-                    markup.Append(Markup.Escape(gutter)).Append(' ');
-                }
-                var fragment = fragments[fragmentIndex];
-                if (index < jsonStartsAt)
-                {
-                    markup.Append(Markup.Escape(fragment));
-                }
-                else
-                {
-                    markup.Append(fragment);
-                }
-                rendered.Add(new Markup(markup.ToString()).Overflow(Overflow.Ellipsis));
-            }
-        }
-        return rendered;
-    }
-
-    private static IReadOnlyList<string> ExtractJsonDocuments(string candidate)
-    {
-        var documents = new List<string>();
-        var offset = 0;
-        while (offset < candidate.Length)
-        {
-            while (offset < candidate.Length && char.IsWhiteSpace(candidate[offset]))
-            {
-                offset++;
-            }
-            if (offset == candidate.Length)
-            {
-                break;
-            }
-            if (candidate[offset] is not ('{' or '['))
-            {
-                throw new JsonException("Unexpected content between JSON documents.");
-            }
-            var start = offset;
-            var depth = 0;
-            var inString = false;
-            var escaped = false;
-            for (; offset < candidate.Length; offset++)
-            {
-                var character = candidate[offset];
-                if (inString)
-                {
-                    if (escaped)
-                    {
-                        escaped = false;
-                    }
-                    else if (character == '\\')
-                    {
-                        escaped = true;
-                    }
-                    else if (character == '"')
-                    {
-                        inString = false;
-                    }
-                    continue;
-                }
-                if (character == '"')
-                {
-                    inString = true;
-                }
-                else if (character is '{' or '[')
-                {
-                    depth++;
-                }
-                else if (character is '}' or ']')
-                {
-                    depth--;
-                    if (depth == 0)
-                    {
-                        offset++;
-                        documents.Add(candidate[start..offset]);
-                        break;
-                    }
-                }
-            }
-            if (depth != 0 || inString)
-            {
-                throw new JsonException("Incomplete JSON document.");
-            }
-        }
-        if (documents.Count == 0)
-        {
-            throw new JsonException("No JSON documents found.");
-        }
         return documents;
     }
 
-    internal static IReadOnlyList<string> WrapJsonLine(string line, int width)
-    {
-        var tokens = JsonTokens(line);
-        var fragments = new List<string>();
-        var output = new StringBuilder();
-        var length = 0;
-        foreach (var (text, color) in tokens)
+    private static JsonText JsonBlock(string json) =>
+        new(json)
         {
-            for (var index = 0; index < text.Length; )
-            {
-                var unitLength =
-                    text[index] == '\\'
-                        ? text.AsSpan(index).StartsWith("\\u", StringComparison.Ordinal)
-                            ? Math.Min(6, text.Length - index)
-                            : Math.Min(2, text.Length - index)
-                        : 1;
-                if (length > 0 && length + unitLength > width)
-                {
-                    fragments.Add(output.ToString());
-                    output.Clear();
-                    length = 0;
-                }
-                AppendStyled(output, text.Substring(index, unitLength), color);
-                length += unitLength;
-                index += unitLength;
-            }
-        }
-        if (length > 0 || fragments.Count == 0)
-        {
-            fragments.Add(output.ToString());
-        }
-        return fragments;
-    }
-
-    private static IReadOnlyList<(string Text, string Color)> JsonTokens(string line)
-    {
-        var tokens = new List<(string Text, string Color)>();
-        var index = 0;
-        while (index < line.Length)
-        {
-            var start = index;
-            var character = line[index];
-            if (character == '"')
-            {
-                index++;
-                while (index < line.Length)
-                {
-                    if (line[index] == '\\')
-                    {
-                        index += line.AsSpan(index).StartsWith("\\u", StringComparison.Ordinal)
-                            ? 6
-                            : 2;
-                    }
-                    else if (line[index++] == '"')
-                    {
-                        break;
-                    }
-                }
-                var probe = index;
-                while (probe < line.Length && char.IsWhiteSpace(line[probe]))
-                {
-                    probe++;
-                }
-                tokens.Add(
-                    (
-                        line[start..Math.Min(index, line.Length)],
-                        probe < line.Length && line[probe] == ':' ? "cyan" : "green"
-                    )
-                );
-            }
-            else if (character == '-' || char.IsDigit(character))
-            {
-                index++;
-                while (
-                    index < line.Length
-                    && (char.IsDigit(line[index]) || line[index] is '.' or 'e' or 'E' or '+' or '-')
-                )
-                {
-                    index++;
-                }
-                tokens.Add((line[start..index], "cornflowerblue"));
-            }
-            else if (char.IsLetter(character))
-            {
-                index++;
-                while (index < line.Length && char.IsLetter(line[index]))
-                {
-                    index++;
-                }
-                var token = line[start..index];
-                tokens.Add((token, token is "true" or "false" ? "yellow" : "grey"));
-            }
-            else
-            {
-                index++;
-                tokens.Add((line[start..index], "grey"));
-            }
-        }
-        return tokens;
-    }
-
-    private static void AppendStyled(StringBuilder output, string value, string color) =>
-        output.Append('[').Append(color).Append(']').Append(Markup.Escape(value)).Append("[/]");
+            BracesStyle = _jsonPunctuation,
+            BracketsStyle = _jsonPunctuation,
+            ColonStyle = _jsonPunctuation,
+            CommaStyle = _jsonPunctuation,
+            NullStyle = _jsonPunctuation,
+            MemberStyle = new Style(Color.Aqua),
+            StringStyle = new Style(Color.Green),
+            NumberStyle = new Style(Color.CornflowerBlue),
+            BooleanStyle = new Style(Color.Yellow),
+        };
 
     private static string StepBackground(string stepId)
     {
@@ -580,37 +371,6 @@ internal sealed class TerminalRenderer(
             hash *= 16777619;
         }
         return _stepBackgrounds[(int)(hash % _stepBackgrounds.Length)];
-    }
-
-    private static IEnumerable<string> WrapVisibleText(string value, int width)
-    {
-        var normalized = value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
-        foreach (var rawLine in normalized.Split('\n'))
-        {
-            var content = rawLine.TrimEnd();
-            if (content.Length == 0)
-            {
-                continue;
-            }
-            var indentLength = content.Length - content.TrimStart().Length;
-            var indent = content[..Math.Min(indentLength, Math.Max(0, width - 1))];
-            var remaining = content[indentLength..];
-            var lineWidth = Math.Max(1, width - indent.Length);
-            while (remaining.Length > lineWidth)
-            {
-                var breakAt = remaining.LastIndexOf(' ', lineWidth);
-                if (breakAt <= 0)
-                {
-                    breakAt = lineWidth;
-                }
-                yield return indent + remaining[..breakAt].TrimEnd();
-                remaining = remaining[breakAt..].TrimStart();
-            }
-            if (remaining.Length > 0)
-            {
-                yield return indent + remaining;
-            }
-        }
     }
 
     private IRenderable RenderPipeline(
@@ -632,7 +392,9 @@ internal sealed class TerminalRenderer(
 
         const int durationWidth = PipelineDurationWidth;
         var labelWidth = Math.Min(
-            rows.Select(entry => TerminalText.Sanitize(entry.Label).Length).DefaultIfEmpty(1).Max(),
+            rows.Select(entry => CellWidth(TerminalText.Sanitize(entry.Label)))
+                .DefaultIfEmpty(1)
+                .Max(),
             Math.Max(1, paneWidth - durationWidth - 12)
         );
         var resultWidth = Math.Max(1, paneWidth - labelWidth - durationWidth - 10);
@@ -722,7 +484,6 @@ internal sealed class TerminalRenderer(
         int resultWidth
     )
     {
-        var duration = Truncate(FormatDuration(entry.Duration), PipelineDurationWidth);
         var icon = entry.Style switch
         {
             TerminalPipelineEntryStyle.Success => "✓",
@@ -741,16 +502,17 @@ internal sealed class TerminalRenderer(
         return
         [
             new Text(icon, new Style(color)),
-            new Text(Truncate(TerminalText.Sanitize(entry.Label), labelWidth)).Overflow(
-                Overflow.Ellipsis
+            new Text(Truncate(TerminalText.Sanitize(entry.Label), labelWidth)),
+            new Text(
+                Truncate(FormatDuration(entry.Duration), PipelineDurationWidth),
+                new Style(Color.Grey)
             ),
-            new Text(duration, new Style(Color.Grey)),
-            new Text(Truncate(result, resultWidth), new Style(color)).Overflow(Overflow.Ellipsis),
+            new Text(Truncate(result, resultWidth), new Style(color)),
         ];
     }
 
     private static string Truncate(string value, int width) =>
-        value.Length <= width ? value : value[..(width - 1)] + "…";
+        Segment.SplitOverflow(new Segment(value), Overflow.Ellipsis, width)[0].Text;
 
     private static string FormatDuration(TimeSpan? duration) =>
         duration switch
@@ -860,4 +622,14 @@ internal sealed class TerminalRenderer(
             TerminalPipelineStatus.WaitingForInteraction => "yellow",
             _ => "cyan",
         };
+
+    private static int CellWidth(string value) => new Segment(value).CellCount();
+
+    private sealed class RenderedLines(IReadOnlyList<SegmentLine> lines) : Renderable
+    {
+        protected override IEnumerable<Segment> Render(RenderOptions options, int maxWidth) =>
+            lines.SelectMany<SegmentLine, Segment>(
+                (line, index) => index == 0 ? line : [Segment.LineBreak, .. line]
+            );
+    }
 }
