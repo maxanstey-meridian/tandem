@@ -33,3 +33,4 @@
 - MAF's workspace write, replace and delete tools resolve every path through the workspace path authority, so reads and deletes through symbolic links or reparse points are rejected as writes already were.
 - Read-only Git tools resolve path arguments through the workspace path authority: `.git` segments are rejected case-insensitively and paths through symbolic links are rejected, as the file tools already did.
 - `git_blame` returns a text page with `offset`/`limit`/`nextOffset` like the other paged Git tools; it previously cut porcelain output at 500 lines with no continuation.
+- The Node bridge's OpenAI-compatible clients always disable the OpenAI SDK's retry policy, so `StreamRetryChatClient` is the only retry layer. A client without `maxAttempts` previously stacked the SDK's three retries on each of its four attempts (16 requests for a persistent 503).

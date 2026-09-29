@@ -14,12 +14,7 @@ internal static class OpenAiCompatibleChatClients
     )
     {
         var endpoint = new Uri(descriptor.Endpoint, UriKind.Absolute);
-        // The outer transport wrapper owns an explicit attempt budget.
-        var client = OpenAiClient(
-            descriptor,
-            transport: null,
-            retries: descriptor.MaxAttempts is null ? null : 0
-        );
+        var client = OpenAiClient(descriptor, transport: null);
         IChatClient chatClient;
         if (descriptor.WireApi == RegisteredWireApi.Responses)
         {
@@ -63,7 +58,7 @@ internal static class OpenAiCompatibleChatClients
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
-        var models = await OpenAiClient(descriptor, transport, retries: 0)
+        var models = await OpenAiClient(descriptor, transport)
             .GetOpenAIModelClient()
             .GetModelsAsync(timeout.Token);
         if (!models.Value.Any(model => model.Id == descriptor.Model))
@@ -76,21 +71,18 @@ internal static class OpenAiCompatibleChatClients
 
     private static OpenAIClient OpenAiClient(
         RegisteredChatClientContract descriptor,
-        PipelineTransport? transport,
-        int? retries
+        PipelineTransport? transport
     )
     {
+        // StreamRetryChatClient is the only retry layer; the SDK's default retries would multiply it.
         var options = new OpenAIClientOptions
         {
             Endpoint = new Uri(descriptor.Endpoint, UriKind.Absolute),
+            RetryPolicy = new ClientRetryPolicy(0),
         };
         if (transport is not null)
         {
             options.Transport = transport;
-        }
-        if (retries is { } maxRetries)
-        {
-            options.RetryPolicy = new ClientRetryPolicy(maxRetries);
         }
         return new OpenAIClient(new ApiKeyCredential(ApiKey(descriptor)), options);
     }
