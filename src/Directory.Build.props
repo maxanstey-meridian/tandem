@@ -3,6 +3,7 @@
 
     <!-- Every project under src/ is a package; its public surface is tracked in PublicAPI.*.txt. -->
     <PropertyGroup>
+        <IsPackable>true</IsPackable>
         <!-- RS0026/RS0027 guard binary compatibility across releases; Tandem breaks APIs outright. -->
         <NoWarn>$(NoWarn);RS0026;RS0027</NoWarn>
     </PropertyGroup>
