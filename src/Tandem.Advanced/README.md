@@ -37,7 +37,7 @@ receives bounded stdout/stderr previews. When ledger tools are enabled and the a
 `diagnostics.entryCursor` identifies captured output: use `read_ledger_entry` with that cursor and
 `stream: "stdout"` or `"stderr"`, following `nextOffset`. `captureTruncated` means the hard capture
 ceiling was reached; `previewTruncated` only means more captured output is available. Without a
-durable reference the response explicitly says retrieval is unavailable. Acceptance-policy process
+ledger reference the response explicitly says retrieval is unavailable. Acceptance-policy process
 evidence is also bounded and marks truncation; full diagnostics remain in the ledger record.
 
 Raw response parsing is an Advanced extension: import `Tandem.Advanced`, implement

@@ -1034,6 +1034,9 @@ Persistent pipelines can record:
 
 Tandem records a value when the stage, agent, capability, or interaction accepts it.
 
+The ledger is an append-only run-history journal for inspection. Runs are process-owned: a ledger
+records what a run accepted, but it cannot reopen or resume the run.
+
 For example:
 
 ```ts
@@ -1193,7 +1196,8 @@ Start with the package-backed [C# quickstart](docs/quickstarts/csharp.md), then 
 deterministic stages, and persistence. The TypeScript quickstart lives in the
 [`tandem-ts` repository](https://github.com/maxanstey-meridian/tandem-ts).
 
-The repository contains matching C# and TypeScript examples for:
+The repository contains C# examples for the following; the TypeScript versions live in
+[`tandem-ts`](https://github.com/maxanstey-meridian/tandem-ts):
 
 * **Songwriter** — a small agent pipeline with branching and revision;
 * **Debate** — multiple agents, capabilities, and session continuation; and

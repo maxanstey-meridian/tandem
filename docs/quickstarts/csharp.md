@@ -54,5 +54,6 @@ dotnet run
 ```
 
 The typed state owns the facts, `NormalizeStage` owns one deterministic operation, and the route owns
-the decision to continue to `done`. Continue with the package-backed
-[getting-started progression](../../examples/getting-started).
+the decision to continue to `done`. Continue with the
+[getting-started progression](../../examples/getting-started), which builds against this
+repository's projects.
