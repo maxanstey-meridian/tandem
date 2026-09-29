@@ -6,7 +6,6 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
 {
     private static int _interactiveOwner;
     private readonly TerminalDisplayOptions _options;
-    private readonly IReadOnlySet<string> _truncatedToolNames;
     private readonly IAnsiConsole _console;
     private readonly TerminalModel _model;
     private readonly TerminalRenderer _renderer;
@@ -42,10 +41,6 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
                 "Capacities and refresh interval must be positive."
             );
         }
-        _truncatedToolNames = new HashSet<string>(
-            _options.TruncatedToolNames,
-            StringComparer.Ordinal
-        );
         _console = _options.Console ?? AnsiConsole.Console;
         _model = new(
             pipeline.Name,
@@ -55,7 +50,7 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
             _options.TranscriptCharacterCapacity,
             _options.Title,
             _options.WorkingDirectory,
-            _truncatedToolNames
+            _options.TruncatedToolNames
         );
         _renderer = new(_console, _options.KeyActions, pipeline.StepIds);
         _observer = new(this);
@@ -335,77 +330,52 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
 
     private void Observe(PipelineObservation observation)
     {
-        _model.Apply(observation);
+        var changes = _model.Apply(observation);
         if (observation is PipelineInteractionRequestedObservation interactionRequest)
         {
             _model.SetInteraction(_options.FormatInteraction?.Invoke(interactionRequest));
         }
-        if (!IsInteractive && Volatile.Read(ref _started) != 0)
+        if (IsInteractive || Volatile.Read(ref _started) == 0)
         {
-            switch (observation)
+            return;
+        }
+        if (changes.Visit is { } visit)
+        {
+            WritePlain(PlainLine(visit));
+        }
+        foreach (var entry in changes.Entries)
+        {
+            if (PlainLine(entry) is { } line)
             {
-                case PipelineStepStarted started:
-                    WritePlain($"{started.StepId} started");
-                    break;
-                case PipelineAgentUpdated { Update: AgentUpdate.Text text } update:
-                    WritePlain($"{update.StepId} text: {text.Value}");
-                    break;
-                case PipelineAgentUpdated { Update: AgentUpdate.Reasoning reasoning } update:
-                    WritePlain($"{update.StepId} reasoning: {reasoning.Value}");
-                    break;
-                case PipelineAgentUpdated { Update: AgentUpdate.ToolStarted tool } update:
-                    var arguments = TerminalModel.DisplayArguments(tool, _truncatedToolNames);
-                    WritePlain(
-                        $"{update.StepId} tool {ToolStartFormatter.Format(tool.Name, arguments, tool.WorkingDirectory)} started"
-                    );
-                    break;
-                case PipelineAgentUpdated { Update: AgentUpdate.ToolCompleted tool } update:
-                    WritePlain(
-                        $"{update.StepId} tool {tool.CallId} {(tool.Succeeded ? "completed" : "failed")}"
-                    );
-                    break;
-                case PipelineCommandOutput command:
-                    WritePlain(
-                        $"{command.StepId} command {command.Command} exited {command.ExitCode}: {command.Output}"
-                    );
-                    break;
-                case PipelineActionAttempted action:
-                    WritePlain(
-                        $"{action.StepId} action {action.ActionName} ({action.Effect}) started"
-                    );
-                    break;
-                case PipelineActionCompleted action:
-                    WritePlain($"{action.StepId} action {action.ActionName} {action.Result}");
-                    break;
-                case PipelineStepCompleted completed:
-                    WritePlain(
-                        $"{completed.StepId} {completed.Outcome.Kind}: {completed.Outcome.Summary} ({completed.Outcome.Duration})"
-                    );
-                    break;
-                case PipelineStepFaulted faulted:
-                    WritePlain($"{faulted.StepId} faulted: {faulted.Error}");
-                    break;
-                case PipelineStepCancelled cancelled:
-                    WritePlain($"{cancelled.StepId} cancelled");
-                    break;
-                case PipelineInteractionRequestedObservation requested:
-                    WritePlain($"{requested.StepId} waiting for interaction");
-                    break;
-                case PipelineInteractionAnsweredObservation answered:
-                    WritePlain($"{answered.StepId} interaction answered");
-                    break;
-                case PipelineAgentUsage usage:
-                    var contextWindow =
-                        usage.ContextWindowTokens > 0
-                            ? $"/{usage.ContextWindowTokens}"
-                            : string.Empty;
-                    WritePlain(
-                        $"{usage.StepId} usage: in {usage.InputTokens} out {usage.OutputTokens} ctx {usage.CurrentContextTokens}{contextWindow}"
-                    );
-                    break;
+                WritePlain(line);
             }
         }
     }
+
+    private static string PlainLine(StepVisit visit) =>
+        visit.Outcome switch
+        {
+            null => $"{visit.StepId} started",
+            "cancelled" => $"{visit.StepId} cancelled",
+            var outcome => $"{visit.StepId} {outcome}: {visit.Summary} ({visit.Duration})",
+        };
+
+    private static string? PlainLine(TranscriptEntry entry) =>
+        entry.Kind switch
+        {
+            TranscriptKind.Text => $"{entry.StepId} text: {entry.Text}",
+            TranscriptKind.Reasoning => $"{entry.StepId} reasoning: {entry.Text}",
+            TranscriptKind.ToolStarted =>
+                $"{entry.StepId} tool {ToolStartFormatter.Format(entry.ToolName ?? entry.Text, entry.Text, entry.WorkingDirectory)} started",
+            TranscriptKind.ToolCompleted when entry.Succeeded is true => null,
+            TranscriptKind.ToolCompleted => $"{entry.StepId} tool failed: {entry.Text}",
+            TranscriptKind.Command when entry.Succeeded is true =>
+                $"{entry.StepId} command passed: {entry.Text}",
+            TranscriptKind.Command => $"{entry.StepId} command failed: {entry.Text}",
+            TranscriptKind.Action => $"{entry.StepId} action failed: {entry.Text}",
+            TranscriptKind.Semantic => $"{entry.StepId} output: {entry.Text}",
+            _ => throw new ArgumentOutOfRangeException(nameof(entry), entry.Kind, null),
+        };
 
     private void WritePlain(string value) => _console.WriteLine(TerminalText.Sanitize(value));
 

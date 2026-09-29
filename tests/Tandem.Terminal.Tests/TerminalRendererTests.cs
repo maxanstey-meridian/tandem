@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.Time.Testing;
 using Spectre.Console;
 using Spectre.Console.Testing;
 
@@ -79,6 +80,24 @@ public sealed class TerminalRendererTests
     }
 
     [Fact]
+    public void RunHeaderElapsedTimeFollowsTheModelClockAndStopsWhenFinished()
+    {
+        var time = new FakeTimeProvider();
+        var model = new TerminalModel("pipeline", _runId, time, 100, 10_000, null, null);
+        var console = new TestConsole().Width(140).Height(24);
+        var renderer = new TerminalRenderer(console);
+
+        time.Advance(TimeSpan.FromSeconds(65));
+        renderer.Render(model.Snapshot());
+        console.Output.Should().Contain("Running  00:01:05");
+
+        model.Finish(TerminalPipelineStatus.Succeeded);
+        time.Advance(TimeSpan.FromHours(1));
+        renderer.Render(model.Snapshot());
+        console.Output.Should().Contain("Succeeded  00:01:05").And.NotContain("01:01:05");
+    }
+
+    [Fact]
     public void WorkHeaderShowsModelWithoutStateOrParticipant()
     {
         var console = new TestConsole().Width(140).Height(24);
@@ -105,8 +124,7 @@ public sealed class TerminalRendererTests
             _runId,
             TerminalPipelineStatus.Running,
             "deepseek",
-            now,
-            null,
+            TimeSpan.Zero,
             [new("executor", now)],
             [new("executor", TranscriptKind.Text, "working")],
             800,
@@ -775,7 +793,7 @@ public sealed class TerminalRendererTests
             .Contain($"\u001b[38;5;69m{_runId:N}\u001b[0m")
             .And.Contain("\u001b[38;5;141mtitle[unsafe]\u001b[0m")
             .And.Contain($"\u001b[1;38;5;{statusColor}m{status}\u001b[0m")
-            .And.MatchRegex("\\u001b\\[38;5;8m  00:00:0[0-9]\\u001b\\[0m");
+            .And.Contain("\u001b[38;5;8m  00:00:00\u001b[0m");
     }
 
     [Fact]
@@ -940,8 +958,7 @@ public sealed class TerminalRendererTests
             _runId,
             TerminalPipelineStatus.Running,
             "model",
-            now,
-            null,
+            TimeSpan.Zero,
             visits,
             transcript,
             0,

@@ -131,7 +131,6 @@ internal sealed class TerminalRenderer(
 
     private static IRenderable RenderHeader(TerminalSnapshot model)
     {
-        var elapsed = (model.CompletedAt ?? DateTimeOffset.UtcNow) - model.StartedAt;
         var output = new StringBuilder();
         AppendChrome(output, $"{model.RunId:N}", "cornflowerblue");
         if (!string.IsNullOrEmpty(model.Title))
@@ -141,7 +140,7 @@ internal sealed class TerminalRenderer(
         }
         AppendChrome(output, "  ", "grey");
         AppendChrome(output, $"{model.Status}", StatusColor(model.Status), bold: true);
-        AppendChrome(output, $"  {elapsed:hh\\:mm\\:ss}", "grey");
+        AppendChrome(output, $"  {model.Elapsed:hh\\:mm\\:ss}", "grey");
         return new Panel(new Markup(output.ToString()).Overflow(Overflow.Ellipsis))
             .Border(BoxBorder.Rounded)
             .Padding(1, 0, 1, 0);
