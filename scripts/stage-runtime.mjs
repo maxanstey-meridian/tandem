@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { runtimeAssets } from "./runtime-assets.mjs";
+import { runtimeAssetsForRid } from "./runtime-assets.mjs";
+
+const rid = process.argv[2];
+const runtimeAssets = runtimeAssetsForRid(rid);
 
 const publish = new URL("../.runtime-publish/", import.meta.url);
 const runtime = new URL("../bridge-runtime/", import.meta.url);

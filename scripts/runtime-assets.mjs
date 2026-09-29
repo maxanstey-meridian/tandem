@@ -1,7 +1,12 @@
 export const runtimeAssets = [
   "FluentValidation.dll",
   "Google.Protobuf.dll",
-  "libe_sqlite3.dylib",
+  "Humanizer.dll",
+  "import.cjs",
+  "Json.More.dll",
+  "JsonPointer.Net.dll",
+  "JsonSchema.Net.Generation.dll",
+  "JsonSchema.Net.dll",
   "Microsoft.Agents.AI.Abstractions.dll",
   "Microsoft.Agents.AI.dll",
   "Microsoft.Agents.AI.Harness.dll",
@@ -28,6 +33,7 @@ export const runtimeAssets = [
   "Microsoft.Extensions.Primitives.dll",
   "Microsoft.Extensions.VectorData.Abstractions.dll",
   "Microsoft.JavaScript.NodeApi.dll",
+  "Microsoft.JavaScript.NodeApi.Generator.dll",
   "Microsoft.ML.Tokenizers.dll",
   "OpenAI.dll",
   "OpenTelemetry.Api.dll",
@@ -51,4 +57,16 @@ export const runtimeAssets = [
   "Tandem.NodeApiSpike.Bridge.d.ts",
   "Tandem.NodeApiSpike.Bridge.mjs",
   "Tandem.NodeApiSpike.Bridge.runtimeconfig.json",
+  "Tavily.dll",
 ];
+
+const nativeAssets = {
+  "osx-arm64": ["libe_sqlite3.dylib"],
+  "linux-x64": ["libe_sqlite3.so"],
+};
+
+export function runtimeAssetsForRid(rid) {
+  const native = nativeAssets[rid];
+  if (!native) throw new Error(`unsupported bridge RID: ${rid}`);
+  return [...runtimeAssets, ...native];
+}

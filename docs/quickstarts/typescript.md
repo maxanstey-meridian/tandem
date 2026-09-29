@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- macOS on Apple silicon
+- macOS on Apple silicon or Linux x64
 - Node.js 22 or newer
 - .NET 10 runtime
 
@@ -46,6 +46,6 @@ Run it:
 node index.mjs
 ```
 
-Application code installs only `@maxanstey-meridian/tandem`; platform runtime packages are selected
-automatically. Continue with the package-backed
+Application code installs only `@maxanstey-meridian/tandem`; its package selects the bundled
+runtime for the current platform. Continue with the package-backed
 [getting-started progression](../../examples/getting-started).
