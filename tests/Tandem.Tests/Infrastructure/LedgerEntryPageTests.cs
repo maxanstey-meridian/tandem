@@ -11,19 +11,15 @@ public sealed class LedgerEntryPageTests
     public async Task Complete_record_is_retrievable_without_knowing_the_missing_diagnostic()
     {
         using var temp = new TempDirectory();
-        var directory = temp.Path;
-        var store = new SqliteLedgerStore(Path.Combine(directory, "ledger.sqlite3"));
-        await store.InitializeAsync();
+        var store = new SqliteLedgerStore(Path.Combine(temp.Path, "ledger.sqlite3"));
         var run = Guid.NewGuid();
-        await store.CreateRunAsync(run, "test");
-        var ledger = store.ForRun(run);
+        var observer = await store.CreateObserverAsync(run, "test");
         var original = new string('a', 20000) + "UNKNOWN_FAILURE_😀" + new string('z', 20000);
-        await ledger.AppendAsync(
-            new LedgerStream<string>("diagnostics", "test.output"),
-            "output",
-            original
+        await observer.ObserveAsync(
+            new PipelineCommandOutput(run, "executor", "task check", original, 1),
+            default
         );
-        var reader = (IPipelineLedgerReader)ledger;
+        var reader = (IPipelineLedgerReader)store.ForRun(run);
         var listing = await reader.ReadAsync();
         var cursor = listing.Entries.Single().Cursor;
         listing.Entries.Single().Value.Should().NotContain("UNKNOWN_FAILURE");
@@ -44,9 +40,13 @@ public sealed class LedgerEntryPageTests
             next.Should().BeGreaterThan(offset);
             offset = next;
         } while (true);
-        JsonSerializer.Deserialize<string>(content.ToString()).Should().Be(original);
+        JsonSerializer
+            .Deserialize<RuntimeJournalRecord>(content.ToString(), TandemJson.CreateTypedContract())!
+            .Payload!.Value.GetString()
+            .Should()
+            .Be(original);
         var otherRun = Guid.NewGuid();
-        await store.CreateRunAsync(otherRun, "other");
+        await store.CreateObserverAsync(otherRun, "other");
         await FluentActions
             .Awaiting(async () =>
                 await ((IPipelineLedgerReader)store.ForRun(otherRun)).ReadEntryAsync(cursor)

@@ -2,41 +2,19 @@ using System.Text.Json;
 
 namespace Tandem.Ledger;
 
-public static class PipelineJournal
-{
-    public static LedgerStream<RuntimeJournalRecord> Stream { get; } =
-        new("runtime.journal", "tandem.runtime-journal");
-
-    public static bool IsAccepted(RuntimeJournalRecord record) =>
-        record.Kind
-            is RuntimeJournalKind.StructuredOutputAccepted
-                or RuntimeJournalKind.CapabilityAccepted
-                or RuntimeJournalKind.InteractionRequested
-                or RuntimeJournalKind.InteractionAnswered
-                or RuntimeJournalKind.StepCompleted
-        && (record.Payload is not null || !string.IsNullOrWhiteSpace(record.ValueType));
-}
-
 public sealed class SqlitePipelineObserver : IPipelinePersistenceObserver
 {
-    private readonly RunLedger _ledger;
+    private readonly SqliteLedgerStore _store;
     private readonly Guid _runId;
-    private readonly Guid _executionAttemptId;
-    private readonly SemaphoreSlim _writeLock = new(1, 1);
 
-    internal SqlitePipelineObserver(RunLedger ledger, Guid? executionAttemptId = null)
+    internal SqlitePipelineObserver(SqliteLedgerStore store, Guid runId)
     {
-        _ledger = ledger;
-        _runId = ledger.RunId;
-        _executionAttemptId = executionAttemptId ?? Guid.CreateVersion7();
+        _store = store;
+        _runId = runId;
     }
 
     public ValueTask RecordRunStartedAsync(CancellationToken cancellationToken = default) =>
-        AppendAsync(
-            new RuntimeJournalRecord(RuntimeJournalKind.RunStarted, ""),
-            entryId: null,
-            cancellationToken
-        );
+        AppendAsync(new RuntimeJournalRecord(RuntimeJournalKind.RunStarted, ""), cancellationToken);
 
     public ValueTask RecordRunCompletedAsync(
         string result,
@@ -44,7 +22,6 @@ public sealed class SqlitePipelineObserver : IPipelinePersistenceObserver
     ) =>
         AppendAsync(
             new RuntimeJournalRecord(RuntimeJournalKind.RunCompleted, "", Result: result),
-            entryId: null,
             cancellationToken
         );
 
@@ -168,51 +145,11 @@ public sealed class SqlitePipelineObserver : IPipelinePersistenceObserver
         };
         return record is null
             ? ValueTask.CompletedTask
-            : AppendAsync(
-                record with
-                {
-                    VisitId = observation.VisitId,
-                },
-                EntryId(observation, _executionAttemptId),
-                cancellationToken
-            );
+            : AppendAsync(record with { VisitId = observation.VisitId }, cancellationToken);
     }
-
-    private static string? EntryId(PipelineObservation observation, Guid executionAttemptId) =>
-        observation switch
-        {
-            PipelineStructuredOutputRejected value =>
-                $"{executionAttemptId:N}:rejected-output--{value.RejectionId:N}",
-            PipelineStructuredOutputAccepted value =>
-                $"{executionAttemptId:N}:accepted-output--{value.AcceptedOutputId}",
-            PipelineCapabilityAccepted value =>
-                $"{executionAttemptId:N}:accepted-capability--{value.AcceptedCallId}",
-            PipelineInteractionRequestedObservation value =>
-                $"{executionAttemptId:N}:interaction-request--{value.RequestId}",
-            PipelineInteractionAnsweredObservation value =>
-                $"{executionAttemptId:N}:interaction-response--{value.RequestId}",
-            _ => null,
-        };
 
     private async ValueTask AppendAsync(
         RuntimeJournalRecord record,
-        string? entryId,
         CancellationToken cancellationToken
-    )
-    {
-        await _writeLock.WaitAsync(cancellationToken);
-        try
-        {
-            await _ledger.AppendAsync(
-                PipelineJournal.Stream,
-                entryId ?? $"runtime--{Guid.CreateVersion7():N}",
-                record,
-                cancellationToken
-            );
-        }
-        finally
-        {
-            _writeLock.Release();
-        }
-    }
+    ) => await _store.AppendAsync(_runId, record, cancellationToken);
 }

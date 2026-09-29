@@ -25,70 +25,67 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task Entries_AreOrderedIdempotentAndDurableAcrossStoreInstances()
+    public async Task Journal_IsOrderedAndDurableAcrossStoreInstances()
     {
         var path = DatabasePath();
         var runId = Guid.CreateVersion7();
-        var stream = new LedgerStream<ProbeEntry>("probes", "test.probe");
-        var store = await CreateStoreAsync(path);
-        await store.CreateRunAsync(runId, "test");
-        var ledger = store.ForRun(runId);
+        var observer = await new SqliteLedgerStore(path).CreateObserverAsync(runId, "test");
 
-        var first = await ledger.AppendAsync(stream, "entry-1", new ProbeEntry("first", 1));
-        var second = await ledger.AppendAsync(stream, "entry-2", new ProbeEntry("second", 2));
-        var replay = await ledger.AppendAsync(stream, "entry-1", new ProbeEntry("first", 1));
+        await observer.ObserveAsync(new PipelineStepStarted(runId, "first"), default);
+        await observer.ObserveAsync(new PipelineStepStarted(runId, "second"), default);
 
-        replay.Should().Be(first);
-        second.Sequence.Should().Be(2);
-        var reopened = await CreateStoreAsync(path);
-        var entries = await reopened.ForRun(runId).ReadAsync(stream);
-        entries.Select(entry => entry.Value.Name).Should().Equal("first", "second");
+        var entries = await new SqliteLedgerStore(path).ReadJournalAsync(runId);
+        entries.Select(entry => entry.Record.StepId).Should().Equal("first", "second");
         entries.Select(entry => entry.Sequence).Should().Equal(1, 2);
     }
 
     [Fact]
-    public async Task Entries_CanBeReadIncrementallyAfterSequence()
+    public async Task AgentLedgerReader_PaginatesAndSearchesAcceptedRecords()
     {
         var store = await CreateStoreAsync(DatabasePath());
         var runId = Guid.CreateVersion7();
-        var stream = new LedgerStream<ProbeEntry>("incremental", "test.probe");
-        await store.CreateRunAsync(runId, "test");
-        var ledger = store.ForRun(runId);
-        await ledger.AppendAsync(stream, "entry-1", new ProbeEntry("first", 1));
-        await ledger.AppendAsync(stream, "entry-2", new ProbeEntry("second", 2));
-        await ledger.AppendAsync(stream, "entry-3", new ProbeEntry("third", 3));
+        var observer = await store.CreateObserverAsync(runId, "test");
+        await observer.ObserveAsync(AcceptedStep(runId, "alpha", new RunnerState(1)), default);
+        await observer.ObserveAsync(AcceptedStep(runId, "needle", new RunnerState(2)), default);
+        await observer.ObserveAsync(AcceptedStep(runId, "omega", new RunnerState(3)), default);
 
-        var entries = await ledger.ReadAfterAsync(stream, 1);
-
-        entries.Select(entry => entry.Sequence).Should().Equal(2, 3);
-        entries.Select(entry => entry.Value.Name).Should().Equal("second", "third");
-    }
-
-    [Fact]
-    public async Task AgentLedgerReader_PaginatesAndSearchesAcrossAcceptedStreams()
-    {
-        var store = await CreateStoreAsync(DatabasePath());
-        var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "test");
-        var ledger = store.ForRun(runId);
-        var firstStream = new LedgerStream<ProbeEntry>("first", "test.probe");
-        var secondStream = new LedgerStream<ProbeEntry>("second", "test.probe");
-        await ledger.AppendAsync(firstStream, "entry-1", new ProbeEntry("alpha", 1));
-        await ledger.AppendAsync(secondStream, "entry-2", new ProbeEntry("needle", 2));
-        await ledger.AppendAsync(firstStream, "entry-3", new ProbeEntry("omega", 3));
-
-        var reader = (IPipelineLedgerReader)ledger;
+        var reader = (IPipelineLedgerReader)store.ForRun(runId);
         var firstPage = await reader.ReadAsync(limit: 2);
         var secondPage = await reader.ReadAsync(firstPage.NextCursor, limit: 2);
         var search = await reader.SearchAsync("NEEDLE");
 
-        firstPage.Entries.Select(entry => entry.EntryId).Should().Equal("entry-1", "entry-2");
+        firstPage.Entries.Select(entry => entry.Sequence).Should().Equal(1, 2);
         firstPage.NextCursor.Should().NotBeNull();
-        secondPage.Entries.Select(entry => entry.EntryId).Should().Equal("entry-3");
+        secondPage.Entries.Select(entry => entry.Sequence).Should().Equal(3);
         secondPage.NextCursor.Should().BeNull();
-        search.Entries.Should().ContainSingle().Which.EntryId.Should().Be("entry-2");
-        search.Entries[0].Stream.Should().Be("second");
+        search.Entries.Should().ContainSingle().Which.Sequence.Should().Be(2);
         search.Entries[0].Value.Should().Contain("needle");
+    }
+
+    [Fact]
+    public async Task AgentLedgerReader_SearchMatchesValuesNotPropertyNames()
+    {
+        var store = await CreateStoreAsync(DatabasePath());
+        var runId = Guid.CreateVersion7();
+        var observer = await store.CreateObserverAsync(runId, "test");
+        await observer.ObserveAsync(AcceptedStep(runId, "planner", new RunnerState(7)), default);
+        await observer.ObserveAsync(
+            new PipelineCommandOutput(runId, "verify", "task check", "stepId is not a key here", 1),
+            default
+        );
+
+        var reader = (IPipelineLedgerReader)store.ForRun(runId);
+        var propertyName = await reader.SearchAsync("valueType");
+        var nestedPropertyName = await reader.SearchAsync("count");
+        var value = await reader.SearchAsync("PLANNER");
+        var nestedValue = await reader.SearchAsync("7");
+        var outputValue = await reader.SearchAsync("stepId");
+
+        propertyName.Entries.Should().BeEmpty();
+        nestedPropertyName.Entries.Should().BeEmpty();
+        value.Entries.Should().ContainSingle().Which.Sequence.Should().Be(1);
+        nestedValue.Entries.Should().ContainSingle().Which.Sequence.Should().Be(1);
+        outputValue.Entries.Should().ContainSingle().Which.Sequence.Should().Be(2);
     }
 
     [Fact]
@@ -96,16 +93,20 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     {
         var store = await CreateStoreAsync(DatabasePath());
         var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "test");
-        var ledger = store.ForRun(runId);
+        var observer = await store.CreateObserverAsync(runId, "test");
         var marker = "MATCH-NEAR-THE-END";
-        await ledger.AppendAsync(
-            new LedgerStream<ProbeEntry>("large", "test.probe"),
-            "large-entry",
-            new ProbeEntry(new string('x', 20_000) + marker, 1)
+        await observer.ObserveAsync(
+            new PipelineCommandOutput(
+                runId,
+                "large",
+                "task check",
+                new string('x', 20_000) + marker,
+                1
+            ),
+            default
         );
 
-        var reader = (IPipelineLedgerReader)ledger;
+        var reader = (IPipelineLedgerReader)store.ForRun(runId);
         var read = await reader.ReadAsync();
         var search = await reader.SearchAsync(marker);
 
@@ -171,19 +172,16 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             ),
             CancellationToken.None
         );
-        await store
-            .ForRun(runId)
-            .AppendAsync(
-                PipelineJournal.Stream,
-                "legacy-command",
-                new RuntimeJournalRecord(
-                    RuntimeJournalKind.CommandCompleted,
-                    "executor",
-                    Name: "legacy command",
-                    Result: "1"
-                ),
-                CancellationToken.None
-            );
+        await store.AppendAsync(
+            runId,
+            new RuntimeJournalRecord(
+                RuntimeJournalKind.CommandCompleted,
+                "executor",
+                Name: "command without output",
+                Result: "1"
+            ),
+            CancellationToken.None
+        );
 
         var reader = (IPipelineLedgerReader)store.ForRun(runId);
         var page = await reader.ReadAsync(cancellationToken: CancellationToken.None);
@@ -201,104 +199,29 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task EntryIdentity_IsUniqueAcrossAWholeRun()
-    {
-        var store = await CreateStoreAsync(DatabasePath());
-        var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "test");
-        var ledger = store.ForRun(runId);
-        await ledger.AppendAsync(
-            new LedgerStream<ProbeEntry>("first", "test.probe"),
-            "same-id",
-            new ProbeEntry("value", 1)
-        );
-
-        var differentStream = async () =>
-            await ledger.AppendAsync(
-                new LedgerStream<ProbeEntry>("second", "test.probe"),
-                "same-id",
-                new ProbeEntry("value", 1)
-            );
-        var differentContent = async () =>
-            await ledger.AppendAsync(
-                new LedgerStream<ProbeEntry>("first", "test.probe"),
-                "same-id",
-                new ProbeEntry("changed", 2)
-            );
-
-        await differentStream.Should().ThrowAsync<LedgerConflictException>();
-        await differentContent.Should().ThrowAsync<LedgerConflictException>();
-        var afterConflict = await ledger.AppendAsync(
-            new LedgerStream<ProbeEntry>("first", "test.probe"),
-            "next-id",
-            new ProbeEntry("next", 3)
-        );
-        afterConflict.Sequence.Should().Be(2, "the conflicting transaction must roll back");
-    }
-
-    [Fact]
-    public async Task Documents_UseCompareAndSwapWithIdempotentReplay()
-    {
-        var store = await CreateStoreAsync(DatabasePath());
-        var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "test");
-        var ledger = store.ForRun(runId);
-        var document = new LedgerDocument<ProbeEntry>("current-probe", "test.probe");
-
-        var created = await ledger.WriteDocumentAsync(
-            document,
-            new ProbeEntry("first", 1),
-            expectedVersion: 0
-        );
-        var replay = await ledger.WriteDocumentAsync(
-            document,
-            new ProbeEntry("first", 1),
-            expectedVersion: 0
-        );
-        var updated = await ledger.WriteDocumentAsync(
-            document,
-            new ProbeEntry("second", 2),
-            expectedVersion: 1
-        );
-
-        replay.Should().Be(created);
-        updated.Version.Should().Be(2);
-        (await ledger.ReadDocumentAsync(document)).Should().Be(updated);
-        var stale = async () =>
-            await ledger.WriteDocumentAsync(
-                document,
-                new ProbeEntry("stale", 3),
-                expectedVersion: 1
-            );
-        await stale.Should().ThrowAsync<LedgerConflictException>();
-    }
-
-    [Fact]
     public async Task ConcurrentAppends_AreSerializedBySQLiteWithContiguousSequences()
     {
         var path = DatabasePath();
         var runId = Guid.CreateVersion7();
-        var stream = new LedgerStream<ProbeEntry>("concurrent", "test.probe");
-        var setup = await CreateStoreAsync(path);
-        await setup.CreateRunAsync(runId, "test");
+        await new SqliteLedgerStore(path).CreateObserverAsync(runId, "test");
 
         await Task.WhenAll(
             Enumerable
                 .Range(0, 24)
                 .Select(async index =>
                 {
-                    var store = await CreateStoreAsync(path);
-                    await store
-                        .ForRun(runId)
-                        .AppendAsync(
-                            stream,
-                            $"entry-{index}",
-                            new ProbeEntry($"value-{index}", index)
-                        );
+                    var observer = await new SqliteLedgerStore(path).CreateObserverAsync(
+                        runId,
+                        "test"
+                    );
+                    await observer.ObserveAsync(
+                        new PipelineStepStarted(runId, $"step-{index}"),
+                        default
+                    );
                 })
         );
 
-        var entries = await setup.ForRun(runId).ReadAsync(stream);
+        var entries = await new SqliteLedgerStore(path).ReadJournalAsync(runId);
         entries.Should().HaveCount(24);
         entries
             .Select(entry => entry.Sequence)
@@ -307,34 +230,25 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task SeparateProcesses_AllocateContiguousSequencesAndConvergeSameIdentity()
+    public async Task SeparateProcesses_AllocateContiguousSequences()
     {
         var path = DatabasePath();
         var runId = Guid.CreateVersion7();
 
-        var distinct = await Task.WhenAll(
-            Enumerable
-                .Range(0, 8)
-                .Select(index => RunWorkerAsync(path, runId, $"entry-{index}", $"value-{index}"))
-        );
-        var same = await Task.WhenAll(
-            Enumerable
-                .Range(0, 4)
-                .Select(_ => RunWorkerAsync(path, runId, "same-entry", "same-value"))
+        var results = await Task.WhenAll(
+            Enumerable.Range(0, 8).Select(index => RunWorkerAsync(path, runId, $"step-{index}"))
         );
 
-        distinct.Should().OnlyContain(result => result.ExitCode == 0);
-        same.Should().OnlyContain(result => result.ExitCode == 0);
-        same.Select(result => result.Output).Distinct().Should().ContainSingle();
-        var store = await CreateStoreAsync(path);
-        var entries = await store
-            .ForRun(runId)
-            .ReadAsync(new LedgerStream<ProcessEntry>("process-entries", "test.process-entry"));
-        entries.Should().HaveCount(9);
+        results.Should().OnlyContain(result => result.ExitCode == 0);
+        var entries = await new SqliteLedgerStore(path).ReadJournalAsync(runId);
         entries
             .Select(entry => entry.Sequence)
             .Should()
-            .Equal(Enumerable.Range(1, 9).Select(i => (long)i));
+            .Equal(Enumerable.Range(1, 8).Select(i => (long)i));
+        entries
+            .Select(entry => entry.Record.StepId)
+            .Should()
+            .BeEquivalentTo(Enumerable.Range(0, 8).Select(index => $"step-{index}"));
     }
 
     [Fact]
@@ -342,10 +256,8 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     {
         var path = DatabasePath();
         var runId = Guid.CreateVersion7();
-        var stream = new LedgerStream<ProbeEntry>("snapshot", "test.probe");
-        var setup = await CreateStoreAsync(path);
-        await setup.CreateRunAsync(runId, "test");
-        await setup.ForRun(runId).AppendAsync(stream, "first", new ProbeEntry("first", 1));
+        var setup = await new SqliteLedgerStore(path).CreateObserverAsync(runId, "test");
+        await setup.ObserveAsync(new PipelineStepStarted(runId, "first"), default);
 
         await using var reader = new SqliteConnection(
             $"Data Source={path};Cache=Shared;Pooling=False"
@@ -354,94 +266,73 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         await using var snapshot = reader.BeginTransaction(deferred: true);
         await using var command = reader.CreateCommand();
         command.Transaction = snapshot;
-        command.CommandText = "SELECT COUNT(*) FROM run_entries;";
+        command.CommandText = "SELECT COUNT(*) FROM journal;";
         Convert.ToInt64(await command.ExecuteScalarAsync()).Should().Be(1);
 
-        var writer = new SqliteLedgerStore(
-            path,
-            options: new SqliteLedgerOptions(TimeSpan.FromMilliseconds(20), 0, TimeSpan.Zero)
+        var writer = new SqliteLedgerStore(path);
+        await writer.AppendAsync(
+            runId,
+            new RuntimeJournalRecord(RuntimeJournalKind.StepStarted, "second"),
+            default
         );
-        await writer.ForRun(runId).AppendAsync(stream, "second", new ProbeEntry("second", 2));
 
         Convert.ToInt64(await command.ExecuteScalarAsync()).Should().Be(1);
         await snapshot.CommitAsync();
-        (await setup.ForRun(runId).ReadAsync(stream)).Should().HaveCount(2);
+        (await writer.ReadJournalAsync(runId)).Should().HaveCount(2);
     }
 
     [Fact]
-    public async Task StorageNames_RejectAnotherContractKindNameOrVersion()
-    {
-        var store = await CreateStoreAsync(DatabasePath());
-        var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "test");
-        var ledger = store.ForRun(runId);
-        await ledger.AppendAsync(
-            new LedgerStream<ProbeEntry>("claimed-name", "test.probe", 1),
-            "entry-1",
-            new ProbeEntry("value", 1)
-        );
-
-        var changedContract = async () =>
-            await ledger.ReadAsync(
-                new LedgerStream<ProbeEntry>("claimed-name", "test.other-probe", 1)
-            );
-        var changedVersion = async () =>
-            await ledger.ReadAsync(new LedgerStream<ProbeEntry>("claimed-name", "test.probe", 2));
-        var changedKind = async () =>
-            await ledger.ReadDocumentAsync(
-                new LedgerDocument<ProbeEntry>("claimed-name", "test.probe", 1)
-            );
-
-        await changedContract.Should().ThrowAsync<LedgerConflictException>();
-        await changedVersion.Should().ThrowAsync<LedgerConflictException>();
-        await changedKind.Should().ThrowAsync<LedgerConflictException>();
-    }
-
-    [Fact]
-    public async Task RunsRemainIsolatedForTheSameStreamContract()
+    public async Task RunsRemainIsolated()
     {
         var store = await CreateStoreAsync(DatabasePath());
         var firstRun = Guid.CreateVersion7();
         var secondRun = Guid.CreateVersion7();
-        var stream = new LedgerStream<ProbeEntry>("isolated", "test.probe");
-        await store.CreateRunAsync(firstRun, "test");
-        await store.CreateRunAsync(secondRun, "test");
-        await store.ForRun(firstRun).AppendAsync(stream, "entry", new ProbeEntry("first", 1));
-        await store.ForRun(secondRun).AppendAsync(stream, "entry", new ProbeEntry("second", 2));
+        var first = await store.CreateObserverAsync(firstRun, "test");
+        var second = await store.CreateObserverAsync(secondRun, "test");
+        await first.ObserveAsync(new PipelineStepStarted(firstRun, "first"), default);
+        await second.ObserveAsync(new PipelineStepStarted(secondRun, "second"), default);
 
-        (await store.ForRun(firstRun).ReadAsync(stream)).Single().Value.Name.Should().Be("first");
-        (await store.ForRun(secondRun).ReadAsync(stream)).Single().Value.Name.Should().Be("second");
+        (await store.ReadJournalAsync(firstRun)).Single().Record.StepId.Should().Be("first");
+        (await store.ReadJournalAsync(secondRun)).Single().Record.StepId.Should().Be("second");
+        (await store.ReadJournalAsync(secondRun)).Single().Sequence.Should().Be(1);
     }
 
     [Fact]
-    public async Task LockContentionRetriesBoundedlyThenFails()
+    public async Task Append_WaitsForAnotherWriterAndFollowsItsCommit()
     {
         var path = DatabasePath();
-        var setup = await CreateStoreAsync(path);
+        var store = await CreateStoreAsync(path);
         var runId = Guid.CreateVersion7();
-        await setup.CreateRunAsync(runId, "test");
-        var options = new SqliteLedgerOptions(
-            TimeSpan.FromMilliseconds(20),
-            1,
-            TimeSpan.FromMilliseconds(10)
-        );
-        var store = new SqliteLedgerStore(path, options: options);
+        await store.CreateRunAsync(runId, "test", default);
         await using var blocker = new SqliteConnection($"Data Source={path};Pooling=False");
         await blocker.OpenAsync();
         await using var transaction = blocker.BeginTransaction(deferred: false);
-        var stopwatch = Stopwatch.StartNew();
+        await using (var insert = blocker.CreateCommand())
+        {
+            insert.Transaction = transaction;
+            insert.CommandText =
+                $"INSERT INTO journal (run_id, sequence, record, recorded_at) VALUES ('{runId:N}', 1, '{{\"kind\":\"StepStarted\",\"stepId\":\"blocker\"}}', 0);";
+            await insert.ExecuteNonQueryAsync();
+        }
 
-        var append = async () =>
-            await store
-                .ForRun(runId)
-                .AppendAsync(
-                    new LedgerStream<ProbeEntry>("blocked", "test.probe"),
-                    "entry",
-                    new ProbeEntry("value", 1)
-                );
+        // Microsoft.Data.Sqlite waits for the lock synchronously, so the writer needs its own thread.
+        var append = Task.Run(async () =>
+            await store.AppendAsync(
+                runId,
+                new RuntimeJournalRecord(RuntimeJournalKind.StepStarted, "waiting"),
+                default
+            )
+        );
+        (await Task.WhenAny(append, Task.Delay(TimeSpan.FromMilliseconds(200))))
+            .Should()
+            .NotBeSameAs(append, "the writer lock is still held");
+        await transaction.CommitAsync();
 
-        await append.Should().ThrowAsync<SqliteException>();
-        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(5));
+        (await append).Should().Be(2);
+        (await store.ReadJournalAsync(runId))
+            .Select(entry => entry.Record.StepId)
+            .Should()
+            .Equal("blocker", "waiting");
     }
 
     [Fact]
@@ -461,63 +352,53 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Theory]
-    [InlineData(LedgerRunStatus.Running)]
     [InlineData(LedgerRunStatus.Ready)]
     [InlineData(LedgerRunStatus.Failed)]
     [InlineData(LedgerRunStatus.Faulted)]
     [InlineData(LedgerRunStatus.Interrupted)]
     [InlineData(LedgerRunStatus.Cancelled)]
-    public async Task AnyPersistedRun_CanReopenWithReadableFacts(LedgerRunStatus status)
+    public async Task TerminalRun_KeepsItsJournalReadable(LedgerRunStatus status)
     {
         var path = DatabasePath();
         var runId = Guid.CreateVersion7();
         var store = await CreateStoreAsync(path);
-        await store.CreateRunAsync(runId, "delivery");
-        var facts = new LedgerStream<ProbeEntry>("facts", "test.fact");
-        await store.ForRun(runId).AppendAsync(facts, "accepted", new ProbeEntry("durable", 1));
-        if (status != LedgerRunStatus.Running)
-        {
-            await store.CompleteRunAsync(runId, status);
-        }
+        var observer = await store.CreateObserverAsync(runId, "delivery");
+        await observer.ObserveAsync(AcceptedStep(runId, "agent", new RunnerState(1)), default);
+        await store.CompleteRunAsync(runId, status);
 
         var reopened = await CreateStoreAsync(path);
-        var run = await reopened.ReopenRunAsync(runId);
-        var entries = await reopened.ForRun(runId).ReadAsync(facts);
 
-        run.Status.Should().Be(LedgerRunStatus.Running);
-        run.EndedAt.Should().BeNull();
-        entries.Should().ContainSingle().Which.Value.Name.Should().Be("durable");
+        (await reopened.GetRunAsync(runId)).Status.Should().Be(status);
+        (await reopened.ReadLatestAcceptedAsync<RunnerState>(runId, "agent"))!
+            .Value.Count.Should()
+            .Be(1);
     }
 
     [Fact]
-    public async Task RuntimeJournal_PersistsAcceptedOutputPayloadIdempotently()
+    public async Task RuntimeJournal_PersistsAcceptedOutputPayload()
     {
         var store = await CreateStoreAsync(DatabasePath());
         var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "delivery");
-        var observer = new SqlitePipelineObserver(store.ForRun(runId));
+        var observer = await store.CreateObserverAsync(runId, "delivery");
         var decision = new ProbeDecision("Proceed.", ["README.md"]);
 
-        var observation = new PipelineStructuredOutputAccepted(
-            runId,
-            "planner",
-            "planner-output-1",
-            StandardOutcomeKinds.Success,
-            typeof(ProbeDecision).FullName,
-            JsonSerializer.SerializeToElement(decision, JsonSerializerOptions.Web)
+        await observer.ObserveAsync(
+            new PipelineStructuredOutputAccepted(
+                runId,
+                "planner",
+                "planner-output-1",
+                StandardOutcomeKinds.Success,
+                typeof(ProbeDecision).FullName,
+                JsonSerializer.SerializeToElement(decision, JsonSerializerOptions.Web)
+            ),
+            CancellationToken.None
         );
-        await observer.ObserveAsync(observation, CancellationToken.None);
-        await observer.ObserveAsync(observation, CancellationToken.None);
 
-        var records = await store
-            .ForRun(runId)
-            .ReadAsync(
-                new LedgerStream<RuntimeJournalRecord>("runtime.journal", "tandem.runtime-journal")
-            );
-        records.Should().ContainSingle();
-        records[0].EntryId.Should().EndWith(":accepted-output--planner-output-1");
-        records[0]
-            .Value.Payload!.Value.Deserialize<ProbeDecision>(JsonSerializerOptions.Web)
+        var record = (await store.ReadJournalAsync(runId)).Should().ContainSingle().Subject.Record;
+        record.Kind.Should().Be(RuntimeJournalKind.StructuredOutputAccepted);
+        record.Identity.Should().Be("planner-output-1");
+        record
+            .Payload!.Value.Deserialize<ProbeDecision>(JsonSerializerOptions.Web)
             .Should()
             .BeEquivalentTo(decision);
     }
@@ -528,8 +409,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var path = DatabasePath();
         var store = await CreateStoreAsync(path);
         var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "delivery");
-        var observer = new SqlitePipelineObserver(store.ForRun(runId));
+        var observer = await store.CreateObserverAsync(runId, "delivery");
         var first = new PipelineStructuredOutputRejected(
             runId,
             "planner",
@@ -547,19 +427,19 @@ public sealed class SqliteLedgerStoreTests : IDisposable
 
         await observer.ObserveAsync(first, CancellationToken.None);
         await observer.ObserveAsync(second, CancellationToken.None);
-        await observer.ObserveAsync(second, CancellationToken.None);
 
         var reopened = await CreateStoreAsync(path);
-        var records = await reopened.ForRun(runId).ReadAsync(PipelineJournal.Stream);
+        var records = (await reopened.ReadJournalAsync(runId))
+            .Select(entry => entry.Record)
+            .ToList();
         records
-            .Select(record => record.Value.Kind)
+            .Select(record => record.Kind)
             .Should()
             .OnlyContain(kind => kind == RuntimeJournalKind.StructuredOutputRejected);
-        records.Select(record => record.EntryId).Should().HaveCount(2).And.OnlyHaveUniqueItems();
-        records.Select(record => record.Value.Identity).Should().Equal("1", "2");
+        records.Select(record => record.Identity).Should().Equal("1", "2");
         records
             .Select(record =>
-                record.Value.Payload!.Value.Deserialize<StructuredOutputRejectionEvidence>(
+                record.Payload!.Value.Deserialize<StructuredOutputRejectionEvidence>(
                     TandemJson.CreateTypedContract()
                 )!
             )
@@ -582,37 +462,33 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task RuntimeJournal_PersistsCapabilityPayloadIdempotently()
+    public async Task RuntimeJournal_PersistsCapabilityPayload()
     {
         var store = await CreateStoreAsync(DatabasePath());
         var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "delivery");
-        var observer = new SqlitePipelineObserver(store.ForRun(runId));
+        var observer = await store.CreateObserverAsync(runId, "delivery");
         var request = new ProbeRequest("What next?", "Inspect first.", ["README.md"]);
 
-        var observation = new PipelineCapabilityAccepted(
-            runId,
-            "executor",
-            "invocation-1",
-            "capability:ask_planner",
-            "ask_planner",
-            "accepted-call-1",
-            "Inspect first.",
-            typeof(ProbeRequest).FullName,
-            JsonSerializer.SerializeToElement(request, JsonSerializerOptions.Web)
+        await observer.ObserveAsync(
+            new PipelineCapabilityAccepted(
+                runId,
+                "executor",
+                "invocation-1",
+                "capability:ask_planner",
+                "ask_planner",
+                "accepted-call-1",
+                "Inspect first.",
+                typeof(ProbeRequest).FullName,
+                JsonSerializer.SerializeToElement(request, JsonSerializerOptions.Web)
+            ),
+            CancellationToken.None
         );
-        await observer.ObserveAsync(observation, CancellationToken.None);
-        await observer.ObserveAsync(observation, CancellationToken.None);
 
-        var records = await store
-            .ForRun(runId)
-            .ReadAsync(
-                new LedgerStream<RuntimeJournalRecord>("runtime.journal", "tandem.runtime-journal")
-            );
-        records.Should().ContainSingle();
-        records[0].EntryId.Should().EndWith(":accepted-capability--accepted-call-1");
-        records[0]
-            .Value.Payload!.Value.Deserialize<ProbeRequest>(JsonSerializerOptions.Web)
+        var record = (await store.ReadJournalAsync(runId)).Should().ContainSingle().Subject.Record;
+        record.Kind.Should().Be(RuntimeJournalKind.CapabilityAccepted);
+        record.Identity.Should().Be("accepted-call-1");
+        record
+            .Payload!.Value.Deserialize<ProbeRequest>(JsonSerializerOptions.Web)
             .Should()
             .BeEquivalentTo(request);
     }
@@ -622,8 +498,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     {
         var store = await CreateStoreAsync(DatabasePath());
         var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "delivery");
-        var observer = new SqlitePipelineObserver(store.ForRun(runId));
+        var observer = await store.CreateObserverAsync(runId, "delivery");
 
         await observer.RecordRunStartedAsync(CancellationToken.None);
         await observer.ObserveAsync(
@@ -673,13 +548,9 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         );
         await observer.RecordRunCompletedAsync("Ready", CancellationToken.None);
 
-        var records = await store
-            .ForRun(runId)
-            .ReadAsync(
-                new LedgerStream<RuntimeJournalRecord>("runtime.journal", "tandem.runtime-journal")
-            );
+        var records = await store.ReadJournalAsync(runId);
         records
-            .Select(record => record.Value.Kind)
+            .Select(record => record.Record.Kind)
             .Should()
             .Equal(
                 RuntimeJournalKind.RunStarted,
@@ -692,15 +563,15 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             );
         records.Select(record => record.Sequence).Should().Equal(1, 2, 3, 4, 5, 6, 7);
         records
-            .Single(record => record.Value.Kind == RuntimeJournalKind.UsageRecorded)
-            .Value.ContextWindowTokens.Should()
+            .Single(record => record.Record.Kind == RuntimeJournalKind.UsageRecorded)
+            .Record.ContextWindowTokens.Should()
             .Be(200_000);
-        var command = records.Single(record =>
-            record.Value.Kind == RuntimeJournalKind.CommandCompleted
-        );
-        command.Value.Name.Should().Be("task check");
-        command.Value.Result.Should().Be("7");
-        command.Value.Payload!.Value.GetString().Should().Be("red output");
+        var command = records
+            .Single(record => record.Record.Kind == RuntimeJournalKind.CommandCompleted)
+            .Record;
+        command.Name.Should().Be("task check");
+        command.Result.Should().Be("7");
+        command.Payload!.Value.GetString().Should().Be("red output");
     }
 
     [Fact]
@@ -715,12 +586,8 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             CancellationToken.None
         );
 
-        var records = await store
-            .ForRun(runId)
-            .ReadAsync(
-                new LedgerStream<RuntimeJournalRecord>("runtime.journal", "tandem.runtime-journal")
-            );
-        records.Single().Value.ContextWindowTokens.Should().BeNull();
+        var records = await store.ReadJournalAsync(runId);
+        records.Single().Record.ContextWindowTokens.Should().BeNull();
     }
 
     [Fact]
@@ -728,8 +595,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     {
         var store = await CreateStoreAsync(DatabasePath());
         var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "test");
-        var observer = new SqlitePipelineObserver(store.ForRun(runId));
+        var observer = await store.CreateObserverAsync(runId, "test");
         var successPayload = JsonSerializer.SerializeToElement(
             new { value = "accepted elsewhere" }
         );
@@ -768,10 +634,10 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             CancellationToken.None
         );
 
-        var records = await store.ForRun(runId).ReadAsync(PipelineJournal.Stream);
-        records[0].Value.ValueType.Should().Be(typeof(RunnerState).FullName);
-        records[0].Value.Payload!.Value.GetRawText().Should().Be(successPayload.GetRawText());
-        records[1].Value.Payload!.Value.GetRawText().Should().Be(failurePayload.GetRawText());
+        var records = await store.ReadJournalAsync(runId);
+        records[0].Record.ValueType.Should().Be(typeof(RunnerState).FullName);
+        records[0].Record.Payload!.Value.GetRawText().Should().Be(successPayload.GetRawText());
+        records[1].Record.Payload!.Value.GetRawText().Should().Be(failurePayload.GetRawText());
     }
 
     [Fact]
@@ -958,19 +824,19 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var path = DatabasePath();
         var store = await CreateStoreAsync(path);
         var runId = Guid.CreateVersion7();
-        await store.CreateRunAsync(runId, "polymorphic-state-stage");
         var stage = new PolymorphicStateStage();
         var pipeline = Pipeline.Start(stage, "polymorphic-state-stage").Persist().Build(stage);
+        var observer = await store.CreateObserverAsync(runId, pipeline);
 
         await new PipelineRunner().RunAsync(
             pipeline,
             new RunnerBaseState(1),
-            new PipelineRunOptions(runId, Observer: new SqlitePipelineObserver(store.ForRun(runId)))
+            new PipelineRunOptions(runId, Observer: observer)
         );
 
         var reopened = await CreateStoreAsync(path);
-        var completed = (await reopened.ForRun(runId).ReadAsync(PipelineJournal.Stream))
-            .Select(entry => entry.Value)
+        var completed = (await reopened.ReadJournalAsync(runId))
+            .Select(entry => entry.Record)
             .Single(record => record.Kind == RuntimeJournalKind.StepCompleted);
         completed.ValueType.Should().Be(typeof(RunnerDerivedState).FullName);
         completed.Payload!.Value.GetProperty("detail").GetString().Should().Be("persisted");
@@ -1005,31 +871,30 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task ReopenedObservers_ContinueJournalSequenceWithoutIdentityCollisions()
+    public async Task SecondObserverForARunningRun_ContinuesTheJournalSequence()
     {
         var path = DatabasePath();
         var runId = Guid.CreateVersion7();
-        var firstStore = new SqliteLedgerStore(path);
-        var first = await firstStore.CreateObserverAsync(runId, "pipeline");
+        var first = await new SqliteLedgerStore(path).CreateObserverAsync(runId, "pipeline");
         await first.ObserveAsync(new PipelineStepStarted(runId, "first"), default);
 
-        var reopenedStore = new SqliteLedgerStore(path);
-        var reopened = await reopenedStore.CreateObserverAsync(runId, "pipeline");
-        await reopened.ObserveAsync(new PipelineStepStarted(runId, "second"), default);
+        var secondStore = new SqliteLedgerStore(path);
+        var second = await secondStore.CreateObserverAsync(runId, "pipeline");
+        await second.ObserveAsync(new PipelineStepStarted(runId, "second"), default);
         await Task.WhenAll(
             first.ObserveAsync(new PipelineStepStarted(runId, "third"), default).AsTask(),
-            reopened.ObserveAsync(new PipelineStepStarted(runId, "fourth"), default).AsTask()
+            second.ObserveAsync(new PipelineStepStarted(runId, "fourth"), default).AsTask()
         );
 
-        var entries = await reopenedStore.ForRun(runId).ReadAsync(PipelineJournal.Stream);
+        var entries = await secondStore.ReadJournalAsync(runId);
         entries.Select(entry => entry.Sequence).Should().Equal(1, 2, 3, 4);
-        entries.Select(entry => entry.EntryId).Should().OnlyHaveUniqueItems();
     }
 
     [Fact]
     public async Task ObserverFactory_RejectsCompositionConflictsAndTerminalRuns()
     {
-        var store = new SqliteLedgerStore(DatabasePath());
+        var path = DatabasePath();
+        var store = new SqliteLedgerStore(path);
         var runId = Guid.CreateVersion7();
         var observer = await store.CreateObserverAsync(runId, "pipeline");
         var conflict = async () => await store.CreateObserverAsync(runId, "other");
@@ -1045,44 +910,16 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var reopen = async () => await store.CreateObserverAsync(runId, "pipeline");
         var append = async () =>
             await observer.ObserveAsync(new PipelineStepStarted(runId, "late"), default);
-        var directAppend = async () =>
-            await store
-                .ForRun(runId)
-                .AppendAsync(new LedgerStream<string>("terminal", "test.terminal"), "late", "late");
-        var write = async () =>
-            await store
-                .ForRun(runId)
-                .WriteDocumentAsync(
-                    new LedgerDocument<RunnerState>("state", "test.state"),
-                    new RunnerState(1),
-                    0
-                );
+        var secondAppend = async () =>
+            await new SqliteLedgerStore(path).AppendAsync(
+                runId,
+                new RuntimeJournalRecord(RuntimeJournalKind.StepStarted, "late"),
+                default
+            );
 
         await reopen.Should().ThrowAsync<LedgerConflictException>();
         await append.Should().ThrowAsync<LedgerConflictException>();
-        await directAppend.Should().ThrowAsync<LedgerConflictException>();
-        await write.Should().ThrowAsync<LedgerConflictException>();
-    }
-
-    [Fact]
-    public async Task JournalCompletionAndTerminalStatus_CommitAtomically()
-    {
-        var store = new SqliteLedgerStore(DatabasePath());
-        var runId = Guid.CreateVersion7();
-        var observer = await store.CreateObserverAsync(runId, "pipeline");
-
-        await store.ExecuteAsync(async cancellationToken =>
-        {
-            await observer.RecordRunCompletedAsync("Ready", cancellationToken);
-            await store.CompleteRunAsync(runId, LedgerRunStatus.Ready, cancellationToken);
-            return true;
-        });
-
-        (await store.GetRunAsync(runId)).Status.Should().Be(LedgerRunStatus.Ready);
-        var journal = await store.ForRun(runId).ReadAsync(PipelineJournal.Stream);
-        journal
-            .Should()
-            .ContainSingle(entry => entry.Value.Kind == RuntimeJournalKind.RunCompleted);
+        await secondAppend.Should().ThrowAsync<LedgerConflictException>();
     }
 
     [Fact]
@@ -1141,25 +978,21 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         await nullValue.Should().ThrowAsync<LedgerDataException>();
     }
 
-    [Fact]
-    public async Task UnknownSchemaVersion_FailsWithoutRewritingTheDatabase()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(99)]
+    public async Task OtherSchemaVersion_FailsWithoutRewritingTheDatabase(int version)
     {
         var path = DatabasePath();
-        Directory.CreateDirectory(_directory);
-        await using (
-            var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}")
-        )
-        {
-            await connection.OpenAsync();
-            await using var command = connection.CreateCommand();
-            command.CommandText = "PRAGMA user_version = 99;";
-            await command.ExecuteNonQueryAsync();
-        }
+        await ExecuteSqlAsync(path, $"PRAGMA user_version = {version};");
         var store = new SqliteLedgerStore(path);
 
         var initialize = async () => await store.InitializeAsync();
 
-        await initialize.Should().ThrowAsync<InvalidOperationException>().WithMessage("*99*");
+        await initialize
+            .Should()
+            .ThrowAsync<InvalidOperationException>()
+            .WithMessage($"*'{version}'*expected '2'*");
     }
 
     [Fact]
@@ -1170,16 +1003,18 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var runId = Guid.CreateVersion7();
         await store.CreateRunAsync(runId, "test");
         var id = runId.ToString("N");
+        await ExecuteSqlAsync(
+            path,
+            $"INSERT INTO journal (run_id, sequence, record, recorded_at) VALUES ('{id}', 1, '{{}}', 0);"
+        );
         var invalidStatements = new[]
         {
             $"INSERT INTO runs VALUES ('{Guid.NewGuid():N}', '', 'Running', 0, 0, NULL);",
             $"INSERT INTO runs VALUES ('{Guid.NewGuid():N}', 'test', 'Unknown', 0, 0, NULL);",
-            "INSERT INTO run_entries VALUES ('missing', 'stream', 1, 'entry', X'00', X'00', 0);",
-            $"INSERT INTO run_entries VALUES ('{id}', '', 1, 'entry-1', X'00', X'00', 0);",
-            $"INSERT INTO run_entries VALUES ('{id}', 'stream', 0, 'entry-2', X'00', X'00', 0);",
-            $"INSERT INTO run_entries VALUES ('{id}', 'stream', 1, '', X'00', X'00', 0);",
-            $"INSERT INTO run_documents VALUES ('{id}', '', 1, X'00', X'00', 0);",
-            $"INSERT INTO run_documents VALUES ('{id}', 'document', 0, X'00', X'00', 0);",
+            "INSERT INTO journal (run_id, sequence, record, recorded_at) VALUES ('missing', 1, '{}', 0);",
+            $"INSERT INTO journal (run_id, sequence, record, recorded_at) VALUES ('{id}', 0, '{{}}', 0);",
+            $"INSERT INTO journal (run_id, sequence, record, recorded_at) VALUES ('{id}', 1, '{{}}', 0);",
+            $"INSERT INTO journal (run_id, sequence, record, recorded_at) VALUES ('{id}', 2, 'not json', 0);",
         };
 
         foreach (var sql in invalidStatements)
@@ -1234,8 +1069,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     private static async Task<WorkerResult> RunWorkerAsync(
         string databasePath,
         Guid runId,
-        string entryId,
-        string value
+        string stepId
     )
     {
         var worker = Path.Combine(AppContext.BaseDirectory, "Tandem.Ledger.TestWorker.dll");
@@ -1252,8 +1086,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         process.StartInfo.ArgumentList.Add(worker);
         process.StartInfo.ArgumentList.Add(databasePath);
         process.StartInfo.ArgumentList.Add(runId.ToString("D"));
-        process.StartInfo.ArgumentList.Add(entryId);
-        process.StartInfo.ArgumentList.Add(value);
+        process.StartInfo.ArgumentList.Add(stepId);
         process.Start();
         var output = await process.StandardOutput.ReadToEndAsync();
         var error = await process.StandardError.ReadToEndAsync();
@@ -1275,8 +1108,6 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         await command.ExecuteNonQueryAsync();
     }
 
-    private sealed record ProbeEntry(string Name, int Count);
-
     private sealed record ProbeDecision(string Rationale, IReadOnlyList<string> Evidence);
 
     private sealed record ProbeRequest(
@@ -1284,8 +1115,6 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         string ProposedApproach,
         IReadOnlyList<string> Evidence
     );
-
-    private sealed record ProcessEntry(string Value);
 
     private sealed record WorkerResult(int ExitCode, string Output, string Error);
 

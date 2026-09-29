@@ -1,16 +1,4 @@
 [ledger]
-T Tandem.Ledger.AcceptedLedgerEntry<TEntry>
-C (System.Int64 Sequence, System.String EntryId, TEntry Value, System.DateTimeOffset RecordedAt)
-M System.Boolean Equals(System.Object? obj)
-M System.Boolean Equals(Tandem.Ledger.AcceptedLedgerEntry<TEntry>? other)
-M System.Int32 GetHashCode()
-M System.String ToString()
-M System.Void Deconstruct(out System.Int64 Sequence, out System.String EntryId, out TEntry Value, out System.DateTimeOffset RecordedAt)
-M Tandem.Ledger.AcceptedLedgerEntry<TEntry> <Clone>$()
-P System.DateTimeOffset RecordedAt { get; set; }
-P System.Int64 Sequence { get; set; }
-P System.String EntryId { get; set; }
-P TEntry Value { get; set; }
 T Tandem.Ledger.AcceptedPipelineValue<TValue>
 C (System.Int64 Sequence, System.String StepId, System.String ValueType, TValue Value, System.DateTimeOffset RecordedAt)
 M System.Boolean Equals(System.Object? obj)
@@ -28,28 +16,17 @@ T Tandem.Ledger.LedgerConflictException
 C (System.String message)
 T Tandem.Ledger.LedgerDataException
 C (System.String message, System.Exception? innerException = null)
-T Tandem.Ledger.LedgerDocumentValue<TDocument>
-C (System.Int64 Version, TDocument Value, System.DateTimeOffset UpdatedAt)
+T Tandem.Ledger.LedgerJournalEntry
+C (System.Int64 Sequence, Tandem.Ledger.RuntimeJournalRecord Record, System.DateTimeOffset RecordedAt)
 M System.Boolean Equals(System.Object? obj)
-M System.Boolean Equals(Tandem.Ledger.LedgerDocumentValue<TDocument>? other)
+M System.Boolean Equals(Tandem.Ledger.LedgerJournalEntry? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
-M System.Void Deconstruct(out System.Int64 Version, out TDocument Value, out System.DateTimeOffset UpdatedAt)
-M Tandem.Ledger.LedgerDocumentValue<TDocument> <Clone>$()
-P System.DateTimeOffset UpdatedAt { get; set; }
-P System.Int64 Version { get; set; }
-P TDocument Value { get; set; }
-T Tandem.Ledger.LedgerDocument<TDocument>
-C (System.String Name, System.String Contract, System.Int32 Version = 1)
-M System.Boolean Equals(System.Object? obj)
-M System.Boolean Equals(Tandem.Ledger.LedgerDocument<TDocument>? other)
-M System.Int32 GetHashCode()
-M System.String ToString()
-M System.Void Deconstruct(out System.String Name, out System.String Contract, out System.Int32 Version)
-M Tandem.Ledger.LedgerDocument<TDocument> <Clone>$()
-P System.Int32 Version { get; set; }
-P System.String Contract { get; set; }
-P System.String Name { get; set; }
+M System.Void Deconstruct(out System.Int64 Sequence, out Tandem.Ledger.RuntimeJournalRecord Record, out System.DateTimeOffset RecordedAt)
+M Tandem.Ledger.LedgerJournalEntry <Clone>$()
+P System.DateTimeOffset RecordedAt { get; set; }
+P System.Int64 Sequence { get; set; }
+P Tandem.Ledger.RuntimeJournalRecord Record { get; set; }
 T Tandem.Ledger.LedgerRun
 C (System.Guid RunId, System.String Composition, Tandem.Ledger.LedgerRunStatus Status, System.DateTimeOffset StartedAt, System.DateTimeOffset UpdatedAt, System.Nullable<System.DateTimeOffset>? EndedAt)
 M System.Boolean Equals(System.Object? obj)
@@ -72,28 +49,9 @@ F static Tandem.Ledger.LedgerRunStatus Faulted
 F static Tandem.Ledger.LedgerRunStatus Interrupted
 F static Tandem.Ledger.LedgerRunStatus Ready
 F static Tandem.Ledger.LedgerRunStatus Running
-T Tandem.Ledger.LedgerStream<TEntry>
-C (System.String Name, System.String Contract, System.Int32 Version = 1)
-M System.Boolean Equals(System.Object? obj)
-M System.Boolean Equals(Tandem.Ledger.LedgerStream<TEntry>? other)
-M System.Int32 GetHashCode()
-M System.String ToString()
-M System.Void Deconstruct(out System.String Name, out System.String Contract, out System.Int32 Version)
-M Tandem.Ledger.LedgerStream<TEntry> <Clone>$()
-P System.Int32 Version { get; set; }
-P System.String Contract { get; set; }
-P System.String Name { get; set; }
 T Tandem.Ledger.LedgerValueTypeMismatchException
 C (System.String message)
-T Tandem.Ledger.PipelineJournal
-M static System.Boolean IsAccepted(Tandem.Ledger.RuntimeJournalRecord record)
-P Tandem.Ledger.LedgerStream<Tandem.Ledger.RuntimeJournalRecord> Stream { get; }
 T Tandem.Ledger.RunLedger
-M System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Tandem.Ledger.AcceptedLedgerEntry<TEntry>>> ReadAfterAsync<TEntry>(Tandem.Ledger.LedgerStream<TEntry> stream, System.Int64 sequence, System.Threading.CancellationToken cancellationToken = default)
-M System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Tandem.Ledger.AcceptedLedgerEntry<TEntry>>> ReadAsync<TEntry>(Tandem.Ledger.LedgerStream<TEntry> stream, System.Threading.CancellationToken cancellationToken = default)
-M System.Threading.Tasks.ValueTask<Tandem.Ledger.AcceptedLedgerEntry<TEntry>> AppendAsync<TEntry>(Tandem.Ledger.LedgerStream<TEntry> stream, System.String entryId, TEntry entry, System.Threading.CancellationToken cancellationToken = default)
-M System.Threading.Tasks.ValueTask<Tandem.Ledger.LedgerDocumentValue<TDocument>> WriteDocumentAsync<TDocument>(Tandem.Ledger.LedgerDocument<TDocument> document, TDocument value, System.Int64 expectedVersion, System.Threading.CancellationToken cancellationToken = default)
-M System.Threading.Tasks.ValueTask<Tandem.Ledger.LedgerDocumentValue<TDocument>?> ReadDocumentAsync<TDocument>(Tandem.Ledger.LedgerDocument<TDocument> document, System.Threading.CancellationToken cancellationToken = default)
 P System.Guid RunId { get; }
 T Tandem.Ledger.RuntimeJournalKind
 F System.Int32 value__
@@ -134,29 +92,15 @@ P System.String? Result { get; set; }
 P System.String? ValueType { get; set; }
 P System.String? VisitId { get; set; }
 P Tandem.Ledger.RuntimeJournalKind Kind { get; set; }
-T Tandem.Ledger.SqliteLedgerOptions
-C (System.TimeSpan BusyTimeout, System.Int32 LockRetryAttempts, System.TimeSpan LockRetryDelay)
-M System.Boolean Equals(System.Object? obj)
-M System.Boolean Equals(Tandem.Ledger.SqliteLedgerOptions? other)
-M System.Int32 GetHashCode()
-M System.String ToString()
-M System.Void Deconstruct(out System.TimeSpan BusyTimeout, out System.Int32 LockRetryAttempts, out System.TimeSpan LockRetryDelay)
-M Tandem.Ledger.SqliteLedgerOptions <Clone>$()
-P System.Int32 LockRetryAttempts { get; set; }
-P System.TimeSpan BusyTimeout { get; set; }
-P System.TimeSpan LockRetryDelay { get; set; }
-P Tandem.Ledger.SqliteLedgerOptions Default { get; }
 T Tandem.Ledger.SqliteLedgerStore
-C (System.String databasePath, System.TimeProvider? timeProvider = null, System.Text.Json.JsonSerializerOptions? serializerOptions = null, Tandem.Ledger.SqliteLedgerOptions? options = null)
+C (System.String databasePath)
 M System.Threading.Tasks.ValueTask InitializeAsync(System.Threading.CancellationToken cancellationToken = default)
+M System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Tandem.Ledger.LedgerJournalEntry>> ReadJournalAsync(System.Guid runId, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Tandem.Ledger.RuntimeJournalRecord>> ReadAcceptedAsync(System.Guid runId, System.Threading.CancellationToken cancellationToken = default)
-M System.Threading.Tasks.ValueTask<T> ExecuteAsync<T>(System.Func<System.Threading.CancellationToken,System.Threading.Tasks.ValueTask<T>> operation, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.AcceptedPipelineValue<TValue>?> ReadLatestAcceptedAsync<TValue>(System.Guid runId, System.String stepId, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.AcceptedPipelineValue<TValue>?> ReadLatestAcceptedAsync<TValue>(System.Guid runId, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.LedgerRun> CompleteRunAsync(System.Guid runId, Tandem.Ledger.LedgerRunStatus status, System.Threading.CancellationToken cancellationToken = default)
-M System.Threading.Tasks.ValueTask<Tandem.Ledger.LedgerRun> CreateRunAsync(System.Guid runId, System.String composition, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.LedgerRun> GetRunAsync(System.Guid runId, System.Threading.CancellationToken cancellationToken = default)
-M System.Threading.Tasks.ValueTask<Tandem.Ledger.LedgerRun> ReopenRunAsync(System.Guid runId, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.SqlitePipelineObserver> CreateObserverAsync(System.Guid runId, System.String composition, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.SqlitePipelineObserver> CreateObserverAsync<TState>(System.Guid runId, Tandem.Pipeline<TState> pipeline, System.Threading.CancellationToken cancellationToken = default)
 M Tandem.Ledger.RunLedger ForRun(System.Guid runId)

@@ -1,513 +1,130 @@
-using System.Security.Cryptography;
 using System.Text.Json;
+using Dapper;
 using Microsoft.Data.Sqlite;
 
 namespace Tandem.Ledger;
 
 public sealed class SqliteLedgerStore
 {
-    private const int SchemaVersion = 1;
-    private const int MaximumLedgerToolValueCharacters = 4_000;
-    private const int MaximumLedgerToolPageCharacters = 200_000;
+    private const int SchemaVersion = 2;
+    private const string SelectJournal =
+        "SELECT id AS Id, sequence AS Sequence, record AS Record, recorded_at AS RecordedAtMilliseconds FROM journal";
+    private const string SelectRun =
+        "SELECT composition AS Composition, status AS Status, started_at AS StartedAt, updated_at AS UpdatedAt, ended_at AS EndedAt FROM runs WHERE run_id = @RunId;";
+    private const string Schema = """
+        CREATE TABLE runs (
+            run_id TEXT PRIMARY KEY,
+            composition TEXT NOT NULL CHECK (length(trim(composition)) > 0),
+            status TEXT NOT NULL CHECK (status IN ('Running', 'Ready', 'Failed', 'Faulted', 'Interrupted', 'Cancelled')),
+            started_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            ended_at INTEGER NULL
+        );
+        CREATE TABLE journal (
+            id INTEGER PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES runs(run_id),
+            sequence INTEGER NOT NULL CHECK (sequence >= 1),
+            record TEXT NOT NULL CHECK (json_valid(record)),
+            recorded_at INTEGER NOT NULL,
+            kind TEXT GENERATED ALWAYS AS (json_extract(record, '$.kind')) VIRTUAL,
+            step_id TEXT GENERATED ALWAYS AS (json_extract(record, '$.stepId')) VIRTUAL,
+            identity TEXT GENERATED ALWAYS AS (json_extract(record, '$.identity')) VIRTUAL,
+            value_type TEXT GENERATED ALWAYS AS (json_extract(record, '$.valueType')) VIRTUAL,
+            payload_type TEXT GENERATED ALWAYS AS (json_type(record, '$.payload')) VIRTUAL,
+            -- An accepted value: the fact a participant produced or a human supplied.
+            accepted INTEGER GENERATED ALWAYS AS (
+                kind IN ('StructuredOutputAccepted', 'CapabilityAccepted', 'InteractionRequested', 'InteractionAnswered', 'StepCompleted')
+                AND (coalesce(payload_type, 'null') <> 'null' OR trim(coalesce(value_type, '')) <> '')
+            ) VIRTUAL,
+            -- What the ledger tools show agents: accepted values and captured command output.
+            agent_readable INTEGER GENERATED ALWAYS AS (
+                accepted
+                OR (kind = 'CommandCompleted' AND coalesce(payload_type, 'null') <> 'null')
+                OR (kind = 'ActionCompleted' AND payload_type = 'object')
+            ) VIRTUAL,
+            UNIQUE (run_id, sequence)
+        );
+        CREATE INDEX journal_accepted ON journal (run_id, accepted, step_id, value_type);
+        CREATE INDEX journal_actions ON journal (run_id, kind, step_id, identity);
+        PRAGMA user_version = 2;
+        """;
+
+    internal static JsonSerializerOptions JournalJson { get; } = TandemJson.CreateTypedContract();
+
     private readonly string _databasePath;
     private readonly string _connectionString;
-    private readonly TimeProvider _timeProvider;
-    private readonly JsonSerializerOptions _serializerOptions;
-    private readonly SqliteLedgerOptions _options;
-    private readonly AsyncLocal<TransactionScope?> _transaction = new();
+    private readonly string _readOnlyConnectionString;
+    private readonly Lock _initializationGate = new();
+    private Task? _initialization;
 
-    public SqliteLedgerStore(
-        string databasePath,
-        TimeProvider? timeProvider = null,
-        JsonSerializerOptions? serializerOptions = null,
-        SqliteLedgerOptions? options = null
-    )
+    public SqliteLedgerStore(string databasePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
         _databasePath = Path.GetFullPath(databasePath);
-        _connectionString = new SqliteConnectionStringBuilder
+        // Each operation opens its own short-lived connection. A store has no lifetime of its
+        // own, so pooled connections would keep the database files open after it is dropped.
+        // Default Timeout is how long Microsoft.Data.Sqlite waits on a locked database.
+        var builder = new SqliteConnectionStringBuilder
         {
             DataSource = _databasePath,
             Mode = SqliteOpenMode.ReadWriteCreate,
-            // WAL permits readers alongside a writer. Shared cache adds table
-            // locks that defeat that isolation between concurrent run stores.
-            Cache = SqliteCacheMode.Private,
             Pooling = false,
-        }.ToString();
-        _timeProvider = timeProvider ?? TimeProvider.System;
-        _serializerOptions = serializerOptions ?? TandemJson.CreateTypedContract();
-        _options = options ?? SqliteLedgerOptions.Default;
-        if (_options.BusyTimeout <= TimeSpan.Zero || _options.BusyTimeout > TimeSpan.FromMinutes(1))
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(options),
-                "Busy timeout must be between zero and one minute."
-            );
-        }
-        if (_options.LockRetryAttempts < 0 || _options.LockRetryAttempts > 10)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(options),
-                "Lock retry attempts must be between zero and ten."
-            );
-        }
-        if (
-            _options.LockRetryDelay < TimeSpan.Zero
-            || _options.LockRetryDelay > TimeSpan.FromSeconds(10)
-        )
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(options),
-                "Lock retry delay must be between zero and ten seconds."
-            );
-        }
+            ForeignKeys = true,
+            DefaultTimeout = 5,
+        };
+        _connectionString = builder.ToString();
+        builder.Mode = SqliteOpenMode.ReadOnly;
+        _readOnlyConnectionString = builder.ToString();
     }
 
     public async ValueTask InitializeAsync(CancellationToken cancellationToken = default) =>
-        await RetryLockedAsync(
-            async ct =>
-            {
-                await InitializeCoreAsync(ct);
-                return true;
-            },
-            cancellationToken
-        );
+        await EnsureInitializedAsync().WaitAsync(cancellationToken);
 
-    private async ValueTask InitializeCoreAsync(CancellationToken cancellationToken)
+    private Task EnsureInitializedAsync()
+    {
+        lock (_initializationGate)
+        {
+            if (_initialization is null || _initialization.IsFaulted || _initialization.IsCanceled)
+            {
+                _initialization = InitializeCoreAsync();
+            }
+            return _initialization;
+        }
+    }
+
+    private async Task InitializeCoreAsync()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_databasePath)!);
-        await using var connection = await OpenAsync(cancellationToken);
-        await ExecuteAsync(connection, "PRAGMA journal_mode = WAL;", cancellationToken);
-        await ExecuteAsync(connection, "PRAGMA synchronous = FULL;", cancellationToken);
-
-        var version = await ScalarAsync<long>(
-            connection,
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync();
+        await connection.ExecuteAsync("PRAGMA journal_mode = WAL;");
+        // The version read shares the write lock with schema creation, so concurrent
+        // first-time initialisers cannot both see an empty database.
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        var version = await connection.ExecuteScalarAsync<long>(
             "PRAGMA user_version;",
-            cancellationToken
+            transaction: transaction
         );
-        if (version is not 0 and not SchemaVersion)
+        if (version == SchemaVersion)
+        {
+            return;
+        }
+        EnsureSchemaVersion(version == 0 ? SchemaVersion : version);
+        await connection.ExecuteAsync(Schema, transaction: transaction);
+        await transaction.CommitAsync();
+    }
+
+    private static void EnsureSchemaVersion(long version)
+    {
+        if (version != SchemaVersion)
         {
             throw new InvalidOperationException(
                 $"Ledger schema version '{version}' is not supported; expected '{SchemaVersion}'."
             );
         }
-
-        if (version == SchemaVersion)
-        {
-            return;
-        }
-
-        await using var transaction = connection.BeginTransaction(deferred: false);
-        await ExecuteAsync(
-            connection,
-            """
-            CREATE TABLE IF NOT EXISTS runs (
-                run_id TEXT PRIMARY KEY,
-                composition TEXT NOT NULL CHECK (length(trim(composition)) > 0),
-                status TEXT NOT NULL CHECK (status IN ('Running', 'Ready', 'Failed', 'Faulted', 'Interrupted', 'Cancelled')),
-                started_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                ended_at INTEGER NULL
-            );
-            CREATE TABLE IF NOT EXISTS ledger_contracts (
-                storage_name TEXT PRIMARY KEY CHECK (length(trim(storage_name)) > 0),
-                storage_kind TEXT NOT NULL CHECK (storage_kind IN ('stream', 'document')),
-                contract_name TEXT NOT NULL CHECK (length(trim(contract_name)) > 0),
-                contract_version INTEGER NOT NULL CHECK (contract_version >= 1)
-            );
-            CREATE TABLE IF NOT EXISTS run_entries (
-                run_id TEXT NOT NULL,
-                stream TEXT NOT NULL CHECK (length(trim(stream)) > 0),
-                sequence INTEGER NOT NULL CHECK (sequence >= 1),
-                entry_id TEXT NOT NULL CHECK (length(trim(entry_id)) > 0),
-                payload BLOB NOT NULL,
-                payload_hash BLOB NOT NULL,
-                recorded_at INTEGER NOT NULL,
-                PRIMARY KEY (run_id, stream, sequence),
-                UNIQUE (run_id, entry_id),
-                FOREIGN KEY (run_id) REFERENCES runs(run_id)
-            );
-            CREATE TABLE IF NOT EXISTS run_documents (
-                run_id TEXT NOT NULL,
-                key TEXT NOT NULL CHECK (length(trim(key)) > 0),
-                version INTEGER NOT NULL CHECK (version >= 1),
-                payload BLOB NOT NULL,
-                payload_hash BLOB NOT NULL,
-                updated_at INTEGER NOT NULL,
-                PRIMARY KEY (run_id, key),
-                FOREIGN KEY (run_id) REFERENCES runs(run_id)
-            );
-            PRAGMA user_version = 1;
-            """,
-            cancellationToken,
-            transaction
-        );
-        await transaction.CommitAsync(cancellationToken);
-    }
-
-    public async ValueTask<LedgerRun> CreateRunAsync(
-        Guid runId,
-        string composition,
-        CancellationToken cancellationToken = default
-    ) =>
-        await RetryLockedAsync(ct => CreateRunCoreAsync(runId, composition, ct), cancellationToken);
-
-    private async ValueTask<LedgerRun> CreateRunCoreAsync(
-        Guid runId,
-        string composition,
-        CancellationToken cancellationToken
-    )
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(composition);
-        var now = Now();
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            INSERT INTO runs (run_id, composition, status, started_at, updated_at)
-            VALUES ($run_id, $composition, 'Running', $now, $now)
-            ON CONFLICT (run_id) DO NOTHING;
-            """;
-        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
-        command.Parameters.AddWithValue("$composition", composition);
-        command.Parameters.AddWithValue("$now", now.ToUnixTimeMilliseconds());
-        await command.ExecuteNonQueryAsync(cancellationToken);
-
-        var run = await ReadRunAsync(connection, runId, cancellationToken);
-        if (!string.Equals(run.Composition, composition, StringComparison.Ordinal))
-        {
-            throw new LedgerConflictException(
-                $"Run '{runId:N}' already belongs to composition '{run.Composition}'."
-            );
-        }
-        return run;
     }
 
     public RunLedger ForRun(Guid runId) => new(this, runId);
-
-    internal async ValueTask<PipelineLedgerPage> ReadPageAsync(
-        Guid runId,
-        string? query,
-        long? cursor,
-        int limit,
-        CancellationToken cancellationToken
-    )
-    {
-        if (cursor < 0)
-        {
-            throw new Tandem.Infrastructure.PaginationValidationException(
-                nameof(cursor),
-                "Cursor cannot be negative. Restart with a null cursor; subsequently use nextCursor from the preceding page.",
-                new { cursor, retryCursor = (long?)null }
-            );
-        }
-        if (limit is < 1 or > 50)
-        {
-            throw new Tandem.Infrastructure.PaginationValidationException(
-                nameof(limit),
-                "Ledger page size must be 1 to 50.",
-                new
-                {
-                    limit,
-                    minimumLimit = 1,
-                    maximumLimit = 50,
-                    retryLimit = Math.Clamp(limit, 1, 50),
-                }
-            );
-        }
-        if (query is not null)
-        {
-            if (string.IsNullOrWhiteSpace(query))
-            {
-                throw new Tandem.Infrastructure.PaginationValidationException(
-                    nameof(query),
-                    "Supply nonblank search text, or use read_ledger to browse without a query.",
-                    new { minimumQueryLength = 1, maximumQueryLength = 1024 }
-                );
-            }
-            if (query.Length > 1_024)
-            {
-                throw new Tandem.Infrastructure.PaginationValidationException(
-                    nameof(query),
-                    "Ledger search query cannot exceed 1024 characters. Shorten the query and restart with a null cursor.",
-                    new
-                    {
-                        queryLength = query.Length,
-                        maximumQueryLength = 1024,
-                        retryCursor = (long?)null,
-                    }
-                );
-            }
-        }
-        await InitializeAsync(cancellationToken);
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT rowid, stream, sequence, entry_id, payload, recorded_at
-            FROM run_entries
-            WHERE run_id = $run_id AND rowid > $cursor
-            ORDER BY rowid;
-            """;
-        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
-        command.Parameters.AddWithValue("$cursor", cursor ?? 0);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        var entries = new List<PipelineLedgerEntry>();
-        var pageCharacters = 0;
-        var hasMore = false;
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            var stream = reader.GetString(1);
-            var value = System.Text.Encoding.UTF8.GetString((byte[])reader[4]);
-            if (!IsAgentReadableLedgerEntry(stream, value) || !Matches(value, query))
-            {
-                continue;
-            }
-            var formatted = FormatLedgerToolValue(value, query);
-            if (
-                entries.Count >= limit
-                || pageCharacters + formatted.Length > MaximumLedgerToolPageCharacters
-            )
-            {
-                hasMore = true;
-                break;
-            }
-            entries.Add(
-                new PipelineLedgerEntry(
-                    reader.GetInt64(0),
-                    stream,
-                    reader.GetInt64(2),
-                    reader.GetString(3),
-                    formatted,
-                    FromUnix(reader.GetInt64(5))
-                )
-            );
-            pageCharacters += formatted.Length;
-        }
-        return new PipelineLedgerPage(entries, hasMore ? entries[^1].Cursor : null);
-    }
-
-    internal async ValueTask<long?> FindActionEntryAsync(
-        Guid runId,
-        string stepId,
-        string invocationId,
-        CancellationToken cancellationToken
-    )
-    {
-        await InitializeAsync(cancellationToken);
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText =
-            "SELECT rowid, payload FROM run_entries WHERE run_id = $run AND stream = $stream ORDER BY rowid DESC;";
-        command.Parameters.AddWithValue("$run", runId.ToString("N"));
-        command.Parameters.AddWithValue("$stream", PipelineJournal.Stream.Name);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            var record = JsonSerializer.Deserialize<RuntimeJournalRecord>(
-                (byte[])reader[1],
-                _serializerOptions
-            );
-            if (
-                record is { Kind: RuntimeJournalKind.ActionCompleted, Payload: not null }
-                && record.StepId == stepId
-                && record.Identity == invocationId
-            )
-            {
-                return reader.GetInt64(0);
-            }
-        }
-        return null;
-    }
-
-    internal async ValueTask<object> ReadEntryPageAsync(
-        Guid runId,
-        long entryCursor,
-        int offset,
-        int limit,
-        CancellationToken cancellationToken,
-        string? diagnosticStream = null
-    )
-    {
-        if (entryCursor <= 0 || offset < 0 || limit is < 2 or > 65536)
-        {
-            throw new Tandem.Infrastructure.PaginationValidationException(
-                "page",
-                "entryCursor must be positive, offset nonnegative, and limit from 2 to 65536.",
-                new
-                {
-                    entryCursor,
-                    retryOffset = 0,
-                    retryLimit = Math.Clamp(limit, 2, 65536),
-                }
-            );
-        }
-
-        await InitializeAsync(cancellationToken);
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText =
-            "SELECT stream, payload FROM run_entries WHERE run_id = $run_id AND rowid = $cursor;";
-        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
-        command.Parameters.AddWithValue("$cursor", entryCursor);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-        {
-            throw new Tandem.Infrastructure.PaginationValidationException(
-                nameof(entryCursor),
-                "No readable entry at this cursor in the current run. Use read_ledger or search_ledger to obtain an entry cursor.",
-                new { entryCursor }
-            );
-        }
-
-        var value = System.Text.Encoding.UTF8.GetString((byte[])reader[1]);
-        if (!IsAgentReadableLedgerEntry(reader.GetString(0), value))
-        {
-            throw new Tandem.Infrastructure.PaginationValidationException(
-                nameof(entryCursor),
-                "This record is not agent-readable. Use a cursor from read_ledger or search_ledger.",
-                new { entryCursor }
-            );
-        }
-
-        bool? captureTruncated = null;
-        if (diagnosticStream is not null)
-        {
-            if (diagnosticStream is not ("stdout" or "stderr"))
-            {
-                throw new Tandem.Infrastructure.ToolInputException(
-                    "stream must be stdout or stderr."
-                );
-            }
-
-            var record =
-                reader.GetString(0) == PipelineJournal.Stream.Name
-                    ? JsonSerializer.Deserialize<RuntimeJournalRecord>(value, _serializerOptions)
-                    : null;
-            if (
-                record
-                is not { Kind: RuntimeJournalKind.ActionCompleted, Payload: { } processPayload }
-            )
-            {
-                throw new Tandem.Infrastructure.ToolInputException(
-                    "This entry has no process diagnostics. Read it without stream."
-                );
-            }
-
-            var process =
-                processPayload.Deserialize<PipelineActionProcessPayload>()
-                ?? throw new LedgerDataException("Missing process output.");
-            value = diagnosticStream == "stdout" ? process.Stdout : process.Stderr;
-            captureTruncated = process.Truncated;
-        }
-
-        if (
-            offset > value.Length
-            || (
-                offset > 0
-                && offset < value.Length
-                && char.IsLowSurrogate(value[offset])
-                && char.IsHighSurrogate(value[offset - 1])
-            )
-        )
-        {
-            throw new Tandem.Infrastructure.PaginationValidationException(
-                nameof(offset),
-                "Offset exceeds the entry or splits a Unicode character. Restart at offset 0 and follow nextOffset.",
-                new { totalLength = value.Length, retryOffset = 0 }
-            );
-        }
-
-        var length = Math.Min(limit, value.Length - offset);
-        if (
-            length > 0
-            && offset + length < value.Length
-            && char.IsHighSurrogate(value[offset + length - 1])
-        )
-        {
-            length--;
-        }
-
-        var next = offset + length;
-        return new
-        {
-            entryCursor,
-            stream = diagnosticStream,
-            captureTruncated,
-            content = value.Substring(offset, length),
-            offset,
-            length,
-            totalLength = value.Length,
-            hasMore = next < value.Length,
-            nextOffset = next < value.Length ? (int?)next : null,
-            offsetUnit = "UTF-16 code units",
-        };
-    }
-
-    private bool IsAgentReadableLedgerEntry(string stream, string value)
-    {
-        if (!string.Equals(stream, PipelineJournal.Stream.Name, StringComparison.Ordinal))
-        {
-            return true;
-        }
-        try
-        {
-            var record = JsonSerializer.Deserialize<RuntimeJournalRecord>(
-                value,
-                _serializerOptions
-            );
-            return record is not null
-                && (PipelineJournal.IsAccepted(record) || IsReadableCommand(record));
-        }
-        catch (Exception exception) when (exception is JsonException or NotSupportedException)
-        {
-            throw new LedgerDataException(
-                "The runtime journal contains a malformed record.",
-                exception
-            );
-        }
-    }
-
-    private static bool IsReadableCommand(RuntimeJournalRecord record)
-    {
-        if (record is { Kind: RuntimeJournalKind.CommandCompleted, Payload: not null })
-        {
-            return true;
-        }
-        if (record is not { Kind: RuntimeJournalKind.ActionCompleted, Payload: { } payload })
-        {
-            return false;
-        }
-        try
-        {
-            return payload.Deserialize<PipelineActionProcessPayload>() is not null;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-    }
-
-    private static bool Matches(string value, string? query) =>
-        query is null || value.Contains(query, StringComparison.OrdinalIgnoreCase);
-
-    private static string FormatLedgerToolValue(string value, string? query)
-    {
-        if (value.Length <= MaximumLedgerToolValueCharacters)
-        {
-            return value;
-        }
-
-        var start = 0;
-        if (query is not null)
-        {
-            var match = value.IndexOf(query, StringComparison.OrdinalIgnoreCase);
-            start = Math.Max(0, match - MaximumLedgerToolValueCharacters / 4);
-            start = Math.Min(start, value.Length - MaximumLedgerToolValueCharacters);
-        }
-        var prefix = start > 0 ? "[...truncated...]" : "";
-        var suffix =
-            start + MaximumLedgerToolValueCharacters < value.Length ? "[...truncated...]" : "";
-        return $"{prefix}{value.Substring(start, MaximumLedgerToolValueCharacters)}{suffix}";
-    }
 
     public async ValueTask<SqlitePipelineObserver> CreateObserverAsync(
         Guid runId,
@@ -515,7 +132,6 @@ public sealed class SqliteLedgerStore
         CancellationToken cancellationToken = default
     )
     {
-        await InitializeAsync(cancellationToken);
         var run = await CreateRunAsync(runId, composition, cancellationToken);
         if (run.Status != LedgerRunStatus.Running)
         {
@@ -523,7 +139,7 @@ public sealed class SqliteLedgerStore
                 $"Run '{runId:N}' is already terminal with status '{run.Status}'."
             );
         }
-        return new SqlitePipelineObserver(ForRun(runId));
+        return new SqlitePipelineObserver(this, runId);
     }
 
     public ValueTask<SqlitePipelineObserver> CreateObserverAsync<TState>(
@@ -536,256 +152,42 @@ public sealed class SqliteLedgerStore
         return CreateObserverAsync(runId, pipeline.Inspect().Name, cancellationToken);
     }
 
-    public async ValueTask<IReadOnlyList<RuntimeJournalRecord>> ReadAcceptedAsync(
+    internal ValueTask<LedgerRun> CreateRunAsync(
         Guid runId,
+        string composition,
         CancellationToken cancellationToken = default
     )
     {
-        await using var connection = new SqliteConnection(
-            new SqliteConnectionStringBuilder
+        ArgumentException.ThrowIfNullOrWhiteSpace(composition);
+        return WithWriteTransactionAsync(
+            async (connection, transaction, ct) =>
             {
-                DataSource = _databasePath,
-                Mode = SqliteOpenMode.ReadOnly,
-                Pooling = false,
-            }.ToString()
-        );
-        await connection.OpenAsync(cancellationToken);
-        await ReadRunAsync(connection, runId, cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText =
-            "SELECT payload FROM run_entries WHERE run_id = $run_id AND stream = $stream ORDER BY rowid;";
-        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
-        command.Parameters.AddWithValue("$stream", PipelineJournal.Stream.Name);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        var accepted = new List<RuntimeJournalRecord>();
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            RuntimeJournalRecord? record;
-            try
-            {
-                record = JsonSerializer.Deserialize<RuntimeJournalRecord>(
-                    (byte[])reader[0],
-                    _serializerOptions
+                await connection.ExecuteAsync(
+                    new CommandDefinition(
+                        """
+                        INSERT INTO runs (run_id, composition, status, started_at, updated_at)
+                        VALUES (@RunId, @Composition, 'Running', @Now, @Now)
+                        ON CONFLICT (run_id) DO NOTHING;
+                        """,
+                        new
+                        {
+                            RunId = Key(runId),
+                            Composition = composition,
+                            Now = NowMilliseconds(),
+                        },
+                        transaction,
+                        cancellationToken: ct
+                    )
                 );
-            }
-            catch (JsonException exception)
-            {
-                throw new LedgerDataException(
-                    $"Run '{runId:N}' contains a malformed pipeline journal record.",
-                    exception
-                );
-            }
-            if (record is not null && PipelineJournal.IsAccepted(record))
-            {
-                accepted.Add(record);
-            }
-        }
-        return accepted;
-    }
-
-    public async ValueTask<AcceptedPipelineValue<TValue>?> ReadLatestAcceptedAsync<TValue>(
-        Guid runId,
-        string stepId,
-        CancellationToken cancellationToken = default
-    )
-    {
-        // TODO: This scans and deserializes the full journal. A bounded recent read could miss an
-        // older accepted value, so the proper fix is a schema version that indexes journal kind,
-        // step ID, accepted-value status, and value type for a targeted latest-value query.
-        ArgumentException.ThrowIfNullOrWhiteSpace(stepId);
-        await InitializeAsync(cancellationToken);
-        IReadOnlyList<AcceptedLedgerEntry<RuntimeJournalRecord>> entries;
-        try
-        {
-            entries = await ForRun(runId).ReadAsync(PipelineJournal.Stream, cancellationToken);
-        }
-        catch (JsonException exception)
-        {
-            throw new LedgerDataException(
-                $"Run '{runId:N}' contains a malformed pipeline journal record.",
-                exception
-            );
-        }
-
-        var latest = entries.LastOrDefault(entry =>
-            string.Equals(entry.Value.StepId, stepId, StringComparison.Ordinal)
-            && PipelineJournal.IsAccepted(entry.Value)
+                var run = await ReadRunAsync(connection, transaction, runId, ct);
+                return string.Equals(run.Composition, composition, StringComparison.Ordinal)
+                    ? run
+                    : throw new LedgerConflictException(
+                        $"Run '{runId:N}' already belongs to composition '{run.Composition}'."
+                    );
+            },
+            cancellationToken
         );
-        if (latest is null)
-        {
-            return null;
-        }
-
-        var expectedType = typeof(TValue).FullName ?? typeof(TValue).Name;
-        if (string.IsNullOrWhiteSpace(latest.Value.ValueType))
-        {
-            throw new LedgerDataException(
-                $"Accepted value at sequence '{latest.Sequence}' for step '{stepId}' has no value type."
-            );
-        }
-        if (!string.Equals(latest.Value.ValueType, expectedType, StringComparison.Ordinal))
-        {
-            throw new LedgerValueTypeMismatchException(
-                $"Accepted value at sequence '{latest.Sequence}' for step '{stepId}' is '{latest.Value.ValueType}', not '{expectedType}'."
-            );
-        }
-
-        TValue value;
-        try
-        {
-            var payload =
-                latest.Value.Payload
-                ?? throw new LedgerDataException(
-                    $"Accepted value at sequence '{latest.Sequence}' for step '{stepId}' has no payload."
-                );
-            value = payload.Deserialize<TValue>(_serializerOptions)!;
-            if (value is null)
-            {
-                throw new LedgerDataException(
-                    $"Accepted value at sequence '{latest.Sequence}' for step '{stepId}' is null."
-                );
-            }
-        }
-        catch (Exception exception) when (exception is JsonException or NotSupportedException)
-        {
-            throw new LedgerDataException(
-                $"Accepted value at sequence '{latest.Sequence}' for step '{stepId}' is malformed.",
-                exception
-            );
-        }
-        return new AcceptedPipelineValue<TValue>(
-            latest.Sequence,
-            latest.Value.StepId,
-            latest.Value.ValueType,
-            value,
-            latest.RecordedAt
-        );
-    }
-
-    public async ValueTask<AcceptedPipelineValue<TValue>?> ReadLatestAcceptedAsync<TValue>(
-        Guid runId,
-        CancellationToken cancellationToken = default
-    )
-    {
-        await InitializeAsync(cancellationToken);
-        var expectedType = typeof(TValue).FullName ?? typeof(TValue).Name;
-        IReadOnlyList<AcceptedLedgerEntry<RuntimeJournalRecord>> entries;
-        try
-        {
-            entries = await ForRun(runId).ReadAsync(PipelineJournal.Stream, cancellationToken);
-        }
-        catch (JsonException exception)
-        {
-            throw new LedgerDataException(
-                $"Run '{runId:N}' contains a malformed pipeline journal record.",
-                exception
-            );
-        }
-        var latest = entries.LastOrDefault(entry =>
-            PipelineJournal.IsAccepted(entry.Value)
-            && string.Equals(entry.Value.ValueType, expectedType, StringComparison.Ordinal)
-        );
-        if (latest is null)
-        {
-            return null;
-        }
-        var payload =
-            latest.Value.Payload
-            ?? throw new LedgerDataException(
-                $"Accepted value at sequence '{latest.Sequence}' has no payload."
-            );
-        TValue value;
-        try
-        {
-            value =
-                payload.Deserialize<TValue>(_serializerOptions)
-                ?? throw new LedgerDataException(
-                    $"Accepted value at sequence '{latest.Sequence}' is null."
-                );
-        }
-        catch (Exception exception) when (exception is JsonException or NotSupportedException)
-        {
-            throw new LedgerDataException(
-                $"Accepted value at sequence '{latest.Sequence}' is malformed.",
-                exception
-            );
-        }
-        return new AcceptedPipelineValue<TValue>(
-            latest.Sequence,
-            latest.Value.StepId,
-            expectedType,
-            value,
-            latest.RecordedAt
-        );
-    }
-
-    public async ValueTask<T> ExecuteAsync<T>(
-        Func<CancellationToken, ValueTask<T>> operation,
-        CancellationToken cancellationToken = default
-    )
-    {
-        ArgumentNullException.ThrowIfNull(operation);
-        if (_transaction.Value is not null)
-        {
-            return await operation(cancellationToken);
-        }
-
-        SqliteConnection? connection = null;
-        SqliteTransaction? transaction = null;
-        for (var attempt = 0; ; attempt++)
-        {
-            try
-            {
-                connection = await OpenAsync(cancellationToken);
-                transaction = connection.BeginTransaction(deferred: false);
-                break;
-            }
-            catch (SqliteException exception)
-                when (IsLocked(exception) && attempt < _options.LockRetryAttempts)
-            {
-                if (transaction is not null)
-                {
-                    await transaction.DisposeAsync();
-                }
-                if (connection is not null)
-                {
-                    await connection.DisposeAsync();
-                }
-                transaction = null;
-                connection = null;
-                await Task.Delay(_options.LockRetryDelay, cancellationToken);
-            }
-            catch
-            {
-                if (transaction is not null)
-                {
-                    await transaction.DisposeAsync();
-                }
-                if (connection is not null)
-                {
-                    await connection.DisposeAsync();
-                }
-                throw;
-            }
-        }
-
-        var activeConnection = connection;
-        var activeTransaction = transaction;
-        await using (activeConnection)
-        await using (activeTransaction)
-        {
-            _transaction.Value = new TransactionScope(activeConnection, activeTransaction);
-            try
-            {
-                var result = await operation(cancellationToken);
-                await activeTransaction.CommitAsync(CancellationToken.None);
-                return result;
-            }
-            finally
-            {
-                _transaction.Value = null;
-            }
-        }
     }
 
     public async ValueTask<LedgerRun> GetRunAsync(
@@ -793,850 +195,381 @@ public sealed class SqliteLedgerStore
         CancellationToken cancellationToken = default
     )
     {
-        await using var connection = await OpenAsync(cancellationToken);
-        return await ReadRunAsync(connection, runId, cancellationToken);
+        await using var connection = await OpenReadOnlyAsync(cancellationToken);
+        return await ReadRunAsync(connection, null, runId, cancellationToken);
     }
 
-    public async ValueTask<LedgerRun> ReopenRunAsync(
-        Guid runId,
-        CancellationToken cancellationToken = default
-    )
-    {
-        var now = Now();
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var transaction = connection.BeginTransaction(deferred: false);
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            UPDATE runs
-            SET status = 'Running', updated_at = $now, ended_at = NULL
-            WHERE run_id = $run_id;
-            """;
-        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
-        command.Parameters.AddWithValue("$now", now.ToUnixTimeMilliseconds());
-        await command.ExecuteNonQueryAsync(cancellationToken);
-
-        var run = await ReadRunAsync(connection, runId, cancellationToken, transaction);
-        if (run.Status != LedgerRunStatus.Running)
-        {
-            throw new LedgerConflictException(
-                $"Run '{runId:N}' cannot resume from status '{run.Status}'."
-            );
-        }
-        await transaction.CommitAsync(cancellationToken);
-        return run;
-    }
-
-    public async ValueTask<LedgerRun> CompleteRunAsync(
+    public ValueTask<LedgerRun> CompleteRunAsync(
         Guid runId,
         LedgerRunStatus status,
         CancellationToken cancellationToken = default
-    ) =>
-        _transaction.Value is null
-            ? await RetryLockedAsync(
-                ct => CompleteRunCoreAsync(runId, status, ct),
-                cancellationToken
-            )
-            : await CompleteRunCoreAsync(runId, status, cancellationToken);
-
-    private async ValueTask<LedgerRun> CompleteRunCoreAsync(
-        Guid runId,
-        LedgerRunStatus status,
-        CancellationToken cancellationToken
     )
     {
         if (status == LedgerRunStatus.Running)
         {
             throw new ArgumentException("A terminal run status is required.", nameof(status));
         }
-        var now = Now();
-        if (_transaction.Value is { } scope)
-        {
-            return await CompleteRunInTransactionAsync(
-                scope.Connection,
-                scope.Transaction,
-                runId,
-                status,
-                now,
-                cancellationToken
-            );
-        }
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var transaction = connection.BeginTransaction(deferred: false);
-        var run = await CompleteRunInTransactionAsync(
-            connection,
-            transaction,
-            runId,
-            status,
-            now,
-            cancellationToken
-        );
-        await transaction.CommitAsync(cancellationToken);
-        return run;
-    }
-
-    private async ValueTask<LedgerRun> CompleteRunInTransactionAsync(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        Guid runId,
-        LedgerRunStatus status,
-        DateTimeOffset now,
-        CancellationToken cancellationToken
-    )
-    {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            UPDATE runs
-            SET status = $status, updated_at = $now, ended_at = $now
-            WHERE run_id = $run_id AND status = 'Running';
-            """;
-        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
-        command.Parameters.AddWithValue("$status", status.ToString());
-        command.Parameters.AddWithValue("$now", now.ToUnixTimeMilliseconds());
-        await command.ExecuteNonQueryAsync(cancellationToken);
-
-        var run = await ReadRunAsync(connection, runId, cancellationToken, transaction);
-        if (run.Status != status)
-        {
-            throw new LedgerConflictException(
-                $"Run '{runId:N}' is already terminal with status '{run.Status}'."
-            );
-        }
-        return run;
-    }
-
-    internal async ValueTask<AcceptedLedgerEntry<TEntry>> AppendAsync<TEntry>(
-        Guid runId,
-        LedgerStream<TEntry> stream,
-        string entryId,
-        TEntry entry,
-        CancellationToken cancellationToken
-    ) =>
-        _transaction.Value is null
-            ? await RetryLockedAsync(
-                ct => AppendCoreAsync(runId, stream, entryId, entry, ct),
-                cancellationToken
-            )
-            : await AppendCoreAsync(runId, stream, entryId, entry, cancellationToken);
-
-    private async ValueTask<AcceptedLedgerEntry<TEntry>> AppendCoreAsync<TEntry>(
-        Guid runId,
-        LedgerStream<TEntry> stream,
-        string entryId,
-        TEntry entry,
-        CancellationToken cancellationToken
-    )
-    {
-        var streamName = stream.ValidatedName;
-        ArgumentException.ThrowIfNullOrWhiteSpace(entryId);
-        var payload = JsonSerializer.SerializeToUtf8Bytes(entry, _serializerOptions);
-        var hash = SHA256.HashData(payload);
-        var now = Now();
-        if (_transaction.Value is { } scope)
-        {
-            return await AppendInTransactionAsync(
-                scope.Connection,
-                scope.Transaction,
-                runId,
-                stream,
-                streamName,
-                entryId,
-                entry,
-                payload,
-                hash,
-                now,
-                cancellationToken
-            );
-        }
-
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var transaction = connection.BeginTransaction(deferred: false);
-        var accepted = await AppendInTransactionAsync(
-            connection,
-            transaction,
-            runId,
-            stream,
-            streamName,
-            entryId,
-            entry,
-            payload,
-            hash,
-            now,
-            cancellationToken
-        );
-        await transaction.CommitAsync(cancellationToken);
-        return accepted;
-    }
-
-    private async ValueTask<AcceptedLedgerEntry<TEntry>> AppendInTransactionAsync<TEntry>(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        Guid runId,
-        LedgerStream<TEntry> stream,
-        string streamName,
-        string entryId,
-        TEntry entry,
-        byte[] payload,
-        byte[] hash,
-        DateTimeOffset now,
-        CancellationToken cancellationToken
-    )
-    {
-        await EnsureRunRunningAsync(connection, transaction, runId, cancellationToken);
-        await EnsureContractAsync(
-            connection,
-            transaction,
-            streamName,
-            "stream",
-            stream.ValidatedContract,
-            stream.ValidatedVersion,
-            cancellationToken
-        );
-
-        var replay = await ReadEntryByIdAsync<TEntry>(
-            connection,
-            transaction,
-            runId,
-            entryId,
-            cancellationToken
-        );
-        if (replay is not null)
-        {
-            if (
-                !string.Equals(replay.Value.Stream, streamName, StringComparison.Ordinal)
-                || !replay.Value.Hash.AsSpan().SequenceEqual(hash)
-                || !replay.Value.Payload.AsSpan().SequenceEqual(payload)
-            )
+        return WithWriteTransactionAsync(
+            async (connection, transaction, ct) =>
             {
+                await connection.ExecuteAsync(
+                    new CommandDefinition(
+                        """
+                        UPDATE runs SET status = @Status, updated_at = @Now, ended_at = @Now
+                        WHERE run_id = @RunId AND status = 'Running';
+                        """,
+                        new
+                        {
+                            RunId = Key(runId),
+                            Status = status.ToString(),
+                            Now = NowMilliseconds(),
+                        },
+                        transaction,
+                        cancellationToken: ct
+                    )
+                );
+                var run = await ReadRunAsync(connection, transaction, runId, ct);
+                return run.Status == status
+                    ? run
+                    : throw new LedgerConflictException(
+                        $"Run '{runId:N}' is already terminal with status '{run.Status}'."
+                    );
+            },
+            cancellationToken
+        );
+    }
+
+    internal ValueTask<long> AppendAsync(
+        Guid runId,
+        RuntimeJournalRecord record,
+        CancellationToken cancellationToken
+    )
+    {
+        var payload = JsonSerializer.Serialize(record, JournalJson);
+        return WithWriteTransactionAsync(
+            async (connection, transaction, ct) =>
+            {
+                var sequence = await connection.QuerySingleOrDefaultAsync<long?>(
+                    new CommandDefinition(
+                        """
+                        INSERT INTO journal (run_id, sequence, record, recorded_at)
+                        SELECT @RunId,
+                            COALESCE((SELECT MAX(sequence) FROM journal WHERE run_id = @RunId), 0) + 1,
+                            @Record,
+                            @Now
+                        WHERE EXISTS (SELECT 1 FROM runs WHERE run_id = @RunId AND status = 'Running')
+                        RETURNING sequence;
+                        """,
+                        new
+                        {
+                            RunId = Key(runId),
+                            Record = payload,
+                            Now = NowMilliseconds(),
+                        },
+                        transaction,
+                        cancellationToken: ct
+                    )
+                );
+                if (sequence is { } appended)
+                {
+                    return appended;
+                }
+                var run = await ReadRunAsync(connection, transaction, runId, ct);
                 throw new LedgerConflictException(
-                    $"Entry '{entryId}' already exists in run '{runId:N}' with different content."
+                    $"Run '{runId:N}' is already terminal with status '{run.Status}'."
                 );
-            }
-            return new AcceptedLedgerEntry<TEntry>(
-                replay.Value.Sequence,
-                entryId,
-                Deserialize<TEntry>(replay.Value.Payload),
-                FromUnix(replay.Value.RecordedAt)
-            );
-        }
-
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            INSERT INTO run_entries
-                (run_id, stream, sequence, entry_id, payload, payload_hash, recorded_at)
-            VALUES (
-                $run_id,
-                $stream,
-                COALESCE((SELECT MAX(sequence) + 1 FROM run_entries WHERE run_id = $run_id AND stream = $stream), 1),
-                $entry_id,
-                $payload,
-                $hash,
-                $recorded_at
-            )
-            RETURNING sequence;
-            """;
-        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
-        command.Parameters.AddWithValue("$stream", streamName);
-        command.Parameters.AddWithValue("$entry_id", entryId);
-        command.Parameters.AddWithValue("$payload", payload);
-        command.Parameters.AddWithValue("$hash", hash);
-        command.Parameters.AddWithValue("$recorded_at", now.ToUnixTimeMilliseconds());
-        var sequence = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
-        return new AcceptedLedgerEntry<TEntry>(sequence, entryId, entry, now);
-    }
-
-    internal async ValueTask<IReadOnlyList<AcceptedLedgerEntry<TEntry>>> ReadAsync<TEntry>(
-        Guid runId,
-        LedgerStream<TEntry> stream,
-        CancellationToken cancellationToken
-    )
-    {
-        await RetryLockedAsync(
-            async ct =>
-            {
-                await EnsureContractAsync(
-                    stream.ValidatedName,
-                    "stream",
-                    stream.ValidatedContract,
-                    stream.ValidatedVersion,
-                    ct
-                );
-                return true;
             },
             cancellationToken
         );
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT sequence, entry_id, payload, recorded_at
-            FROM run_entries
-            WHERE run_id = $run_id AND stream = $stream
-            ORDER BY sequence;
-            """;
-        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
-        command.Parameters.AddWithValue("$stream", stream.ValidatedName);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        var entries = new List<AcceptedLedgerEntry<TEntry>>();
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            entries.Add(
-                new AcceptedLedgerEntry<TEntry>(
-                    reader.GetInt64(0),
-                    reader.GetString(1),
-                    Deserialize<TEntry>((byte[])reader[2]),
-                    FromUnix(reader.GetInt64(3))
-                )
-            );
-        }
-        return entries;
     }
 
-    internal async ValueTask<IReadOnlyList<AcceptedLedgerEntry<TEntry>>> ReadAfterAsync<TEntry>(
+    public async ValueTask<IReadOnlyList<LedgerJournalEntry>> ReadJournalAsync(
         Guid runId,
-        LedgerStream<TEntry> stream,
-        long sequence,
-        CancellationToken cancellationToken
-    )
-    {
-        if (sequence < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(sequence));
-        }
-        await RetryLockedAsync(
-            async ct =>
-            {
-                await EnsureContractAsync(
-                    stream.ValidatedName,
-                    "stream",
-                    stream.ValidatedContract,
-                    stream.ValidatedVersion,
-                    ct
-                );
-                return true;
-            },
-            cancellationToken
-        );
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT sequence, entry_id, payload, recorded_at
-            FROM run_entries
-            WHERE run_id = $run_id AND stream = $stream AND sequence > $sequence
-            ORDER BY sequence;
-            """;
-        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
-        command.Parameters.AddWithValue("$stream", stream.ValidatedName);
-        command.Parameters.AddWithValue("$sequence", sequence);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        var entries = new List<AcceptedLedgerEntry<TEntry>>();
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            entries.Add(
-                new AcceptedLedgerEntry<TEntry>(
-                    reader.GetInt64(0),
-                    reader.GetString(1),
-                    Deserialize<TEntry>((byte[])reader[2]),
-                    FromUnix(reader.GetInt64(3))
-                )
-            );
-        }
-        return entries;
-    }
-
-    internal async ValueTask<LedgerDocumentValue<TDocument>?> ReadDocumentAsync<TDocument>(
-        Guid runId,
-        LedgerDocument<TDocument> document,
-        CancellationToken cancellationToken
-    )
-    {
-        if (_transaction.Value is { } scope)
-        {
-            await EnsureContractAsync(
-                scope.Connection,
-                scope.Transaction,
-                document.ValidatedName,
-                "document",
-                document.ValidatedContract,
-                document.ValidatedVersion,
-                cancellationToken
-            );
-            return await ReadDocumentAsync<TDocument>(
-                scope.Connection,
-                scope.Transaction,
-                runId,
-                document.ValidatedName,
-                cancellationToken
-            );
-        }
-
-        await RetryLockedAsync(
-            async ct =>
-            {
-                await EnsureContractAsync(
-                    document.ValidatedName,
-                    "document",
-                    document.ValidatedContract,
-                    document.ValidatedVersion,
-                    ct
-                );
-                return true;
-            },
-            cancellationToken
-        );
-        await using var connection = await OpenAsync(cancellationToken);
-        return await ReadDocumentAsync<TDocument>(
-            connection,
-            null,
-            runId,
-            document.ValidatedName,
-            cancellationToken
-        );
-    }
-
-    internal async ValueTask<LedgerDocumentValue<TDocument>> WriteDocumentAsync<TDocument>(
-        Guid runId,
-        LedgerDocument<TDocument> document,
-        TDocument value,
-        long expectedVersion,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken = default
     ) =>
-        _transaction.Value is null
-            ? await RetryLockedAsync(
-                ct => WriteDocumentCoreAsync(runId, document, value, expectedVersion, ct),
-                cancellationToken
-            )
-            : await WriteDocumentCoreAsync(
-                runId,
-                document,
-                value,
-                expectedVersion,
-                cancellationToken
-            );
+        (await ReadJournalRowsAsync(runId, "ORDER BY id", new { }, cancellationToken))
+            .Select(ToEntry)
+            .ToList();
 
-    private async ValueTask<LedgerDocumentValue<TDocument>> WriteDocumentCoreAsync<TDocument>(
+    public async ValueTask<IReadOnlyList<RuntimeJournalRecord>> ReadAcceptedAsync(
         Guid runId,
-        LedgerDocument<TDocument> document,
-        TDocument value,
-        long expectedVersion,
+        CancellationToken cancellationToken = default
+    ) =>
+        (await ReadJournalRowsAsync(runId, "AND accepted ORDER BY id", new { }, cancellationToken))
+            .Select(Deserialize)
+            .ToList();
+
+    public ValueTask<AcceptedPipelineValue<TValue>?> ReadLatestAcceptedAsync<TValue>(
+        Guid runId,
+        string stepId,
+        CancellationToken cancellationToken = default
+    )
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(stepId);
+        return ReadLatestAcceptedCoreAsync<TValue>(runId, stepId, cancellationToken);
+    }
+
+    public ValueTask<AcceptedPipelineValue<TValue>?> ReadLatestAcceptedAsync<TValue>(
+        Guid runId,
+        CancellationToken cancellationToken = default
+    ) => ReadLatestAcceptedCoreAsync<TValue>(runId, null, cancellationToken);
+
+    private async ValueTask<AcceptedPipelineValue<TValue>?> ReadLatestAcceptedCoreAsync<TValue>(
+        Guid runId,
+        string? stepId,
         CancellationToken cancellationToken
     )
     {
-        if (expectedVersion < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(expectedVersion));
-        }
-        var key = document.ValidatedName;
-        var payload = JsonSerializer.SerializeToUtf8Bytes(value, _serializerOptions);
-        var hash = SHA256.HashData(payload);
-        var now = Now();
-        if (_transaction.Value is { } scope)
-        {
-            return await WriteDocumentInTransactionAsync(
-                scope.Connection,
-                scope.Transaction,
+        var expectedType = typeof(TValue).FullName ?? typeof(TValue).Name;
+        var latestRow = (
+            await ReadJournalRowsAsync(
                 runId,
-                document,
-                key,
-                value,
-                expectedVersion,
-                payload,
-                hash,
-                now,
+                stepId is null
+                    ? "AND accepted AND value_type = @ValueType ORDER BY id DESC LIMIT 1"
+                    : "AND accepted AND step_id = @StepId ORDER BY id DESC LIMIT 1",
+                new { StepId = stepId, ValueType = expectedType },
                 cancellationToken
+            )
+        ).SingleOrDefault();
+        if (latestRow is null)
+        {
+            return null;
+        }
+        var latest = ToEntry(latestRow);
+
+        var location = stepId is null
+            ? $"Accepted value at sequence '{latest.Sequence}'"
+            : $"Accepted value at sequence '{latest.Sequence}' for step '{stepId}'";
+        if (string.IsNullOrWhiteSpace(latest.Record.ValueType))
+        {
+            throw new LedgerDataException($"{location} has no value type.");
+        }
+        if (!string.Equals(latest.Record.ValueType, expectedType, StringComparison.Ordinal))
+        {
+            throw new LedgerValueTypeMismatchException(
+                $"{location} is '{latest.Record.ValueType}', not '{expectedType}'."
             );
         }
-
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var transaction = connection.BeginTransaction(deferred: false);
-        var written = await WriteDocumentInTransactionAsync(
-            connection,
-            transaction,
-            runId,
-            document,
-            key,
+        var payload =
+            latest.Record.Payload ?? throw new LedgerDataException($"{location} has no payload.");
+        TValue value;
+        try
+        {
+            value =
+                payload.Deserialize<TValue>(JournalJson)
+                ?? throw new LedgerDataException($"{location} is null.");
+        }
+        catch (Exception exception) when (exception is JsonException or NotSupportedException)
+        {
+            throw new LedgerDataException($"{location} is malformed.", exception);
+        }
+        return new AcceptedPipelineValue<TValue>(
+            latest.Sequence,
+            latest.Record.StepId,
+            expectedType,
             value,
-            expectedVersion,
-            payload,
-            hash,
-            now,
-            cancellationToken
+            latest.RecordedAt
         );
-        await transaction.CommitAsync(cancellationToken);
-        return written;
     }
 
-    private async ValueTask<
-        LedgerDocumentValue<TDocument>
-    > WriteDocumentInTransactionAsync<TDocument>(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
+    internal async ValueTask<IReadOnlyList<JournalRow>> ReadAgentReadableAsync(
         Guid runId,
-        LedgerDocument<TDocument> document,
-        string key,
-        TDocument value,
-        long expectedVersion,
-        byte[] payload,
-        byte[] hash,
-        DateTimeOffset now,
+        long afterId,
+        string? valueText,
+        int limit,
         CancellationToken cancellationToken
     )
     {
-        await EnsureRunRunningAsync(connection, transaction, runId, cancellationToken);
-        await EnsureContractAsync(
-            connection,
-            transaction,
-            key,
-            "document",
-            document.ValidatedContract,
-            document.ValidatedVersion,
-            cancellationToken
+        await using var connection = await OpenReadOnlyAsync(cancellationToken);
+        // Matches JSON values, never property names. SQLite's lower() folds ASCII only.
+        var rows = await connection.QueryAsync<JournalRow>(
+            new CommandDefinition(
+                $"""
+                {SelectJournal}
+                WHERE run_id = @RunId AND id > @AfterId AND agent_readable
+                    AND (@ValueText IS NULL OR EXISTS (
+                        SELECT 1 FROM json_tree(journal.record)
+                        WHERE atom IS NOT NULL AND instr(lower(atom), lower(@ValueText)) > 0
+                    ))
+                ORDER BY id
+                LIMIT @Limit;
+                """,
+                new
+                {
+                    RunId = Key(runId),
+                    AfterId = afterId,
+                    ValueText = valueText,
+                    Limit = limit,
+                },
+                cancellationToken: cancellationToken
+            )
         );
-        var current = await ReadDocumentRowAsync(
-            connection,
-            transaction,
-            runId,
-            key,
-            cancellationToken
-        );
-
-        if (current is not null)
-        {
-            var isReplay =
-                current.Value.Version == expectedVersion + 1
-                && current.Value.Hash.AsSpan().SequenceEqual(hash)
-                && current.Value.Payload.AsSpan().SequenceEqual(payload);
-            if (isReplay)
-            {
-                return new LedgerDocumentValue<TDocument>(
-                    current.Value.Version,
-                    Deserialize<TDocument>(current.Value.Payload),
-                    FromUnix(current.Value.UpdatedAt)
-                );
-            }
-            if (current.Value.Version != expectedVersion)
-            {
-                throw new LedgerConflictException(
-                    $"Document '{key}' in run '{runId:N}' is at version '{current.Value.Version}', not '{expectedVersion}'."
-                );
-            }
-        }
-        else if (expectedVersion != 0)
-        {
-            throw new LedgerConflictException(
-                $"Document '{key}' in run '{runId:N}' does not exist at version '{expectedVersion}'."
-            );
-        }
-
-        var version = expectedVersion + 1;
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            INSERT INTO run_documents (run_id, key, version, payload, payload_hash, updated_at)
-            VALUES ($run_id, $key, $version, $payload, $hash, $updated_at)
-            ON CONFLICT (run_id, key) DO UPDATE SET
-                version = excluded.version,
-                payload = excluded.payload,
-                payload_hash = excluded.payload_hash,
-                updated_at = excluded.updated_at
-            WHERE run_documents.version = $expected_version;
-            """;
-        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
-        command.Parameters.AddWithValue("$key", key);
-        command.Parameters.AddWithValue("$version", version);
-        command.Parameters.AddWithValue("$payload", payload);
-        command.Parameters.AddWithValue("$hash", hash);
-        command.Parameters.AddWithValue("$updated_at", now.ToUnixTimeMilliseconds());
-        command.Parameters.AddWithValue("$expected_version", expectedVersion);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
-        {
-            throw new LedgerConflictException($"Document '{key}' changed during its update.");
-        }
-        return new LedgerDocumentValue<TDocument>(version, value, now);
+        return rows.AsList();
     }
 
-    private async ValueTask<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
+    internal async ValueTask<JournalRecordRow?> ReadRecordAsync(
+        Guid runId,
+        long id,
+        CancellationToken cancellationToken
+    )
     {
-        var connection = new SqliteConnection(_connectionString)
-        {
-            DefaultTimeout = Math.Max(1, (int)Math.Ceiling(_options.BusyTimeout.TotalSeconds)),
-        };
+        await using var connection = await OpenReadOnlyAsync(cancellationToken);
+        return await connection.QuerySingleOrDefaultAsync<JournalRecordRow>(
+            new CommandDefinition(
+                "SELECT record AS Record, agent_readable AS AgentReadable FROM journal WHERE run_id = @RunId AND id = @Id;",
+                new { RunId = Key(runId), Id = id },
+                cancellationToken: cancellationToken
+            )
+        );
+    }
+
+    internal async ValueTask<long?> FindActionEntryAsync(
+        Guid runId,
+        string stepId,
+        string invocationId,
+        CancellationToken cancellationToken
+    )
+    {
+        await using var connection = await OpenReadOnlyAsync(cancellationToken);
+        return await connection.QuerySingleOrDefaultAsync<long?>(
+            new CommandDefinition(
+                """
+                SELECT id FROM journal
+                WHERE run_id = @RunId AND kind = 'ActionCompleted' AND step_id = @StepId
+                    AND identity = @Identity AND coalesce(payload_type, 'null') <> 'null'
+                ORDER BY id DESC
+                LIMIT 1;
+                """,
+                new
+                {
+                    RunId = Key(runId),
+                    StepId = stepId,
+                    Identity = invocationId,
+                },
+                cancellationToken: cancellationToken
+            )
+        );
+    }
+
+    private async ValueTask<IEnumerable<JournalRow>> ReadJournalRowsAsync(
+        Guid runId,
+        string conditionAndOrder,
+        object parameters,
+        CancellationToken cancellationToken
+    )
+    {
+        await using var connection = await OpenReadOnlyAsync(cancellationToken);
+        await ReadRunAsync(connection, null, runId, cancellationToken);
+        var runParameters = new DynamicParameters(parameters);
+        runParameters.Add("RunId", Key(runId));
+        return await connection.QueryAsync<JournalRow>(
+            new CommandDefinition(
+                $"{SelectJournal} WHERE run_id = @RunId {conditionAndOrder};",
+                runParameters,
+                cancellationToken: cancellationToken
+            )
+        );
+    }
+
+    private async ValueTask<T> WithWriteTransactionAsync<T>(
+        Func<SqliteConnection, SqliteTransaction, CancellationToken, ValueTask<T>> operation,
+        CancellationToken cancellationToken
+    )
+    {
+        await EnsureInitializedAsync().WaitAsync(cancellationToken);
+        await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
-        await ExecuteAsync(connection, "PRAGMA foreign_keys = ON;", cancellationToken);
-        await ExecuteAsync(
-            connection,
-            $"PRAGMA busy_timeout = {(long)_options.BusyTimeout.TotalMilliseconds};",
-            cancellationToken
-        );
-        return connection;
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        var result = await operation(connection, transaction, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return result;
     }
 
-    private async ValueTask EnsureContractAsync(
-        string storageName,
-        string storageKind,
-        string contractName,
-        int contractVersion,
-        CancellationToken cancellationToken
-    )
+    private async ValueTask<SqliteConnection> OpenReadOnlyAsync(CancellationToken cancellationToken)
     {
-        await using var connection = await OpenAsync(cancellationToken);
-        await EnsureContractAsync(
-            connection,
-            null,
-            storageName,
-            storageKind,
-            contractName,
-            contractVersion,
-            cancellationToken
-        );
+        var connection = new SqliteConnection(_readOnlyConnectionString);
+        try
+        {
+            await connection.OpenAsync(cancellationToken);
+            EnsureSchemaVersion(await connection.ExecuteScalarAsync<long>("PRAGMA user_version;"));
+            return connection;
+        }
+        catch
+        {
+            await connection.DisposeAsync();
+            throw;
+        }
     }
 
-    private static async ValueTask EnsureContractAsync(
+    private static async ValueTask<LedgerRun> ReadRunAsync(
         SqliteConnection connection,
         SqliteTransaction? transaction,
-        string storageName,
-        string storageKind,
-        string contractName,
-        int contractVersion,
-        CancellationToken cancellationToken
-    )
-    {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            INSERT INTO ledger_contracts (storage_name, storage_kind, contract_name, contract_version)
-            VALUES ($storage_name, $storage_kind, $contract_name, $contract_version)
-            ON CONFLICT (storage_name) DO NOTHING;
-            SELECT storage_kind, contract_name, contract_version
-            FROM ledger_contracts
-            WHERE storage_name = $storage_name;
-            """;
-        command.Parameters.AddWithValue("$storage_name", storageName);
-        command.Parameters.AddWithValue("$storage_kind", storageKind);
-        command.Parameters.AddWithValue("$contract_name", contractName);
-        command.Parameters.AddWithValue("$contract_version", contractVersion);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-        {
-            throw new InvalidOperationException(
-                $"Ledger contract '{storageName}' was not registered."
-            );
-        }
-        if (
-            !string.Equals(reader.GetString(0), storageKind, StringComparison.Ordinal)
-            || !string.Equals(reader.GetString(1), contractName, StringComparison.Ordinal)
-            || reader.GetInt32(2) != contractVersion
-        )
-        {
-            throw new LedgerConflictException(
-                $"Storage name '{storageName}' is already registered as "
-                    + $"'{reader.GetString(0)}:{reader.GetString(1)}@{reader.GetInt32(2)}'."
-            );
-        }
-    }
-
-    private async ValueTask<T> RetryLockedAsync<T>(
-        Func<CancellationToken, ValueTask<T>> operation,
-        CancellationToken cancellationToken
-    )
-    {
-        for (var attempt = 0; ; attempt++)
-        {
-            try
-            {
-                return await operation(cancellationToken);
-            }
-            catch (SqliteException exception)
-                when (IsLocked(exception) && attempt < _options.LockRetryAttempts)
-            {
-                await Task.Delay(_options.LockRetryDelay, cancellationToken);
-            }
-        }
-    }
-
-    private static bool IsLocked(SqliteException exception) => exception.SqliteErrorCode is 5 or 6;
-
-    private static async ValueTask ExecuteAsync(
-        SqliteConnection connection,
-        string sql,
-        CancellationToken cancellationToken,
-        SqliteTransaction? transaction = null
-    )
-    {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = sql;
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    private static async ValueTask<T> ScalarAsync<T>(
-        SqliteConnection connection,
-        string sql,
-        CancellationToken cancellationToken
-    )
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        var value = await command.ExecuteScalarAsync(cancellationToken);
-        return value is null or DBNull
-            ? throw new InvalidOperationException("SQLite returned no scalar value.")
-            : (T)Convert.ChangeType(value, typeof(T));
-    }
-
-    private async ValueTask<LedgerRun> ReadRunAsync(
-        SqliteConnection connection,
         Guid runId,
-        CancellationToken cancellationToken,
-        SqliteTransaction? transaction = null
+        CancellationToken cancellationToken
     )
     {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText =
-            "SELECT composition, status, started_at, updated_at, ended_at FROM runs WHERE run_id = $run_id;";
-        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-        {
-            throw new KeyNotFoundException($"Run '{runId:N}' does not exist.");
-        }
+        var row =
+            await connection.QuerySingleOrDefaultAsync<RunRow>(
+                new CommandDefinition(
+                    SelectRun,
+                    new { RunId = Key(runId) },
+                    transaction,
+                    cancellationToken: cancellationToken
+                )
+            ) ?? throw new KeyNotFoundException($"Run '{runId:N}' does not exist.");
         return new LedgerRun(
             runId,
-            reader.GetString(0),
-            Enum.Parse<LedgerRunStatus>(reader.GetString(1)),
-            FromUnix(reader.GetInt64(2)),
-            FromUnix(reader.GetInt64(3)),
-            reader.IsDBNull(4) ? null : FromUnix(reader.GetInt64(4))
+            row.Composition,
+            Enum.Parse<LedgerRunStatus>(row.Status),
+            FromUnix(row.StartedAt),
+            FromUnix(row.UpdatedAt),
+            row.EndedAt is { } endedAt ? FromUnix(endedAt) : null
         );
     }
 
-    private static async ValueTask EnsureRunRunningAsync(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        Guid runId,
-        CancellationToken cancellationToken
-    )
+    private static LedgerJournalEntry ToEntry(JournalRow row) =>
+        new(row.Sequence, Deserialize(row), row.RecordedAt);
+
+    private static RuntimeJournalRecord Deserialize(JournalRow row)
     {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT status FROM runs WHERE run_id = $run_id;";
-        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
-        var result = await command.ExecuteScalarAsync(cancellationToken);
-        if (result is null or DBNull)
+        try
         {
-            throw new KeyNotFoundException($"Run '{runId:N}' does not exist.");
+            return JsonSerializer.Deserialize<RuntimeJournalRecord>(row.Record, JournalJson)
+                ?? throw new JsonException("Journal record is null.");
         }
-        var status = Enum.Parse<LedgerRunStatus>((string)result);
-        if (status != LedgerRunStatus.Running)
+        catch (Exception exception) when (exception is JsonException or NotSupportedException)
         {
-            throw new LedgerConflictException(
-                $"Run '{runId:N}' is already terminal with status '{status}'."
-            );
+            throw new LedgerDataException($"Journal record '{row.Id}' is malformed.", exception);
         }
     }
 
-    private async ValueTask<EntryRow?> ReadEntryByIdAsync<TEntry>(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        Guid runId,
-        string entryId,
-        CancellationToken cancellationToken
-    )
-    {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText =
-            "SELECT stream, sequence, payload, payload_hash, recorded_at FROM run_entries WHERE run_id = $run_id AND entry_id = $entry_id;";
-        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
-        command.Parameters.AddWithValue("$entry_id", entryId);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken)
-            ? new EntryRow(
-                reader.GetString(0),
-                reader.GetInt64(1),
-                (byte[])reader[2],
-                (byte[])reader[3],
-                reader.GetInt64(4)
-            )
-            : null;
-    }
+    private static string Key(Guid runId) => runId.ToString("N");
 
-    private async ValueTask<LedgerDocumentValue<TDocument>?> ReadDocumentAsync<TDocument>(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        Guid runId,
-        string key,
-        CancellationToken cancellationToken
-    )
-    {
-        var row = await ReadDocumentRowAsync(
-            connection,
-            transaction,
-            runId,
-            key,
-            cancellationToken
-        );
-        return row is null
-            ? null
-            : new LedgerDocumentValue<TDocument>(
-                row.Value.Version,
-                Deserialize<TDocument>(row.Value.Payload),
-                FromUnix(row.Value.UpdatedAt)
-            );
-    }
+    private static long NowMilliseconds() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-    private static async ValueTask<DocumentRow?> ReadDocumentRowAsync(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        Guid runId,
-        string key,
-        CancellationToken cancellationToken
-    )
-    {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText =
-            "SELECT version, payload, payload_hash, updated_at FROM run_documents WHERE run_id = $run_id AND key = $key;";
-        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
-        command.Parameters.AddWithValue("$key", key);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken)
-            ? new DocumentRow(
-                reader.GetInt64(0),
-                (byte[])reader[1],
-                (byte[])reader[2],
-                reader.GetInt64(3)
-            )
-            : null;
-    }
-
-    private T Deserialize<T>(byte[] payload) =>
-        JsonSerializer.Deserialize<T>(payload, _serializerOptions)
-        ?? throw new JsonException($"Ledger payload for '{typeof(T).FullName}' was null.");
-
-    private DateTimeOffset Now() => FromUnix(_timeProvider.GetUtcNow().ToUnixTimeMilliseconds());
-
-    private static DateTimeOffset FromUnix(long value) =>
+    internal static DateTimeOffset FromUnix(long value) =>
         DateTimeOffset.FromUnixTimeMilliseconds(value);
 
-    private readonly record struct EntryRow(
-        string Stream,
-        long Sequence,
-        byte[] Payload,
-        byte[] Hash,
-        long RecordedAt
+    private sealed record RunRow(
+        string Composition,
+        string Status,
+        long StartedAt,
+        long UpdatedAt,
+        long? EndedAt
     );
+}
 
-    private readonly record struct DocumentRow(
-        long Version,
-        byte[] Payload,
-        byte[] Hash,
-        long UpdatedAt
-    );
+internal sealed record JournalRow(
+    long Id,
+    long Sequence,
+    string Record,
+    long RecordedAtMilliseconds
+)
+{
+    public DateTimeOffset RecordedAt => SqliteLedgerStore.FromUnix(RecordedAtMilliseconds);
+}
 
-    private sealed record TransactionScope(
-        SqliteConnection Connection,
-        SqliteTransaction Transaction
-    );
+internal sealed record JournalRecordRow(string Record, long? AgentReadable)
+{
+    public bool IsAgentReadable => AgentReadable == 1;
 }
