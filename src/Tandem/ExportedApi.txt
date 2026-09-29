@@ -47,7 +47,7 @@ Tandem.TandemJson
 [adapter-authoring]
 Tandem.AgentJsonCapabilityDefinition`1
 Tandem.AgentJsonOutputDefinition`1
-Tandem.AgentJsonValidationProblem
+Tandem.ValidationProblem
 
 [runtime-hosting]
 Tandem.AgentUpdate
@@ -65,6 +65,13 @@ Tandem.PipelineAcceptedValue
 Tandem.PipelineActionAttempted
 Tandem.PipelineActionCompleted
 Tandem.PipelineActionProcessPayload
+Tandem.ToolEffect
+Tandem.ToolEvidence
+Tandem.ToolInvocationObservation
+Tandem.ToolInvocationStatus
+Tandem.ToolObservation
+Tandem.ToolResultEvidence
+Tandem.ToolResultEvidence+Process
 Tandem.PipelineAgentUpdated
 Tandem.PipelineAgentUsage
 Tandem.PipelineCapabilityAccepted
@@ -86,7 +93,6 @@ Tandem.PipelineStepCompleted
 Tandem.PipelineStepFaulted
 Tandem.PipelineStepStarted
 Tandem.PipelineStructuredOutputAccepted
-Tandem.PipelineStructuredOutputProblem
 Tandem.PipelineStructuredOutputRejected
 
 [generator-abi]

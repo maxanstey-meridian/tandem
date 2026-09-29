@@ -105,6 +105,56 @@ public sealed class TypedStructuredOutputAcceptanceTests
         sink.Recorded.Summary.Should().Be("go");
     }
 
+    [Fact]
+    public async Task OutputAcceptances_RunInConfigurationOrderAndStopAtTheFirstRejection()
+    {
+        var calls = new List<string>();
+        var client = new TestChatClient(
+            Response("""{"decision":"Stop","summary":"halt"}"""),
+            Response("""{"decision":"Proceed","summary":"go"}""")
+        );
+        var agent = Agent
+            .Create<DecisionState>("planner", "Decide.", client)
+            .WithMessage(_ => "Decide.")
+            .WithOutput(
+                new DecisionOutputDefinition(),
+                (state, decision) => state with { Decision = decision.Decision }
+            )
+            .RequireOutputAcceptance<DecisionState, PlannerDecision>(observation =>
+            {
+                calls.Add($"policy:{observation.Output.Decision}");
+                return observation.Output.Decision == DecisionValue.Stop
+                    ? [new ValidationProblem("decision", "Stopping is not allowed yet.")]
+                    : [];
+            })
+            .RequireOutputAcceptance<DecisionState, PlannerDecision>(observation =>
+            {
+                calls.Add($"check:{observation.Output.Decision}");
+                return [];
+            })
+            .WithOutputAcceptance<DecisionState, PlannerDecision>(
+                (observation, _) =>
+                {
+                    calls.Add($"accept:{observation.Output.Decision}");
+                    return ValueTask.CompletedTask;
+                }
+            )
+            .Build();
+
+        var result = await new PipelineRunner().RunAsync(
+            Pipeline.Start(agent, "ordered-acceptance").Build(agent),
+            new DecisionState(null)
+        );
+
+        result.State.Decision.Should().Be(DecisionValue.Proceed);
+        calls.Should().Equal("policy:Stop", "policy:Proceed", "check:Proceed", "accept:Proceed");
+        client
+            .Requests[1]
+            .Select(message => message.Text)
+            .Should()
+            .Contain(text => text.Contains("Stopping is not allowed yet."));
+    }
+
     private sealed record DecisionState(DecisionValue? Decision);
 
     private enum DecisionValue

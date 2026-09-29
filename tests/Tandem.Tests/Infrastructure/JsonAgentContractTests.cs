@@ -52,14 +52,14 @@ public sealed class JsonAgentContractTests
                 order.Add("intrinsic");
                 return candidate.GetProperty("value").GetInt32() > 0
                     ? []
-                    : [new AgentJsonValidationProblem("$.value", "Must be positive.")];
+                    : [new ValidationProblem("$.value", "Must be positive.")];
             },
             "example.dynamic-value",
             (state, candidate) =>
             {
                 order.Add("contextual");
                 return candidate.GetProperty("value").GetInt32() > state.Maximum
-                    ? [new AgentJsonValidationProblem("$.value", "Exceeds maximum.")]
+                    ? [new ValidationProblem("$.value", "Exceeds maximum.")]
                     : [];
             }
         );
@@ -196,14 +196,14 @@ public sealed class JsonAgentContractTests
                 order.Add("intrinsic");
                 return request.GetProperty("value").GetInt32() > 0
                     ? []
-                    : [new AgentJsonValidationProblem("$.value", "Must be positive.")];
+                    : [new ValidationProblem("$.value", "Must be positive.")];
             },
             (state, request) =>
             {
                 order.Add("contextual");
                 return request.GetProperty("value").GetInt32() <= state.Maximum
                     ? []
-                    : [new AgentJsonValidationProblem("$.value", "Exceeds maximum.")];
+                    : [new ValidationProblem("$.value", "Exceeds maximum.")];
             },
             request => $"Set {request.GetProperty("value").GetInt32()}",
             "example.capability-value"
@@ -230,7 +230,7 @@ public sealed class JsonAgentContractTests
 
         function.JsonSchema.GetProperty("type").GetString().Should().Be("object");
         var invalid = (Tandem.Infrastructure.ToolError)(await function.InvokeAsync(Arguments(0)))!;
-        invalid.Problems[0].Field.Should().Be("$.value");
+        invalid.Problems[0].Path.Should().Be("$.value");
         invocation.Accepted.Should().BeNull();
         await function.InvokeAsync(Arguments(3));
 
@@ -315,14 +315,12 @@ public sealed class JsonAgentContractTests
         invocation.AttachToolOutcomeCollector(collector);
         AddInvocation(
             collector,
-            new Tandem.Infrastructure.ToolInvocationObservationDescriptor(
+            new Tandem.ToolInvocationObservation(
                 "failed",
-                new Tandem.Infrastructure.ToolSemantics(
-                    Tandem.Infrastructure.ToolEffect.ProcessExecution
-                ),
+                ToolEffect.ProcessExecution,
                 JsonDocument.Parse("{\"value\":1}").RootElement.Clone(),
-                Tandem.Infrastructure.ToolInvocationStatus.Failed,
-                new Tandem.Infrastructure.ToolResultEvidenceDescriptor.Process(
+                ToolInvocationStatus.Failed,
+                new Tandem.ToolResultEvidence.Process(
                     7,
                     "stdout",
                     "stderr",
@@ -334,21 +332,21 @@ public sealed class JsonAgentContractTests
         );
         AddInvocation(
             collector,
-            new Tandem.Infrastructure.ToolInvocationObservationDescriptor(
+            new Tandem.ToolInvocationObservation(
                 "blocked",
-                null,
+                ToolEffect.Unclassified,
                 JsonDocument.Parse("{}").RootElement.Clone(),
-                Tandem.Infrastructure.ToolInvocationStatus.Blocked,
+                ToolInvocationStatus.Blocked,
                 null
             )
         );
         AddInvocation(
             collector,
-            new Tandem.Infrastructure.ToolInvocationObservationDescriptor(
+            new Tandem.ToolInvocationObservation(
                 "faulted",
-                null,
+                ToolEffect.Unclassified,
                 JsonDocument.Parse("{}").RootElement.Clone(),
-                Tandem.Infrastructure.ToolInvocationStatus.Faulted,
+                ToolInvocationStatus.Faulted,
                 null
             )
         );
@@ -396,7 +394,7 @@ public sealed class JsonAgentContractTests
 
     private static void AddInvocation(
         Tandem.Infrastructure.Blocks.ToolOutcomeCollector collector,
-        Tandem.Infrastructure.ToolInvocationObservationDescriptor observation
+        Tandem.ToolInvocationObservation observation
     )
     {
         var reservation = collector.ReserveToolInvocation();
@@ -460,8 +458,8 @@ public sealed class JsonAgentContractTests
 
     private static async Task<Exception> FaultAsync(
         JsonContract contract,
-        Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>>? validate = null,
-        Func<JsonState, JsonElement, IReadOnlyList<AgentJsonValidationProblem>>? validateFor = null,
+        Func<JsonElement, IReadOnlyList<ValidationProblem>>? validate = null,
+        Func<JsonState, JsonElement, IReadOnlyList<ValidationProblem>>? validateFor = null,
         Func<JsonState, JsonElement, JsonState>? apply = null
     )
     {
@@ -500,7 +498,7 @@ public sealed class JsonAgentContractTests
     }
 
     private static AgentJsonOutputDefinition<JsonState> JsonOutput(
-        Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>> validate
+        Func<JsonElement, IReadOnlyList<ValidationProblem>> validate
     ) =>
         new(
             JsonDocument.Parse("{\"type\":\"object\"}").RootElement.Clone(),
@@ -510,7 +508,7 @@ public sealed class JsonAgentContractTests
         );
 
     private static AgentCapability<JsonState> JsonCapability(
-        Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>> validate,
+        Func<JsonElement, IReadOnlyList<ValidationProblem>> validate,
         Func<JsonElement, string> summarize
     ) =>
         AgentCapabilities.CreateJson(
@@ -519,9 +517,9 @@ public sealed class JsonAgentContractTests
         );
 
     private static AgentJsonCapabilityDefinition<JsonState> JsonCapabilityDefinition(
-        Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>> validate,
+        Func<JsonElement, IReadOnlyList<ValidationProblem>> validate,
         Func<JsonElement, string> summarize,
-        Func<JsonState, JsonElement, IReadOnlyList<AgentJsonValidationProblem>>? validateFor = null
+        Func<JsonState, JsonElement, IReadOnlyList<ValidationProblem>>? validateFor = null
     ) =>
         new(
             "set_value",

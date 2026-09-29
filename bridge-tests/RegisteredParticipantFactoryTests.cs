@@ -48,7 +48,7 @@ public sealed class RegisteredParticipantFactoryTests
         );
 
         var problem = Assert.Single(problems);
-        Assert.Equal("$.answer", problem.Field);
+        Assert.Equal("$.answer", problem.Path);
         Assert.Equal("Required", problem.Message);
     }
 

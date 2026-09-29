@@ -195,8 +195,8 @@ public sealed class TerminalPipelineDisplayTests
                 "agent",
                 "invocation",
                 "publish",
-                "Write",
-                "Rejected"
+                ToolEffect.WorkspaceMutation,
+                ToolInvocationStatus.Blocked
             ),
             default
         );
@@ -209,7 +209,7 @@ public sealed class TerminalPipelineDisplayTests
                 $"tool search path=\"src/file.cs\" staged=false in {invocationDirectory} started"
             );
         console.Output.Should().Contain("verify command passed: test\n[31mpassed");
-        console.Output.Should().Contain("agent action failed: publish: Rejected");
+        console.Output.Should().Contain("agent action failed: publish: Blocked");
         console.Output.Should().NotContain("\u001b");
     }
 
@@ -250,7 +250,14 @@ public sealed class TerminalPipelineDisplayTests
                 "agent",
                 new AgentUpdate.ToolCompleted("c2", null, "denied")
             ),
-            new PipelineActionCompleted(_runId, "agent", "i", "publish", "Write", "Rejected"),
+            new PipelineActionCompleted(
+                _runId,
+                "agent",
+                "i",
+                "publish",
+                ToolEffect.WorkspaceMutation,
+                ToolInvocationStatus.Blocked
+            ),
             new PipelineAgentUsage(_runId, "agent", 10, 4, 30, 200),
         ];
         foreach (var observation in observations)
@@ -285,7 +292,7 @@ public sealed class TerminalPipelineDisplayTests
                 "agent reasoning: thinking",
                 "agent tool search q=\"x\" started",
                 "agent tool failed: denied",
-                "agent action failed: publish: Rejected",
+                "agent action failed: publish: Blocked",
                 "agent faulted: boom (00:00:03)",
                 "verify started",
                 "verify command passed: test",

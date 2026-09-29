@@ -9,7 +9,6 @@ public sealed record PipelineRunOptions(
     IPipelineObserver? Observer = null
 )
 {
-    internal IPipelineAcceptanceUnitOfWork? AcceptanceUnitOfWork { get; init; }
     internal IPipelineLedgerReader? Ledger { get; init; }
 }
 
@@ -161,7 +160,6 @@ public sealed class PipelineRunner
             initialState,
             options.Interactions is null ? null : new TypedInteractionHandler(options.Interactions),
             options.Observer,
-            options.AcceptanceUnitOfWork,
             options.Ledger,
             cancellationToken
         );

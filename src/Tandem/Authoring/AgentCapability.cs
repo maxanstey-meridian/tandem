@@ -42,7 +42,7 @@ internal sealed class CapabilityInvocationState<TState>(
     public AcceptedCapability<TState>? Accepted { get; private set; }
     public string? AcceptedCallId { get; private set; }
     public object? AcceptedResult { get; private set; }
-    public IReadOnlyList<Infrastructure.ToolInvocationObservationDescriptor> ToolInvocations =>
+    public IReadOnlyList<ToolInvocationObservation> ToolInvocations =>
         ToolOutcomeCollector?.ToolInvocations ?? [];
 
     internal Infrastructure.Blocks.ToolOutcomeCollector? ToolOutcomeCollector { get; private set; }

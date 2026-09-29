@@ -33,8 +33,8 @@ public sealed class HarnessAgentImplementationTests
             .Throw<InvalidOperationException>()
             .WithMessage("Agent already exposes tool 'file_access_grep'.");
         effects.TryGet("file_access_read", out var read).Should().BeTrue();
-        read.Effect.Should().Be(Tandem.Infrastructure.ToolEffect.Read);
-        read.Evidence.Should().Be(Tandem.Infrastructure.ToolEvidence.RepositoryInspection);
+        read.Effect.Should().Be(ToolEffect.Read);
+        read.Evidence.Should().Be(ToolEvidence.RepositoryInspection);
     }
 
     [Fact]

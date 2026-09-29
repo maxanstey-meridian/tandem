@@ -8,13 +8,11 @@ internal sealed class ToolOutcomeCollector
     private string? _lifecycleToolName;
     private readonly Dictionary<
         string,
-        (int Ordinal, ToolObservationDescriptor? Observation)
+        (int Ordinal, ToolObservation? Observation)
     > _latestToolOutcomes = [];
-    private readonly List<ToolInvocationObservationDescriptor?> _toolInvocations = [];
+    private readonly List<ToolInvocationObservation?> _toolInvocations = [];
 
-    public ToolOutcomeCollector(
-        IReadOnlyList<ToolInvocationObservationDescriptor>? priorInvocations = null
-    )
+    public ToolOutcomeCollector(IReadOnlyList<ToolInvocationObservation>? priorInvocations = null)
     {
         if (priorInvocations is not null)
         {
@@ -43,7 +41,7 @@ internal sealed class ToolOutcomeCollector
 
     public void RecordSuccessfulToolCall(
         ToolInvocationReservation reservation,
-        ToolObservationDescriptor observation
+        ToolObservation observation
     )
     {
         lock (_sync)
@@ -63,7 +61,7 @@ internal sealed class ToolOutcomeCollector
     private void RecordToolOutcome(
         ToolInvocationReservation reservation,
         string toolName,
-        ToolObservationDescriptor? observation
+        ToolObservation? observation
     )
     {
         if (
@@ -87,7 +85,7 @@ internal sealed class ToolOutcomeCollector
 
     public void CompleteToolInvocation(
         ToolInvocationReservation reservation,
-        ToolInvocationObservationDescriptor observation
+        ToolInvocationObservation observation
     )
     {
         lock (_sync)
@@ -96,7 +94,7 @@ internal sealed class ToolOutcomeCollector
         }
     }
 
-    public IReadOnlySet<ToolObservationDescriptor> SuccessfulTools
+    public IReadOnlySet<ToolObservation> SuccessfulTools
     {
         get
         {
@@ -111,7 +109,7 @@ internal sealed class ToolOutcomeCollector
         }
     }
 
-    public IReadOnlyList<ToolInvocationObservationDescriptor> ToolInvocations
+    public IReadOnlyList<ToolInvocationObservation> ToolInvocations
     {
         get
         {

@@ -376,7 +376,7 @@ public sealed class AgentCommandObservationTests
             await releaseFirst.Task;
             collector.RecordSuccessfulToolCall(
                 first,
-                new Tandem.Infrastructure.ToolObservationDescriptor("tool", null)
+                new ToolObservation("tool", ToolEffect.Unclassified, ToolEvidence.None)
             );
         });
         var secondCompletion = Task.Run(() =>
@@ -390,9 +390,8 @@ public sealed class AgentCommandObservationTests
         collector.SuccessfulTools.Should().BeEmpty();
     }
 
-    private static Tandem.Infrastructure.ToolInvocationObservationDescriptor Invocation(
-        string name
-    ) => new(name, null, Json("{}"), Tandem.Infrastructure.ToolInvocationStatus.Completed, null);
+    private static ToolInvocationObservation Invocation(string name) =>
+        new(name, ToolEffect.Unclassified, Json("{}"), ToolInvocationStatus.Completed, null);
 
     private static async Task<OutputAcceptanceObservation<TestState, AcceptedOutput>> RunAsync(
         string command,
@@ -438,14 +437,11 @@ public sealed class AgentCommandObservationTests
                 interceptor
             )
             .WithMessage(_ => "Verify.")
-            .WithOutput<TestState, AcceptedOutput>(
-                (response, state) =>
-                    new StructuredOutputResult<TestState>(
-                        new StructuredOutcome<TestState>("agent.success", "Accepted.", Json("{}")),
-                        [],
-                        response,
-                        new AcceptedOutput()
-                    )
+            .WithRawOutput(new AcceptedOutputDefinition(), (state, _) => state)
+            .RequireOutputAcceptance<TestState, AcceptedOutput>(_ =>
+                rejectFirstOutput && acceptanceAttempt++ == 0
+                    ? [new ValidationProblem("$", "Use the verification tool first.")]
+                    : []
             )
             .WithOutputAcceptance<TestState, AcceptedOutput>(
                 (observation, _) =>
@@ -453,11 +449,6 @@ public sealed class AgentCommandObservationTests
                     acceptedObservation = observation;
                     return ValueTask.CompletedTask;
                 }
-            )
-            .RequireOutputAcceptance<TestState, AcceptedOutput>(_ =>
-                rejectFirstOutput && acceptanceAttempt++ == 0
-                    ? [new StructuredOutputProblem("$", "Use the verification tool first.")]
-                    : []
             )
             .Build();
         var complete = PipelineNodes.Complete(new TestCompletion<TestState>("complete"));
@@ -504,6 +495,16 @@ public sealed class AgentCommandObservationTests
     private sealed record TestState(bool Continued = false, bool Done = false);
 
     private sealed record AcceptedOutput;
+
+    private sealed class AcceptedOutputDefinition
+        : IAgentRawOutputDefinition<TestState, AcceptedOutput>
+    {
+        public string Instructions => "Say accepted.";
+        public IValidator<AcceptedOutput> Validator { get; } =
+            new InlineValidator<AcceptedOutput>();
+
+        public AcceptedOutput Parse(string response) => new();
+    }
 
     private sealed record FinishRequest;
 

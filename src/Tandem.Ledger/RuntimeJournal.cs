@@ -42,6 +42,6 @@ public sealed record RuntimeJournalRecord(
 
 public sealed record StructuredOutputRejectionEvidence(
     int Attempt,
-    IReadOnlyList<PipelineStructuredOutputProblem> Problems,
+    IReadOnlyList<ValidationProblem> Problems,
     string RawResponse
 );

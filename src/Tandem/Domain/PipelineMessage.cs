@@ -1,6 +1,5 @@
 using System.Collections.Immutable;
 using System.Text.Json;
-using Tandem.Infrastructure;
 
 namespace Tandem.Domain;
 
@@ -26,7 +25,7 @@ internal sealed record PipelineResult(string StepId, string CaseId, JsonElement 
 
 internal sealed record AgentStepRuntime(
     JsonElement? Session,
-    IReadOnlyList<ToolInvocationObservationDescriptor> ToolInvocations,
+    IReadOnlyList<ToolInvocationObservation> ToolInvocations,
     AgentUsage? Usage,
     AgentProfileSelection? Profile,
     ImmutableHashSet<string> Latches,

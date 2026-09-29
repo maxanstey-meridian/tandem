@@ -410,14 +410,14 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             runId,
             "planner",
             1,
-            [new PipelineStructuredOutputProblem("$.decision", "decision is required")],
+            [new ValidationProblem("$.decision", "decision is required")],
             "{\"decision\":null}"
         );
         var second = new PipelineStructuredOutputRejected(
             runId,
             "planner",
             2,
-            [new PipelineStructuredOutputProblem("$.reason", "reason is required")],
+            [new ValidationProblem("$.reason", "reason is required")],
             "{\"decision\":\"proceed\"}"
         );
 
@@ -523,7 +523,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
                 "executor",
                 "invocation-1",
                 "file_access_write",
-                "WorkspaceMutation"
+                ToolEffect.WorkspaceMutation
             ),
             CancellationToken.None
         );
@@ -533,8 +533,8 @@ public sealed class SqliteLedgerStoreTests : IDisposable
                 "executor",
                 "invocation-1",
                 "file_access_write",
-                "WorkspaceMutation",
-                "Completed"
+                ToolEffect.WorkspaceMutation,
+                ToolInvocationStatus.Completed
             ),
             CancellationToken.None
         );

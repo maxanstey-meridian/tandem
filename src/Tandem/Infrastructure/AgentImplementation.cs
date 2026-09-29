@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Tandem.Domain;
@@ -86,54 +85,10 @@ internal static class AgentSkillRuntime
         );
 }
 
-internal enum ToolEffect
-{
-    Read,
-    WorkspaceMutation,
-    ProcessExecution,
-    LifecycleTransition,
-}
-
-internal enum ToolEvidence
-{
-    None,
-    RepositoryInspection,
-}
-
 internal sealed record ToolSemantics(
     ToolEffect Effect,
     ToolEvidence Evidence = ToolEvidence.None,
-    Func<object?, ToolResultEvidenceDescriptor?>? ResultEvidence = null
-);
-
-internal sealed record ToolObservationDescriptor(string Name, ToolSemantics? Semantics);
-
-internal enum ToolInvocationStatus
-{
-    Completed,
-    Failed,
-    Blocked,
-    Faulted,
-}
-
-internal abstract record ToolResultEvidenceDescriptor
-{
-    internal sealed record Process(
-        int ExitCode,
-        string Stdout,
-        string Stderr,
-        TimeSpan Duration,
-        bool TimedOut,
-        bool Truncated
-    ) : ToolResultEvidenceDescriptor;
-}
-
-internal sealed record ToolInvocationObservationDescriptor(
-    string Name,
-    ToolSemantics? Semantics,
-    JsonElement Arguments,
-    ToolInvocationStatus Status,
-    ToolResultEvidenceDescriptor? Result
+    Func<object?, ToolResultEvidence?>? ResultEvidence = null
 );
 
 internal sealed class ToolEffectRegistry
@@ -144,7 +99,7 @@ internal sealed class ToolEffectRegistry
         string name,
         ToolEffect effect,
         ToolEvidence evidence = ToolEvidence.None,
-        Func<object?, ToolResultEvidenceDescriptor?>? resultEvidence = null
+        Func<object?, ToolResultEvidence?>? resultEvidence = null
     )
     {
         if (!_semantics.TryAdd(name, new ToolSemantics(effect, evidence, resultEvidence)))

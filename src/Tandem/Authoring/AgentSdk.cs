@@ -141,8 +141,6 @@ public sealed class AgentModelRequestOptions
 
 public sealed class AgentBuilder<TState>
 {
-    private static readonly JsonSerializerOptions _structuredOutputJsonOptions =
-        TandemJson.TypedContract;
     private static readonly TimeSpan _maximumTimeout = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
     private readonly string _id;
     private readonly string _profile;
@@ -166,12 +164,11 @@ public sealed class AgentBuilder<TState>
     private Func<
         PipelineMessage<TState>,
         string,
-        ToolEffect?,
+        ToolEffect,
         JsonElement,
         CancellationToken,
         ValueTask<string?>
     >? _toolInterceptor;
-    private Action<ChatOptions>? _configureChatOptions;
     private AgentModelRequestOptions? _modelRequestOptions;
     private AgentImplementationFactory? _implementationFactory;
     private TimeSpan? _timeout;
@@ -268,7 +265,7 @@ public sealed class AgentBuilder<TState>
         Func<
             PipelineMessage<TState>,
             string,
-            ToolEffect?,
+            ToolEffect,
             JsonElement,
             CancellationToken,
             ValueTask<string?>
@@ -281,12 +278,10 @@ public sealed class AgentBuilder<TState>
     }
 
     internal AgentBuilder<TState> ConfigureStructuredOutput(
-        AgentStructuredOutputDescriptor<TState> descriptor,
-        Action<ChatOptions>? configureChatOptions = null
+        AgentStructuredOutputDescriptor<TState> descriptor
     )
     {
         _structuredOutput = descriptor;
-        _configureChatOptions = configureChatOptions;
         return this;
     }
 
@@ -298,29 +293,21 @@ public sealed class AgentBuilder<TState>
         ArgumentNullException.ThrowIfNull(output);
         ArgumentNullException.ThrowIfNull(apply);
         var jsonSchema = StructuredOutputSchema.CreateJsonSchema<TOutput>();
-        _structuredOutput = new AgentStructuredOutputDescriptor<TState>(
+        _structuredOutput = new AgentStructuredOutputDescriptor<TState, TOutput>(
             (response, state) =>
-                AgentStructuredOutputPolicy.Parse<TOutput, TState>(
+                AgentStructuredOutputPolicy.Parse(
                     response,
-                    _structuredOutputJsonOptions,
                     output.Validator,
                     output.ValidatorFor(state)
                 ),
-            Apply: (state, candidate) => apply(state, (TOutput)candidate),
-            EmitAccepted: (runId, stepId, acceptedOutputId, kind, payload, candidate) =>
-                new OutputAccepted<TOutput>(
-                    runId,
-                    stepId,
-                    acceptedOutputId,
-                    kind,
-                    typeof(TOutput).FullName,
-                    payload,
-                    (TOutput)candidate
-                ),
-            OutputType: typeof(TOutput),
-            Instructions: output.Instructions,
-            JsonSchema: jsonSchema,
-            Examples: state =>
+            apply,
+            typeof(TOutput).FullName ?? typeof(TOutput).Name,
+            output.Instructions,
+            jsonSchema,
+            ChatResponseFormat.ForJsonSchema(jsonSchema, typeof(TOutput).Name)
+        )
+        {
+            ExampleFactory = state =>
                 output
                     .Examples(state)
                     .Select(example =>
@@ -332,16 +319,11 @@ public sealed class AgentBuilder<TState>
                         );
                         return new AgentOutputExampleDescriptor(
                             example.Input,
-                            JsonSerializer.Serialize(example.Output, _structuredOutputJsonOptions)
+                            JsonSerializer.Serialize(example.Output, TandemJson.TypedContract)
                         );
                     })
-                    .ToArray()
-        );
-        _configureChatOptions = options =>
-            options.ResponseFormat = ChatResponseFormat.ForJsonSchema(
-                jsonSchema,
-                typeof(TOutput).Name
-            );
+                    .ToArray(),
+        };
         return this;
     }
 
@@ -361,20 +343,18 @@ public sealed class AgentBuilder<TState>
             nameof(output)
         );
 
-        _structuredOutput = new AgentStructuredOutputDescriptor<TState>(
+        _structuredOutput = new AgentStructuredOutputDescriptor<TState, JsonElement>(
             (response, state) => ParseJsonOutput(response, state, output),
-            Apply: (state, candidate) => apply(state, (JsonElement)candidate),
-            OutputType: typeof(JsonElement),
-            ValueType: output.ValueType,
-            Instructions: output.Instructions,
-            JsonSchema: jsonSchema
+            apply,
+            output.ValueType,
+            output.Instructions,
+            jsonSchema,
+            ChatResponseFormat.ForJsonSchema(jsonSchema)
         );
-        _configureChatOptions = options =>
-            options.ResponseFormat = ChatResponseFormat.ForJsonSchema(jsonSchema);
         return this;
     }
 
-    private static AgentStructuredOutputResult<TState> ParseJsonOutput(
+    private static ParsedOutput<JsonElement> ParseJsonOutput(
         string response,
         TState state,
         AgentJsonOutputDefinition<TState> output
@@ -387,36 +367,17 @@ public sealed class AgentBuilder<TState>
         }
         catch (Exception exception) when (exception is InvalidOperationException or JsonException)
         {
-            return new AgentStructuredOutputResult<TState>(
-                null,
-                [new AgentStructuredOutputProblem("$", exception.Message)],
-                response
-            );
+            return ParsedOutput<JsonElement>.Invalid("$", exception.Message);
         }
 
-        var problems = output
-            .Validate(candidate)
-            .Select(problem => new AgentStructuredOutputProblem(problem.Field, problem.Message))
-            .ToArray();
-        if (problems.Length == 0 && output.ValidateFor is not null)
+        var problems = output.Validate(candidate);
+        if (problems.Count == 0 && output.ValidateFor is not null)
         {
-            problems = output
-                .ValidateFor(state, candidate)
-                .Select(problem => new AgentStructuredOutputProblem(problem.Field, problem.Message))
-                .ToArray();
+            problems = output.ValidateFor(state, candidate);
         }
-        return problems.Length > 0
-            ? new AgentStructuredOutputResult<TState>(null, problems, response, candidate)
-            : new AgentStructuredOutputResult<TState>(
-                new AgentStructuredOutcome<TState>(
-                    StandardOutcomeKinds.Success,
-                    "Succeeded",
-                    candidate
-                ),
-                [],
-                response,
-                candidate
-            );
+        return problems.Count > 0
+            ? ParsedOutput<JsonElement>.Invalid(problems)
+            : ParsedOutput<JsonElement>.Valid(candidate);
     }
 
     private static void ValidateExample<TOutput>(
@@ -445,27 +406,12 @@ public sealed class AgentBuilder<TState>
         return this;
     }
 
-    internal AgentBuilder<TState> ConfigureOutput<TOutput>(
-        AgentStructuredOutputDescriptor<TState> descriptor
-    )
-    {
-        _structuredOutput = descriptor with { OutputType = typeof(TOutput) };
-        _configureChatOptions = options =>
-            options.ResponseFormat = StructuredOutputSchema.Create<TOutput>();
-        return this;
-    }
-
-    internal AgentBuilder<TState> ConfigureOutputAcceptance(
-        Type outputType,
-        Func<
-            PipelineMessage<TState>,
-            AgentStructuredOutputResult<TState>,
-            IReadOnlySet<ToolObservationDescriptor>,
-            IReadOnlyList<ToolInvocationObservationDescriptor>,
-            string,
-            int,
-            IReadOnlyList<AgentStructuredOutputProblem>
-        > acceptance
+    /// <summary>
+    /// Adds an acceptance step to the configured output. Acceptances run in configuration order
+    /// after validation; the first to return problems sends the output back for correction.
+    /// </summary>
+    internal AgentBuilder<TState> ConfigureOutputAcceptance<TOutput>(
+        StructuredOutputAcceptance<TState, TOutput> acceptance
     )
     {
         if (_structuredOutput is null)
@@ -474,55 +420,22 @@ public sealed class AgentBuilder<TState>
                 "Output acceptance requires typed output. Call WithOutput(...) first."
             );
         }
-        if (_structuredOutput.Accept is not null)
-        {
-            throw new InvalidOperationException("Output acceptance is already configured.");
-        }
-        if (_structuredOutput.OutputType != outputType)
+        if (_structuredOutput is not AgentStructuredOutputDescriptor<TState, TOutput> typed)
         {
             throw new InvalidOperationException(
-                $"Output acceptance for '{outputType.Name}' cannot decorate configured output "
-                    + $"'{_structuredOutput.OutputType?.Name ?? "unknown"}'."
+                $"Output acceptance for '{typeof(TOutput).Name}' cannot decorate the configured output."
             );
         }
-        _structuredOutput = _structuredOutput with { Accept = acceptance };
-        return this;
-    }
-
-    internal AgentBuilder<TState> ConfigureOutputAcceptanceAsync(
-        Type outputType,
-        Func<
-            PipelineMessage<TState>,
-            AgentStructuredOutputResult<TState>,
-            IReadOnlySet<ToolObservationDescriptor>,
-            IReadOnlyList<ToolInvocationObservationDescriptor>,
-            string,
-            int,
-            CancellationToken,
-            ValueTask
-        > acceptance
-    )
-    {
-        if (_structuredOutput is null)
+        var existing = typed.Accept;
+        _structuredOutput = typed with
         {
-            throw new InvalidOperationException(
-                "Output acceptance requires typed output. Call WithOutput(...) first."
-            );
-        }
-        if (_structuredOutput.AcceptAsync is not null)
-        {
-            throw new InvalidOperationException(
-                "Asynchronous output acceptance is already configured."
-            );
-        }
-        if (_structuredOutput.OutputType != outputType)
-        {
-            throw new InvalidOperationException(
-                $"Output acceptance for '{outputType.Name}' cannot decorate configured output "
-                    + $"'{_structuredOutput.OutputType?.Name ?? "unknown"}'."
-            );
-        }
-        _structuredOutput = _structuredOutput with { AcceptAsync = acceptance };
+            Accept = existing is null
+                ? acceptance
+                : async (attempt, output, cancellationToken) =>
+                    await existing(attempt, output, cancellationToken) is { Count: > 0 } problems
+                        ? problems
+                        : await acceptance(attempt, output, cancellationToken),
+        };
         return this;
     }
 
@@ -677,7 +590,6 @@ public sealed class AgentBuilder<TState>
                     },
                     _chatClient,
                     _toolInterceptor,
-                    _configureChatOptions,
                     _chatClientFactory
                 )
             )

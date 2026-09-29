@@ -1,6 +1,5 @@
 [advanced]
 Tandem.Advanced.AdvancedAgentBuilderExtensions
-Tandem.Advanced.AdvancedPipelineRunOptionsExtensions
 Tandem.Advanced.AgentCapabilityAcceptanceContext`2
 Tandem.Advanced.AgentCapabilityAcceptanceExtensions
 Tandem.Advanced.AgentCheckpointContext`1
@@ -19,7 +18,6 @@ Tandem.Advanced.AgentTools
 Tandem.Advanced.AgentTurnContinuationPolicy`1
 Tandem.Advanced.AgentTurnDirective
 Tandem.Advanced.AgentTurnObservation`1
-Tandem.Advanced.IPipelineAcceptanceUnitOfWork
 Tandem.Advanced.LocalProcess
 Tandem.Advanced.LocalProcessRequest
 Tandem.Advanced.LocalProcessResult
@@ -36,22 +34,9 @@ Tandem.Advanced.OutputAcceptanceObservation`2
 Tandem.Advanced.OutputAcceptancePolicy`2
 Tandem.Advanced.PipelineOperation
 Tandem.Advanced.PipelineOperationContext`1
-Tandem.Advanced.StructuredOutcome`1
-Tandem.Advanced.StructuredOutputAcceptanceObservation`1
-Tandem.Advanced.StructuredOutputAcceptancePolicy`1
 Tandem.Advanced.IAgentRawOutputDefinition`2
 Tandem.Advanced.RawOutputExtensions
-Tandem.Advanced.StructuredOutputParser`1
-Tandem.Advanced.StructuredOutputProblem
-Tandem.Advanced.StructuredOutputResult`1
-Tandem.Advanced.ToolEffect
-Tandem.Advanced.ToolEvidence
 Tandem.Advanced.ToolInterceptionResult
 Tandem.Advanced.ToolInterceptionResult+Blocked
 Tandem.Advanced.ToolInterceptor`1
 Tandem.Advanced.ToolInvocation
-Tandem.Advanced.ToolInvocationObservation
-Tandem.Advanced.ToolInvocationStatus
-Tandem.Advanced.ToolObservation
-Tandem.Advanced.ToolResultEvidence
-Tandem.Advanced.ToolResultEvidence+Process

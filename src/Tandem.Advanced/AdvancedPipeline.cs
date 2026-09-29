@@ -5,36 +5,6 @@ using Tandem.Infrastructure;
 
 namespace Tandem.Advanced;
 
-public interface IPipelineAcceptanceUnitOfWork
-{
-    public ValueTask<T> ExecuteAsync<T>(
-        Func<CancellationToken, ValueTask<T>> operation,
-        CancellationToken cancellationToken
-    );
-}
-
-public static class AdvancedPipelineRunOptionsExtensions
-{
-    public static PipelineRunOptions WithAcceptanceUnitOfWork(
-        this PipelineRunOptions options,
-        IPipelineAcceptanceUnitOfWork unitOfWork
-    )
-    {
-        ArgumentNullException.ThrowIfNull(options);
-        ArgumentNullException.ThrowIfNull(unitOfWork);
-        return options with { AcceptanceUnitOfWork = new AcceptanceUnitOfWorkAdapter(unitOfWork) };
-    }
-
-    private sealed class AcceptanceUnitOfWorkAdapter(IPipelineAcceptanceUnitOfWork unitOfWork)
-        : Tandem.IPipelineAcceptanceUnitOfWork
-    {
-        public ValueTask<T> ExecuteAsync<T>(
-            Func<CancellationToken, ValueTask<T>> operation,
-            CancellationToken cancellationToken
-        ) => unitOfWork.ExecuteAsync(operation, cancellationToken);
-    }
-}
-
 public sealed record OperationResult<TState>(TState State, OperationOutcome Outcome)
 {
     internal static OperationResult<TState> From(PipelineMessage<TState> message)
@@ -123,52 +93,7 @@ public abstract record ToolInterceptionResult
     public sealed record Blocked(string Message) : ToolInterceptionResult;
 }
 
-public enum ToolEffect
-{
-    Read,
-    WorkspaceMutation,
-    ProcessExecution,
-    LifecycleTransition,
-    Unclassified,
-}
-
 public sealed record ToolInvocation(string Name, ToolEffect Effect, JsonElement Arguments);
-
-public enum ToolInvocationStatus
-{
-    Completed,
-    Failed,
-    Blocked,
-    Faulted,
-}
-
-public abstract record ToolResultEvidence
-{
-    public sealed record Process(
-        int ExitCode,
-        string Stdout,
-        string Stderr,
-        TimeSpan Duration,
-        bool TimedOut,
-        bool Truncated
-    ) : ToolResultEvidence;
-}
-
-public sealed record ToolInvocationObservation(
-    string Name,
-    ToolEffect Effect,
-    JsonElement Arguments,
-    ToolInvocationStatus Status,
-    ToolResultEvidence? Result
-);
-
-public enum ToolEvidence
-{
-    None,
-    RepositoryInspection,
-}
-
-public sealed record ToolObservation(string Name, ToolEffect Effect, ToolEvidence Evidence);
 
 public delegate ValueTask<ToolInterceptionResult?> ToolInterceptor<TState>(
     AgentMessageContext<TState> context,
@@ -412,24 +337,6 @@ public sealed class AgentToolGroup<TState>
 
 public static class AgentTools
 {
-    private static readonly HashSet<string> _builtIns =
-    [
-        "read_file",
-        "ls",
-        "grep",
-        "write_file",
-        "delete_file",
-        "replace",
-        "replace_lines",
-        "copy_file",
-        "move_file",
-        "create_directory",
-        "git:ro",
-        "shell",
-        "web_search",
-        "web_fetch",
-    ];
-
     public static AgentToolGroup<TState> Always<TState>(params AgentToolSelection[] tools) =>
         Create<TState>(_ => true, tools);
 
@@ -441,7 +348,7 @@ public static class AgentTools
     internal static AgentToolSelection Select(string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        if (!_builtIns.Contains(name))
+        if (!BuiltInAgentTools.IsSelectable(name))
         {
             throw new ArgumentException($"Unknown agent workspace tool '{name}'.", nameof(name));
         }
@@ -687,27 +594,8 @@ public static class AdvancedAgentBuilderExtensions
                     entry => new AgentWorkspaceToolDescriptor(
                         entry.Value.Name,
                         entry.Value.Create,
-                        entry.Value.Effect switch
-                        {
-                            ToolEffect.Read => Infrastructure.ToolEffect.Read,
-                            ToolEffect.WorkspaceMutation => Infrastructure
-                                .ToolEffect
-                                .WorkspaceMutation,
-                            ToolEffect.ProcessExecution => Infrastructure
-                                .ToolEffect
-                                .ProcessExecution,
-                            ToolEffect.LifecycleTransition => Infrastructure
-                                .ToolEffect
-                                .LifecycleTransition,
-                            _ => throw new ArgumentOutOfRangeException(nameof(entry.Value.Effect)),
-                        },
-                        entry.Value.Evidence switch
-                        {
-                            ToolEvidence.RepositoryInspection => Infrastructure
-                                .ToolEvidence
-                                .RepositoryInspection,
-                            _ => Infrastructure.ToolEvidence.None,
-                        }
+                        entry.Value.Effect,
+                        entry.Value.Evidence
                     ),
                     StringComparer.Ordinal
                 )
@@ -718,21 +606,7 @@ public static class AdvancedAgentBuilderExtensions
                 {
                     var result = await toolInterceptor(
                         AgentMessageContext<TState>.From(message),
-                        new ToolInvocation(
-                            toolName,
-                            effect switch
-                            {
-                                Infrastructure.ToolEffect.Read => ToolEffect.Read,
-                                Infrastructure.ToolEffect.WorkspaceMutation =>
-                                    ToolEffect.WorkspaceMutation,
-                                Infrastructure.ToolEffect.ProcessExecution =>
-                                    ToolEffect.ProcessExecution,
-                                Infrastructure.ToolEffect.LifecycleTransition =>
-                                    ToolEffect.LifecycleTransition,
-                                _ => ToolEffect.Unclassified,
-                            },
-                            arguments.Clone()
-                        ),
+                        new ToolInvocation(toolName, effect, arguments.Clone()),
                         cancellationToken
                     );
                     return result is ToolInterceptionResult.Blocked blocked
@@ -742,33 +616,37 @@ public static class AdvancedAgentBuilderExtensions
         );
     }
 
-    public static AgentBuilder<TState> WithOutput<TState, TOutput>(
-        this AgentBuilder<TState> builder,
-        StructuredOutputParser<TState> parser,
-        StructuredOutputAcceptancePolicy<TState>? acceptancePolicy = null,
-        string? correctionRequiredToolName = null
-    ) =>
-        builder.ConfigureOutput<TOutput>(
-            StructuredOutputDescriptors.Create(parser, acceptancePolicy, correctionRequiredToolName)
-        );
-
     public static AgentBuilder<TState> RequireOutputAcceptance<TState, TOutput>(
         this AgentBuilder<TState> builder,
         OutputAcceptancePolicy<TState, TOutput> acceptance
-    ) =>
-        builder.ConfigureOutputAcceptance(
-            typeof(TOutput),
-            StructuredOutputDescriptors.Accept(acceptance)
+    )
+    {
+        ArgumentNullException.ThrowIfNull(acceptance);
+        return builder.ConfigureOutputAcceptance<TOutput>(
+            (attempt, output, _) =>
+                ValueTask.FromResult(
+                    acceptance(OutputAcceptanceObservation<TState, TOutput>.From(attempt, output))
+                )
         );
+    }
 
     public static AgentBuilder<TState> WithOutputAcceptance<TState, TOutput>(
         this AgentBuilder<TState> builder,
         OutputAcceptance<TState, TOutput> acceptance
-    ) =>
-        builder.ConfigureOutputAcceptanceAsync(
-            typeof(TOutput),
-            StructuredOutputDescriptors.AcceptAsync(acceptance)
+    )
+    {
+        ArgumentNullException.ThrowIfNull(acceptance);
+        return builder.ConfigureOutputAcceptance<TOutput>(
+            async (attempt, output, cancellationToken) =>
+            {
+                await acceptance(
+                    OutputAcceptanceObservation<TState, TOutput>.From(attempt, output),
+                    cancellationToken
+                );
+                return [];
+            }
         );
+    }
 
     public static AgentBuilder<TState> WithCheckpoint<TState>(
         this AgentBuilder<TState> builder,
@@ -835,22 +713,12 @@ public static class AdvancedAgentBuilderExtensions
             new AgentStateGuardDescriptor<TState>(
                 guard.Id,
                 guard.IsActive,
-                guard.Blocks.Select(ToInfrastructure).ToHashSet(),
+                guard.Blocks.ToHashSet(),
                 guard.Message,
                 guard.Remediation?.Descriptor.ToolName
             )
         );
     }
-
-    private static Infrastructure.ToolEffect ToInfrastructure(ToolEffect effect) =>
-        effect switch
-        {
-            ToolEffect.Read => Infrastructure.ToolEffect.Read,
-            ToolEffect.WorkspaceMutation => Infrastructure.ToolEffect.WorkspaceMutation,
-            ToolEffect.ProcessExecution => Infrastructure.ToolEffect.ProcessExecution,
-            ToolEffect.LifecycleTransition => Infrastructure.ToolEffect.LifecycleTransition,
-            _ => throw new ArgumentOutOfRangeException(nameof(effect)),
-        };
 
     public static AgentBuilder<TState> WithMessageAugmentation<TState>(
         this AgentBuilder<TState> builder,

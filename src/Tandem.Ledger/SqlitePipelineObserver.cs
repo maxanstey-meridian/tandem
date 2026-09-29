@@ -98,15 +98,15 @@ public sealed class SqlitePipelineObserver : IPipelinePersistenceObserver
                 value.StepId,
                 value.InvocationId,
                 value.ActionName,
-                value.Effect
+                value.Effect.ToString()
             ),
             PipelineActionCompleted value => new RuntimeJournalRecord(
                 RuntimeJournalKind.ActionCompleted,
                 value.StepId,
                 value.InvocationId,
                 value.ActionName,
-                value.Effect,
-                value.Result,
+                value.Effect.ToString(),
+                value.Result.ToString(),
                 Payload: value.Process is null
                     ? null
                     : JsonSerializer.SerializeToElement(value.Process)

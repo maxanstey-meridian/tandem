@@ -133,7 +133,7 @@ public sealed record PipelineActionAttempted(
     string StepId,
     string InvocationId,
     string ActionName,
-    string Effect
+    ToolEffect Effect
 ) : PipelineObservation(RunId, StepId);
 
 public sealed record PipelineActionProcessPayload(
@@ -151,8 +151,8 @@ public sealed record PipelineActionCompleted(
     string StepId,
     string InvocationId,
     string ActionName,
-    string Effect,
-    string Result,
+    ToolEffect Effect,
+    ToolInvocationStatus Result,
     PipelineActionProcessPayload? Process = null
 ) : PipelineObservation(RunId, StepId);
 
@@ -169,7 +169,7 @@ public sealed record PipelineStructuredOutputRejected(
     Guid RunId,
     string StepId,
     int Attempt,
-    IReadOnlyList<PipelineStructuredOutputProblem> Problems,
+    IReadOnlyList<ValidationProblem> Problems,
     string RawResponse
 ) : PipelineObservation(RunId, StepId)
 {
@@ -177,8 +177,6 @@ public sealed record PipelineStructuredOutputRejected(
     // later rejection is distinct, while redelivery (including a record copy) is idempotent.
     internal Guid RejectionId { get; } = Guid.CreateVersion7();
 }
-
-public sealed record PipelineStructuredOutputProblem(string Field, string Message);
 
 public sealed record OutputAccepted<T>(
     Guid RunId,
@@ -237,13 +235,11 @@ public sealed record CapabilityAccepted<T>(
 internal sealed class PipelineRunContext(
     Guid runId,
     IPipelineObserver? observer,
-    IPipelineAcceptanceUnitOfWork? unitOfWork = null,
     IReadOnlySet<string>? persistentStepIds = null,
     IPipelineLedgerReader? ledger = null
 )
 {
     private readonly SemaphoreSlim _observationGate = new(1, 1);
-    private readonly AsyncLocal<bool> _insideAcceptance = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<
         string,
         byte
@@ -303,12 +299,6 @@ internal sealed class PipelineRunContext(
         {
             VisitId = observation.VisitId ?? PipelineExecutionEnvelope.VisitId,
         };
-        // Acceptance already owns this gate and its ambient ledger transaction.
-        if (_insideAcceptance.Value)
-        {
-            await observer.ObserveAsync(observation, cancellationToken);
-            return;
-        }
         await _observationGate.WaitAsync(cancellationToken);
         try
         {
@@ -319,36 +309,6 @@ internal sealed class PipelineRunContext(
             _observationGate.Release();
         }
     }
-
-    public async ValueTask<T> ExecuteAsync<T>(
-        Func<CancellationToken, ValueTask<T>> operation,
-        CancellationToken cancellationToken
-    )
-    {
-        if (unitOfWork is null || _insideAcceptance.Value)
-        {
-            return await operation(cancellationToken);
-        }
-        await _observationGate.WaitAsync(cancellationToken);
-        try
-        {
-            _insideAcceptance.Value = true;
-            return await unitOfWork.ExecuteAsync(operation, cancellationToken);
-        }
-        finally
-        {
-            _insideAcceptance.Value = false;
-            _observationGate.Release();
-        }
-    }
-}
-
-internal interface IPipelineAcceptanceUnitOfWork
-{
-    public ValueTask<T> ExecuteAsync<T>(
-        Func<CancellationToken, ValueTask<T>> operation,
-        CancellationToken cancellationToken
-    );
 }
 
 internal interface IPipelineRunContextCarrier

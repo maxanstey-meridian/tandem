@@ -60,13 +60,7 @@ internal static class ReadOnlyGitTools
         };
         foreach (var tool in tools)
         {
-            HarnessTools.Add(
-                options,
-                toolEffects,
-                tool,
-                Infrastructure.ToolEffect.Read,
-                Infrastructure.ToolEvidence.RepositoryInspection
-            );
+            HarnessTools.AddBuiltIn(options, toolEffects, tool);
         }
     }
 }

@@ -39,30 +39,18 @@ public static class RawOutputExtensions
         ArgumentNullException.ThrowIfNull(output);
         ArgumentNullException.ThrowIfNull(apply);
         return builder.ConfigureStructuredOutput(
-            new AgentStructuredOutputDescriptor<TState>(
+            new AgentStructuredOutputDescriptor<TState, TOutput>(
                 (response, state) =>
-                    AgentStructuredOutputPolicy.ParseRaw<TOutput, TState>(
+                    AgentStructuredOutputPolicy.ParseRaw(
                         response,
                         output.Parse,
                         output.Validator,
                         output.ValidatorFor(state)
                     ),
-                Apply: (state, candidate) => apply(state, (TOutput)candidate),
-                EmitAccepted: (runId, stepId, acceptedOutputId, kind, payload, candidate) =>
-                    new OutputAccepted<TOutput>(
-                        runId,
-                        stepId,
-                        acceptedOutputId,
-                        kind,
-                        valueType ?? typeof(TOutput).FullName,
-                        payload,
-                        (TOutput)candidate
-                    ),
-                OutputType: typeof(TOutput),
-                ValueType: valueType,
-                Instructions: output.Instructions
-            ),
-            options => options.ResponseFormat = null
+                apply,
+                valueType ?? typeof(TOutput).FullName ?? typeof(TOutput).Name,
+                output.Instructions
+            )
         );
     }
 }

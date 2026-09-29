@@ -60,6 +60,20 @@ internal static class BuiltInAgentTools
             [WebFetchGroup] = [new("web_fetch", ToolEffect.Read)],
         };
 
+    private static readonly IReadOnlyDictionary<string, BuiltInTool> _groupTools = Groups
+        .Values.SelectMany(tools => tools)
+        .ToDictionary(tool => tool.Name, StringComparer.Ordinal);
+
+    /// <summary>The authority of a tool that a workspace tool group attaches.</summary>
+    public static BuiltInTool GroupTool(string name) =>
+        _groupTools.TryGetValue(name, out var tool)
+            ? tool
+            : throw new InvalidOperationException($"'{name}' is not a built-in group tool.");
+
+    /// <summary>Whether a workspace may select <paramref name="name"/> as a built-in tool.</summary>
+    public static bool IsSelectable(string name) =>
+        FileSelections.ContainsKey(name) || Groups.ContainsKey(name);
+
     public const string ReadLedgerEntry = "read_ledger_entry";
     public const string ReadLedger = "read_ledger";
     public const string SearchLedger = "search_ledger";

@@ -35,12 +35,7 @@ internal static class TavilyWebTools
         }
 
         void Add(AIFunction tool) =>
-            HarnessTools.Add(
-                context.ChatOptions,
-                context.ToolEffects,
-                tool,
-                Infrastructure.ToolEffect.Read
-            );
+            HarnessTools.AddBuiltIn(context.ChatOptions, context.ToolEffects, tool);
     }
 
     internal sealed class RenamedAIFunction(AIFunction inner, string name)

@@ -59,8 +59,8 @@ public sealed class TavilyWebToolsTests
         advertised.Description.Should().Be(tavily.Description);
         advertised.JsonSchema.ToString().Should().Be(tavily.JsonSchema.ToString());
         context.ToolEffects.TryGet(name, out var semantics).Should().BeTrue();
-        semantics.Effect.Should().Be(Tandem.Infrastructure.ToolEffect.Read);
-        semantics.Evidence.Should().Be(Tandem.Infrastructure.ToolEvidence.None);
+        semantics.Effect.Should().Be(ToolEffect.Read);
+        semantics.Evidence.Should().Be(ToolEvidence.None);
     }
 
     private static AgentImplementationContext Context(bool search, bool fetch) =>

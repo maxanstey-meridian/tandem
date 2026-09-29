@@ -390,16 +390,14 @@ internal static class RegisteredParticipantFactory
         }
     }
 
-    internal static IReadOnlyList<AgentJsonValidationProblem> ParseValidationProblems(
-        string problems
-    )
+    internal static IReadOnlyList<ValidationProblem> ParseValidationProblems(string problems)
     {
         if (string.IsNullOrWhiteSpace(problems))
         {
             return [];
         }
 
-        return JsonSerializer.Deserialize<AgentJsonValidationProblem[]>(
+        return JsonSerializer.Deserialize<ValidationProblem[]>(
                 problems,
                 TandemJson.CreateTypedContract()
             ) ?? [];
@@ -413,20 +411,18 @@ internal static class RegisteredParticipantFactory
         CallbackDispatcher callbacks
     )
     {
-        Func<
-            JavaScriptState,
-            Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>>
-        >? validateFor = contract.ValidateForCallback is null
-            ? null
-            : state =>
-                candidate =>
-                    ParseValidationProblems(
-                        callbacks.Invoke(
-                            contract.ValidateForCallback,
-                            state.Json,
-                            candidate.GetRawText()
-                        )
-                    );
+        Func<JavaScriptState, Func<JsonElement, IReadOnlyList<ValidationProblem>>>? validateFor =
+            contract.ValidateForCallback is null
+                ? null
+                : state =>
+                    candidate =>
+                        ParseValidationProblems(
+                            callbacks.Invoke(
+                                contract.ValidateForCallback,
+                                state.Json,
+                                candidate.GetRawText()
+                            )
+                        );
         return new RawOutputDefinition(
             contract.Instructions,
             text =>
@@ -443,10 +439,7 @@ internal static class RegisteredParticipantFactory
     private sealed class RawOutputDefinition(
         string instructions,
         Func<string, JsonElement> parse,
-        Func<
-            JavaScriptState,
-            Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>>
-        >? validateFor
+        Func<JavaScriptState, Func<JsonElement, IReadOnlyList<ValidationProblem>>>? validateFor
     ) : IAgentRawOutputDefinition<JavaScriptState, JsonElement>
     {
         public string Instructions => instructions;
@@ -470,7 +463,7 @@ internal static class RegisteredParticipantFactory
                     {
                         foreach (var problem in validate(value))
                         {
-                            context.AddFailure(problem.Field, problem.Message);
+                            context.AddFailure(problem.Path, problem.Message);
                         }
                     }
                 );

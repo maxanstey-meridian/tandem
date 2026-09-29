@@ -60,10 +60,7 @@ internal static class CapabilityAcceptanceRuntime
                 );
             }
 
-            var result = invocation.RunContext is { } executionContext
-                ? await executionContext.ExecuteAsync(AcceptCoreAsync, cancellationToken)
-                : await AcceptCoreAsync(cancellationToken);
-            invocation.Commit(result);
+            invocation.Commit(await AcceptCoreAsync(cancellationToken));
             return JsonSerializer.SerializeToElement(
                 new { accepted = true, outcome = new { kind = accepted.CapabilityId, payload } },
                 TandemJson.TypedContract
@@ -85,7 +82,7 @@ internal static class CapabilityAcceptanceRuntime
             return new ToolError(
                 "capability_acceptance_failed",
                 "capability acceptance failed",
-                [new ToolProblem(null, exception.Message)]
+                [new ValidationProblem("$", exception.Message)]
             );
         }
     }

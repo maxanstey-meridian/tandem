@@ -513,11 +513,16 @@ public sealed class LocalCapabilityTests
                 [CreateCapability().Descriptor, checkpoint.Descriptor],
                 _ => "Normal turn.",
                 null,
-                StructuredOutput: new AgentStructuredOutputDescriptor<TestState>(
+                StructuredOutput: new AgentStructuredOutputDescriptor<TestState, TestState>(
                     (_, _) => throw new InvalidOperationException("Checkpoint turn parsed output."),
-                    Examples: _ =>
-                        [new AgentOutputExampleDescriptor("ordinary example", "example output")]
-                ),
+                    (state, _) => state,
+                    "test",
+                    null
+                )
+                {
+                    ExampleFactory = _ =>
+                        [new AgentOutputExampleDescriptor("ordinary example", "example output")],
+                },
                 Checkpoint: new AgentCheckpointDescriptor<TestState>(
                     100,
                     20,
@@ -621,10 +626,7 @@ public sealed class LocalCapabilityTests
                         usage =>
                             usage.CurrentContextTokens + policy.MaxOutputTokens
                             >= policy.CheckpointAtTokens,
-                        new HashSet<Tandem.Infrastructure.ToolEffect>
-                        {
-                            Tandem.Infrastructure.ToolEffect.WorkspaceMutation,
-                        },
+                        new HashSet<ToolEffect> { ToolEffect.WorkspaceMutation },
                         "Checkpoint required.",
                         checkpoint.Descriptor.CapabilityId,
                         checkpoint.Descriptor.ToolName,

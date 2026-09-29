@@ -11,8 +11,8 @@ internal static class HarnessTools
     private sealed record FileTool(
         WorkspaceToolKind Kind,
         string Name,
-        Infrastructure.ToolEffect Effect,
-        Infrastructure.ToolEvidence Evidence,
+        ToolEffect Effect,
+        ToolEvidence Evidence,
         Func<string, AIFunction>? Create
     );
 
@@ -22,78 +22,77 @@ internal static class HarnessTools
         new(
             WorkspaceToolKind.ReadFile,
             FileAccessProvider.ReadFileToolName,
-            Infrastructure.ToolEffect.Read,
-            Infrastructure.ToolEvidence.RepositoryInspection,
+            ToolEffect.Read,
+            ToolEvidence.RepositoryInspection,
             WorkspaceFileReadTools.Create
         ),
         new(
             WorkspaceToolKind.ListFiles,
             FileAccessProvider.LsToolName,
-            Infrastructure.ToolEffect.Read,
-            Infrastructure.ToolEvidence.RepositoryInspection,
+            ToolEffect.Read,
+            ToolEvidence.RepositoryInspection,
             WorkspaceListTools.Create
         ),
         new(
             WorkspaceToolKind.Grep,
             FileAccessProvider.GrepToolName,
-            Infrastructure.ToolEffect.Read,
-            Infrastructure.ToolEvidence.RepositoryInspection,
+            ToolEffect.Read,
+            ToolEvidence.RepositoryInspection,
             WorkspaceGrepTools.Create
         ),
         new(
             WorkspaceToolKind.WriteFile,
             FileAccessProvider.WriteToolName,
-            Infrastructure.ToolEffect.WorkspaceMutation,
-            Infrastructure.ToolEvidence.None,
+            ToolEffect.WorkspaceMutation,
+            ToolEvidence.None,
             null
         ),
         new(
             WorkspaceToolKind.DeleteFile,
             FileAccessProvider.DeleteFileToolName,
-            Infrastructure.ToolEffect.WorkspaceMutation,
-            Infrastructure.ToolEvidence.None,
+            ToolEffect.WorkspaceMutation,
+            ToolEvidence.None,
             null
         ),
         new(
             WorkspaceToolKind.Replace,
             FileAccessProvider.ReplaceToolName,
-            Infrastructure.ToolEffect.WorkspaceMutation,
-            Infrastructure.ToolEvidence.None,
+            ToolEffect.WorkspaceMutation,
+            ToolEvidence.None,
             null
         ),
         new(
             WorkspaceToolKind.ReplaceLines,
             FileAccessProvider.ReplaceLinesToolName,
-            Infrastructure.ToolEffect.WorkspaceMutation,
-            Infrastructure.ToolEvidence.None,
+            ToolEffect.WorkspaceMutation,
+            ToolEvidence.None,
             null
         ),
         new(
             WorkspaceToolKind.CopyFile,
             WorkspaceFileMutationTools.CopyToolName,
-            Infrastructure.ToolEffect.WorkspaceMutation,
-            Infrastructure.ToolEvidence.None,
+            ToolEffect.WorkspaceMutation,
+            ToolEvidence.None,
             WorkspaceFileMutationTools.CreateCopyTool
         ),
         new(
             WorkspaceToolKind.MoveFile,
             WorkspaceFileMutationTools.MoveToolName,
-            Infrastructure.ToolEffect.WorkspaceMutation,
-            Infrastructure.ToolEvidence.None,
+            ToolEffect.WorkspaceMutation,
+            ToolEvidence.None,
             WorkspaceFileMutationTools.CreateMoveTool
         ),
         new(
             WorkspaceToolKind.CreateDirectory,
             WorkspaceFileMutationTools.CreateDirectoryToolName,
-            Infrastructure.ToolEffect.WorkspaceMutation,
-            Infrastructure.ToolEvidence.None,
+            ToolEffect.WorkspaceMutation,
+            ToolEvidence.None,
             WorkspaceFileMutationTools.CreateDirectoryTool
         ),
     ];
 
     internal static bool IsMutation(WorkspaceToolKind kind) =>
-        _fileTools.Single(tool => tool.Kind == kind).Effect
-        == Infrastructure.ToolEffect.WorkspaceMutation;
+        _fileTools.Single(tool => tool.Kind == kind).Effect == ToolEffect.WorkspaceMutation;
 
     // Returns the selected tools that MAF's FileAccessProvider must expose.
     internal static IReadOnlySet<string> AddFileTools(
@@ -118,13 +117,19 @@ internal static class HarnessTools
         return mafToolNames;
     }
 
+    internal static void AddBuiltIn(ChatOptions options, ToolEffectRegistry effects, AITool tool)
+    {
+        var builtIn = BuiltInAgentTools.GroupTool(tool.Name);
+        Add(options, effects, tool, builtIn.Effect, builtIn.Evidence);
+    }
+
     internal static void Add(
         ChatOptions options,
         ToolEffectRegistry effects,
         AITool tool,
-        Infrastructure.ToolEffect effect,
-        Infrastructure.ToolEvidence evidence = Infrastructure.ToolEvidence.None,
-        Func<object?, ToolResultEvidenceDescriptor?>? resultEvidence = null
+        ToolEffect effect,
+        ToolEvidence evidence = ToolEvidence.None,
+        Func<object?, ToolResultEvidence?>? resultEvidence = null
     )
     {
         var tools = options.Tools ?? [];

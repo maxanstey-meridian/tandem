@@ -636,11 +636,10 @@ public sealed class ParallelPipelineRunnerTests
     }
 
     [Fact]
-    public async Task ObserverAndAcceptanceUnitOfWorkCallbacksAreSerialized()
+    public async Task ObserverCallbacksAreSerialized()
     {
         var observer = new ConcurrencyObserver();
-        var unitOfWork = new ConcurrencyUnitOfWork();
-        var context = new PipelineRunContext(Guid.CreateVersion7(), observer, unitOfWork);
+        var context = new PipelineRunContext(Guid.CreateVersion7(), observer);
 
         await Task.WhenAll(
             Enumerable
@@ -654,26 +653,8 @@ public sealed class ParallelPipelineRunnerTests
                         .AsTask()
                 )
         );
-        await Task.WhenAll(
-            Enumerable
-                .Range(0, 4)
-                .Select(index =>
-                    context
-                        .ExecuteAsync(
-                            async cancellationToken =>
-                            {
-                                await Task.Delay(10, cancellationToken);
-                                return index;
-                            },
-                            CancellationToken.None
-                        )
-                        .AsTask()
-                )
-        );
 
         observer.MaximumConcurrency.Should().Be(1);
-        unitOfWork.MaximumConcurrency.Should().Be(1);
-        unitOfWork.ExecutionCount.Should().Be(4);
     }
 
     [Fact]
@@ -844,34 +825,6 @@ public sealed class ParallelPipelineRunnerTests
             try
             {
                 await Task.Delay(10, cancellationToken);
-            }
-            finally
-            {
-                Interlocked.Decrement(ref _active);
-            }
-        }
-    }
-
-    private sealed class ConcurrencyUnitOfWork : IPipelineAcceptanceUnitOfWork
-    {
-        private int _active;
-        private int _executionCount;
-        private int _maximumConcurrency;
-        public int ExecutionCount => Volatile.Read(ref _executionCount);
-        public int MaximumConcurrency => Volatile.Read(ref _maximumConcurrency);
-
-        public async ValueTask<T> ExecuteAsync<T>(
-            Func<CancellationToken, ValueTask<T>> operation,
-            CancellationToken cancellationToken
-        )
-        {
-            Interlocked.Increment(ref _executionCount);
-            var active = Interlocked.Increment(ref _active);
-            RecordMaximum(ref _maximumConcurrency, active);
-            try
-            {
-                await Task.Delay(10, cancellationToken);
-                return await operation(cancellationToken);
             }
             finally
             {

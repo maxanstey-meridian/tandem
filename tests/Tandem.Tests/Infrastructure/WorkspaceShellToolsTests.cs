@@ -3,7 +3,6 @@ using FluentAssertions;
 using Microsoft.Agents.AI.Tools.Shell;
 using Microsoft.Extensions.AI;
 using Tandem.Infrastructure;
-using RuntimeToolEffect = Tandem.Infrastructure.ToolEffect;
 
 namespace Tandem.Tests.Infrastructure;
 
@@ -43,7 +42,7 @@ public sealed class WorkspaceShellToolsTests
         result.Stdout.Trim().Should().EndWith(System.IO.Path.GetFileName(workspace.Path));
         tool.JsonSchema.GetProperty("properties").EnumerateObject().Should().BeEmpty();
         effects.TryGet("where_am_i", out var semantics).Should().BeTrue();
-        semantics.Effect.Should().Be(RuntimeToolEffect.ProcessExecution);
+        semantics.Effect.Should().Be(ToolEffect.ProcessExecution);
     }
 
     [Fact]
@@ -305,7 +304,7 @@ public sealed class WorkspaceShellToolsTests
         tool.Name.Should().Be("run_shell");
         second.Should().NotContain("retained-value");
         effects.TryGet("run_shell", out var semantics).Should().BeTrue();
-        semantics.Effect.Should().Be(RuntimeToolEffect.ProcessExecution);
+        semantics.Effect.Should().Be(ToolEffect.ProcessExecution);
         tool.JsonSchema.GetProperty("properties")
             .TryGetProperty("command", out _)
             .Should()

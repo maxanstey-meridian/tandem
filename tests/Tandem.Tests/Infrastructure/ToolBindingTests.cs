@@ -43,7 +43,7 @@ public sealed class ToolBindingTests
     [Fact]
     public void Expected_workspace_errors_follow_registered_semantics()
     {
-        var read = new ToolSemantics(Tandem.Infrastructure.ToolEffect.Read);
+        var read = new ToolSemantics(ToolEffect.Read);
         ToolInputValidation.IsExpected(new FileNotFoundException(), read).Should().BeTrue();
         ToolInputValidation
             .IsExpected(new ArgumentException("invalid offset"), read)

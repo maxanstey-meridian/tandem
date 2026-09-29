@@ -27,10 +27,12 @@ public sealed class StructuredOutputPromptTests
     [Fact]
     public void InitialInstructions_IncludeAuthoredInstructionsAndExactSchema()
     {
-        var output = new AgentStructuredOutputDescriptor<int>(
+        var output = new AgentStructuredOutputDescriptor<int, int>(
             (_, _) => throw new NotSupportedException(),
-            Instructions: "Return only ordered distinct existing source indexes.",
-            JsonSchema: _schema
+            (state, _) => state,
+            "test",
+            "Return only ordered distinct existing source indexes.",
+            _schema
         );
 
         var prompt = AgentStructuredOutputPrompt.Initial(output);
@@ -43,9 +45,8 @@ public sealed class StructuredOutputPromptTests
     [Fact]
     public void CorrectionPrompt_RepeatsProblemsAndExactSchema()
     {
-        var result = new AgentStructuredOutputResult<int>(
-            null,
-            [new AgentStructuredOutputProblem("$.selected_source_indexes", "Field is required.")],
+        var result = AgentStructuredOutputResult<int>.Rejected(
+            [new ValidationProblem("$.selected_source_indexes", "Field is required.")],
             "{}"
         );
 

@@ -16,12 +16,11 @@ internal sealed class AgentBlock<TState>(
     Func<
         PipelineMessage<TState>,
         string,
-        ToolEffect?,
+        ToolEffect,
         JsonElement,
         CancellationToken,
         ValueTask<string?>
     >? toolInterceptor = null,
-    Action<ChatOptions>? configureChatOptions = null,
     Func<string, IChatClient>? chatClientFactory = null
 )
     : Executor<PipelineMessage<TState>, PipelineMessage<TState>>(
@@ -78,7 +77,7 @@ internal sealed class AgentBlock<TState>(
             .ToHashSet(StringComparer.Ordinal);
         var selectedChatClient = SelectChatClient(message);
         await PublishModelSelectedAsync(message, selectedChatClient, cts.Token);
-        AIAgent CreateTurnAgent(string? requiredToolName, bool configureStructuredOutput = true) =>
+        AIAgent CreateTurnAgent(string? requiredToolName) =>
             CreateAgent(
                 instructions,
                 tools,
@@ -87,8 +86,7 @@ internal sealed class AgentBlock<TState>(
                 requiredToolName,
                 collector,
                 boundCapabilityNames,
-                capabilityInvocation,
-                configureStructuredOutput
+                capabilityInvocation
             );
 
         var agent = CreateTurnAgent(
@@ -162,13 +160,16 @@ internal sealed class AgentBlock<TState>(
 
             if (config.StructuredOutput is { } structuredOutput)
             {
-                structuredResult = await EvaluateStructuredOutputAsync(
-                    structuredOutput,
+                structuredResult = await structuredOutput.EvaluateAsync(
                     turn.Text,
-                    message,
-                    collector,
-                    acceptedOutputId,
-                    structuredAttempt,
+                    new StructuredOutputAttempt<TState>(
+                        message,
+                        config.StepId,
+                        acceptedOutputId,
+                        collector.SuccessfulTools,
+                        collector.ToolInvocations,
+                        structuredAttempt
+                    ),
                     cts.Token
                 );
                 if (
@@ -185,12 +186,7 @@ internal sealed class AgentBlock<TState>(
                         runtime.RunId,
                         config.StepId,
                         structuredAttempt + 1,
-                        structuredResult
-                            .Problems.Select(problem => new PipelineStructuredOutputProblem(
-                                problem.Field,
-                                problem.Message
-                            ))
-                            .ToArray(),
+                        structuredResult.Problems,
                         structuredResult.RawResponse
                     ),
                     cts.Token
@@ -199,13 +195,6 @@ internal sealed class AgentBlock<TState>(
                 turnInput = UserTurn(
                     structuredResult.CorrectionPrompt(structuredOutput.JsonSchema)
                 );
-                if (!string.IsNullOrWhiteSpace(structuredOutput.CorrectionRequiredToolName))
-                {
-                    agent = CreateTurnAgent(
-                        structuredOutput.CorrectionRequiredToolName,
-                        configureStructuredOutput: false
-                    );
-                }
                 continue;
             }
 
@@ -341,7 +330,7 @@ internal sealed class AgentBlock<TState>(
     }
 
     private IReadOnlyList<ChatMessage> ExampleConversation(TState state, string userMessage) =>
-        config.StructuredOutput?.Examples?.Invoke(state) is { Count: > 0 } examples
+        config.StructuredOutput?.Examples(state) is { Count: > 0 } examples
             ?
             [
                 .. examples.SelectMany(example =>
@@ -423,109 +412,6 @@ internal sealed class AgentBlock<TState>(
             await PublishUpdatesAsync(message, update, cancellationToken);
         }
         return new ModelTurn(text.ToString(), toolNames, inputTokens, outputTokens);
-    }
-
-    private async ValueTask<AgentStructuredOutputResult<TState>> EvaluateStructuredOutputAsync(
-        AgentStructuredOutputDescriptor<TState> structuredOutput,
-        string responseText,
-        PipelineMessage<TState> message,
-        ToolOutcomeCollector collector,
-        string acceptedOutputId,
-        int structuredAttempt,
-        CancellationToken cancellationToken
-    )
-    {
-        var successfulTools = collector.SuccessfulTools;
-        var structuredResult = structuredOutput.Parse(responseText, message.State);
-        if (structuredResult.Success && structuredOutput.Accept is not null)
-        {
-            var problems = structuredOutput.Accept(
-                message,
-                structuredResult,
-                successfulTools,
-                collector.ToolInvocations,
-                acceptedOutputId,
-                structuredAttempt
-            );
-            if (problems.Count > 0)
-            {
-                structuredResult = structuredResult with
-                {
-                    Outcome = null,
-                    Problems = [.. structuredResult.Problems, .. problems],
-                };
-            }
-        }
-        if (!structuredResult.Success)
-        {
-            return structuredResult;
-        }
-
-        async ValueTask<bool> AcceptAsync(CancellationToken token)
-        {
-            if (structuredOutput.AcceptAsync is not null)
-            {
-                await structuredOutput.AcceptAsync(
-                    message,
-                    structuredResult,
-                    successfulTools,
-                    collector.ToolInvocations,
-                    acceptedOutputId,
-                    structuredAttempt,
-                    token
-                );
-            }
-            if (message.RunContext is { } runContext)
-            {
-                JsonElement? payload = runContext.ShouldPersist(config.StepId)
-                    ? structuredResult.Outcome!.Payload
-                    : null;
-                await runContext.ObserveAsync(
-                    structuredOutput.EmitAccepted is { } emit
-                        ? emit(
-                            message.Runtime.RunId,
-                            config.StepId,
-                            acceptedOutputId,
-                            structuredResult.Outcome!.Kind,
-                            payload,
-                            structuredResult.Candidate!
-                        )
-                        : new PipelineStructuredOutputAccepted(
-                            message.Runtime.RunId,
-                            config.StepId,
-                            acceptedOutputId,
-                            structuredResult.Outcome!.Kind,
-                            structuredOutput.ValueType
-                                ?? structuredOutput.OutputType?.FullName
-                                ?? structuredOutput.OutputType?.Name,
-                            payload
-                        ),
-                    token
-                );
-            }
-            token.ThrowIfCancellationRequested();
-            if (structuredOutput.Apply is { } apply && structuredResult.Candidate is { } candidate)
-            {
-                structuredResult = structuredResult with
-                {
-                    Outcome = structuredResult.Outcome! with
-                    {
-                        UpdatedState = apply(message.State, candidate),
-                    },
-                };
-            }
-            return true;
-        }
-
-        if (message.RunContext is { } structuredRunContext)
-        {
-            await structuredRunContext.ExecuteAsync(AcceptAsync, cancellationToken);
-        }
-        else
-        {
-            await AcceptAsync(cancellationToken);
-        }
-        return structuredResult;
     }
 
     // The accepted capability call terminates MAF's function loop. A plain ChatClientAgent
@@ -681,23 +567,23 @@ internal sealed class AgentBlock<TState>(
         var name = context.Function.Name;
         var reservation = collector.ReserveToolInvocation();
         ToolSemantics? semantics = toolEffects.TryGet(name, out var classified) ? classified : null;
-        var effect = semantics?.Effect.ToString() ?? "Unclassified";
+        var effect = semantics?.Effect ?? ToolEffect.Unclassified;
         var actionInvocationId =
             $"{message.Runtime.NextInvocationId(config.StepId)}--action-{reservation.Ordinal + 1}";
         var arguments = TandemJson.EmptyObject;
 
         async ValueTask RecordAsync(
             ToolInvocationStatus status,
-            ToolResultEvidenceDescriptor? evidence,
+            ToolResultEvidence? evidence,
             CancellationToken token
         )
         {
-            var process = evidence as ToolResultEvidenceDescriptor.Process;
+            var process = evidence as ToolResultEvidence.Process;
             collector.CompleteToolInvocation(
                 reservation,
-                new ToolInvocationObservationDescriptor(
+                new ToolInvocationObservation(
                     name,
-                    semantics,
+                    effect,
                     arguments,
                     status,
                     process is null
@@ -718,7 +604,7 @@ internal sealed class AgentBlock<TState>(
                     actionInvocationId,
                     name,
                     effect,
-                    status.ToString(),
+                    status,
                     process is null
                         ? null
                         : new PipelineActionProcessPayload(
@@ -785,7 +671,7 @@ internal sealed class AgentBlock<TState>(
 
         var gate = ResolveActiveGates(message)
             .FirstOrDefault(active =>
-                (semantics is null || active.BlockedEffects.Contains(semantics.Effect))
+                (effect == ToolEffect.Unclassified || active.BlockedEffects.Contains(effect))
                 && !string.Equals(active.ReleaseCapabilityName, name, StringComparison.Ordinal)
             );
         if (gate is not null)
@@ -794,7 +680,7 @@ internal sealed class AgentBlock<TState>(
             return new ToolError(
                 "action_blocked",
                 "action blocked by gate",
-                [new ToolProblem(null, gate.Message)]
+                [new ValidationProblem("$", gate.Message)]
             ).ToJson();
         }
 
@@ -803,13 +689,7 @@ internal sealed class AgentBlock<TState>(
             string? blockedMessage;
             try
             {
-                blockedMessage = await toolInterceptor(
-                    message,
-                    name,
-                    semantics?.Effect,
-                    arguments,
-                    ct
-                );
+                blockedMessage = await toolInterceptor(message, name, effect, arguments, ct);
             }
             catch
             {
@@ -831,7 +711,7 @@ internal sealed class AgentBlock<TState>(
         }
         catch (PaginationValidationException exception)
         {
-            result = exception.ToolResult;
+            result = exception.Error;
         }
         catch (Exception exception) when (ToolInputValidation.IsExpected(exception, semantics))
         {
@@ -849,11 +729,9 @@ internal sealed class AgentBlock<TState>(
         }
         var isToolError =
             toolError is not null
-            || IsUntypedToolError(result)
-            || (
-                semantics?.Effect == ToolEffect.ProcessExecution && IsFailedProcessExecution(result)
-            );
-        ToolResultEvidenceDescriptor? resultEvidence;
+            || IsMafToolFailure(result)
+            || (effect == ToolEffect.ProcessExecution && IsFailedProcessExecution(result));
+        ToolResultEvidence? resultEvidence;
         try
         {
             resultEvidence = semantics?.ResultEvidence?.Invoke(result);
@@ -868,7 +746,7 @@ internal sealed class AgentBlock<TState>(
             resultEvidence,
             ct
         );
-        if (resultEvidence is ToolResultEvidenceDescriptor.Process diagnostic)
+        if (resultEvidence is ToolResultEvidence.Process diagnostic)
         {
             result = await DiagnosticResultAsync(message, actionInvocationId, diagnostic, ct);
         }
@@ -897,7 +775,7 @@ internal sealed class AgentBlock<TState>(
         {
             collector.RecordSuccessfulToolCall(
                 reservation,
-                new ToolObservationDescriptor(name, semantics)
+                new ToolObservation(name, effect, semantics?.Evidence ?? ToolEvidence.None)
             );
         }
 
@@ -907,7 +785,7 @@ internal sealed class AgentBlock<TState>(
     private async ValueTask<JsonElement> DiagnosticResultAsync(
         PipelineMessage<TState> message,
         string actionInvocationId,
-        ToolResultEvidenceDescriptor.Process diagnostic,
+        ToolResultEvidence.Process diagnostic,
         CancellationToken cancellationToken
     )
     {
@@ -945,23 +823,18 @@ internal sealed class AgentBlock<TState>(
         );
     }
 
-    // Tandem's own tools return ToolError. Advanced's workspace tools and pagination failures
-    // still answer with JSON carrying isError, and MAF's file tools report failures as text.
-    private static bool IsUntypedToolError(object? result) =>
+    // Tandem's own tools return ToolError. MAF's FileAccessProvider tools (write, replace,
+    // delete) own their results and report failures only as text.
+    private static bool IsMafToolFailure(object? result) =>
         result switch
         {
-            JsonElement { ValueKind: JsonValueKind.Object } element => element.TryGetProperty(
-                "isError",
-                out var isError
-            )
-                && isError.ValueKind == JsonValueKind.True,
             string text when text.StartsWith("Error", StringComparison.OrdinalIgnoreCase) => true,
             _ => result?.ToString() is { } text
                 && text.StartsWith("File '", StringComparison.Ordinal)
                 && text.EndsWith("' not found.", StringComparison.Ordinal),
         };
 
-    private static bool IsPreviewTruncated(ToolResultEvidenceDescriptor.Process process) =>
+    private static bool IsPreviewTruncated(ToolResultEvidence.Process process) =>
         process.Stdout.Length > DiagnosticPreviewCharacters
         || process.Stderr.Length > DiagnosticPreviewCharacters;
 
@@ -1060,12 +933,11 @@ internal sealed class AgentBlock<TState>(
                 );
             }
 
-            var structured = structuredResult.Outcome!;
             return Outcome(
-                structured.UpdatedState ?? state,
-                structured.Kind,
-                structured.Summary,
-                structured.Payload
+                structuredResult.UpdatedState!,
+                StandardOutcomeKinds.Success,
+                "Succeeded",
+                structuredResult.Payload
             );
         }
 
@@ -1135,8 +1007,7 @@ internal sealed class AgentBlock<TState>(
         string? requiredToolName,
         ToolOutcomeCollector collector,
         IReadOnlySet<string> boundCapabilityNames,
-        CapabilityInvocationState<TState> capabilityInvocation,
-        bool configureStructuredOutput = true
+        CapabilityInvocationState<TState> capabilityInvocation
     )
     {
         var chatOptions = CreateChatOptions(
@@ -1146,10 +1017,6 @@ internal sealed class AgentBlock<TState>(
         if (!string.IsNullOrWhiteSpace(requiredToolName))
         {
             chatOptions.ToolMode = ChatToolMode.RequireSpecific(requiredToolName);
-        }
-        if (configureStructuredOutput)
-        {
-            configureChatOptions?.Invoke(chatOptions);
         }
 
         var toolEffects = new ToolEffectRegistry();
@@ -1267,7 +1134,12 @@ internal sealed class AgentBlock<TState>(
 
     private ChatOptions CreateChatOptions(string instructions, IReadOnlyList<AITool> tools)
     {
-        var options = new ChatOptions { Instructions = instructions, Tools = tools.ToList() };
+        var options = new ChatOptions
+        {
+            Instructions = instructions,
+            Tools = tools.ToList(),
+            ResponseFormat = config.StructuredOutput?.ResponseFormat,
+        };
         if (config.ModelRequestOptions is not { } request)
         {
             return options;

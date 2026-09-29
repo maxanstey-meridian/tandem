@@ -24,13 +24,13 @@ internal static class WorkspaceShellTools
                 options,
                 effects,
                 CreateCommandFunction(command, workspace.Path),
-                Infrastructure.ToolEffect.ProcessExecution,
+                ToolEffect.ProcessExecution,
                 resultEvidence: ToProcessEvidence
             );
         }
         if (workspace.IncludeShell)
         {
-            HarnessTools.Add(
+            HarnessTools.AddBuiltIn(
                 options,
                 effects,
                 CreateExecutor(workspace.Path)
@@ -38,8 +38,7 @@ internal static class WorkspaceShellTools
                         "run_shell",
                         "Run a model-authored command in the configured workspace without approval.",
                         requireApproval: false
-                    ),
-                Infrastructure.ToolEffect.ProcessExecution
+                    )
             );
         }
     }
@@ -164,10 +163,10 @@ internal static class WorkspaceShellTools
         }
     }
 
-    private static ToolResultEvidenceDescriptor.Process? ToProcessEvidence(object? result) =>
+    private static ToolResultEvidence.Process? ToProcessEvidence(object? result) =>
         result is JsonElement { ValueKind: JsonValueKind.Object } element
         && element.Deserialize<ShellResult>(AIJsonUtilities.DefaultOptions) is { } shell
-            ? new ToolResultEvidenceDescriptor.Process(
+            ? new ToolResultEvidence.Process(
                 shell.ExitCode,
                 shell.Stdout,
                 shell.Stderr,

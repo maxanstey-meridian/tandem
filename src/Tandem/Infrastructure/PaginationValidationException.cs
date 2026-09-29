@@ -10,15 +10,11 @@ internal sealed class PaginationValidationException(
     object details
 ) : ArgumentOutOfRangeException(parameter, message)
 {
-    internal JsonElement ToolResult { get; } =
-        JsonSerializer.SerializeToElement(
-            new
-            {
-                isError = true,
-                code = "invalid_pagination",
-                parameter,
-                message,
-                details,
-            }
+    internal ToolError Error { get; } =
+        new(
+            "invalid_pagination",
+            message,
+            [new ValidationProblem(parameter, message)],
+            JsonSerializer.SerializeToElement(details)
         );
 }

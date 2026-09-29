@@ -16,16 +16,16 @@ public sealed class AgentSkillTests
 
         var foundLoad = effects.TryGet(AgentSkillsProvider.LoadSkillToolName, out var load);
         foundLoad.Should().BeTrue();
-        load.Effect.Should().Be(Tandem.Infrastructure.ToolEffect.Read);
+        load.Effect.Should().Be(ToolEffect.Read);
         var foundRead = effects.TryGet(
             AgentSkillsProvider.ReadSkillResourceToolName,
             out var readSkill
         );
         foundRead.Should().BeTrue();
-        readSkill.Effect.Should().Be(Tandem.Infrastructure.ToolEffect.Read);
+        readSkill.Effect.Should().Be(ToolEffect.Read);
         var foundRun = effects.TryGet(AgentSkillsProvider.RunSkillScriptToolName, out var run);
         foundRun.Should().BeTrue();
-        run.Effect.Should().Be(Tandem.Infrastructure.ToolEffect.ProcessExecution);
+        run.Effect.Should().Be(ToolEffect.ProcessExecution);
     }
 
     [Fact]

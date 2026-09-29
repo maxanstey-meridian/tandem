@@ -115,10 +115,7 @@ public sealed class WorkspaceAuthorityTests
                 new AgentStateGuard<TestState>(
                     "deny-process",
                     _ => true,
-                    new HashSet<Tandem.Advanced.ToolEffect>
-                    {
-                        Tandem.Advanced.ToolEffect.ProcessExecution,
-                    },
+                    new HashSet<ToolEffect> { ToolEffect.ProcessExecution },
                     "Process execution is unavailable."
                 )
             )

@@ -255,43 +255,43 @@ M static System.Text.Json.JsonSerializerOptions CreateTypedContract()
 
 [adapter-authoring]
 T Tandem.AgentJsonCapabilityDefinition<TState>
-C (System.String ToolName, System.String Instructions, System.Text.Json.JsonElement JsonSchema, System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>> Validate, System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>>? ValidateFor, System.Func<System.Text.Json.JsonElement,System.String> Summarize, System.String ValueType)
+C (System.String ToolName, System.String Instructions, System.Text.Json.JsonElement JsonSchema, System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem>> Validate, System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem>>? ValidateFor, System.Func<System.Text.Json.JsonElement,System.String> Summarize, System.String ValueType)
 M System.Boolean Equals(System.Object? obj)
 M System.Boolean Equals(Tandem.AgentJsonCapabilityDefinition<TState>? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
-M System.Void Deconstruct(out System.String ToolName, out System.String Instructions, out System.Text.Json.JsonElement JsonSchema, out System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>> Validate, out System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>>? ValidateFor, out System.Func<System.Text.Json.JsonElement,System.String> Summarize, out System.String ValueType)
+M System.Void Deconstruct(out System.String ToolName, out System.String Instructions, out System.Text.Json.JsonElement JsonSchema, out System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem>> Validate, out System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem>>? ValidateFor, out System.Func<System.Text.Json.JsonElement,System.String> Summarize, out System.String ValueType)
 M Tandem.AgentJsonCapabilityDefinition<TState> <Clone>$()
-P System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>> Validate { get; set; }
+P System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem>> Validate { get; set; }
 P System.Func<System.Text.Json.JsonElement,System.String> Summarize { get; set; }
-P System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>>? ValidateFor { get; set; }
+P System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem>>? ValidateFor { get; set; }
 P System.String Instructions { get; set; }
 P System.String ToolName { get; set; }
 P System.String ValueType { get; set; }
 P System.Text.Json.JsonElement JsonSchema { get; set; }
 T Tandem.AgentJsonOutputDefinition<TState>
-C (System.Text.Json.JsonElement JsonSchema, System.String Instructions, System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>> Validate, System.String ValueType, System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>>? ValidateFor = null)
+C (System.Text.Json.JsonElement JsonSchema, System.String Instructions, System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem>> Validate, System.String ValueType, System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem>>? ValidateFor = null)
 M System.Boolean Equals(System.Object? obj)
 M System.Boolean Equals(Tandem.AgentJsonOutputDefinition<TState>? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
-M System.Void Deconstruct(out System.Text.Json.JsonElement JsonSchema, out System.String Instructions, out System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>> Validate, out System.String ValueType, out System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>>? ValidateFor)
+M System.Void Deconstruct(out System.Text.Json.JsonElement JsonSchema, out System.String Instructions, out System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem>> Validate, out System.String ValueType, out System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem>>? ValidateFor)
 M Tandem.AgentJsonOutputDefinition<TState> <Clone>$()
-P System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>> Validate { get; set; }
-P System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.AgentJsonValidationProblem>>? ValidateFor { get; set; }
+P System.Func<System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem>> Validate { get; set; }
+P System.Func<TState,System.Text.Json.JsonElement,System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem>>? ValidateFor { get; set; }
 P System.String Instructions { get; set; }
 P System.String ValueType { get; set; }
 P System.Text.Json.JsonElement JsonSchema { get; set; }
-T Tandem.AgentJsonValidationProblem
-C (System.String Field, System.String Message)
+T Tandem.ValidationProblem
+C (System.String Path, System.String Message)
 M System.Boolean Equals(System.Object? obj)
-M System.Boolean Equals(Tandem.AgentJsonValidationProblem? other)
+M System.Boolean Equals(Tandem.ValidationProblem? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
-M System.Void Deconstruct(out System.String Field, out System.String Message)
-M Tandem.AgentJsonValidationProblem <Clone>$()
-P System.String Field { get; set; }
+M System.Void Deconstruct(out System.String Path, out System.String Message)
+M Tandem.ValidationProblem <Clone>$()
 P System.String Message { get; set; }
+P System.String Path { get; set; }
 
 [runtime-hosting]
 T Tandem.AgentUpdate
@@ -402,31 +402,31 @@ M Tandem.PipelineAcceptedValue <Clone>$()
 P System.String ValueType { get; set; }
 P System.Text.Json.JsonElement Payload { get; set; }
 T Tandem.PipelineActionAttempted
-C (System.Guid RunId, System.String StepId, System.String InvocationId, System.String ActionName, System.String Effect)
+C (System.Guid RunId, System.String StepId, System.String InvocationId, System.String ActionName, Tandem.ToolEffect Effect)
 M System.Boolean Equals(System.Object? obj)
 M System.Boolean Equals(Tandem.PipelineActionAttempted? other)
 M System.Boolean Equals(Tandem.PipelineObservation? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
-M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String InvocationId, out System.String ActionName, out System.String Effect)
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String InvocationId, out System.String ActionName, out Tandem.ToolEffect Effect)
 M Tandem.PipelineActionAttempted <Clone>$()
 P System.String ActionName { get; set; }
-P System.String Effect { get; set; }
 P System.String InvocationId { get; set; }
+P Tandem.ToolEffect Effect { get; set; }
 T Tandem.PipelineActionCompleted
-C (System.Guid RunId, System.String StepId, System.String InvocationId, System.String ActionName, System.String Effect, System.String Result, Tandem.PipelineActionProcessPayload? Process = null)
+C (System.Guid RunId, System.String StepId, System.String InvocationId, System.String ActionName, Tandem.ToolEffect Effect, Tandem.ToolInvocationStatus Result, Tandem.PipelineActionProcessPayload? Process = null)
 M System.Boolean Equals(System.Object? obj)
 M System.Boolean Equals(Tandem.PipelineActionCompleted? other)
 M System.Boolean Equals(Tandem.PipelineObservation? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
-M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String InvocationId, out System.String ActionName, out System.String Effect, out System.String Result, out Tandem.PipelineActionProcessPayload? Process)
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.String InvocationId, out System.String ActionName, out Tandem.ToolEffect Effect, out Tandem.ToolInvocationStatus Result, out Tandem.PipelineActionProcessPayload? Process)
 M Tandem.PipelineActionCompleted <Clone>$()
 P System.String ActionName { get; set; }
-P System.String Effect { get; set; }
 P System.String InvocationId { get; set; }
-P System.String Result { get; set; }
 P Tandem.PipelineActionProcessPayload? Process { get; set; }
+P Tandem.ToolEffect Effect { get; set; }
+P Tandem.ToolInvocationStatus Result { get; set; }
 T Tandem.PipelineActionProcessPayload
 C (System.Text.Json.JsonElement Arguments, System.Int32 ExitCode, System.String Stdout, System.String Stderr, System.TimeSpan Duration, System.Boolean TimedOut, System.Boolean Truncated)
 M System.Boolean Equals(System.Object? obj)
@@ -655,28 +655,80 @@ P System.Nullable<System.Text.Json.JsonElement>? Payload { get; set; }
 P System.String AcceptedOutputId { get; set; }
 P System.String OutcomeKind { get; set; }
 P System.String? OutputType { get; set; }
-T Tandem.PipelineStructuredOutputProblem
-C (System.String Field, System.String Message)
-M System.Boolean Equals(System.Object? obj)
-M System.Boolean Equals(Tandem.PipelineStructuredOutputProblem? other)
-M System.Int32 GetHashCode()
-M System.String ToString()
-M System.Void Deconstruct(out System.String Field, out System.String Message)
-M Tandem.PipelineStructuredOutputProblem <Clone>$()
-P System.String Field { get; set; }
-P System.String Message { get; set; }
 T Tandem.PipelineStructuredOutputRejected
-C (System.Guid RunId, System.String StepId, System.Int32 Attempt, System.Collections.Generic.IReadOnlyList<Tandem.PipelineStructuredOutputProblem> Problems, System.String RawResponse)
+C (System.Guid RunId, System.String StepId, System.Int32 Attempt, System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem> Problems, System.String RawResponse)
 M System.Boolean Equals(System.Object? obj)
 M System.Boolean Equals(Tandem.PipelineObservation? other)
 M System.Boolean Equals(Tandem.PipelineStructuredOutputRejected? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
-M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.Int32 Attempt, out System.Collections.Generic.IReadOnlyList<Tandem.PipelineStructuredOutputProblem> Problems, out System.String RawResponse)
+M System.Void Deconstruct(out System.Guid RunId, out System.String StepId, out System.Int32 Attempt, out System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem> Problems, out System.String RawResponse)
 M Tandem.PipelineStructuredOutputRejected <Clone>$()
-P System.Collections.Generic.IReadOnlyList<Tandem.PipelineStructuredOutputProblem> Problems { get; set; }
+P System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem> Problems { get; set; }
 P System.Int32 Attempt { get; set; }
 P System.String RawResponse { get; set; }
+T Tandem.ToolEffect
+F System.Int32 value__
+F static Tandem.ToolEffect LifecycleTransition
+F static Tandem.ToolEffect ProcessExecution
+F static Tandem.ToolEffect Read
+F static Tandem.ToolEffect Unclassified
+F static Tandem.ToolEffect WorkspaceMutation
+T Tandem.ToolEvidence
+F System.Int32 value__
+F static Tandem.ToolEvidence None
+F static Tandem.ToolEvidence RepositoryInspection
+T Tandem.ToolInvocationObservation
+C (System.String Name, Tandem.ToolEffect Effect, System.Text.Json.JsonElement Arguments, Tandem.ToolInvocationStatus Status, Tandem.ToolResultEvidence? Result)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.ToolInvocationObservation? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Name, out Tandem.ToolEffect Effect, out System.Text.Json.JsonElement Arguments, out Tandem.ToolInvocationStatus Status, out Tandem.ToolResultEvidence? Result)
+M Tandem.ToolInvocationObservation <Clone>$()
+P System.String Name { get; set; }
+P System.Text.Json.JsonElement Arguments { get; set; }
+P Tandem.ToolEffect Effect { get; set; }
+P Tandem.ToolInvocationStatus Status { get; set; }
+P Tandem.ToolResultEvidence? Result { get; set; }
+T Tandem.ToolInvocationStatus
+F System.Int32 value__
+F static Tandem.ToolInvocationStatus Blocked
+F static Tandem.ToolInvocationStatus Completed
+F static Tandem.ToolInvocationStatus Failed
+F static Tandem.ToolInvocationStatus Faulted
+T Tandem.ToolObservation
+C (System.String Name, Tandem.ToolEffect Effect, Tandem.ToolEvidence Evidence)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.ToolObservation? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.String Name, out Tandem.ToolEffect Effect, out Tandem.ToolEvidence Evidence)
+M Tandem.ToolObservation <Clone>$()
+P System.String Name { get; set; }
+P Tandem.ToolEffect Effect { get; set; }
+P Tandem.ToolEvidence Evidence { get; set; }
+T Tandem.ToolResultEvidence
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.ToolResultEvidence? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M Tandem.ToolResultEvidence <Clone>$()
+T Tandem.ToolResultEvidence+Process
+C (System.Int32 ExitCode, System.String Stdout, System.String Stderr, System.TimeSpan Duration, System.Boolean TimedOut, System.Boolean Truncated)
+M System.Boolean Equals(System.Object? obj)
+M System.Boolean Equals(Tandem.ToolResultEvidence+Process? other)
+M System.Boolean Equals(Tandem.ToolResultEvidence? other)
+M System.Int32 GetHashCode()
+M System.String ToString()
+M System.Void Deconstruct(out System.Int32 ExitCode, out System.String Stdout, out System.String Stderr, out System.TimeSpan Duration, out System.Boolean TimedOut, out System.Boolean Truncated)
+M Tandem.ToolResultEvidence+Process <Clone>$()
+P System.Boolean TimedOut { get; set; }
+P System.Boolean Truncated { get; set; }
+P System.Int32 ExitCode { get; set; }
+P System.String Stderr { get; set; }
+P System.String Stdout { get; set; }
+P System.TimeSpan Duration { get; set; }
 
 [generator-abi]
 T Tandem.GeneratedOutcomeStepDescriptor<TState>

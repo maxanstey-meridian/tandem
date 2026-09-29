@@ -175,7 +175,8 @@ internal sealed class TerminalModel(
                             succeeded: command.ExitCode == 0
                         )
                     );
-                case PipelineActionCompleted action when action.Result != "Completed":
+                case PipelineActionCompleted action
+                    when action.Result != ToolInvocationStatus.Completed:
                     return Changes(
                         Append(
                             key,

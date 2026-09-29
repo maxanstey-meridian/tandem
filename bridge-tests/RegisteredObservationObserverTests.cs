@@ -61,7 +61,7 @@ public sealed class RegisteredObservationObserverTests
                     Guid.Empty,
                     "agent",
                     2,
-                    [new PipelineStructuredOutputProblem("$.answer", "answer is required")],
+                    [new ValidationProblem("$.answer", "answer is required")],
                     "{\"answer\":null}"
                 ),
                 """{"version":1,"kind":"structuredOutputRejected","stepId":"agent","attempt":2,"problems":[{"field":"$.answer","message":"answer is required"}],"rawResponse":"{\u0022answer\u0022:null}"}"""

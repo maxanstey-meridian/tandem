@@ -97,7 +97,7 @@ internal sealed class RegisteredObservationObserver(
                 value.Attempt,
                 problems = value.Problems.Select(problem => new
                 {
-                    field = problem.Field,
+                    field = problem.Path,
                     message = problem.Message,
                 }),
                 value.RawResponse,

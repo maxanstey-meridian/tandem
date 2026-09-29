@@ -1,12 +1,6 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace Tandem;
-
-public sealed record AgentJsonValidationProblem(
-    [property: JsonPropertyName("path")] string Field,
-    string Message
-);
 
 /// <summary>
 /// Defines the adapter-authoring seam for a dynamic structured-output contract.
@@ -20,7 +14,7 @@ public sealed record AgentJsonValidationProblem(
 public sealed record AgentJsonOutputDefinition<TState>(
     JsonElement JsonSchema,
     string Instructions,
-    Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>> Validate,
+    Func<JsonElement, IReadOnlyList<ValidationProblem>> Validate,
     string ValueType,
-    Func<TState, JsonElement, IReadOnlyList<AgentJsonValidationProblem>>? ValidateFor = null
+    Func<TState, JsonElement, IReadOnlyList<ValidationProblem>>? ValidateFor = null
 );

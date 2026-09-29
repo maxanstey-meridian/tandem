@@ -2,29 +2,39 @@ using System.Text.Json;
 
 namespace Tandem.Domain;
 
-internal sealed record AgentStructuredOutputProblem(string Field, string Message);
-
-internal sealed record AgentStructuredOutcome<TState>(
-    string Kind,
-    string Summary,
-    JsonElement Payload,
-    TState? UpdatedState = default
-);
-
-internal sealed record AgentStructuredOutputResult<TState>(
-    AgentStructuredOutcome<TState>? Outcome,
-    IReadOnlyList<AgentStructuredOutputProblem> Problems,
-    string RawResponse,
-    object? Candidate = null
+internal sealed record ParsedOutput<TOutput>(
+    TOutput? Value,
+    IReadOnlyList<ValidationProblem> Problems
 )
 {
-    public bool Success => Outcome is not null;
+    public static ParsedOutput<TOutput> Valid(TOutput value) => new(value, []);
+
+    public static ParsedOutput<TOutput> Invalid(IReadOnlyList<ValidationProblem> problems) =>
+        new(default, problems);
+
+    public static ParsedOutput<TOutput> Invalid(string path, string message) =>
+        Invalid([new ValidationProblem(path, message)]);
+}
+
+internal sealed record AgentStructuredOutputResult<TState>(
+    IReadOnlyList<ValidationProblem> Problems,
+    string RawResponse,
+    JsonElement Payload = default,
+    TState? UpdatedState = default
+)
+{
+    public bool Success => Problems.Count == 0;
+
+    public static AgentStructuredOutputResult<TState> Rejected(
+        IReadOnlyList<ValidationProblem> problems,
+        string rawResponse
+    ) => new(problems, rawResponse);
 
     public string CorrectionPrompt(JsonElement? schema)
     {
         var problems = string.Join(
             Environment.NewLine,
-            Problems.Select(problem => $"- {problem.Field}: {problem.Message}")
+            Problems.Select(problem => $"- {problem.Path}: {problem.Message}")
         );
         return $"""
             Your previous response could not be accepted:

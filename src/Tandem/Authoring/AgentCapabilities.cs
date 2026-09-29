@@ -108,18 +108,21 @@ public sealed class AgentCapability<TState, TRequest> : AgentCapability<TState>
                     return new(
                         null,
                         [
-                            new ToolProblem(null, ex.Message),
-                            new ToolProblem(null, $"Received arguments: {payload.GetRawText()}"),
+                            new ValidationProblem("$", ex.Message),
+                            new ValidationProblem(
+                                "$",
+                                $"Received arguments: {payload.GetRawText()}"
+                            ),
                         ]
                     );
                 }
 
-                var problems = ToolProblem.From(
+                var problems = ValidationProblem.From(
                     await validator.ValidateAsync(request, cancellationToken)
                 );
                 if (problems.Count == 0 && contextualValidator(state) is { } contextual)
                 {
-                    problems = ToolProblem.From(
+                    problems = ValidationProblem.From(
                         await contextual.ValidateAsync(request, cancellationToken)
                     );
                 }
@@ -170,7 +173,7 @@ internal sealed record CapabilityAcceptanceContext<TState, TRequest>(
     TRequest Request
 )
 {
-    internal IReadOnlyList<ToolInvocationObservationDescriptor> ToolInvocations { get; init; } = [];
+    internal IReadOnlyList<ToolInvocationObservation> ToolInvocations { get; init; } = [];
     internal string AcceptedCallId => $"{RunId:N}:{StepId}:{InvocationId}:{CapabilityId}";
 }
 
@@ -203,7 +206,7 @@ internal static class CapabilityContract
 
 internal sealed record CapabilityRequest<TRequest>(
     TRequest? Request,
-    IReadOnlyList<ToolProblem> Problems
+    IReadOnlyList<ValidationProblem> Problems
 );
 
 /// <summary>
@@ -253,7 +256,7 @@ internal sealed class CapabilityFunction<TState, TRequest>(
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException)
         {
-            return ToolError.InvalidCall(contract.Name, [new ToolProblem(null, ex.Message)]);
+            return ToolError.InvalidCall(contract.Name, [new ValidationProblem("$", ex.Message)]);
         }
 
         var context = new CapabilityAcceptanceContext<TState, TRequest>(

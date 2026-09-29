@@ -125,13 +125,13 @@ T Tandem.Ledger.SqlitePipelineRunnerExtensions
 M static System.Threading.Tasks.Task<Tandem.PipelineRunResult<TState>> RunAsync<TState>(Tandem.PipelineRunner runner, Tandem.Pipeline<TState> pipeline, TState initialState, Tandem.Ledger.SqlitePipelineRunOptions options, System.Threading.CancellationToken cancellationToken = default)
 M static Tandem.PipelineRunOptions WithRunLedger(Tandem.PipelineRunOptions options, Tandem.Ledger.RunLedger ledger)
 T Tandem.Ledger.StructuredOutputRejectionEvidence
-C (System.Int32 Attempt, System.Collections.Generic.IReadOnlyList<Tandem.PipelineStructuredOutputProblem> Problems, System.String RawResponse)
+C (System.Int32 Attempt, System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem> Problems, System.String RawResponse)
 M System.Boolean Equals(System.Object? obj)
 M System.Boolean Equals(Tandem.Ledger.StructuredOutputRejectionEvidence? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
-M System.Void Deconstruct(out System.Int32 Attempt, out System.Collections.Generic.IReadOnlyList<Tandem.PipelineStructuredOutputProblem> Problems, out System.String RawResponse)
+M System.Void Deconstruct(out System.Int32 Attempt, out System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem> Problems, out System.String RawResponse)
 M Tandem.Ledger.StructuredOutputRejectionEvidence <Clone>$()
-P System.Collections.Generic.IReadOnlyList<Tandem.PipelineStructuredOutputProblem> Problems { get; set; }
+P System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem> Problems { get; set; }
 P System.Int32 Attempt { get; set; }
 P System.String RawResponse { get; set; }

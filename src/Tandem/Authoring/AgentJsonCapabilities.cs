@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Tandem.Infrastructure;
 
 namespace Tandem;
 
@@ -16,8 +15,8 @@ public sealed record AgentJsonCapabilityDefinition<TState>(
     string ToolName,
     string Instructions,
     JsonElement JsonSchema,
-    Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>> Validate,
-    Func<TState, JsonElement, IReadOnlyList<AgentJsonValidationProblem>>? ValidateFor,
+    Func<JsonElement, IReadOnlyList<ValidationProblem>> Validate,
+    Func<TState, JsonElement, IReadOnlyList<ValidationProblem>>? ValidateFor,
     Func<JsonElement, string> Summarize,
     string ValueType
 );
@@ -53,17 +52,7 @@ public static partial class AgentCapabilities
                 {
                     problems = validateFor(state, request);
                 }
-                return ValueTask.FromResult(
-                    new CapabilityRequest<JsonElement>(
-                        request,
-                        [
-                            .. problems.Select(problem => new ToolProblem(
-                                problem.Field,
-                                problem.Message
-                            )),
-                        ]
-                    )
-                );
+                return ValueTask.FromResult(new CapabilityRequest<JsonElement>(request, problems));
             },
             capability.Summarize,
             apply,

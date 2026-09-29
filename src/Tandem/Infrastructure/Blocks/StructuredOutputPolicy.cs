@@ -7,9 +7,8 @@ namespace Tandem;
 
 internal static class AgentStructuredOutputPolicy
 {
-    public static AgentStructuredOutputResult<TState> Parse<T, TState>(
+    public static ParsedOutput<T> Parse<T>(
         string response,
-        JsonSerializerOptions options,
         IValidator<T> validator,
         IValidator<T>? contextualValidator = null
     )
@@ -17,36 +16,29 @@ internal static class AgentStructuredOutputPolicy
         T? value;
         try
         {
-            value = AgentStructuredJsonExtractor.Extract(response).Deserialize<T>(options);
+            value = AgentStructuredJsonExtractor
+                .Extract(response)
+                .Deserialize<T>(TandemJson.TypedContract);
         }
         catch (InvalidOperationException exception)
         {
-            return Failure<TState>(response, "$", exception.Message);
+            return ParsedOutput<T>.Invalid("$", exception.Message);
         }
         catch (JsonException exception)
         {
-            return Failure<TState>(response, exception.Path ?? "$", exception.Message);
+            return ParsedOutput<T>.Invalid(exception.Path ?? "$", exception.Message);
         }
 
-        if (value is null)
-        {
-            return Failure<TState>(response, "$", "Response must contain a JSON object.");
-        }
-
-        return Validate<T, TState>(response, value, options, validator, contextualValidator);
+        return value is null
+            ? ParsedOutput<T>.Invalid("$", "Response must contain a JSON object.")
+            : Validate(value, validator, contextualValidator);
     }
-
-    private static AgentStructuredOutputResult<TState> Failure<TState>(
-        string raw,
-        string field,
-        string message
-    ) => new(null, [new AgentStructuredOutputProblem(field, message)], raw);
 
     /// <summary>
     /// Parses a free-text model response through the raw output definition, then applies
     /// the same intrinsic and contextual validation chain as JSON-schema outputs.
     /// </summary>
-    public static AgentStructuredOutputResult<TState> ParseRaw<T, TState>(
+    public static ParsedOutput<T> ParseRaw<T>(
         string response,
         Func<string, T> parse,
         IValidator<T> validator,
@@ -60,80 +52,29 @@ internal static class AgentStructuredOutputPolicy
         }
         catch (InvalidOperationException exception)
         {
-            return Failure<TState>(response, "$", exception.Message);
+            return ParsedOutput<T>.Invalid("$", exception.Message);
         }
 
-        if (value is null)
-        {
-            return Failure<TState>(response, "$", "Response did not produce an output value.");
-        }
-
-        return Validate<T, TState>(
-            response,
-            value,
-            TandemJson.TypedContract,
-            validator,
-            contextualValidator
-        );
+        return value is null
+            ? ParsedOutput<T>.Invalid("$", "Response did not produce an output value.")
+            : Validate(value, validator, contextualValidator);
     }
 
-    private static AgentStructuredOutputResult<TState> Validate<T, TState>(
-        string response,
+    private static ParsedOutput<T> Validate<T>(
         T value,
-        JsonSerializerOptions options,
         IValidator<T> validator,
         IValidator<T>? contextualValidator
     )
     {
-        var validation = validator.Validate(value);
-        if (!validation.IsValid)
+        var problems = ValidationProblem.From(validator.Validate(value));
+        if (problems.Count == 0 && contextualValidator is not null)
         {
-            return new AgentStructuredOutputResult<TState>(
-                null,
-                validation
-                    .Errors.Select(error => new AgentStructuredOutputProblem(
-                        ToCamelCase(error.PropertyName),
-                        error.ErrorMessage
-                    ))
-                    .ToArray(),
-                response,
-                value
-            );
+            problems = ValidationProblem.From(contextualValidator.Validate(value));
         }
-
-        if (contextualValidator is not null)
-        {
-            validation = contextualValidator.Validate(value);
-            if (!validation.IsValid)
-            {
-                return new AgentStructuredOutputResult<TState>(
-                    null,
-                    validation
-                        .Errors.Select(error => new AgentStructuredOutputProblem(
-                            ToCamelCase(error.PropertyName),
-                            error.ErrorMessage
-                        ))
-                        .ToArray(),
-                    response,
-                    value
-                );
-            }
-        }
-
-        return new AgentStructuredOutputResult<TState>(
-            new AgentStructuredOutcome<TState>(
-                StandardOutcomeKinds.Success,
-                "Succeeded",
-                JsonSerializer.SerializeToElement(value, options)
-            ),
-            [],
-            response,
-            value
-        );
+        return problems.Count > 0
+            ? ParsedOutput<T>.Invalid(problems)
+            : ParsedOutput<T>.Valid(value);
     }
-
-    private static string ToCamelCase(string path) =>
-        string.IsNullOrEmpty(path) ? path : char.ToLowerInvariant(path[0]) + path[1..];
 }
 
 internal static class AgentStructuredJsonExtractor

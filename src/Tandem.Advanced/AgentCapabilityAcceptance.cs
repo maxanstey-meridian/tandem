@@ -41,9 +41,7 @@ public static class AgentCapabilityAcceptanceExtensions
                         context.Request
                     )
                     {
-                        ToolInvocations = context
-                            .ToolInvocations.Select(StructuredOutputDescriptors.ToPublic)
-                            .ToArray(),
+                        ToolInvocations = context.ToolInvocations,
                     },
                     cancellationToken
                 )
@@ -75,9 +73,7 @@ public static class AgentCapabilityAcceptanceExtensions
                         context.Request
                     )
                     {
-                        ToolInvocations = context
-                            .ToolInvocations.Select(StructuredOutputDescriptors.ToPublic)
-                            .ToArray(),
+                        ToolInvocations = context.ToolInvocations,
                     },
                     cancellationToken
                 )

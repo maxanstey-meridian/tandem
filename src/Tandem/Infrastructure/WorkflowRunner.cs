@@ -37,7 +37,6 @@ internal static class InProcessPipelineRunner
         TState initialState,
         IExternalRequestHandler? requests = null,
         IPipelineObserver? observer = null,
-        IPipelineAcceptanceUnitOfWork? unitOfWork = null,
         IPipelineLedgerReader? ledger = null,
         CancellationToken cancellationToken = default
     )
@@ -54,7 +53,6 @@ internal static class InProcessPipelineRunner
             RunContext = new PipelineRunContext(
                 runId,
                 observer,
-                unitOfWork,
                 pipeline.PersistentStepIds,
                 ledger
             ),

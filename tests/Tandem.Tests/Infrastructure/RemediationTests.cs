@@ -148,14 +148,14 @@ public sealed class RemediationTests
     {
         var validator = new InlineValidator<string>();
         Action cancel = () =>
-            AgentStructuredOutputPolicy.ParseRaw<string, string>(
+            AgentStructuredOutputPolicy.ParseRaw<string>(
                 "text",
                 _ => throw new OperationCanceledException(),
                 validator
             );
         cancel.Should().Throw<OperationCanceledException>();
         Action fault = () =>
-            AgentStructuredOutputPolicy.ParseRaw<string, string>(
+            AgentStructuredOutputPolicy.ParseRaw<string>(
                 "text",
                 _ => throw new IOException("broken adapter"),
                 validator
@@ -171,13 +171,13 @@ public sealed class RemediationTests
         var contextual = new InlineValidator<string>();
         var called = false;
         contextual.RuleFor(value => value).Custom((_, _) => called = true);
-        var result = AgentStructuredOutputPolicy.ParseRaw<string, string>(
+        var result = AgentStructuredOutputPolicy.ParseRaw<string>(
             "text",
             _ => "",
             intrinsic,
             contextual
         );
-        result.Success.Should().BeFalse();
+        result.Problems.Should().NotBeEmpty();
         called.Should().BeFalse();
     }
 

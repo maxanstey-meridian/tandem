@@ -96,15 +96,15 @@ internal sealed class CallbackDispatcher(
         string Name,
         string Message,
         string? Boundary,
-        AgentJsonValidationProblem[]? Problems
+        ValidationProblem[]? Problems
     );
 }
 
 internal sealed class CallbackContractException(
     string boundary,
-    IReadOnlyList<AgentJsonValidationProblem> problems
+    IReadOnlyList<ValidationProblem> problems
 ) : Exception("JavaScript callback contract validation failed.")
 {
     public string Boundary { get; } = boundary;
-    public IReadOnlyList<AgentJsonValidationProblem> Problems { get; } = problems;
+    public IReadOnlyList<ValidationProblem> Problems { get; } = problems;
 }
