@@ -1,5 +1,4 @@
 using System.ClientModel.Primitives;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
@@ -13,11 +12,6 @@ namespace Tandem.OpenAICompatible;
 public sealed class ReasoningExtractionChatClient(IChatClient inner) : DelegatingChatClient(inner)
 {
     private const string ReasoningMaxTokensKey = "reasoningMaxTokens";
-    private static readonly PropertyInfo? _patchProperty =
-        typeof(StreamingChatCompletionUpdate).GetProperty(
-            "Patch",
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic
-        );
 
     public override async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
         IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
@@ -110,15 +104,8 @@ public sealed class ReasoningExtractionChatClient(IChatClient inner) : Delegatin
     internal static bool TryExtractReasoning(object? raw, out string reasoning)
     {
         reasoning = "";
-        if (
-            raw is not StreamingChatCompletionUpdate streaming
-            || _patchProperty?.GetValue(streaming) is not JsonPatch patch
-        )
-        {
-            return false;
-        }
-
-        return TryExtractReasoning(patch, out reasoning);
+        return raw is StreamingChatCompletionUpdate streaming
+            && TryExtractReasoning(streaming.Patch, out reasoning);
     }
 
     internal static bool TryExtractReasoning(JsonPatch patch, out string reasoning)

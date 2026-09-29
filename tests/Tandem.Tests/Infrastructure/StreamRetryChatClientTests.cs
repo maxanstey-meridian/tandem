@@ -1,3 +1,6 @@
+using System.ClientModel;
+using System.ClientModel.Primitives;
+using System.Net;
 using System.Runtime.CompilerServices;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
@@ -24,6 +27,51 @@ public sealed class StreamRetryChatClientTests
         text.Should().Be("hello world");
         updates.Should().HaveCount(3);
         inner.Calls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Default_sdk_retry_multiplies_the_attempts_of_this_layer()
+    {
+        var handler = new CountingHandler(_ => throw new HttpRequestException("reset"));
+        var client = new StreamRetryChatClient(
+            new SdkStreamingClient(handler, new ImmediateRetryPolicy(maxRetries: 3)),
+            maxAttempts: 2,
+            retryDelay: TimeSpan.Zero
+        );
+
+        var act = () =>
+            CollectAsync(client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hi")]));
+
+        await act.Should().ThrowAsync<Exception>();
+        handler.Requests.Should().Be(8, "each of the 2 attempts here is 4 SDK attempts");
+    }
+
+    [Theory]
+    [InlineData(null, 3)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, 3)]
+    [InlineData(HttpStatusCode.TooManyRequests, 3)]
+    [InlineData(HttpStatusCode.BadRequest, 1)]
+    public async Task With_sdk_retry_disabled_this_client_is_the_only_retry_layer(
+        HttpStatusCode? status,
+        int expectedRequests
+    )
+    {
+        var handler = new CountingHandler(_ =>
+            status is { } code
+                ? new HttpResponseMessage(code) { Content = new StringContent("{}") }
+                : throw new HttpRequestException("reset")
+        );
+        var client = new StreamRetryChatClient(
+            new SdkStreamingClient(handler, new ClientRetryPolicy(maxRetries: 0)),
+            maxAttempts: 3,
+            retryDelay: TimeSpan.Zero
+        );
+
+        var act = () =>
+            CollectAsync(client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hi")]));
+
+        await act.Should().ThrowAsync<Exception>();
+        handler.Requests.Should().Be(expectedRequests);
     }
 
     [Fact]
@@ -248,5 +296,75 @@ public sealed class StreamRetryChatClientTests
 
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() =>
             GetEnumerator();
+    }
+
+    private sealed class CountingHandler(Func<HttpRequestMessage, HttpResponseMessage> respond)
+        : HttpMessageHandler
+    {
+        private int _requests;
+        public int Requests => _requests;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken
+        )
+        {
+            Interlocked.Increment(ref _requests);
+            return Task.FromResult(respond(request));
+        }
+    }
+
+    private sealed class ImmediateRetryPolicy(int maxRetries) : ClientRetryPolicy(maxRetries)
+    {
+        protected override TimeSpan GetNextDelay(PipelineMessage message, int tryCount) =>
+            TimeSpan.Zero;
+    }
+
+    // The smallest IChatClient over the real OpenAI SDK pipeline, so the SDK's own retry policy runs.
+    private sealed class SdkStreamingClient(
+        HttpMessageHandler handler,
+        ClientRetryPolicy retryPolicy
+    ) : IChatClient
+    {
+        private readonly OpenAI.Chat.ChatClient _client = new(
+            "model",
+            new ApiKeyCredential("key"),
+            new OpenAI.OpenAIClientOptions
+            {
+                Endpoint = new Uri("http://127.0.0.1:1/v1"),
+                Transport = new HttpClientPipelineTransport(new HttpClient(handler)),
+                RetryPolicy = retryPolicy,
+            }
+        );
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default
+        ) => throw new NotSupportedException();
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default
+        )
+        {
+            await foreach (
+                var update in _client.CompleteChatStreamingAsync(
+                    [new OpenAI.Chat.UserChatMessage("hi")],
+                    cancellationToken: cancellationToken
+                )
+            )
+            {
+                yield return new ChatResponseUpdate(
+                    ChatRole.Assistant,
+                    update.ContentUpdate.FirstOrDefault()?.Text
+                );
+            }
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose() { }
     }
 }

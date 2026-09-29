@@ -1,13 +1,16 @@
+using System.ClientModel;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.AI;
 
 namespace Tandem.OpenAICompatible;
 
 /// <summary>
-/// Buffers each streaming response until it completes and retries transport
-/// failures. The surrounding agent loop commits an assistant turn only after a
-/// complete stream, so withholding updates preserves that atomicity and makes a
-/// request safe to re-issue even when the connection drops after partial output.
+/// Buffers each streaming response until it completes and retries transport failures and
+/// retryable HTTP statuses. The surrounding agent loop commits an assistant turn only after a
+/// complete stream, so withholding updates preserves that atomicity and makes a request safe to
+/// re-issue even when the connection drops after partial output. This is the only retry layer:
+/// build the inner OpenAI client with <c>RetryPolicy = new ClientRetryPolicy(0)</c>, otherwise
+/// every attempt here is multiplied by the SDK's own retries.
 /// </summary>
 public sealed class StreamRetryChatClient(
     IChatClient innerClient,
@@ -53,73 +56,32 @@ public sealed class StreamRetryChatClient(
     {
         for (var attempt = 1; ; attempt++)
         {
-            Exception? failure = null;
-            var completed = false;
             var updates = new List<ChatResponseUpdate>();
-
-            var enumerator = InnerClient
-                .GetStreamingResponseAsync(messages, options, cancellationToken)
-                .GetAsyncEnumerator(cancellationToken);
             try
             {
-                while (true)
+                await foreach (
+                    var update in InnerClient
+                        .GetStreamingResponseAsync(messages, options, cancellationToken)
+                        .WithCancellation(cancellationToken)
+                )
                 {
-                    ChatResponseUpdate? update = null;
-                    try
+                    if (update is not null)
                     {
-                        if (!await enumerator.MoveNextAsync())
-                        {
-                            completed = true;
-                            break;
-                        }
-                        update = enumerator.Current;
+                        updates.Add(update);
                     }
-                    catch (Exception error)
-                    {
-                        failure = error;
-                        break;
-                    }
-
-                    if (update is null)
-                    {
-                        continue;
-                    }
-                    updates.Add(update);
                 }
             }
-            finally
+            catch (Exception error)
+                when (attempt < _maxAttempts && IsRetryable(error, cancellationToken))
             {
-                try
-                {
-                    await enumerator.DisposeAsync();
-                }
-                catch (Exception error)
-                {
-                    if (completed)
-                    {
-                        throw;
-                    }
-                    failure ??= error;
-                }
+                await DelayAsync(attempt, cancellationToken);
+                continue;
             }
-
-            if (completed)
+            foreach (var update in updates)
             {
-                foreach (var update in updates)
-                {
-                    yield return update;
-                }
-                yield break;
+                yield return update;
             }
-            if (failure is null)
-            {
-                yield break;
-            }
-            if (attempt >= _maxAttempts || !IsRetryable(failure, cancellationToken))
-            {
-                throw failure;
-            }
-            await DelayAsync(attempt, cancellationToken);
+            yield break;
         }
     }
 
@@ -132,18 +94,16 @@ public sealed class StreamRetryChatClient(
         }
     }
 
-    internal static bool IsRetryable(Exception error, CancellationToken cancellationToken)
-    {
-        if (error is OperationCanceledException)
-        {
-            return false;
-        }
-        if (cancellationToken.IsCancellationRequested)
-        {
-            return false;
-        }
-        return error is IOException or HttpRequestException or TimeoutException
+    internal static bool IsRetryable(Exception error, CancellationToken cancellationToken) =>
+        !cancellationToken.IsCancellationRequested
+        && error is not OperationCanceledException
+        && (
+            error
+                is IOException
+                    or HttpRequestException
+                    or TimeoutException
+                    or ClientResultException { Status: 408 or 429 or >= 500 }
             || error.InnerException is not null
-                && IsRetryable(error.InnerException, cancellationToken);
-    }
+                && IsRetryable(error.InnerException, cancellationToken)
+        );
 }
