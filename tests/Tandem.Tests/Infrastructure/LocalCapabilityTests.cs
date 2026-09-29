@@ -212,66 +212,25 @@ public sealed class LocalCapabilityTests
     }
 
     [Fact]
-    public async Task JournalFailureAtCapabilityBoundary_DoesNotCommitStateOrCompleteVisit()
+    public async Task ObserverFailureAtCapabilityBoundary_DoesNotCommitStateOrCompleteVisit()
     {
-        var directory = Path.Combine(
-            Path.GetTempPath(),
-            "tandem-journal-failure-" + Guid.NewGuid().ToString("N")
+        var runId = Guid.CreateVersion7();
+        var capability = CreateCapability();
+        var client = new ScriptedChatClient(
+            ToolCall("call-1", "increment", new Dictionary<string, object?> { ["amount"] = 1 }),
+            ToolCall("call-2", "increment", new Dictionary<string, object?> { ["amount"] = 1 })
         );
-        Directory.CreateDirectory(directory);
-        try
+        var input = new PipelineMessage<TestState>(PipelineRuntime.Create(runId), new TestState(0))
         {
-            var store = new SqliteLedgerStore(Path.Combine(directory, "ledger.sqlite3"));
-            await store.InitializeAsync();
-            var runId = Guid.CreateVersion7();
-            await store.CreateRunAsync(runId, "test");
-            var ledger = store.ForRun(runId);
-            var accepted = new LedgerStream<IncrementRequest>(
-                "test.accepted",
-                "test.increment-accepted"
-            );
-            var capability = CreateCapability()
-                .WithAcceptance<TestState, IncrementRequest>(
-                    async (context, cancellationToken) =>
-                        await ledger.AppendAsync(
-                            accepted,
-                            context.AcceptedCallId,
-                            context.Request,
-                            cancellationToken
-                        )
-                );
-            var observer = new CompositePipelineObserver(
-                new SqlitePipelineObserver(ledger),
-                new FailingAcceptanceObserver()
-            );
-            var client = new ScriptedChatClient(
-                ToolCall("call-1", "increment", new Dictionary<string, object?> { ["amount"] = 1 }),
-                ToolCall("call-2", "increment", new Dictionary<string, object?> { ["amount"] = 1 })
-            );
-            var input = new PipelineMessage<TestState>(
-                PipelineRuntime.Create(runId),
-                new TestState(0)
-            )
-            {
-                RunContext = new PipelineRunContext(
-                    runId,
-                    observer,
-                    new InlineAcceptanceUnitOfWork(store)
-                ),
-            };
+            RunContext = new PipelineRunContext(runId, new FailingAcceptanceObserver()),
+        };
 
-            var execute = async () =>
-                await CreateBlock(client, capability).ExecuteAsync(input, CancellationToken.None);
+        var execute = async () =>
+            await CreateBlock(client, capability).ExecuteAsync(input, CancellationToken.None);
 
-            await execute.Should().ThrowAsync<Exception>();
-            input.State.Count.Should().Be(0);
-            client.CallCount.Should().BeGreaterThan(1);
-            (await ledger.ReadAsync(accepted)).Should().BeEmpty();
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
+        await execute.Should().ThrowAsync<Exception>();
+        input.State.Count.Should().Be(0);
+        client.CallCount.Should().BeGreaterThan(1);
     }
 
     [Fact]
@@ -1000,15 +959,6 @@ public sealed class LocalCapabilityTests
             observations.Add(observation);
             return ValueTask.CompletedTask;
         }
-    }
-
-    private sealed class InlineAcceptanceUnitOfWork(SqliteLedgerStore store)
-        : IPipelineAcceptanceUnitOfWork
-    {
-        public ValueTask<T> ExecuteAsync<T>(
-            Func<CancellationToken, ValueTask<T>> operation,
-            CancellationToken cancellationToken
-        ) => store.ExecuteAsync(operation, cancellationToken);
     }
 
     private sealed class ScriptedChatClient(params ChatResponse[] responses) : IChatClient

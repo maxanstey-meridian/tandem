@@ -45,34 +45,4 @@ public sealed class RunLedger : IPipelineLedgerReader
         int limit,
         CancellationToken cancellationToken
     ) => _store.ReadPageAsync(RunId, query, cursor, limit, cancellationToken);
-
-    public ValueTask<AcceptedLedgerEntry<TEntry>> AppendAsync<TEntry>(
-        LedgerStream<TEntry> stream,
-        string entryId,
-        TEntry entry,
-        CancellationToken cancellationToken = default
-    ) => _store.AppendAsync(RunId, stream, entryId, entry, cancellationToken);
-
-    public ValueTask<IReadOnlyList<AcceptedLedgerEntry<TEntry>>> ReadAsync<TEntry>(
-        LedgerStream<TEntry> stream,
-        CancellationToken cancellationToken = default
-    ) => _store.ReadAsync(RunId, stream, cancellationToken);
-
-    public ValueTask<IReadOnlyList<AcceptedLedgerEntry<TEntry>>> ReadAfterAsync<TEntry>(
-        LedgerStream<TEntry> stream,
-        long sequence,
-        CancellationToken cancellationToken = default
-    ) => _store.ReadAfterAsync(RunId, stream, sequence, cancellationToken);
-
-    public ValueTask<LedgerDocumentValue<TDocument>?> ReadDocumentAsync<TDocument>(
-        LedgerDocument<TDocument> document,
-        CancellationToken cancellationToken = default
-    ) => _store.ReadDocumentAsync(RunId, document, cancellationToken);
-
-    public ValueTask<LedgerDocumentValue<TDocument>> WriteDocumentAsync<TDocument>(
-        LedgerDocument<TDocument> document,
-        TDocument value,
-        long expectedVersion,
-        CancellationToken cancellationToken = default
-    ) => _store.WriteDocumentAsync(RunId, document, value, expectedVersion, cancellationToken);
 }

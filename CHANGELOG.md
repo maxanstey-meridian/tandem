@@ -7,6 +7,9 @@
 - `RunWithTerminalAsync` raises an `AggregateException` holding both failures when a faulted or cancelled run's `TerminalizingAsync` callback also fails; it previously swallowed the terminalization failure.
 - Removed unused Advanced structured-output APIs: `StructuredOutputPolicy`, `StructuredJsonExtractor`, `StructuredOutputAcceptancePolicies`, `AgentBuilder.WithStructuredOutput(...)`, `AgentBuilder.WithMessageFromContext(...)` and `AdvancedAgentMessage<TState>`. Use `WithOutput`/`WithJsonOutput`/`WithRawOutput` and `WithMessage`.
 - Removed `RunLedger.ReadRecentAsync(...)`.
+- The ledger is now an append-only run-history journal (runs are process-owned; the ledger records them for inspection). Removed the general-purpose durability surface: `LedgerStream<T>`, `LedgerDocument<T>`, `LedgerDocumentValue<T>`, `AcceptedLedgerEntry<T>`, `PipelineJournal`, `RunLedger.AppendAsync/ReadAsync/ReadAfterAsync/ReadDocumentAsync/WriteDocumentAsync`, `SqliteLedgerStore.ReopenRunAsync(...)` (runs can no longer be resumed), `SqliteLedgerStore.ExecuteAsync(...)` (ambient transactions), the `ledger_contracts` registry, optimistic document concurrency and idempotent replay of entry IDs. `SqliteLedgerStore.CreateRunAsync(...)` is no longer public; `CreateObserverAsync(...)` creates the run. Read a run's journal with the new `SqliteLedgerStore.ReadJournalAsync(runId)` (`LedgerJournalEntry`), its accepted values with `ReadAcceptedAsync`/`ReadLatestAcceptedAsync`.
+- The Node bridge no longer wraps capability acceptance in a ledger transaction; the journal records acceptance as history.
+- **On-disk incompatibility:** the ledger schema is now version 2 (one `journal` table; no `run_entries`, `run_documents` or `ledger_contracts`). Ledger files written by earlier versions (schema version 1) are refused with "Ledger schema version '1' is not supported; expected '2'". There is no migration; start a new ledger file.
 
 ## Unreleased — fixes and additions
 

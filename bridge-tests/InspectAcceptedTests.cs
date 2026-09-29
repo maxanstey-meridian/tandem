@@ -13,28 +13,11 @@ public sealed class InspectAcceptedTests
         try
         {
             var store = new SqliteLedgerStore(path);
-            await store.InitializeAsync();
             var runId = Guid.CreateVersion7();
-            await store.CreateRunAsync(runId, "inspect");
-            var ledger = store.ForRun(runId);
-            var other = new LedgerStream<OtherEntry>("application.notes", "application.note");
-            await ledger.AppendAsync(other, "note-1", new OtherEntry("not a journal record"));
-            await ledger.AppendAsync(
-                PipelineJournal.Stream,
-                "accepted-1",
-                Accepted("first", JsonSerializer.SerializeToElement(new { order = 1 }))
-            );
-            await ledger.AppendAsync(other, "note-2", new OtherEntry("still not one"));
-            await ledger.AppendAsync(
-                PipelineJournal.Stream,
-                "started",
-                new RuntimeJournalRecord(RuntimeJournalKind.StepStarted, "second")
-            );
-            await ledger.AppendAsync(
-                PipelineJournal.Stream,
-                "accepted-2",
-                Accepted("second", JsonSerializer.SerializeToElement(new { order = 2 }))
-            );
+            var observer = await store.CreateObserverAsync(runId, "inspect");
+            await observer.ObserveAsync(Accepted(runId, "first", 1), default);
+            await observer.ObserveAsync(new PipelineStepStarted(runId, "second"), default);
+            await observer.ObserveAsync(Accepted(runId, "second", 2), default);
 
             var json = await NodePipelineBridge.InspectAcceptedAsync(path, runId.ToString());
 
@@ -80,13 +63,17 @@ public sealed class InspectAcceptedTests
         }
     }
 
-    private static RuntimeJournalRecord Accepted(string stepId, JsonElement payload) =>
+    private static PipelineStructuredOutputAccepted Accepted(
+        Guid runId,
+        string stepId,
+        int order
+    ) =>
         new(
-            RuntimeJournalKind.StructuredOutputAccepted,
+            runId,
             stepId,
-            ValueType: "order",
-            Payload: payload
+            $"{stepId}-output",
+            StandardOutcomeKinds.Success,
+            "order",
+            JsonSerializer.SerializeToElement(new { order })
         );
-
-    private sealed record OtherEntry(string Text);
 }

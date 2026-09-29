@@ -1,6 +1,7 @@
 # Meridian.Tandem.Ledger
 
-SQLite-backed accepted-value persistence and run records for Tandem pipelines.
+An append-only SQLite run-history journal for Tandem pipelines: accepted values and run records
+for inspection. Runs themselves are process-owned; a ledger cannot resume them.
 
 ```sh
 dotnet add package Meridian.Tandem.Ledger --version 0.1.0

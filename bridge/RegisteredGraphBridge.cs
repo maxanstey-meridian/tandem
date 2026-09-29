@@ -147,10 +147,6 @@ public static partial class NodePipelineBridge
             {
                 Ledger = definition.EnableLedgerTools ? store?.ForRun(runId) : null,
             };
-            if (store is not null)
-            {
-                options = options.WithAcceptanceUnitOfWork(new LedgerAcceptanceUnitOfWork(store));
-            }
             var runner = new PipelineRunner();
             var initialState = new JavaScriptState(definition.InitialState!);
             var result =
@@ -291,15 +287,6 @@ public static partial class NodePipelineBridge
                 ),
             cause
         );
-
-    private sealed class LedgerAcceptanceUnitOfWork(SqliteLedgerStore store)
-        : Tandem.Advanced.IPipelineAcceptanceUnitOfWork
-    {
-        public ValueTask<T> ExecuteAsync<T>(
-            Func<CancellationToken, ValueTask<T>> operation,
-            CancellationToken cancellationToken
-        ) => store.ExecuteAsync(operation, cancellationToken);
-    }
 
     private static void ApplyPersistence(
         PipelineBuilder<JavaScriptState> builder,
