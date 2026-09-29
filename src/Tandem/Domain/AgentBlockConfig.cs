@@ -24,7 +24,8 @@ internal sealed record AgentBlockConfig<TState>(
     IReadOnlyList<AgentStateGuardDescriptor<TState>>? StateGuards = null,
     IReadOnlyList<AgentLatchedGateDescriptor>? LatchedGates = null,
     IReadOnlyList<AgentSkillDescriptor>? Skills = null,
-    AgentContextBudgetDescriptor? ContextBudget = null
+    AgentContextBudgetDescriptor? ContextBudget = null,
+    AgentModelRequestOptions? ModelRequestOptions = null
 );
 
 internal sealed record AgentContextBudgetDescriptor(

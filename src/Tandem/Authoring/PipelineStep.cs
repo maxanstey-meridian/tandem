@@ -233,7 +233,18 @@ public sealed class GeneratedPassThroughStepDescriptor<TState>(
 ) : PipelineNodeDescriptor
 {
     internal override ExecutorBinding Bind() =>
-        new GeneratedPassThroughStepExecutor<TState>(id, execute).Bind();
+        new GeneratedStepExecutor<TState>(
+            id,
+            async (state, cancellationToken) =>
+            {
+                await execute(state, cancellationToken);
+                return new Outcome<TState>.Success(
+                    PipelineExecutionEnvelope.CurrentState<TState>()
+                );
+            },
+            new(),
+            _ => null
+        ).BindExecutor();
 }
 
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -243,7 +254,13 @@ public sealed class GeneratedStateStepDescriptor<TState>(
 ) : PipelineNodeDescriptor
 {
     internal override ExecutorBinding Bind() =>
-        new GeneratedStateStepExecutor<TState>(id, execute).Bind();
+        new GeneratedStepExecutor<TState>(
+            id,
+            async (state, cancellationToken) =>
+                new Outcome<TState>.Success(await execute(state, cancellationToken)),
+            new(),
+            output => PipelineAcceptedValue.From(output.State)
+        ).BindExecutor();
 }
 
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -257,10 +274,23 @@ public sealed class GeneratedOutcomeStepDescriptor<TState>(
     internal ValueTask<PipelineMessage<TState>> ExecuteScopedAsync(
         PipelineMessage<TState> message,
         CancellationToken token
-    ) => new GeneratedOutcomeStepExecutor<TState>(id, execute, new()).ExecuteAsync(message, token);
+    ) => Create(new()).ExecuteAsync(message, token);
 
     internal ExecutorBinding Bind(StandardOutcomeRouteAwareness<TState> routeAwareness) =>
-        new GeneratedOutcomeStepExecutor<TState>(id, execute, routeAwareness).Bind();
+        Create(routeAwareness).BindExecutor();
+
+    private GeneratedStepExecutor<TState> Create(
+        StandardOutcomeRouteAwareness<TState> routeAwareness
+    ) =>
+        new(
+            id,
+            execute,
+            routeAwareness,
+            output =>
+                output.LatestOutcome?.Kind == StandardOutcomeKinds.Success
+                    ? PipelineAcceptedValue.From(output.State)
+                    : null
+        );
 }
 
 internal sealed class StandardOutcomeRouteAwareness<TState>
@@ -283,141 +313,18 @@ public readonly struct PipelineOutcomeSelector<TState>
         Failed ? nameof(Outcome<TState>.Failed) : nameof(Outcome<TState>.Success);
 }
 
-internal sealed class GeneratedPassThroughStepExecutor<TState>
-    : Executor<PipelineMessage<TState>, PipelineMessage<TState>>
+internal sealed class GeneratedStepExecutor<TState>(
+    string id,
+    Func<TState, CancellationToken, ValueTask<Outcome<TState>>> execute,
+    StandardOutcomeRouteAwareness<TState> routeAwareness,
+    Func<PipelineMessage<TState>, PipelineAcceptedValue?> acceptedValue
+)
+    : Executor<PipelineMessage<TState>, PipelineMessage<TState>>(
+        id,
+        options: null,
+        declareCrossRunShareable: true
+    )
 {
-    private readonly string _id;
-    private readonly Func<TState, CancellationToken, ValueTask> _execute;
-
-    public GeneratedPassThroughStepExecutor(
-        string id,
-        Func<TState, CancellationToken, ValueTask> execute
-    )
-        : base(id, options: null, declareCrossRunShareable: true)
-    {
-        _id = id;
-        _execute = execute;
-    }
-
-    internal ExecutorBinding Bind() => this.BindExecutor();
-
-    public override async ValueTask<PipelineMessage<TState>> HandleAsync(
-        PipelineMessage<TState> pipeline,
-        IWorkflowContext context,
-        CancellationToken cancellationToken
-    )
-    {
-        using var lease = await ParallelBranchLease.EnterAsync(
-            pipeline.ParallelContext?.Slots,
-            cancellationToken
-        );
-        using var envelope = PipelineExecutionEnvelope.Begin(pipeline);
-        return await PipelineObservationPublisher.ExecuteAsync(
-            _id,
-            PipelineObservationMode.Full,
-            pipeline,
-            async () =>
-            {
-                await _execute(pipeline.State, cancellationToken);
-                return envelope.Message with
-                {
-                    LatestOutcome = new BlockOutcome(
-                        StandardOutcomeKinds.Success,
-                        _id,
-                        "Succeeded",
-                        JsonSerializer.SerializeToElement(new { })
-                    ),
-                    LatestResult = PipelineResultPayload.Create(
-                        _id,
-                        nameof(Outcome<object>.Success),
-                        new { }
-                    ),
-                };
-            },
-            cancellationToken
-        );
-    }
-}
-
-internal sealed class GeneratedStateStepExecutor<TState>
-    : Executor<PipelineMessage<TState>, PipelineMessage<TState>>
-{
-    private readonly string _id;
-    private readonly Func<TState, CancellationToken, ValueTask<TState>> _execute;
-
-    public GeneratedStateStepExecutor(
-        string id,
-        Func<TState, CancellationToken, ValueTask<TState>> execute
-    )
-        : base(id, options: null, declareCrossRunShareable: true)
-    {
-        _id = id;
-        _execute = execute;
-    }
-
-    internal ExecutorBinding Bind() => this.BindExecutor();
-
-    public override async ValueTask<PipelineMessage<TState>> HandleAsync(
-        PipelineMessage<TState> pipeline,
-        IWorkflowContext context,
-        CancellationToken cancellationToken
-    )
-    {
-        using var lease = await ParallelBranchLease.EnterAsync(
-            pipeline.ParallelContext?.Slots,
-            cancellationToken
-        );
-        using var envelope = PipelineExecutionEnvelope.Begin(pipeline);
-        return await PipelineObservationPublisher.ExecuteAsync(
-            _id,
-            PipelineObservationMode.Full,
-            pipeline,
-            async () =>
-            {
-                var state = await _execute(pipeline.State, cancellationToken);
-                return envelope.Message with
-                {
-                    State = state,
-                    LatestOutcome = new BlockOutcome(
-                        StandardOutcomeKinds.Success,
-                        _id,
-                        "Succeeded",
-                        JsonSerializer.SerializeToElement(new { })
-                    ),
-                    LatestResult = PipelineResultPayload.Create(
-                        _id,
-                        nameof(Outcome<object>.Success),
-                        new { }
-                    ),
-                };
-            },
-            cancellationToken,
-            acceptedValue: output => PipelineAcceptedValue.From(output.State)
-        );
-    }
-}
-
-internal sealed class GeneratedOutcomeStepExecutor<TState>
-    : Executor<PipelineMessage<TState>, PipelineMessage<TState>>
-{
-    private readonly string _id;
-    private readonly Func<TState, CancellationToken, ValueTask<Outcome<TState>>> _execute;
-    private readonly StandardOutcomeRouteAwareness<TState> _routeAwareness;
-
-    public GeneratedOutcomeStepExecutor(
-        string id,
-        Func<TState, CancellationToken, ValueTask<Outcome<TState>>> execute,
-        StandardOutcomeRouteAwareness<TState> routeAwareness
-    )
-        : base(id, options: null, declareCrossRunShareable: true)
-    {
-        _id = id;
-        _execute = execute;
-        _routeAwareness = routeAwareness;
-    }
-
-    internal ExecutorBinding Bind() => this.BindExecutor();
-
     public override async ValueTask<PipelineMessage<TState>> HandleAsync(
         PipelineMessage<TState> pipeline,
         IWorkflowContext context,
@@ -435,68 +342,87 @@ internal sealed class GeneratedOutcomeStepExecutor<TState>
         );
         using var envelope = PipelineExecutionEnvelope.Begin(pipeline);
         return await PipelineObservationPublisher.ExecuteAsync(
-            _id,
+            Id,
             PipelineObservationMode.Full,
             pipeline,
             async () =>
-            {
-                var result = await _execute(pipeline.State, cancellationToken);
-                return result switch
+                await execute(pipeline.State, cancellationToken) switch
                 {
-                    Outcome<TState>.Success success => envelope.Message with
-                    {
-                        State = success.State,
-                        LatestOutcome = new BlockOutcome(
-                            StandardOutcomeKinds.Success,
-                            _id,
-                            "Succeeded",
-                            JsonSerializer.SerializeToElement(new { })
-                        ),
-                        LatestResult = PipelineResultPayload.Create(
-                            _id,
-                            nameof(Outcome<TState>.Success),
-                            new { }
-                        ),
-                    },
-                    Outcome<TState>.Failed failed => AdaptFailed(envelope.Message, failed),
+                    Outcome<TState>.Success success => StandardOutcomes.Succeeded(
+                        envelope.Message with
+                        {
+                            State = success.State,
+                        },
+                        Id
+                    ),
+                    Outcome<TState>.Failed failed => StandardOutcomes.Failed(
+                        envelope.Message with
+                        {
+                            State = failed.State,
+                        },
+                        Id,
+                        failed.Failure.Summary,
+                        JsonSerializer.SerializeToElement(failed.Failure),
+                        routeAwareness
+                    ),
                     _ => throw new InvalidOperationException("Unknown standard outcome."),
-                };
-            },
+                },
             cancellationToken,
-            acceptedValue: output =>
-                output.LatestOutcome?.Kind == StandardOutcomeKinds.Success
-                    ? PipelineAcceptedValue.From(output.State)
-                    : null
+            acceptedValue
         );
     }
+}
 
-    private PipelineMessage<TState> AdaptFailed(
-        PipelineMessage<TState> pipeline,
-        Outcome<TState>.Failed failed
-    )
-    {
-        var result = pipeline with
+internal static class StandardOutcomes
+{
+    public static PipelineMessage<TState> Succeeded<TState>(
+        PipelineMessage<TState> message,
+        string stepId
+    ) =>
+        message with
         {
-            State = failed.State,
             LatestOutcome = new BlockOutcome(
-                StandardOutcomeKinds.Failed,
-                _id,
-                failed.Failure.Summary,
-                JsonSerializer.SerializeToElement(failed.Failure)
+                StandardOutcomeKinds.Success,
+                stepId,
+                "Succeeded",
+                JsonSerializer.SerializeToElement(new { })
             ),
             LatestResult = PipelineResultPayload.Create(
-                _id,
+                stepId,
+                nameof(Outcome<TState>.Success),
+                new { }
+            ),
+        };
+
+    public static PipelineMessage<TState> Failed<TState>(
+        PipelineMessage<TState> message,
+        string stepId,
+        string summary,
+        JsonElement evidence,
+        StandardOutcomeRouteAwareness<TState> routeAwareness
+    )
+    {
+        var failed = message with
+        {
+            LatestOutcome = new BlockOutcome(
+                StandardOutcomeKinds.Failed,
+                stepId,
+                summary,
+                evidence
+            ),
+            LatestResult = PipelineResultPayload.Create(
+                stepId,
                 nameof(Outcome<TState>.Failed),
-                failed.Failure
+                evidence
             ),
             Status = PipelineRunStatus.Succeeded,
         };
-        return result with
-        {
-            Status = _routeAwareness.Matches(result)
-                ? PipelineRunStatus.Succeeded
-                : PipelineRunStatus.Failed,
-        };
+        return routeAwareness.Matches(failed)
+            ? failed
+            : failed with
+            {
+                Status = PipelineRunStatus.Failed,
+            };
     }
 }
 
@@ -538,6 +464,13 @@ internal static class PipelineExecutionEnvelope
         }
         return new OperationLease<TState>(scope);
     }
+
+    public static TState CurrentState<TState>() =>
+        _current.Value is PipelineExecutionScope<TState> scope
+            ? scope.Message.State
+            : throw new InvalidOperationException(
+                "Operations can only run while a generated pipeline step is executing."
+            );
 
     public static PipelineMessage<TState> Get<TState>(TState state)
     {
@@ -926,45 +859,9 @@ public sealed class PipelineBuilder<TState>
     )
     {
         var descriptor = start.Descriptor;
-        if (descriptor is PipelineParallelDescriptor<TState> parallel)
-        {
-            var parallelAwareness = new StandardOutcomeRouteAwareness<TState>();
-            var graph = parallel.BindGraph(parallelAwareness);
-            var parallelWorkflowBuilder = new WorkflowBuilder(graph.Entry).WithName(name);
-            if (!string.IsNullOrWhiteSpace(description))
-            {
-                parallelWorkflowBuilder = parallelWorkflowBuilder.WithDescription(description);
-            }
-            graph.AddTo(parallelWorkflowBuilder);
-            var parallelResult = new PipelineBuilder<TState>(parallelWorkflowBuilder);
-            parallelResult._bindings.Add(start, graph.Exit);
-            parallelResult._inputBindings.Add(start, graph.Entry);
-            parallelResult._descriptors.Add(start, descriptor);
-            parallelResult._failureRouteAwareness.Add(start, parallelAwareness);
-            parallelResult.RegisterPhysicalIds(start.Id, graph.PhysicalIds);
-            parallelResult.RegisterParallelBranches(start, parallel);
-            return parallelResult;
-        }
-        var awareness =
-            descriptor is GeneratedOutcomeStepDescriptor<TState>
-                ? new StandardOutcomeRouteAwareness<TState>()
-                : null;
-        var binding = awareness is null
-            ? descriptor.Bind()
-            : ((GeneratedOutcomeStepDescriptor<TState>)descriptor).Bind(awareness);
-        var workflowBuilder = new WorkflowBuilder(binding).WithName(name);
-        if (!string.IsNullOrWhiteSpace(description))
-        {
-            workflowBuilder = workflowBuilder.WithDescription(description);
-        }
-        var result = new PipelineBuilder<TState>(workflowBuilder);
-        result._bindings.Add(start, binding);
-        result._descriptors.Add(start, descriptor);
-        result.RegisterCollection(start, descriptor);
-        if (awareness is not null)
-        {
-            result._failureRouteAwareness.Add(start, awareness);
-        }
+        var bound = BindDescriptor(descriptor);
+        var result = new PipelineBuilder<TState>(NewWorkflow(bound.Entry, name, description));
+        result.Register(start, descriptor, bound);
         return result;
     }
 
@@ -975,16 +872,72 @@ public sealed class PipelineBuilder<TState>
     )
     {
         var binding = start.Request.Descriptor.Bind();
-        var workflowBuilder = new WorkflowBuilder(binding).WithName(name);
-        if (!string.IsNullOrWhiteSpace(description))
-        {
-            workflowBuilder = workflowBuilder.WithDescription(description);
-        }
-        var result = new PipelineBuilder<TState>(workflowBuilder);
+        var result = new PipelineBuilder<TState>(NewWorkflow(binding, name, description));
         result._bindings.Add(start.Request, binding);
         result._descriptors.Add(start.Request, start.Request.Descriptor);
         result.EnsureInteraction(start);
         return result;
+    }
+
+    private static WorkflowBuilder NewWorkflow(
+        ExecutorBinding start,
+        string name,
+        string? description
+    )
+    {
+        var workflowBuilder = new WorkflowBuilder(start).WithName(name);
+        return string.IsNullOrWhiteSpace(description)
+            ? workflowBuilder
+            : workflowBuilder.WithDescription(description);
+    }
+
+    private sealed record NodeBinding(
+        ExecutorBinding Entry,
+        ExecutorBinding Exit,
+        StandardOutcomeRouteAwareness<TState>? RouteAwareness,
+        ParallelGraphBinding? Parallel
+    );
+
+    private static NodeBinding BindDescriptor(PipelineNodeDescriptor descriptor)
+    {
+        switch (descriptor)
+        {
+            case PipelineParallelDescriptor<TState> parallel:
+            {
+                var awareness = new StandardOutcomeRouteAwareness<TState>();
+                var graph = parallel.BindGraph(awareness);
+                return new(graph.Entry, graph.Exit, awareness, graph);
+            }
+            case GeneratedOutcomeStepDescriptor<TState> outcome:
+            {
+                var awareness = new StandardOutcomeRouteAwareness<TState>();
+                var binding = outcome.Bind(awareness);
+                return new(binding, binding, awareness, null);
+            }
+            default:
+            {
+                var binding = descriptor.Bind();
+                return new(binding, binding, null, null);
+            }
+        }
+    }
+
+    private void Register(IPipelineNode node, PipelineNodeDescriptor descriptor, NodeBinding bound)
+    {
+        RegisterCollection(node, descriptor);
+        _bindings.Add(node, bound.Exit);
+        _descriptors.Add(node, descriptor);
+        if (bound.RouteAwareness is { } awareness)
+        {
+            _failureRouteAwareness.Add(node, awareness);
+        }
+        if (bound.Parallel is { } graph)
+        {
+            RegisterPhysicalIds(node.Id, graph.PhysicalIds);
+            graph.AddTo(_builder);
+            _inputBindings.Add(node, graph.Entry);
+            RegisterParallelBranches(node, (PipelineParallelDescriptor<TState>)descriptor);
+        }
     }
 
     public PipelineBuilder<TState> Persist()
@@ -1396,34 +1349,9 @@ public sealed class PipelineBuilder<TState>
         }
 
         var descriptor = node.Descriptor;
-        RegisterCollection(node, descriptor);
-        if (descriptor is PipelineParallelDescriptor<TState> parallel)
-        {
-            var awareness = new StandardOutcomeRouteAwareness<TState>();
-            var graph = parallel.BindGraph(awareness);
-            RegisterPhysicalIds(node.Id, graph.PhysicalIds);
-            graph.AddTo(_builder);
-            binding = graph.Exit;
-            _bindings.Add(node, binding);
-            _inputBindings.Add(node, graph.Entry);
-            _descriptors.Add(node, descriptor);
-            _failureRouteAwareness.Add(node, awareness);
-            RegisterParallelBranches(node, parallel);
-            return binding;
-        }
-        if (descriptor is GeneratedOutcomeStepDescriptor<TState> outcomeDescriptor)
-        {
-            var awareness = new StandardOutcomeRouteAwareness<TState>();
-            binding = outcomeDescriptor.Bind(awareness);
-            _failureRouteAwareness.Add(node, awareness);
-        }
-        else
-        {
-            binding = descriptor.Bind();
-        }
-        _bindings.Add(node, binding);
-        _descriptors.Add(node, descriptor);
-        return binding;
+        var bound = BindDescriptor(descriptor);
+        Register(node, descriptor, bound);
+        return bound.Exit;
     }
 
     private void RegisterCollection(IPipelineNode node, PipelineNodeDescriptor descriptor)

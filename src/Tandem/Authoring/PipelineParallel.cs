@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.Agents.AI.Workflows;
 using Tandem.Domain;
 
@@ -291,7 +290,7 @@ internal sealed class ParallelForkExecutor<TState>(
                 baseline with
                 {
                     State = clone(baseline.State),
-                    Runtime = runtime.Copy(),
+                    Runtime = runtime,
                     ParallelContext = new ParallelBranchContext<TState>(
                         id,
                         occurrenceId,
@@ -451,95 +450,54 @@ internal sealed class ParallelJoinExecutor<TState>
 
         var ordered = batch.OrderBy(item => item.Index).ToArray();
         var baseline = ordered[0].Baseline;
-        PipelineMessage<TState> output;
+        var runtime = PipelineRuntime.Merge(
+            baseline.Runtime,
+            ordered.Select(item => item.Result.Runtime)
+        );
         var failed = ordered.FirstOrDefault(item =>
             item.Result.LatestOutcome?.Kind == StandardOutcomeKinds.Failed
         );
-        if (failed is not null)
-        {
-            output = failed.Result with
-            {
-                Runtime = PipelineRuntime.Merge(
-                    baseline.Runtime,
-                    ordered.Select(item => item.Result.Runtime)
-                ),
-                LatestOutcome = new BlockOutcome(
-                    StandardOutcomeKinds.Failed,
-                    _groupId,
-                    failed.Result.LatestOutcome!.Summary,
-                    failed.Result.LatestOutcome.Payload
-                ),
-                LatestResult = PipelineResultPayload.Create(
-                    _groupId,
-                    nameof(Outcome<TState>.Failed),
-                    failed.Result.LatestOutcome.Payload
-                ),
-                Status = PipelineRunStatus.Succeeded,
-                ParallelContext = null,
-            };
-            output = output with
-            {
-                Status = _routeAwareness.Matches(output)
-                    ? PipelineRunStatus.Succeeded
-                    : PipelineRunStatus.Failed,
-            };
-        }
-        else
-        {
-            var states = ordered.ToDictionary(
-                item => item.BranchId,
-                item => item.Result.State,
-                StringComparer.Ordinal
+        var output = failed is not null
+            ? StandardOutcomes.Failed(
+                failed.Result with
+                {
+                    Runtime = runtime,
+                    ParallelContext = null,
+                },
+                _groupId,
+                failed.Result.LatestOutcome!.Summary,
+                failed.Result.LatestOutcome.Payload,
+                _routeAwareness
+            )
+            : StandardOutcomes.Succeeded(
+                baseline with
+                {
+                    State = _merge(
+                        new PipelineParallelMerge<TState>(
+                            baseline.State,
+                            _branchIds,
+                            ordered.ToDictionary(
+                                item => item.BranchId,
+                                item => item.Result.State,
+                                StringComparer.Ordinal
+                            )
+                        )
+                    ),
+                    Runtime = runtime,
+                    Status = PipelineRunStatus.Succeeded,
+                    ParallelContext = null,
+                },
+                _groupId
             );
-            var runtime = PipelineRuntime.Merge(
-                baseline.Runtime,
-                ordered.Select(item => item.Result.Runtime)
-            );
-            var mergedState = _merge(
-                new PipelineParallelMerge<TState>(baseline.State, _branchIds, states)
-            );
-            output = baseline with
-            {
-                State = mergedState,
-                Runtime = runtime,
-                LatestOutcome = new BlockOutcome(
-                    StandardOutcomeKinds.Success,
-                    _groupId,
-                    "Succeeded",
-                    JsonSerializer.SerializeToElement(new { })
-                ),
-                LatestResult = PipelineResultPayload.Create(
-                    _groupId,
-                    nameof(Outcome<TState>.Success),
-                    new { }
-                ),
-                Status = PipelineRunStatus.Succeeded,
-                ParallelContext = null,
-            };
-        }
 
         if (baseline.RunContext is { } runContext)
         {
-            var accepted = runContext.ShouldPersist(_groupId)
-                ? failed is null
-                    ? PipelineAcceptedValue.From(output.State)
-                    : PipelineAcceptedValue.FromPayload<FailureEvidence>(
-                        output.LatestOutcome!.Payload
-                    )
-                : null;
-            await runContext.ObserveAsync(
-                new PipelineStepCompleted(
-                    runContext.RunId,
-                    _groupId,
-                    new PipelineRunOutcome(
-                        output.LatestOutcome!.Kind,
-                        _groupId,
-                        output.LatestOutcome.Summary,
-                        output.LatestOutcome.Payload,
-                        output.LatestOutcome.Duration
-                    ),
-                    accepted
-                ),
+            await PipelineObservationPublisher.ObserveCompletedAsync(
+                runContext,
+                _groupId,
+                output,
+                TimeSpan.Zero,
+                result => failed is null ? PipelineAcceptedValue.From(result.State) : null,
                 cancellationToken
             );
             runContext.CompleteParallel(_groupId);

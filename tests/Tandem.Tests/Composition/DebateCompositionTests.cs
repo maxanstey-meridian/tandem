@@ -28,16 +28,18 @@ public sealed class DebateCompositionTests
         output.State.Round.Should().Be(2);
         output.State.Arguments.Select(argument => argument.Text).Should().Contain("Revised case");
         output.State.Verdict.Should().Be(new DebateVerdict("Affirmed", "Accepted in process."));
-        output.Runtime.InvocationCounts.Should().ContainKeys("proposer", "critic", "judge");
-        output.Runtime.InvocationCounts["proposer"].Should().Be(2);
-        output.Runtime.InvocationCounts["critic"].Should().Be(2);
-        output.Runtime.InvocationCounts["judge"].Should().Be(1);
-        output.Runtime.AgentSessions.Should().ContainKeys("proposer", "critic");
-        output.Runtime.AgentSessions.Should().NotContainKey("judge");
-        output.Runtime.AgentUsage.Should().ContainKeys("proposer", "critic");
-        output.Runtime.AgentUsage.Should().NotContainKey("judge");
-        output.Runtime.AgentProfiles.Should().ContainKeys("proposer", "critic");
-        output.Runtime.AgentProfiles.Should().NotContainKey("judge");
+        output.Runtime.Step("proposer").Count.Should().Be(2);
+        output.Runtime.Step("critic").Count.Should().Be(2);
+        output.Runtime.Step("judge").Count.Should().Be(1);
+        foreach (var retained in new[] { "proposer", "critic" })
+        {
+            output.Runtime.Step(retained).Session.Should().NotBeNull();
+            output.Runtime.Step(retained).Usage.Should().NotBeNull();
+            output.Runtime.Step(retained).Profile.Should().NotBeNull();
+        }
+        output.Runtime.Step("judge").Session.Should().BeNull();
+        output.Runtime.Step("judge").Usage.Should().BeNull();
+        output.Runtime.Step("judge").Profile.Should().BeNull();
     }
 
     [Fact]

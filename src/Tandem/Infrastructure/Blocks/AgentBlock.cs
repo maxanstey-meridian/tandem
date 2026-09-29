@@ -22,8 +22,7 @@ internal sealed class AgentBlock<TState>(
         ValueTask<string?>
     >? toolInterceptor = null,
     Action<ChatOptions>? configureChatOptions = null,
-    Func<string, IChatClient>? chatClientFactory = null,
-    Action<ChatOptions>? configureModelRequestOptions = null
+    Func<string, IChatClient>? chatClientFactory = null
 )
     : Executor<PipelineMessage<TState>, PipelineMessage<TState>>(
         config.StepId,
@@ -105,7 +104,7 @@ internal sealed class AgentBlock<TState>(
             message.RunContext
         );
         var capabilityFunctions = BindCapabilities(capabilityInvocation, message.RunContext);
-        var collector = new ToolOutcomeCollector(RestoreToolInvocations(runtime));
+        var collector = new ToolOutcomeCollector(runtime.Step(config.StepId).ToolInvocations);
         capabilityInvocation.AttachToolOutcomeCollector(collector);
 
         var instructions = requiresCheckpointRelease
@@ -133,7 +132,7 @@ internal sealed class AgentBlock<TState>(
         var agent = CreateTurnAgent(
             requiresCheckpointRelease ? config.Checkpoint!.Capability.ToolName : null
         );
-        var freshSession = !runtime.AgentSessions.ContainsKey(config.StepId);
+        var freshSession = runtime.Step(config.StepId).Session is null;
         var session = await RestoreOrCreateSessionAsync(agent, runtime, cts.Token);
         var userMessage = await BuildUserMessageAsync(
             message,
@@ -145,7 +144,7 @@ internal sealed class AgentBlock<TState>(
                 ? ExampleConversation(message.State, userMessage)
                 : [new ChatMessage(ChatRole.User, userMessage)];
 
-        var priorUsage = runtime.AgentUsage.GetValueOrDefault(config.StepId);
+        var priorUsage = runtime.Step(config.StepId).Usage;
         var cumulativeInputTokens = priorUsage?.CumulativeInputTokens ?? 0;
         var cumulativeOutputTokens = priorUsage?.CumulativeOutputTokens ?? 0;
         var continuationAttempt = 0;
@@ -173,7 +172,10 @@ internal sealed class AgentBlock<TState>(
                 cumulativeOutputTokens
             );
             var checkpointWasLatched = runtime.IsGateLatched(config.StepId, CheckpointGateId);
-            runtime = LatchTriggeredGates(runtime.WithUsage(config.StepId, turnUsage), turnUsage);
+            runtime = LatchTriggeredGates(
+                runtime.WithStep(config.StepId, step => step with { Usage = turnUsage }),
+                turnUsage
+            );
             message = message with { Runtime = runtime };
             capabilityInvocation.ThrowIfApplicationFaulted();
             if (capabilityInvocation.Accepted is not null)
@@ -361,8 +363,7 @@ internal sealed class AgentBlock<TState>(
         {
             return config.Checkpoint!.UserMessage(
                 message.State,
-                message.Runtime.AgentUsage.GetValueOrDefault(config.StepId)?.CurrentContextTokens
-                    ?? 0
+                message.Runtime.Step(config.StepId).Usage?.CurrentContextTokens ?? 0
             );
         }
 
@@ -645,7 +646,10 @@ internal sealed class AgentBlock<TState>(
         {
             if (!runtime.IsGateLatched(config.StepId, gate.Id) && gate.Trigger(usage))
             {
-                runtime = runtime.WithGateLatch(config.StepId, gate.Id);
+                runtime = runtime.WithStep(
+                    config.StepId,
+                    step => step with { Latches = step.Latches.Add(gate.Id) }
+                );
             }
         }
         return runtime;
@@ -1136,7 +1140,10 @@ internal sealed class AgentBlock<TState>(
             )
         )
         {
-            updatedRuntime = updatedRuntime.WithoutGateLatch(config.StepId, gate.Id);
+            updatedRuntime = updatedRuntime.WithStep(
+                config.StepId,
+                step => step with { Latches = step.Latches.Remove(gate.Id) }
+            );
             if (gate.ResetSessionAfterRelease)
             {
                 resetSession = true;
@@ -1144,9 +1151,10 @@ internal sealed class AgentBlock<TState>(
         }
         if (resetSession)
         {
-            updatedRuntime = updatedRuntime
-                .WithoutSession(config.StepId)
-                .WithoutUsage(config.StepId);
+            updatedRuntime = updatedRuntime.WithStep(
+                config.StepId,
+                step => step with { Session = null, Usage = null }
+            );
         }
         return new PipelineMessage<TState>(
             updatedRuntime.IncrementInvocations(config.StepId),
@@ -1175,63 +1183,10 @@ internal sealed class AgentBlock<TState>(
         bool configureStructuredOutput = true
     )
     {
-        var chatOptions = new ChatOptions { Instructions = instructions, Tools = tools.ToList() };
-        configureModelRequestOptions?.Invoke(chatOptions);
-        if (message.RunContext?.Ledger is { } ledger)
-        {
-            chatOptions.Tools.Add(
-                AIFunctionFactory.Create(
-                    (
-                        long entryCursor,
-                        int offset = 0,
-                        int limit = 16000,
-                        string? stream = null,
-                        CancellationToken cancellationToken = default
-                    ) =>
-                        stream is null
-                            ? ledger.ReadEntryAsync(entryCursor, offset, limit, cancellationToken)
-                            : ledger.ReadDiagnosticAsync(
-                                entryCursor,
-                                stream,
-                                offset,
-                                limit,
-                                cancellationToken
-                            ),
-                    "read_ledger_entry",
-                    "Read a durable entry using entryCursor from a command result or ledger listing. For readable command output specify stream stdout or stderr, then follow nextOffset until hasMore is false. Omit stream to read the raw record. Offsets are UTF-16 code units; captureTruncated indicates output lost at the hard capture limit."
-                )
-            );
-            chatOptions.Tools.Add(
-                AIFunctionFactory.Create(
-                    (
-                        [System.ComponentModel.Description("Cursor returned by the previous page.")]
-                            long? cursor = null,
-                        [System.ComponentModel.Description("Page size from 1 to 50.")]
-                            int limit = 20,
-                        CancellationToken cancellationToken = default
-                    ) => ledger.ReadAsync(cursor, limit, cancellationToken),
-                    "read_ledger",
-                    "Read accepted durable lifecycle history in order: claims, decisions, findings, checkpoints, state, and transitions. Repository and implementation claims in those records must be verified against the current repository before reliance."
-                )
-            );
-            chatOptions.Tools.Add(
-                AIFunctionFactory.Create(
-                    (
-                        [System.ComponentModel.Description(
-                            "Case-insensitive text to find in accepted durable records."
-                        )]
-                            string query,
-                        [System.ComponentModel.Description("Cursor returned by the previous page.")]
-                            long? cursor = null,
-                        [System.ComponentModel.Description("Page size from 1 to 50.")]
-                            int limit = 20,
-                        CancellationToken cancellationToken = default
-                    ) => ledger.SearchAsync(query, cursor, limit, cancellationToken),
-                    "search_ledger",
-                    "Search accepted durable lifecycle history for relevant prior claims, decisions, findings, constraints, checkpoints, and state, then use read_ledger to inspect surrounding records. A match does not establish current repository or implementation state."
-                )
-            );
-        }
+        var chatOptions = CreateChatOptions(
+            instructions,
+            message.RunContext?.Ledger is { } ledger ? [.. tools, .. LedgerTools(ledger)] : tools
+        );
         if (!string.IsNullOrWhiteSpace(requiredToolName))
         {
             chatOptions.ToolMode = ChatToolMode.RequireSpecific(requiredToolName);
@@ -1306,6 +1261,84 @@ internal sealed class AgentBlock<TState>(
             toolEffects,
             workspace?.Path
         );
+    }
+
+    private static IEnumerable<AITool> LedgerTools(IPipelineLedgerReader ledger)
+    {
+        yield return AIFunctionFactory.Create(
+            (
+                long entryCursor,
+                int offset = 0,
+                int limit = 16000,
+                string? stream = null,
+                CancellationToken cancellationToken = default
+            ) =>
+                stream is null
+                    ? ledger.ReadEntryAsync(entryCursor, offset, limit, cancellationToken)
+                    : ledger.ReadDiagnosticAsync(
+                        entryCursor,
+                        stream,
+                        offset,
+                        limit,
+                        cancellationToken
+                    ),
+            "read_ledger_entry",
+            "Read a durable entry using entryCursor from a command result or ledger listing. For readable command output specify stream stdout or stderr, then follow nextOffset until hasMore is false. Omit stream to read the raw record. Offsets are UTF-16 code units; captureTruncated indicates output lost at the hard capture limit."
+        );
+        yield return AIFunctionFactory.Create(
+            (
+                [System.ComponentModel.Description("Cursor returned by the previous page.")]
+                    long? cursor = null,
+                [System.ComponentModel.Description("Page size from 1 to 50.")] int limit = 20,
+                CancellationToken cancellationToken = default
+            ) => ledger.ReadAsync(cursor, limit, cancellationToken),
+            "read_ledger",
+            "Read accepted durable lifecycle history in order: claims, decisions, findings, checkpoints, state, and transitions. Repository and implementation claims in those records must be verified against the current repository before reliance."
+        );
+        yield return AIFunctionFactory.Create(
+            (
+                [System.ComponentModel.Description(
+                    "Case-insensitive text to find in accepted durable records."
+                )]
+                    string query,
+                [System.ComponentModel.Description("Cursor returned by the previous page.")]
+                    long? cursor = null,
+                [System.ComponentModel.Description("Page size from 1 to 50.")] int limit = 20,
+                CancellationToken cancellationToken = default
+            ) => ledger.SearchAsync(query, cursor, limit, cancellationToken),
+            "search_ledger",
+            "Search accepted durable lifecycle history for relevant prior claims, decisions, findings, constraints, checkpoints, and state, then use read_ledger to inspect surrounding records. A match does not establish current repository or implementation state."
+        );
+    }
+
+    private ChatOptions CreateChatOptions(string instructions, IReadOnlyList<AITool> tools)
+    {
+        var options = new ChatOptions { Instructions = instructions, Tools = tools.ToList() };
+        if (config.ModelRequestOptions is not { } request)
+        {
+            return options;
+        }
+
+        options.Reasoning = request.ReasoningEffort is { } effort
+            ? new ReasoningOptions
+            {
+                Effort = effort switch
+                {
+                    AgentReasoningEffort.None => ReasoningEffort.None,
+                    AgentReasoningEffort.Low => ReasoningEffort.Low,
+                    AgentReasoningEffort.Medium => ReasoningEffort.Medium,
+                    AgentReasoningEffort.High => ReasoningEffort.High,
+                    _ => throw new InvalidOperationException("Unknown reasoning effort."),
+                },
+            }
+            : null;
+        if (request.ReasoningMaxTokens is { } reasoningMaxTokens)
+        {
+            options.AdditionalProperties = new() { ["reasoningMaxTokens"] = reasoningMaxTokens };
+        }
+        options.Temperature = request.Temperature;
+        options.MaxOutputTokens = request.MaxOutputTokens;
+        return options;
     }
 
     private ResolvedAgentWorkspace? ResolveWorkspace(
@@ -1472,8 +1505,7 @@ internal sealed class AgentBlock<TState>(
             chatClientFactory is null
                 ? chatClient
                 : chatClientFactory(
-                    message.Runtime.AgentProfiles.GetValueOrDefault(config.StepId)?.ProfileName
-                        ?? config.ProfileName
+                    message.Runtime.Step(config.StepId).Profile?.ProfileName ?? config.ProfileName
                 )
         );
 
@@ -1532,43 +1564,39 @@ internal sealed class AgentBlock<TState>(
 
         return message with
         {
-            Runtime = message
-                .Runtime.WithoutSession(config.StepId)
-                .WithoutToolInvocations(config.StepId)
-                .WithoutUsage(config.StepId)
-                .WithoutProfile(config.StepId),
+            Runtime = message.Runtime.WithStep(
+                config.StepId,
+                step => step.WithoutConversation() with { Profile = null }
+            ),
         };
     }
 
     private PipelineRuntime ApplyPreInvocationPolicies(PipelineMessage<TState> message)
     {
         var runtime = message.Runtime;
-        if (!config.ContinueSession)
-        {
-            runtime = runtime
-                .WithoutSession(config.StepId)
-                .WithoutToolInvocations(config.StepId)
-                .WithoutUsage(config.StepId);
-        }
-
         var profile =
             config.ProfilePolicy?.Invoke(message.State)
             ?? new AgentProfileSelection(config.ProfileName, "Configured agent profile.");
-        if (
-            runtime.AgentProfiles.TryGetValue(config.StepId, out var currentProfile)
-            && !string.Equals(
-                currentProfile.ProfileName,
-                profile.ProfileName,
-                StringComparison.Ordinal
-            )
-        )
-        {
-            runtime = runtime
-                .WithoutSession(config.StepId)
-                .WithoutToolInvocations(config.StepId)
-                .WithoutUsage(config.StepId);
-        }
-        return runtime.WithProfile(config.StepId, profile);
+        return runtime.WithStep(
+            config.StepId,
+            step =>
+                (
+                    !config.ContinueSession
+                    || (
+                        step.Profile is { } current
+                        && !string.Equals(
+                            current.ProfileName,
+                            profile.ProfileName,
+                            StringComparison.Ordinal
+                        )
+                    )
+                        ? step.WithoutConversation()
+                        : step
+                ) with
+                {
+                    Profile = profile,
+                }
+        );
     }
 
     private async Task<PipelineRuntime> CaptureSessionAsync(
@@ -1579,28 +1607,16 @@ internal sealed class AgentBlock<TState>(
     )
     {
         var serialized = await agent.SerializeSessionAsync(session, cancellationToken: ct);
-        return runtime.WithSession(config.StepId, serialized);
+        return runtime.WithStep(config.StepId, step => step with { Session = serialized });
     }
-
-    private IReadOnlyList<ToolInvocationObservationDescriptor> RestoreToolInvocations(
-        PipelineRuntime runtime
-    ) =>
-        runtime.AgentToolInvocations.TryGetValue(config.StepId, out var serialized)
-            ? serialized
-                .Deserialize<PersistedToolInvocation[]>()!
-                .Select(invocation => invocation.ToDescriptor())
-                .ToArray()
-            : [];
 
     private PipelineRuntime CaptureToolInvocations(
         PipelineRuntime runtime,
         ToolOutcomeCollector collector
     ) =>
-        runtime.WithToolInvocations(
+        runtime.WithStep(
             config.StepId,
-            JsonSerializer.SerializeToElement(
-                collector.ToolInvocations.Select(PersistedToolInvocation.FromDescriptor).ToArray()
-            )
+            step => step with { ToolInvocations = collector.ToolInvocations }
         );
 
     private async Task<AgentSession> RestoreOrCreateSessionAsync(
@@ -1609,7 +1625,7 @@ internal sealed class AgentBlock<TState>(
         CancellationToken ct
     )
     {
-        if (runtime.AgentSessions.TryGetValue(config.StepId, out var serialized))
+        if (runtime.Step(config.StepId).Session is { } serialized)
         {
             return await agent.DeserializeSessionAsync(serialized, cancellationToken: ct);
         }
@@ -1617,63 +1633,5 @@ internal sealed class AgentBlock<TState>(
         return await agent.CreateSessionAsync(ct);
     }
 }
-
-internal sealed record PersistedToolInvocation(
-    string Name,
-    ToolEffect? Effect,
-    ToolEvidence? Evidence,
-    JsonElement Arguments,
-    ToolInvocationStatus Status,
-    PersistedProcessEvidence? Process
-)
-{
-    internal static PersistedToolInvocation FromDescriptor(
-        ToolInvocationObservationDescriptor invocation
-    ) =>
-        new(
-            invocation.Name,
-            invocation.Semantics?.Effect,
-            invocation.Semantics?.Evidence,
-            invocation.Arguments,
-            invocation.Status,
-            invocation.Result is ToolResultEvidenceDescriptor.Process process
-                ? new PersistedProcessEvidence(
-                    process.ExitCode,
-                    process.Stdout,
-                    process.Stderr,
-                    process.Duration,
-                    process.TimedOut,
-                    process.Truncated
-                )
-                : null
-        );
-
-    internal ToolInvocationObservationDescriptor ToDescriptor() =>
-        new(
-            Name,
-            Effect is { } effect ? new ToolSemantics(effect, Evidence ?? ToolEvidence.None) : null,
-            Arguments,
-            Status,
-            Process is { } process
-                ? new ToolResultEvidenceDescriptor.Process(
-                    process.ExitCode,
-                    process.Stdout,
-                    process.Stderr,
-                    process.Duration,
-                    process.TimedOut,
-                    process.Truncated
-                )
-                : null
-        );
-}
-
-internal sealed record PersistedProcessEvidence(
-    int ExitCode,
-    string Stdout,
-    string Stderr,
-    TimeSpan Duration,
-    bool TimedOut,
-    bool Truncated
-);
 
 #pragma warning restore MAAI001

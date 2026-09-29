@@ -589,8 +589,15 @@ public sealed class LocalCapabilityTests
         );
         var runtime = PipelineRuntime
             .Create(Guid.CreateVersion7())
-            .WithUsage("agent", new AgentUsage(90, 0, 90, 100))
-            .WithGateLatch("agent", "checkpoint-required");
+            .WithStep(
+                "agent",
+                step =>
+                    step with
+                    {
+                        Usage = new AgentUsage(90, 0, 90, 100),
+                        Latches = step.Latches.Add("checkpoint-required"),
+                    }
+            );
 
         var output = await block.ExecuteAsync(
             new PipelineMessage<TestState>(runtime, new TestState(0)),
@@ -614,8 +621,8 @@ public sealed class LocalCapabilityTests
             );
         output.State.Count.Should().Be(5);
         output.LatestOutcome!.Kind.Should().Be(CapabilityKind("checkpoint"));
-        output.Runtime.AgentSessions.Should().NotContainKey("agent");
-        output.Runtime.AgentUsage.Should().NotContainKey("agent");
+        output.Runtime.Step("agent").Session.Should().BeNull();
+        output.Runtime.Step("agent").Usage.Should().BeNull();
     }
 
     [Fact]
@@ -690,8 +697,8 @@ public sealed class LocalCapabilityTests
 
         client.CallCount.Should().Be(2);
         output.Runtime.IsGateLatched("agent", "checkpoint-required").Should().BeFalse();
-        output.Runtime.AgentSessions.Should().NotContainKey("agent");
-        output.Runtime.AgentUsage.Should().NotContainKey("agent");
+        output.Runtime.Step("agent").Session.Should().BeNull();
+        output.Runtime.Step("agent").Usage.Should().BeNull();
         output.State.Count.Should().Be(1);
     }
 

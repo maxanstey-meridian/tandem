@@ -682,7 +682,8 @@ public sealed class AgentBuilder<TState>
             _stateGuards,
             _latchedGates,
             _skills,
-            _contextBudget
+            _contextBudget,
+            _modelRequestOptions
         );
 
         return new AgentDefinition<TState>(
@@ -696,39 +697,9 @@ public sealed class AgentBuilder<TState>
                     _chatClient,
                     _toolInterceptor,
                     _configureChatOptions,
-                    _chatClientFactory,
-                    ConfigureModelRequestOptions
+                    _chatClientFactory
                 )
             )
         );
-    }
-
-    private void ConfigureModelRequestOptions(ChatOptions options)
-    {
-        if (_modelRequestOptions is not { } request)
-        {
-            return;
-        }
-
-        options.Reasoning = request.ReasoningEffort is { } effort
-            ? new ReasoningOptions
-            {
-                Effort = effort switch
-                {
-                    AgentReasoningEffort.None => ReasoningEffort.None,
-                    AgentReasoningEffort.Low => ReasoningEffort.Low,
-                    AgentReasoningEffort.Medium => ReasoningEffort.Medium,
-                    AgentReasoningEffort.High => ReasoningEffort.High,
-                    _ => throw new InvalidOperationException("Unknown reasoning effort."),
-                },
-            }
-            : null;
-        if (request.ReasoningMaxTokens is { } reasoningMaxTokens)
-        {
-            options.AdditionalProperties ??= [];
-            options.AdditionalProperties["reasoningMaxTokens"] = reasoningMaxTokens;
-        }
-        options.Temperature = request.Temperature;
-        options.MaxOutputTokens = request.MaxOutputTokens;
     }
 }
