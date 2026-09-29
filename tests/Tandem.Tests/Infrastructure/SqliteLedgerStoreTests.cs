@@ -797,7 +797,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         var runId = Guid.CreateVersion7();
         var stage = new WaitForeverStage();
         var pipeline = Pipeline.Start(stage, "sqlite-cancelled-run").Build(stage);
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        using var cancellation = new CancellationTokenSource();
 
         var act = async () =>
             await new PipelineRunner().RunAsync(
@@ -806,7 +806,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
                 new SqlitePipelineRunOptions(
                     path,
                     runId,
-                    Observer: new BreakLedgerAfterCancellationObserver(path)
+                    Observer: new BreakLedgerAfterCancellationObserver(path, cancellation)
                 ),
                 cancellation.Token
             );
@@ -1131,14 +1131,21 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         }
     }
 
-    private sealed class BreakLedgerAfterCancellationObserver(string databasePath)
-        : IPipelineObserver
+    /// <summary>Cancels the run once its step has started, then breaks the ledger file.</summary>
+    private sealed class BreakLedgerAfterCancellationObserver(
+        string databasePath,
+        CancellationTokenSource runCancellation
+    ) : IPipelineObserver
     {
         public ValueTask ObserveAsync(
             PipelineObservation observation,
             CancellationToken cancellationToken
         )
         {
+            if (observation is PipelineStepStarted)
+            {
+                runCancellation.Cancel();
+            }
             if (observation is PipelineStepCancelled)
             {
                 foreach (var suffix in new[] { "", "-shm", "-wal" })
