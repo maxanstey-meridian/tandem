@@ -73,7 +73,7 @@ internal static class StructuredOutputDescriptors
                 : (message, result, tools, _, _, attempt) =>
                     acceptancePolicy(
                             new StructuredOutputAcceptanceObservation<TState>(
-                                ToContext(message),
+                                AgentMessageContext<TState>.From(message),
                                 ToPublic(result),
                                 tools.Select(tool => tool.Name).ToHashSet(StringComparer.Ordinal),
                                 attempt
@@ -109,7 +109,7 @@ internal static class StructuredOutputDescriptors
                 ]
             : acceptance(
                     new OutputAcceptanceObservation<TState, TOutput>(
-                        ToContext(message),
+                        AgentMessageContext<TState>.From(message),
                         acceptedOutputId,
                         output,
                         tools.Select(ToPublic).ToHashSet(),
@@ -134,7 +134,7 @@ internal static class StructuredOutputDescriptors
             result.Candidate is TOutput output
                 ? acceptance(
                     new OutputAcceptanceObservation<TState, TOutput>(
-                        ToContext(message),
+                        AgentMessageContext<TState>.From(message),
                         acceptedOutputId,
                         output,
                         tools.Select(ToPublic).ToHashSet(),
@@ -192,21 +192,6 @@ internal static class StructuredOutputDescriptors
                 .ToArray(),
             result.RawResponse,
             result.Candidate
-        );
-
-    private static AgentMessageContext<TState> ToContext<TState>(PipelineMessage<TState> message) =>
-        new(
-            message.Runtime.RunId,
-            message.State,
-            message.LatestOutcome is { } outcome
-                ? new AgentMessageOutcome(
-                    outcome.Kind,
-                    outcome.StepId,
-                    outcome.Summary,
-                    outcome.Payload,
-                    outcome.Duration
-                )
-                : null
         );
 
     private static ToolObservation ToPublic(Infrastructure.ToolObservationDescriptor observation) =>

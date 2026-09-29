@@ -66,37 +66,24 @@ M Tandem.Advanced.AgentConversationDecision <Clone>$()
 P Tandem.Advanced.AgentConversationRetention Retention { get; set; }
 T Tandem.Advanced.AgentConversationPolicy<TState>
 C (System.Object object, System.IntPtr method)
-M System.IAsyncResult BeginInvoke(Tandem.Advanced.AgentMessageContext<TState> context, Tandem.Advanced.AgentMessageOutcome outcome, System.AsyncCallback callback, System.Object object)
+M System.IAsyncResult BeginInvoke(Tandem.Advanced.AgentMessageContext<TState> context, Tandem.Advanced.OperationOutcome outcome, System.AsyncCallback callback, System.Object object)
 M Tandem.Advanced.AgentConversationDecision EndInvoke(System.IAsyncResult result)
-M Tandem.Advanced.AgentConversationDecision Invoke(Tandem.Advanced.AgentMessageContext<TState> context, Tandem.Advanced.AgentMessageOutcome outcome)
+M Tandem.Advanced.AgentConversationDecision Invoke(Tandem.Advanced.AgentMessageContext<TState> context, Tandem.Advanced.OperationOutcome outcome)
 T Tandem.Advanced.AgentConversationRetention
 F System.Int32 value__
 F static Tandem.Advanced.AgentConversationRetention Discard
 F static Tandem.Advanced.AgentConversationRetention Retain
 T Tandem.Advanced.AgentMessageContext<TState>
-C (System.Guid RunId, TState State, Tandem.Advanced.AgentMessageOutcome? LatestOutcome)
+C (System.Guid RunId, TState State, Tandem.Advanced.OperationOutcome? LatestOutcome)
 M System.Boolean Equals(System.Object? obj)
 M System.Boolean Equals(Tandem.Advanced.AgentMessageContext<TState>? other)
 M System.Int32 GetHashCode()
 M System.String ToString()
-M System.Void Deconstruct(out System.Guid RunId, out TState State, out Tandem.Advanced.AgentMessageOutcome? LatestOutcome)
+M System.Void Deconstruct(out System.Guid RunId, out TState State, out Tandem.Advanced.OperationOutcome? LatestOutcome)
 M Tandem.Advanced.AgentMessageContext<TState> <Clone>$()
 P System.Guid RunId { get; set; }
 P TState State { get; set; }
-P Tandem.Advanced.AgentMessageOutcome? LatestOutcome { get; set; }
-T Tandem.Advanced.AgentMessageOutcome
-C (System.String Kind, System.String StepId, System.String Summary, System.Text.Json.JsonElement Payload, System.TimeSpan Duration)
-M System.Boolean Equals(System.Object? obj)
-M System.Boolean Equals(Tandem.Advanced.AgentMessageOutcome? other)
-M System.Int32 GetHashCode()
-M System.String ToString()
-M System.Void Deconstruct(out System.String Kind, out System.String StepId, out System.String Summary, out System.Text.Json.JsonElement Payload, out System.TimeSpan Duration)
-M Tandem.Advanced.AgentMessageOutcome <Clone>$()
-P System.String Kind { get; set; }
-P System.String StepId { get; set; }
-P System.String Summary { get; set; }
-P System.Text.Json.JsonElement Payload { get; set; }
-P System.TimeSpan Duration { get; set; }
+P Tandem.Advanced.OperationOutcome? LatestOutcome { get; set; }
 T Tandem.Advanced.AgentProfileDecision
 C (System.String ProfileName, System.String Reason)
 M System.Boolean Equals(System.Object? obj)

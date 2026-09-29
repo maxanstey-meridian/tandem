@@ -91,19 +91,19 @@ public sealed class PipelineOperationContext<TState>
         ) ?? ValueTask.CompletedTask;
 }
 
-public sealed record AgentMessageOutcome(
-    string Kind,
-    string StepId,
-    string Summary,
-    JsonElement Payload,
-    TimeSpan Duration
-);
-
 public sealed record AgentMessageContext<TState>(
     Guid RunId,
     TState State,
-    AgentMessageOutcome? LatestOutcome
-);
+    OperationOutcome? LatestOutcome
+)
+{
+    internal static AgentMessageContext<TState> From(PipelineMessage<TState> message) =>
+        new(
+            message.Runtime.RunId,
+            message.State,
+            message.LatestOutcome is { } outcome ? OperationOutcome.From(outcome) : null
+        );
+}
 
 public enum AgentConversationRetention
 {
@@ -115,7 +115,7 @@ public sealed record AgentConversationDecision(AgentConversationRetention Retent
 
 public delegate AgentConversationDecision AgentConversationPolicy<TState>(
     AgentMessageContext<TState> context,
-    AgentMessageOutcome outcome
+    OperationOutcome outcome
 );
 
 public abstract record ToolInterceptionResult
@@ -717,7 +717,7 @@ public static class AdvancedAgentBuilderExtensions
                 : async (message, toolName, effect, arguments, cancellationToken) =>
                 {
                     var result = await toolInterceptor(
-                        ToContext(message),
+                        AgentMessageContext<TState>.From(message),
                         new ToolInvocation(
                             toolName,
                             effect switch
@@ -857,7 +857,8 @@ public static class AdvancedAgentBuilderExtensions
         MessageAugmentation<TState> augmentation
     ) =>
         builder.ConfigureMessageAugmentation(
-            (message, cancellationToken) => augmentation(ToContext(message), cancellationToken)
+            (message, cancellationToken) =>
+                augmentation(AgentMessageContext<TState>.From(message), cancellationToken)
         );
 
     public static AgentBuilder<TState> WithContinuationPolicy<TState>(
@@ -878,7 +879,7 @@ public static class AdvancedAgentBuilderExtensions
                 {
                     var directive = await policy.Continue(
                         new AgentTurnObservation<TState>(
-                            ToContext(message),
+                            AgentMessageContext<TState>.From(message),
                             assistantText,
                             toolNames,
                             hasAcceptedLifecycleOutcome,
@@ -912,19 +913,11 @@ public static class AdvancedAgentBuilderExtensions
     ) =>
         builder.ConfigureConversationPolicy(
             (message, outcome) =>
-                policy(ToContext(message), ToOutcome(outcome)).Retention
-                == AgentConversationRetention.Retain
+                policy(
+                    AgentMessageContext<TState>.From(message),
+                    OperationOutcome.From(outcome)
+                ).Retention == AgentConversationRetention.Retain
         );
-
-    private static AgentMessageContext<TState> ToContext<TState>(PipelineMessage<TState> message) =>
-        new(
-            message.Runtime.RunId,
-            message.State,
-            message.LatestOutcome is { } outcome ? ToOutcome(outcome) : null
-        );
-
-    private static AgentMessageOutcome ToOutcome(BlockOutcome outcome) =>
-        new(outcome.Kind, outcome.StepId, outcome.Summary, outcome.Payload, outcome.Duration);
 }
 
 public static class PipelineOperation

@@ -8,7 +8,7 @@ public static class DebatePolicies
 {
     public static AgentConversationDecision DiscardJudgeAfterVerdict(
         AgentMessageContext<DebateState> _,
-        AgentMessageOutcome __
+        OperationOutcome __
     ) => new(AgentConversationRetention.Discard);
 }
 
