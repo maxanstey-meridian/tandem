@@ -29,16 +29,17 @@ internal abstract record RunEnvelope(Guid RunId)
     }
 
     /// <summary>
-    /// Maps a run's failure. An operation cancelled without the run being cancelled, such as a
-    /// timeout, is a fault.
+    /// Maps a run's failure. Once the run is cancelled, whatever its callbacks and steps raised
+    /// while stopping (an <see cref="OperationCanceledException"/>, a JavaScript AbortError, an
+    /// aggregate of either) is cancellation; an operation cancelled while the run was not, such as
+    /// a timeout, is a fault.
     /// </summary>
     public static RunEnvelope Ended(Guid runId, Exception failure, bool runCancelled) =>
-        Find<CallbackContractException>(failure) is { } callback
+        FindCallbackContract(failure) is { } callback
             ? new RunContractViolated(runId, callback.Boundary, callback.Problems)
         : failure is RegistrationContractException registration
             ? new RunContractViolated(runId, "registration contract", registration.Problems)
-        : runCancelled && Find<OperationCanceledException>(failure) is { } cancellation
-            ? new RunCancelled(runId, cancellation.Message)
+        : runCancelled ? new RunCancelled(runId)
         : new RunFaulted(
             runId,
             (
@@ -46,15 +47,14 @@ internal abstract record RunEnvelope(Guid RunId)
             ).ToString()
         );
 
-    private static T? Find<T>(Exception exception)
-        where T : Exception =>
+    private static CallbackContractException? FindCallbackContract(Exception exception) =>
         exception switch
         {
-            T match => match,
+            CallbackContractException contract => contract,
             AggregateException aggregate => aggregate
-                .InnerExceptions.Select(Find<T>)
-                .FirstOrDefault(match => match is not null),
-            { InnerException: { } inner } => Find<T>(inner),
+                .InnerExceptions.Select(FindCallbackContract)
+                .FirstOrDefault(contract => contract is not null),
+            { InnerException: { } inner } => FindCallbackContract(inner),
             _ => null,
         };
 }
@@ -65,7 +65,7 @@ internal sealed record RunSucceeded(Guid RunId, JsonElement State, string? Summa
 internal sealed record RunFailed(Guid RunId, JsonElement State, string? Summary)
     : RunEnvelope(RunId);
 
-internal sealed record RunCancelled(Guid RunId, string Message) : RunEnvelope(RunId);
+internal sealed record RunCancelled(Guid RunId) : RunEnvelope(RunId);
 
 internal sealed record RunContractViolated(
     Guid RunId,

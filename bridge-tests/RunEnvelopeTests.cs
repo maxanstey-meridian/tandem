@@ -125,7 +125,9 @@ public sealed class RunEnvelopeTests
         Assert.Contains("Timed out.", envelope.GetProperty("message").GetString());
     }
 
-    public static TheoryData<string> Cancellations => ["operation", "task", "aggregate"];
+    // "abort-error" is a JavaScript callback that observes its aborted signal and fails.
+    public static TheoryData<string> Cancellations =>
+        ["operation", "task", "aggregate", "abort-error"];
 
     [Theory]
     [MemberData(nameof(Cancellations))]
@@ -152,10 +154,20 @@ public sealed class RunEnvelopeTests
             {
                 throw new AggregateException(exception);
             }
+            catch (TaskCanceledException) when (surfaced == "abort-error")
+            {
+                return JsonSerializer.Serialize(
+                    new
+                    {
+                        succeeded = false,
+                        error = new { name = "AbortError", message = "This operation was aborted" },
+                    }
+                );
+            }
         }
 
         var run = RunAsync(
-            Graph("completion"),
+            WaitingGraph(),
             (callback, token) => callback == "work" ? Work(token) : Task.FromResult(Value("")),
             cancellation.Token
         );
@@ -214,6 +226,15 @@ public sealed class RunEnvelopeTests
              "nodes":[{"id":"work","kind":"stage","runCallback":"work"},
                       {"id":"end","kind":"{{terminal}}","summaryCallback":"summary"}],
              "routes":[{"source":"work","target":"end","label":"ended"}],"outputs":["end"]}
+            """;
+
+    private static string WaitingGraph() =>
+        """
+            {"contractVersion":10,"name":"envelope","start":"wait","initialState":"{}",
+             "nodes":[{"id":"wait","kind":"interaction","requestCallback":"request","applyCallback":"apply"},
+                      {"id":"end","kind":"completion","summaryCallback":"summary"}],
+             "routes":[{"source":"wait","target":"end","label":"answered"}],"outputs":["end"],
+             "interactionHandlers":[{"id":"handler","target":"wait","handleCallback":"work"}]}
             """;
 
     private static string Value(string value) =>

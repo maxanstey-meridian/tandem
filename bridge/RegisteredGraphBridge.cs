@@ -69,7 +69,9 @@ public static partial class NodePipelineBridge
             // SQLite's async APIs perform synchronous I/O. A busy wait must not block
             // Node's thread while another run needs a JS callback to finish acceptance.
             // CallbackDispatcher already marshals authored callbacks to that thread.
-            var result = await Task.Run(
+            // The run returns JSON so that no Tandem type reaches this method's state machine:
+            // compiling it would load Tandem before PreloadDependencies runs.
+            return await Task.Run(
                 () =>
                     RunRegisteredGraphCoreAsync(
                         runId,
@@ -80,7 +82,6 @@ public static partial class NodePipelineBridge
                     ),
                 cancellationToken
             );
-            return RunEnvelope.Completed(result).ToJson();
         }
         catch (Exception exception)
         {
@@ -90,7 +91,7 @@ public static partial class NodePipelineBridge
         }
     }
 
-    private static async Task<PipelineRunResult<JavaScriptState>> RunRegisteredGraphCoreAsync(
+    private static async Task<string> RunRegisteredGraphCoreAsync(
         Guid runId,
         RegisteredGraphContract definition,
         CallbackDispatcher callbacks,
@@ -138,15 +139,20 @@ public static partial class NodePipelineBridge
         var initialState = new JavaScriptState(definition.InitialState);
         if (definition.Presentation != RegisteredPresentation.Terminal)
         {
-            return store is null
-                ? await runner.RunAsync(pipeline, initialState, options, cancellationToken)
-                : await store.RecordRunAsync(
-                    runId,
-                    () => runner.RunAsync(pipeline, initialState, options, cancellationToken)
-                );
+            return RunEnvelope
+                .Completed(
+                    store is null
+                        ? await runner.RunAsync(pipeline, initialState, options, cancellationToken)
+                        : await store.RecordRunAsync(
+                            runId,
+                            () =>
+                                runner.RunAsync(pipeline, initialState, options, cancellationToken)
+                        )
+                )
+                .ToJson();
         }
         // The terminal records the ledger status before its display waits for the user.
-        return await runner.RunWithTerminalAsync(
+        var result = await runner.RunWithTerminalAsync(
             pipeline,
             initialState,
             new TerminalPipelineRunOptions
@@ -171,6 +177,7 @@ public static partial class NodePipelineBridge
             },
             cancellationToken
         );
+        return RunEnvelope.Completed(result).ToJson();
     }
 
     /// <summary>
