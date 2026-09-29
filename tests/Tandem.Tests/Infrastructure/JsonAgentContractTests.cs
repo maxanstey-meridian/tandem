@@ -110,10 +110,7 @@ public sealed class JsonAgentContractTests
     [Fact]
     public async Task JsonOutput_MalformedThenInvalid_FailsClosedWithoutMapping()
     {
-        var client = new ScriptedChatClient([
-            Response("not json"),
-            .. Enumerable.Repeat(Response("[]"), 2),
-        ]);
+        var client = new ScriptedChatClient(Response("not json"), Response("[]"));
         var mappings = 0;
         var agent = Agent
             .Create<JsonState>("agent", "Decide.", client)
@@ -135,7 +132,7 @@ public sealed class JsonAgentContractTests
 
         result.Status.Should().Be(PipelineRunStatus.Failed);
         mappings.Should().Be(0);
-        client.CallCount.Should().Be(3);
+        client.CallCount.Should().Be(2);
     }
 
     [Fact]

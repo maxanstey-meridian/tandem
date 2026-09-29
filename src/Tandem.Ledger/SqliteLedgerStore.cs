@@ -536,6 +536,53 @@ public sealed class SqliteLedgerStore
         return CreateObserverAsync(runId, pipeline.Inspect().Name, cancellationToken);
     }
 
+    public async ValueTask<IReadOnlyList<RuntimeJournalRecord>> ReadAcceptedAsync(
+        Guid runId,
+        CancellationToken cancellationToken = default
+    )
+    {
+        await using var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder
+            {
+                DataSource = _databasePath,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false,
+            }.ToString()
+        );
+        await connection.OpenAsync(cancellationToken);
+        await ReadRunAsync(connection, runId, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT payload FROM run_entries WHERE run_id = $run_id AND stream = $stream ORDER BY rowid;";
+        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
+        command.Parameters.AddWithValue("$stream", PipelineJournal.Stream.Name);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var accepted = new List<RuntimeJournalRecord>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            RuntimeJournalRecord? record;
+            try
+            {
+                record = JsonSerializer.Deserialize<RuntimeJournalRecord>(
+                    (byte[])reader[0],
+                    _serializerOptions
+                );
+            }
+            catch (JsonException exception)
+            {
+                throw new LedgerDataException(
+                    $"Run '{runId:N}' contains a malformed pipeline journal record.",
+                    exception
+                );
+            }
+            if (record is not null && PipelineJournal.IsAccepted(record))
+            {
+                accepted.Add(record);
+            }
+        }
+        return accepted;
+    }
+
     public async ValueTask<AcceptedPipelineValue<TValue>?> ReadLatestAcceptedAsync<TValue>(
         Guid runId,
         string stepId,

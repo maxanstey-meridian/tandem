@@ -1238,10 +1238,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         string value
     )
     {
-        var worker = Path.GetFullPath(
-            "../../../../Tandem.Ledger.TestWorker/bin/Debug/net10.0/Tandem.Ledger.TestWorker.dll",
-            AppContext.BaseDirectory
-        );
+        var worker = Path.Combine(AppContext.BaseDirectory, "Tandem.Ledger.TestWorker.dll");
         using var process = new Process
         {
             StartInfo = new ProcessStartInfo

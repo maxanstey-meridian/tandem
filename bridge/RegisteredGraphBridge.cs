@@ -1,6 +1,5 @@
 using System.Runtime.Loader;
 using System.Text.Json;
-using Microsoft.Data.Sqlite;
 using Tandem.Advanced;
 using Tandem.Ledger;
 using Tandem.Terminal;
@@ -10,55 +9,27 @@ namespace Tandem.NodeApiSpike;
 public static partial class NodePipelineBridge
 {
     /// <summary>Reads accepted semantic journal values from a packaged SQLite ledger.</summary>
-    public static async Task<string> InspectAcceptedAsync(string ledgerPath, string runId)
+    public static Task<string> InspectAcceptedAsync(string ledgerPath, string runId)
     {
         if (!Guid.TryParse(runId, out var parsedRunId))
         {
             throw new ArgumentException("runId must be a GUID.", nameof(runId));
         }
+        PreloadDependencies();
+        return InspectAcceptedCoreAsync(ledgerPath, parsedRunId);
+    }
 
-        var connectionString = new SqliteConnectionStringBuilder
+    private static async Task<string> InspectAcceptedCoreAsync(string ledgerPath, Guid runId)
+    {
+        var records = await new SqliteLedgerStore(ledgerPath).ReadAcceptedAsync(runId);
+        var accepted = records.Select(record => new
         {
-            DataSource = Path.GetFullPath(ledgerPath),
-            Mode = SqliteOpenMode.ReadOnly,
-        }.ToString();
-        await using var connection = new SqliteConnection(connectionString);
-        await connection.OpenAsync();
-        await using (var run = connection.CreateCommand())
-        {
-            run.CommandText = "SELECT EXISTS(SELECT 1 FROM runs WHERE run_id = $run_id)";
-            run.Parameters.AddWithValue("$run_id", parsedRunId.ToString("N"));
-            if (Convert.ToInt64(await run.ExecuteScalarAsync()) == 0)
-            {
-                throw new KeyNotFoundException($"Run '{runId}' does not exist.");
-            }
-        }
-        await using var command = connection.CreateCommand();
-        command.CommandText =
-            "SELECT payload FROM run_entries WHERE run_id = $run_id ORDER BY sequence";
-        command.Parameters.AddWithValue("$run_id", parsedRunId.ToString("N"));
-        await using var reader = await command.ExecuteReaderAsync();
-        var accepted = new List<object>();
-        while (await reader.ReadAsync())
-        {
-            var record = JsonSerializer.Deserialize<RuntimeJournalRecord>(
-                (byte[])reader[0],
-                TandemJson.CreateTypedContract()
-            );
-            if (record is not null && PipelineJournal.IsAccepted(record))
-            {
-                accepted.Add(
-                    new
-                    {
-                        kind = record.Kind.ToString(),
-                        record.StepId,
-                        record.VisitId,
-                        record.ValueType,
-                        record.Payload,
-                    }
-                );
-            }
-        }
+            kind = record.Kind.ToString(),
+            record.StepId,
+            record.VisitId,
+            record.ValueType,
+            record.Payload,
+        });
         return JsonSerializer.Serialize(accepted, TandemJson.CreateTypedContract());
     }
 

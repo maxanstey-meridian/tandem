@@ -92,30 +92,52 @@ public static class TerminalPipelineRunner
             await display.WaitForCleanupAsync(CancellationToken.None);
             return result;
         }
-        catch (OperationCanceledException) when (runCancellation.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (runCancellation.IsCancellationRequested)
         {
             await display.CancelledAsync("Run cancelled");
-            await TerminalizeAsync(TerminalPipelineStatus.Cancelled, "Run cancelled");
+            await TerminalizeFailureAsync(
+                TerminalPipelineStatus.Cancelled,
+                "Run cancelled",
+                exception
+            );
             await display.WaitForCleanupAsync(CancellationToken.None);
             throw;
         }
         catch (Exception exception)
         {
             await display.FaultedAsync(exception.Message);
+            await TerminalizeFailureAsync(
+                TerminalPipelineStatus.Faulted,
+                exception.Message,
+                exception
+            );
+            await display.WaitForCleanupAsync(CancellationToken.None);
+            throw;
+        }
+
+        async ValueTask TerminalizeFailureAsync(
+            TerminalPipelineStatus status,
+            string summary,
+            Exception activeFailure
+        )
+        {
             try
             {
                 await TerminalizeAsync(
-                    TerminalPipelineStatus.Faulted,
-                    exception.Message,
-                    exception
+                    status,
+                    summary,
+                    status == TerminalPipelineStatus.Faulted ? activeFailure : null
                 );
             }
-            catch
+            catch (Exception terminalizationFailure)
             {
-                // Preserve the active execution failure when terminalization also fails.
+                await display.WaitForCleanupAsync(CancellationToken.None);
+                throw new AggregateException(
+                    "Pipeline execution and run terminalization both failed.",
+                    activeFailure,
+                    terminalizationFailure
+                );
             }
-            await display.WaitForCleanupAsync(CancellationToken.None);
-            throw;
         }
 
         ValueTask TerminalizeAsync(

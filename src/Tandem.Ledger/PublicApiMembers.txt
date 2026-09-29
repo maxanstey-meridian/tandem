@@ -150,6 +150,7 @@ P Tandem.Ledger.SqliteLedgerOptions Default { get; }
 T Tandem.Ledger.SqliteLedgerStore
 C (System.String databasePath, System.TimeProvider? timeProvider = null, System.Text.Json.JsonSerializerOptions? serializerOptions = null, Tandem.Ledger.SqliteLedgerOptions? options = null)
 M System.Threading.Tasks.ValueTask InitializeAsync(System.Threading.CancellationToken cancellationToken = default)
+M System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Tandem.Ledger.RuntimeJournalRecord>> ReadAcceptedAsync(System.Guid runId, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<T> ExecuteAsync<T>(System.Func<System.Threading.CancellationToken,System.Threading.Tasks.ValueTask<T>> operation, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.AcceptedPipelineValue<TValue>?> ReadLatestAcceptedAsync<TValue>(System.Guid runId, System.String stepId, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<Tandem.Ledger.AcceptedPipelineValue<TValue>?> ReadLatestAcceptedAsync<TValue>(System.Guid runId, System.Threading.CancellationToken cancellationToken = default)

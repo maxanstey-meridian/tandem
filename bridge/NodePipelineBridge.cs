@@ -8,7 +8,6 @@ namespace Tandem.NodeApiSpike;
 [JSExport]
 public static partial class NodePipelineBridge
 {
-    private static readonly List<nint> _nativeLibraries = [];
     private static readonly object _dependencyLock = new();
     private static bool _dependenciesConfigured;
 
@@ -24,6 +23,9 @@ public static partial class NodePipelineBridge
         }
     }
 
+    // node-api-dotnet resolves missing assemblies by calling back into JavaScript, which
+    // fails off Node's thread (0x80131509). Runs move to the thread pool, so every bundled
+    // assembly is loaded up front, on Node's thread, into the default context.
     private static void LoadManagedDependencies()
     {
         var loaded = AppDomain
@@ -42,15 +44,17 @@ public static partial class NodePipelineBridge
 
     private static nint ResolveNativeDependency(System.Reflection.Assembly assembly, string name)
     {
-        if (!name.Contains("e_sqlite3", StringComparison.Ordinal))
-            return 0;
-        var path = Path.Combine(RuntimeDirectory(), "libe_sqlite3.dylib");
-        if (!File.Exists(path))
-            return 0;
-        var handle = NativeLibrary.Load(path, assembly, null);
-        _nativeLibraries.Add(handle);
-        return handle;
+        var path = Path.Combine(
+            RuntimeDirectory(),
+            NativeLibraryFileName(name, RuntimeInformation.RuntimeIdentifier)
+        );
+        return NativeLibrary.TryLoad(path, out var handle) ? handle : 0;
     }
+
+    internal static string NativeLibraryFileName(string name, string runtimeIdentifier) =>
+        runtimeIdentifier.StartsWith("win", StringComparison.Ordinal) ? $"{name}.dll"
+        : runtimeIdentifier.StartsWith("osx", StringComparison.Ordinal) ? $"lib{name}.dylib"
+        : $"lib{name}.so";
 
     private static string RuntimeDirectory() =>
         Path.GetDirectoryName(typeof(NodePipelineBridge).Assembly.Location)

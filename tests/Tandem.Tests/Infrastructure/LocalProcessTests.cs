@@ -201,10 +201,7 @@ public sealed class LocalProcessTests
         );
 
     private static string ChildAssemblyPath() =>
-        Path.GetFullPath(
-            "../../../../Tandem.Process.TestChild/bin/Debug/net10.0/Tandem.Process.TestChild.dll",
-            AppContext.BaseDirectory
-        );
+        Path.Combine(AppContext.BaseDirectory, "Tandem.Process.TestChild.dll");
 
     private static string MissingExecutable() => $"tandem-missing-{Guid.NewGuid():N}";
 

@@ -32,21 +32,34 @@ internal sealed class AgentBlock<TState>(
         declareCrossRunShareable: true
     )
 {
-    private const int StructuredOutputCorrectionLimit = 2;
+    private const int StructuredOutputCorrectionLimit = 1;
     private static readonly TimeSpan _modelStreamIdleTimeout = TimeSpan.FromMinutes(20);
-    private static readonly HashSet<string> _reservedWorkspaceToolNames =
+    private static readonly Dictionary<string, WorkspaceToolKind> _fileToolKinds = new(
+        StringComparer.Ordinal
+    )
+    {
+        ["read_file"] = WorkspaceToolKind.ReadFile,
+        ["ls"] = WorkspaceToolKind.ListFiles,
+        ["grep"] = WorkspaceToolKind.Grep,
+        ["write_file"] = WorkspaceToolKind.WriteFile,
+        ["delete_file"] = WorkspaceToolKind.DeleteFile,
+        ["replace"] = WorkspaceToolKind.Replace,
+        ["replace_lines"] = WorkspaceToolKind.ReplaceLines,
+        ["copy_file"] = WorkspaceToolKind.CopyFile,
+        ["move_file"] = WorkspaceToolKind.MoveFile,
+        ["create_directory"] = WorkspaceToolKind.CreateDirectory,
+    };
+    private static readonly HashSet<string> _workspaceToolGroups =
     [
-        "read_file",
-        "ls",
-        "grep",
-        "write_file",
-        "delete_file",
-        "replace",
-        "replace_lines",
         "git:ro",
         "shell",
         "web_search",
         "web_fetch",
+    ];
+    private static readonly HashSet<string> _reservedWorkspaceToolNames =
+    [
+        .. _fileToolKinds.Keys,
+        .. _workspaceToolGroups,
         "git_status",
         "git_diff",
         "git_log",
@@ -1202,7 +1215,7 @@ internal sealed class AgentBlock<TState>(
                             new BlockOutcome(
                                 "agent.failed",
                                 config.StepId,
-                                $"Structured output remained invalid after {StructuredOutputCorrectionLimit} corrections.",
+                                "Structured output remained invalid after its corrective response.",
                                 JsonSerializer.SerializeToElement(
                                     new
                                     {
@@ -1534,24 +1547,13 @@ internal sealed class AgentBlock<TState>(
         var fileTools = new HashSet<WorkspaceToolKind>();
         foreach (var name in selectedNames)
         {
-            var kind = name switch
-            {
-                "read_file" => WorkspaceToolKind.ReadFile,
-                "ls" => WorkspaceToolKind.ListFiles,
-                "grep" => WorkspaceToolKind.Grep,
-                "write_file" => WorkspaceToolKind.WriteFile,
-                "delete_file" => WorkspaceToolKind.DeleteFile,
-                "replace" => WorkspaceToolKind.Replace,
-                "replace_lines" => WorkspaceToolKind.ReplaceLines,
-                "copy_file" => WorkspaceToolKind.CopyFile,
-                "move_file" => WorkspaceToolKind.MoveFile,
-                "create_directory" => WorkspaceToolKind.CreateDirectory,
-                "git:ro" or "shell" or "web_search" or "web_fetch" => default,
-                _ => throw new InvalidOperationException($"Unknown workspace tool '{name}'."),
-            };
-            if (name is not "git:ro" and not "shell" and not "web_search" and not "web_fetch")
+            if (_fileToolKinds.TryGetValue(name, out var kind))
             {
                 fileTools.Add(kind);
+            }
+            else if (!_workspaceToolGroups.Contains(name))
+            {
+                throw new InvalidOperationException($"Unknown workspace tool '{name}'.");
             }
         }
         return new ResolvedAgentWorkspace(

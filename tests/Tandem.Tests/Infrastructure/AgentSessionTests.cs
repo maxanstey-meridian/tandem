@@ -227,6 +227,32 @@ public sealed class AgentSessionTests
             );
     }
 
+    [Fact]
+    public async Task StructuredOutput_GetsOneCorrectiveResponse_ThenFailsClosed()
+    {
+        var client = new RecordingChatClient("{\"value\":0}", "{\"value\":0}", "{\"value\":0}");
+        var agent = Agent
+            .Create<ExampleState>("agent", "Respond.", client)
+            .WithMessage(_ => "live request")
+            .WithOutput(
+                new ExampleOutputDefinition(),
+                (state, output) => state with { Value = output.Value }
+            )
+            .Build();
+        var complete = PipelineNodes.Complete(new TestCompletion<ExampleState>("complete"));
+        var failed = PipelineNodes.Failed(new TestFailure<ExampleState>("failed"));
+        var pipeline = Pipeline
+            .Start(agent, "one-correction")
+            .Route(agent.Success, complete, "complete")
+            .Route(agent.Failed, failed, "failed")
+            .Build(complete, failed);
+
+        var result = await new PipelineRunner().RunAsync(pipeline, new ExampleState(0));
+
+        result.Succeeded.Should().BeFalse();
+        client.Requests.Should().HaveCount(2);
+    }
+
     private sealed record TestState(int Count);
 
     private sealed record TestRequest;

@@ -108,6 +108,31 @@ public sealed class TerminalPipelineRunnerTests
         (await run.WaitAsync(TimeSpan.FromSeconds(5))).Succeeded.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task FaultedRunSurfacesTerminalizationFailureWithTheExecutionFailure()
+    {
+        var execution = new InvalidOperationException("stage broke");
+        var terminalization = new InvalidOperationException("ledger broke");
+        var faulting = PipelineNodes.Stage<State>("fault", (_, _) => throw execution);
+        var pipeline = Pipeline.Start(faulting, "fault-run").Build(faulting);
+
+        var run = () =>
+            new PipelineRunner().RunWithTerminalAsync(
+                pipeline,
+                new State(1),
+                new TerminalPipelineRunOptions
+                {
+                    Display = PlainDisplay(),
+                    TerminalizingAsync = (_, _) => throw terminalization,
+                }
+            );
+
+        var thrown = (await run.Should().ThrowAsync<AggregateException>()).Which;
+        thrown.InnerExceptions.Should().HaveCount(2);
+        thrown.InnerExceptions[1].Should().BeSameAs(terminalization);
+        thrown.InnerExceptions[0].ToString().Should().Contain("stage broke");
+    }
+
     private static TerminalDisplayOptions PlainDisplay() =>
         new()
         {
