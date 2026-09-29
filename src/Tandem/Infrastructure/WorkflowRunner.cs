@@ -37,7 +37,7 @@ internal static class InProcessPipelineRunner
         TState initialState,
         IExternalRequestHandler? requests = null,
         IPipelineObserver? observer = null,
-        IPipelineLedgerReader? ledger = null,
+        IPipelineLedger? ledger = null,
         CancellationToken cancellationToken = default
     )
     {

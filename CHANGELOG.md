@@ -34,6 +34,7 @@
 - `RequireOutputAcceptance` and `WithOutputAcceptance` can each be called more than once and run in configuration order; the first to return problems sends the output back for correction, and later acceptances do not run for that response. Previously each could be configured once and policies always ran before the asynchronous acceptance.
 - JSON outputs (`WithJsonOutput`) publish `OutputAccepted<JsonElement>` (a `PipelineStructuredOutputAccepted`) carrying the accepted value, like typed outputs.
 - `TerminalPipelineRunOptions.Persistence` and `.Observer` are removed. Put the observers on `Run.Observer` (compose several with `PipelineObservers.Compose(...)`); the display observes after them. Previously `Run.Observer` was silently replaced.
+- `read_ledger` and `search_ledger` page entries no longer carry `stream` (always `runtime.journal`) or `entryId` (derived from `sequence`); use `cursor` and `sequence`.
 
 ## Unreleased — fixes and additions
 

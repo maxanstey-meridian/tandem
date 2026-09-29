@@ -19,7 +19,7 @@ public sealed class LedgerEntryPageTests
             new PipelineCommandOutput(run, "executor", "task check", original, 1),
             default
         );
-        var reader = (IPipelineLedgerReader)store.ForRun(run);
+        var reader = store.ForRun(run);
         var listing = await reader.ReadAsync();
         var cursor = listing.Entries.Single().Cursor;
         listing.Entries.Single().Value.Should().NotContain("UNKNOWN_FAILURE");
@@ -51,9 +51,7 @@ public sealed class LedgerEntryPageTests
         var otherRun = Guid.NewGuid();
         await store.CreateObserverAsync(otherRun, "other");
         await FluentActions
-            .Awaiting(async () =>
-                await ((IPipelineLedgerReader)store.ForRun(otherRun)).ReadEntryAsync(cursor)
-            )
+            .Awaiting(async () => await store.ForRun(otherRun).ReadEntryAsync(cursor))
             .Should()
             .ThrowAsync<ArgumentOutOfRangeException>();
     }

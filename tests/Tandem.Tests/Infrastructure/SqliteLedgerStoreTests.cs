@@ -45,7 +45,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         await observer.ObserveAsync(AcceptedStep(runId, "needle", new RunnerState(2)), default);
         await observer.ObserveAsync(AcceptedStep(runId, "omega", new RunnerState(3)), default);
 
-        var reader = (IPipelineLedgerReader)store.ForRun(runId);
+        var reader = store.ForRun(runId);
         var firstPage = await reader.ReadAsync(limit: 2);
         var secondPage = await reader.ReadAsync(firstPage.NextCursor, limit: 2);
         var search = await reader.SearchAsync("NEEDLE");
@@ -70,7 +70,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             default
         );
 
-        var reader = (IPipelineLedgerReader)store.ForRun(runId);
+        var reader = store.ForRun(runId);
         var propertyName = await reader.SearchAsync("valueType");
         var nestedPropertyName = await reader.SearchAsync("count");
         var value = await reader.SearchAsync("PLANNER");
@@ -102,7 +102,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             default
         );
 
-        var reader = (IPipelineLedgerReader)store.ForRun(runId);
+        var reader = store.ForRun(runId);
         var read = await reader.ReadAsync();
         var search = await reader.SearchAsync(marker);
 
@@ -142,9 +142,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             CancellationToken.None
         );
 
-        var page = await ((IPipelineLedgerReader)store.ForRun(runId)).ReadAsync(
-            cancellationToken: CancellationToken.None
-        );
+        var page = await store.ForRun(runId).ReadAsync(cancellationToken: CancellationToken.None);
 
         page.Entries.Should().ContainSingle();
         page.Entries.Single().Value.Should().Contain("StepCompleted");
@@ -179,7 +177,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             CancellationToken.None
         );
 
-        var reader = (IPipelineLedgerReader)store.ForRun(runId);
+        var reader = store.ForRun(runId);
         var page = await reader.ReadAsync(cancellationToken: CancellationToken.None);
         var search = await reader.SearchAsync(
             "FORM_FIELD_OPTIONS_REQUIRED",

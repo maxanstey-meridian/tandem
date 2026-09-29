@@ -9,7 +9,7 @@ public sealed record PipelineRunOptions(
     IPipelineObserver? Observer = null
 )
 {
-    internal IPipelineLedgerReader? Ledger { get; init; }
+    internal IPipelineLedger? Ledger { get; init; }
 }
 
 public sealed record PipelineRunResult<TState>(

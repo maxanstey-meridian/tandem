@@ -1,5 +1,7 @@
+using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.AI;
 using Tandem.Infrastructure;
 
 namespace Tandem.Ledger;
@@ -8,9 +10,8 @@ namespace Tandem.Ledger;
 /// One run's ledger as agents see it through the ledger tools: bounded pages of the run's
 /// agent-readable journal records.
 /// </summary>
-public sealed class RunLedger : IPipelineLedgerReader
+public sealed class RunLedger : IPipelineLedger
 {
-    private const string JournalStream = "runtime.journal";
     private const int MaximumPageSize = 50;
     private const int MaximumQueryLength = 1_024;
     private const int MaximumValueCharacters = 4_000;
@@ -25,34 +26,83 @@ public sealed class RunLedger : IPipelineLedgerReader
     {
         _store = store;
         RunId = runId;
+        Tools = CreateTools();
     }
 
     public Guid RunId { get; }
 
-    ValueTask<long?> IPipelineLedgerReader.FindActionEntryAsync(
+    IReadOnlyList<AITool> IPipelineLedger.Tools => Tools;
+
+    private IReadOnlyList<AITool> Tools { get; }
+
+    ValueTask<long?> IPipelineLedger.FindActionEntryAsync(
         string stepId,
         string invocationId,
         CancellationToken cancellationToken
     ) => _store.FindActionEntryAsync(RunId, stepId, invocationId, cancellationToken);
 
-    ValueTask<PipelineLedgerPage> IPipelineLedgerReader.ReadAsync(
-        long? cursor,
-        int limit,
-        CancellationToken cancellationToken
+    private AITool[] CreateTools() =>
+        [
+            AIFunctionFactory.Create(
+                (
+                    long entryCursor,
+                    int offset = 0,
+                    int limit = 16000,
+                    string? stream = null,
+                    CancellationToken cancellationToken = default
+                ) =>
+                    stream is null
+                        ? ReadEntryAsync(entryCursor, offset, limit, cancellationToken)
+                        : ReadDiagnosticAsync(
+                            entryCursor,
+                            stream,
+                            offset,
+                            limit,
+                            cancellationToken
+                        ),
+                BuiltInAgentTools.ReadLedgerEntry,
+                "Read a durable entry using entryCursor from a command result or ledger listing. For readable command output specify stream stdout or stderr, then follow nextOffset until hasMore is false. Omit stream to read the raw record. Offsets are UTF-16 code units; captureTruncated indicates output lost at the hard capture limit."
+            ),
+            AIFunctionFactory.Create(
+                (
+                    [Description("Cursor returned by the previous page.")] long? cursor = null,
+                    [Description("Page size from 1 to 50.")] int limit = 20,
+                    CancellationToken cancellationToken = default
+                ) => ReadAsync(cursor, limit, cancellationToken),
+                BuiltInAgentTools.ReadLedger,
+                "Read accepted durable lifecycle history in order: claims, decisions, findings, checkpoints, state, and transitions. Repository and implementation claims in those records must be verified against the current repository before reliance."
+            ),
+            AIFunctionFactory.Create(
+                (
+                    [Description("Case-insensitive text to find in accepted durable records.")]
+                        string query,
+                    [Description("Cursor returned by the previous page.")] long? cursor = null,
+                    [Description("Page size from 1 to 50.")] int limit = 20,
+                    CancellationToken cancellationToken = default
+                ) => SearchAsync(query, cursor, limit, cancellationToken),
+                BuiltInAgentTools.SearchLedger,
+                "Search accepted durable lifecycle history for relevant prior claims, decisions, findings, constraints, checkpoints, and state, then use read_ledger to inspect surrounding records. A match does not establish current repository or implementation state."
+            ),
+        ];
+
+    internal ValueTask<LedgerPage> ReadAsync(
+        long? cursor = null,
+        int limit = 20,
+        CancellationToken cancellationToken = default
     ) => ReadPageAsync(null, cursor, limit, cancellationToken);
 
-    ValueTask<PipelineLedgerPage> IPipelineLedgerReader.SearchAsync(
+    internal ValueTask<LedgerPage> SearchAsync(
         string query,
-        long? cursor,
-        int limit,
-        CancellationToken cancellationToken
+        long? cursor = null,
+        int limit = 20,
+        CancellationToken cancellationToken = default
     ) => ReadPageAsync(query, cursor, limit, cancellationToken);
 
-    async ValueTask<object> IPipelineLedgerReader.ReadEntryAsync(
+    internal async ValueTask<LedgerEntryPage> ReadEntryAsync(
         long entryCursor,
-        int offset,
-        int limit,
-        CancellationToken cancellationToken
+        int offset = 0,
+        int limit = 16000,
+        CancellationToken cancellationToken = default
     )
     {
         ValidateEntryPage(entryCursor, offset, limit);
@@ -60,12 +110,12 @@ public sealed class RunLedger : IPipelineLedgerReader
         return Slice(entryCursor, null, null, record, offset, limit);
     }
 
-    async ValueTask<object> IPipelineLedgerReader.ReadDiagnosticAsync(
+    internal async ValueTask<LedgerEntryPage> ReadDiagnosticAsync(
         long entryCursor,
         string stream,
-        int offset,
-        int limit,
-        CancellationToken cancellationToken
+        int offset = 0,
+        int limit = 16000,
+        CancellationToken cancellationToken = default
     )
     {
         ValidateEntryPage(entryCursor, offset, limit);
@@ -96,7 +146,7 @@ public sealed class RunLedger : IPipelineLedgerReader
         );
     }
 
-    private async ValueTask<PipelineLedgerPage> ReadPageAsync(
+    private async ValueTask<LedgerPage> ReadPageAsync(
         string? query,
         long? cursor,
         int limit,
@@ -111,28 +161,19 @@ public sealed class RunLedger : IPipelineLedgerReader
             limit + 1,
             cancellationToken
         );
-        var entries = new List<PipelineLedgerEntry>();
+        var entries = new List<LedgerPageEntry>();
         var pageCharacters = 0;
         foreach (var row in rows)
         {
             var value = Excerpt(row.Record, query);
             if (entries.Count == limit || pageCharacters + value.Length > MaximumPageCharacters)
             {
-                return new PipelineLedgerPage(entries, entries[^1].Cursor);
+                return new LedgerPage(entries, entries[^1].Cursor);
             }
-            entries.Add(
-                new PipelineLedgerEntry(
-                    row.Id,
-                    JournalStream,
-                    row.Sequence,
-                    $"{JournalStream}-{row.Sequence}",
-                    value,
-                    row.RecordedAt
-                )
-            );
+            entries.Add(new LedgerPageEntry(row.Id, row.Sequence, value, row.RecordedAt));
             pageCharacters += value.Length;
         }
-        return new PipelineLedgerPage(entries, null);
+        return new LedgerPage(entries, null);
     }
 
     private static void ValidatePage(string? query, long? cursor, int limit)
@@ -296,6 +337,23 @@ public sealed class RunLedger : IPipelineLedgerReader
         return $"{prefix}{value.Substring(start, MaximumValueCharacters)}{suffix}";
     }
 }
+
+/// <summary>A page of agent-readable journal records, as returned by <c>read_ledger</c> and <c>search_ledger</c>.</summary>
+internal sealed record LedgerPage(IReadOnlyList<LedgerPageEntry> Entries, long? NextCursor)
+{
+    public int ReturnedCount => Entries.Count;
+    public bool HasMore => NextCursor is not null;
+    public int MaximumPageSize => 50;
+    public string Pagination =>
+        "Use nextCursor with the same query until hasMore is false. The cursor identifies a ledger record, not an offset or page number. Pages may end early at the response-size limit; total matching records/pages are not computed. Use read_ledger_entry with an entry cursor to retrieve its complete value in pages.";
+}
+
+internal sealed record LedgerPageEntry(
+    long Cursor,
+    long Sequence,
+    string Value,
+    DateTimeOffset RecordedAt
+);
 
 /// <summary>
 /// One page of a ledger entry's text, as returned by <c>read_ledger_entry</c>. The names are the

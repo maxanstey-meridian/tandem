@@ -1012,7 +1012,7 @@ internal sealed class AgentBlock<TState>(
     {
         var chatOptions = CreateChatOptions(
             instructions,
-            message.RunContext?.Ledger is { } ledger ? [.. tools, .. LedgerTools(ledger)] : tools
+            message.RunContext?.Ledger is { } ledger ? [.. tools, .. ledger.Tools] : tools
         );
         if (!string.IsNullOrWhiteSpace(requiredToolName))
         {
@@ -1081,54 +1081,6 @@ internal sealed class AgentBlock<TState>(
             boundCapabilityNames,
             toolEffects,
             workspace?.Path
-        );
-    }
-
-    private static IEnumerable<AITool> LedgerTools(IPipelineLedgerReader ledger)
-    {
-        yield return AIFunctionFactory.Create(
-            (
-                long entryCursor,
-                int offset = 0,
-                int limit = 16000,
-                string? stream = null,
-                CancellationToken cancellationToken = default
-            ) =>
-                stream is null
-                    ? ledger.ReadEntryAsync(entryCursor, offset, limit, cancellationToken)
-                    : ledger.ReadDiagnosticAsync(
-                        entryCursor,
-                        stream,
-                        offset,
-                        limit,
-                        cancellationToken
-                    ),
-            BuiltInAgentTools.ReadLedgerEntry,
-            "Read a durable entry using entryCursor from a command result or ledger listing. For readable command output specify stream stdout or stderr, then follow nextOffset until hasMore is false. Omit stream to read the raw record. Offsets are UTF-16 code units; captureTruncated indicates output lost at the hard capture limit."
-        );
-        yield return AIFunctionFactory.Create(
-            (
-                [System.ComponentModel.Description("Cursor returned by the previous page.")]
-                    long? cursor = null,
-                [System.ComponentModel.Description("Page size from 1 to 50.")] int limit = 20,
-                CancellationToken cancellationToken = default
-            ) => ledger.ReadAsync(cursor, limit, cancellationToken),
-            BuiltInAgentTools.ReadLedger,
-            "Read accepted durable lifecycle history in order: claims, decisions, findings, checkpoints, state, and transitions. Repository and implementation claims in those records must be verified against the current repository before reliance."
-        );
-        yield return AIFunctionFactory.Create(
-            (
-                [System.ComponentModel.Description(
-                    "Case-insensitive text to find in accepted durable records."
-                )]
-                    string query,
-                [System.ComponentModel.Description("Cursor returned by the previous page.")]
-                    long? cursor = null,
-                [System.ComponentModel.Description("Page size from 1 to 50.")] int limit = 20,
-                CancellationToken cancellationToken = default
-            ) => ledger.SearchAsync(query, cursor, limit, cancellationToken),
-            BuiltInAgentTools.SearchLedger,
-            "Search accepted durable lifecycle history for relevant prior claims, decisions, findings, constraints, checkpoints, and state, then use read_ledger to inspect surrounding records. A match does not establish current repository or implementation state."
         );
     }
 

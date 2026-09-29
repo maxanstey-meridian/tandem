@@ -141,7 +141,7 @@ public sealed class AgentToolSurfaceTests
             .HaveCount(2)
             .And.OnlyHaveUniqueItems();
         // A new store instance proves this reference survives reopening, not just an in-memory cache.
-        var reader = (IPipelineLedgerReader)new SqliteLedgerStore(path).ForRun(result.RunId);
+        var reader = new SqliteLedgerStore(path).ForRun(result.RunId);
         var text = new StringBuilder();
         var offset = 0;
         do
