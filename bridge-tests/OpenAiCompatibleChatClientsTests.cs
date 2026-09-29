@@ -1,4 +1,6 @@
 using System.ClientModel;
+using System.ClientModel.Primitives;
+using System.Diagnostics;
 using System.Net;
 using System.Reflection;
 using System.Text;
@@ -63,10 +65,10 @@ public sealed class OpenAiCompatibleChatClientsTests
     [Fact]
     public async Task OpenRouterStreamingResponsePreservesReasoningAndUsage()
     {
-        using var server = new CompletionServer();
+        var handler = new FakeHttpHandler(CompletionStream);
         var openAi = new OpenAIClient(
             new ApiKeyCredential("test-key"),
-            new OpenAIClientOptions { Endpoint = new Uri(server.BaseUrl) }
+            new OpenAIClientOptions { Endpoint = new Uri(BaseUrl), Transport = handler.Transport }
         );
         using IChatClient client = new ReasoningExtractionChatClient(
             openAi.GetChatClient("model").AsIChatClient()
@@ -97,16 +99,16 @@ public sealed class OpenAiCompatibleChatClientsTests
                 .Single(updates.SelectMany(update => update.Contents).OfType<UsageContent>())
                 .Details.ReasoningTokenCount
         );
-        await server.Completion;
+        Assert.Equal("/v1/chat/completions", Assert.Single(handler.Paths));
     }
 
     [Fact]
     public async Task OpenRouterStreamingProviderErrorIsReportedAtTheAdapterBoundary()
     {
-        using var server = new CompletionServer(providerError: true);
+        var handler = new FakeHttpHandler(ProviderErrorStream);
         var openAi = new OpenAIClient(
             new ApiKeyCredential("test-key"),
-            new OpenAIClientOptions { Endpoint = new Uri(server.BaseUrl) }
+            new OpenAIClientOptions { Endpoint = new Uri(BaseUrl), Transport = handler.Transport }
         );
         using IChatClient client = new ReasoningExtractionChatClient(
             openAi.GetChatClient("model").AsIChatClient()
@@ -126,46 +128,62 @@ public sealed class OpenAiCompatibleChatClientsTests
             exception.Message
         );
         Assert.IsType<ArgumentOutOfRangeException>(exception.InnerException);
-        await server.Completion;
+        Assert.Equal("/v1/chat/completions", Assert.Single(handler.Paths));
     }
 
     [Fact]
     public async Task ModelPreflightRequiresExactModelExposure()
     {
-        using var server = new ModelServer("other-model");
-        var descriptor = Client(server.BaseUrl);
+        var handler = new FakeHttpHandler(ModelList("other-model"));
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            OpenAiCompatibleChatClients.VerifyModelAsync(descriptor, CancellationToken.None)
+            OpenAiCompatibleChatClients.VerifyModelAsync(
+                Client(BaseUrl),
+                CancellationToken.None,
+                handler.Transport
+            )
         );
 
         Assert.Contains("does not expose required model 'required-model'", exception.Message);
-        await server.Completion;
+        Assert.Equal("/v1/models", Assert.Single(handler.Paths));
     }
 
     [Fact]
     public async Task ModelPreflightAcceptsExposedModelWithoutASecretForLoopback()
     {
-        using var server = new ModelServer("required-model");
+        var handler = new FakeHttpHandler(ModelList("required-model"));
 
         await OpenAiCompatibleChatClients.VerifyModelAsync(
-            Client(server.BaseUrl),
-            CancellationToken.None
+            Client(BaseUrl),
+            CancellationToken.None,
+            handler.Transport
         );
 
-        await server.Completion;
+        Assert.Equal("/v1/models", Assert.Single(handler.Paths));
     }
 
     [Fact]
     public async Task ModelPreflightObservesCancellation()
     {
-        using var server = new ModelServer("required-model", respond: false);
+        var handler = new FakeHttpHandler(
+            async (_, token) =>
+            {
+                await Task.Delay(Timeout.Infinite, token);
+                throw new UnreachableException();
+            }
+        );
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            OpenAiCompatibleChatClients.VerifyModelAsync(Client(server.BaseUrl), cancellation.Token)
+            OpenAiCompatibleChatClients.VerifyModelAsync(
+                Client(BaseUrl),
+                cancellation.Token,
+                handler.Transport
+            )
         );
     }
+
+    private const string BaseUrl = "http://127.0.0.1:1/v1";
 
     private static RegisteredChatClientContract Client(string endpoint) =>
         new(
@@ -177,76 +195,59 @@ public sealed class OpenAiCompatibleChatClientsTests
             VerifyModel: true
         );
 
-    private sealed class ModelServer : IDisposable
-    {
-        private readonly HttpListener _listener = new();
-
-        public ModelServer(string model, bool respond = true)
-        {
-            var port = Random.Shared.Next(20000, 50000);
-            BaseUrl = $"http://127.0.0.1:{port}/v1";
-            _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-            _listener.Start();
-            Completion = ServeAsync(model, respond);
-        }
-
-        public string BaseUrl { get; }
-        public Task Completion { get; }
-
-        private async Task ServeAsync(string model, bool respond)
-        {
-            var context = await _listener.GetContextAsync();
-            Assert.Equal("/v1/models", context.Request.Url?.AbsolutePath);
-            if (!respond)
-            {
-                return;
-            }
-            var body = Encoding.UTF8.GetBytes(
-                JsonSerializer.Serialize(new { data = new[] { new { id = model } } })
+    private static Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> ModelList(
+        string model
+    ) =>
+        (_, _) =>
+            Task.FromResult(
+                Response(
+                    "application/json",
+                    JsonSerializer.Serialize(new { data = new[] { new { id = model } } })
+                )
             );
-            context.Response.ContentType = "application/json";
-            context.Response.ContentLength64 = body.Length;
-            await context.Response.OutputStream.WriteAsync(body);
-            context.Response.Close();
-        }
 
-        public void Dispose() => _listener.Close();
-    }
-
-    private sealed class CompletionServer : IDisposable
-    {
-        private readonly HttpListener _listener = new();
-
-        public CompletionServer(bool providerError = false)
-        {
-            var port = Random.Shared.Next(20000, 50000);
-            BaseUrl = $"http://127.0.0.1:{port}/v1";
-            _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-            _listener.Start();
-            Completion = ServeAsync(providerError);
-        }
-
-        public string BaseUrl { get; }
-        public Task Completion { get; }
-
-        private async Task ServeAsync(bool providerError)
-        {
-            var context = await _listener.GetContextAsync();
-            Assert.Equal("/v1/chat/completions", context.Request.Url?.AbsolutePath);
-            const string successResponse =
+    private static Task<HttpResponseMessage> CompletionStream(
+        HttpRequestMessage request,
+        CancellationToken token
+    ) =>
+        Task.FromResult(
+            Response(
+                "text/event-stream",
                 "data: {\"id\":\"completion\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"model\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning\":\"Think carefully.\"},\"finish_reason\":null}]}\n\n"
-                + "data: {\"id\":\"completion\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"model\",\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":15,\"total_tokens\":20,\"completion_tokens_details\":{\"reasoning_tokens\":12}}}\n\n"
-                + "data: [DONE]\n\n";
-            const string errorResponse =
-                "data: {\"id\":\"completion\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"model\",\"provider\":\"Provider\",\"error\":{\"code\":429,\"message\":\"Rate limit exceeded\",\"metadata\":{\"error_type\":\"rate_limit_exceeded\"}},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\"},\"finish_reason\":\"error\"}]}\n\n";
-            var response = providerError ? errorResponse : successResponse;
-            var body = Encoding.UTF8.GetBytes(response);
-            context.Response.ContentType = "text/event-stream";
-            context.Response.ContentLength64 = body.Length;
-            await context.Response.OutputStream.WriteAsync(body);
-            context.Response.Close();
-        }
+                    + "data: {\"id\":\"completion\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"model\",\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":15,\"total_tokens\":20,\"completion_tokens_details\":{\"reasoning_tokens\":12}}}\n\n"
+                    + "data: [DONE]\n\n"
+            )
+        );
 
-        public void Dispose() => _listener.Close();
+    private static Task<HttpResponseMessage> ProviderErrorStream(
+        HttpRequestMessage request,
+        CancellationToken token
+    ) =>
+        Task.FromResult(
+            Response(
+                "text/event-stream",
+                "data: {\"id\":\"completion\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"model\",\"provider\":\"Provider\",\"error\":{\"code\":429,\"message\":\"Rate limit exceeded\",\"metadata\":{\"error_type\":\"rate_limit_exceeded\"}},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\"},\"finish_reason\":\"error\"}]}\n\n"
+            )
+        );
+
+    private static HttpResponseMessage Response(string contentType, string body) =>
+        new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, contentType) };
+
+    private sealed class FakeHttpHandler(
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond
+    ) : HttpMessageHandler
+    {
+        public List<string> Paths { get; } = [];
+
+        public HttpClientPipelineTransport Transport => new(new HttpClient(this));
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken
+        )
+        {
+            Paths.Add(request.RequestUri!.AbsolutePath);
+            return respond(request, cancellationToken);
+        }
     }
 }
