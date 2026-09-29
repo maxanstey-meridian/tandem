@@ -13,3 +13,4 @@
 
 - `SqliteLedgerStore.ReadAcceptedAsync(runId)` reads a run's accepted journal values on a read-only connection, filtered to the runtime journal and in insert order. The bridge's `InspectAcceptedAsync` uses it instead of its own SQL, so other streams' rows are no longer read as journal records.
 - The Node bridge resolves the bundled SQLite native library by runtime identifier (`libe_sqlite3.so` on Linux) instead of always looking for `libe_sqlite3.dylib`.
+- MAF's workspace write, replace and delete tools resolve every path through the workspace path authority, so reads and deletes through symbolic links or reparse points are rejected as writes already were.

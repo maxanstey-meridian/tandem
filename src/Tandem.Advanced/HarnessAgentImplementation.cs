@@ -24,7 +24,7 @@ internal static class HarnessAgentImplementation
         var workspace = context.Workspace;
         AgentFileStore? fileStore = workspace is null
             ? null
-            : new GitExcludedFileStore(new BomlessFileSystemAgentFileStore(workspace.Path));
+            : new WorkspaceFileStore(workspace.Path);
         var providers =
             context.Skills.Count == 0
                 ? new List<AIContextProvider>()
@@ -770,11 +770,10 @@ internal static class WorkspaceShellTools
         );
 }
 
-internal sealed class BomlessFileSystemAgentFileStore(string rootPath) : AgentFileStore
+// MAF's file tools reach only write, read, exists and delete: Tandem replaces its grep, ls and read tools.
+internal sealed class WorkspaceFileStore(string workspacePath) : AgentFileStore
 {
     private static readonly UTF8Encoding _utf8WithoutBom = new(false);
-    private readonly string _rootPath = Path.GetFullPath(rootPath);
-    private readonly FileSystemAgentFileStore _inner = new(rootPath);
 
     public override async Task WriteAsync(
         string path,
@@ -782,26 +781,42 @@ internal sealed class BomlessFileSystemAgentFileStore(string rootPath) : AgentFi
         CancellationToken cancellationToken
     )
     {
-        var normalized = content.Length > 0 && content[0] == '\uFEFF' ? content[1..] : content;
-        var fullPath = WorkspacePathAuthority.Resolve(_rootPath, path, "write");
-        cancellationToken.ThrowIfCancellationRequested();
+        var fullPath = WorkspacePathAuthority.Resolve(workspacePath, path, "write");
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-        await File.WriteAllTextAsync(fullPath, normalized, _utf8WithoutBom, cancellationToken);
+        await File.WriteAllTextAsync(
+            fullPath,
+            content.StartsWith('\uFEFF') ? content[1..] : content,
+            _utf8WithoutBom,
+            cancellationToken
+        );
     }
 
-    public override Task<string?> ReadAsync(string path, CancellationToken cancellationToken) =>
-        _inner.ReadAsync(path, cancellationToken);
+    public override async Task<string?> ReadAsync(string path, CancellationToken cancellationToken)
+    {
+        var fullPath = WorkspacePathAuthority.Resolve(workspacePath, path, "read");
+        return File.Exists(fullPath)
+            ? await File.ReadAllTextAsync(fullPath, cancellationToken)
+            : null;
+    }
 
-    public override Task<bool> DeleteAsync(string path, CancellationToken cancellationToken) =>
-        _inner.DeleteAsync(path, cancellationToken);
+    public override Task<bool> DeleteAsync(string path, CancellationToken cancellationToken)
+    {
+        var fullPath = WorkspacePathAuthority.Resolve(workspacePath, path, "mutation");
+        if (!File.Exists(fullPath))
+        {
+            return Task.FromResult(false);
+        }
+        File.Delete(fullPath);
+        return Task.FromResult(true);
+    }
+
+    public override Task<bool> FileExistsAsync(string path, CancellationToken cancellationToken) =>
+        Task.FromResult(File.Exists(WorkspacePathAuthority.Resolve(workspacePath, path, "read")));
 
     public override Task<IReadOnlyList<FileStoreEntry>> ListChildrenAsync(
         string directory,
         CancellationToken cancellationToken
-    ) => _inner.ListChildrenAsync(directory, cancellationToken);
-
-    public override Task<bool> FileExistsAsync(string path, CancellationToken cancellationToken) =>
-        _inner.FileExistsAsync(path, cancellationToken);
+    ) => throw new NotSupportedException("Tandem's workspace ls tool replaces MAF's.");
 
     public override Task<IReadOnlyList<FileSearchResult>> SearchAsync(
         string directory,
@@ -809,161 +824,10 @@ internal sealed class BomlessFileSystemAgentFileStore(string rootPath) : AgentFi
         string? globPattern,
         bool recursive,
         CancellationToken cancellationToken
-    ) => _inner.SearchAsync(directory, regexPattern, globPattern, recursive, cancellationToken);
+    ) => throw new NotSupportedException("Tandem's workspace grep tool replaces MAF's.");
 
     public override Task CreateDirectoryAsync(string path, CancellationToken cancellationToken) =>
-        _inner.CreateDirectoryAsync(path, cancellationToken);
-}
-
-internal sealed class GitExcludedFileStore(AgentFileStore inner) : AgentFileStore
-{
-    private const string SearchTruncationMarker = "\n[...additional search results omitted...]";
-    private const int MaximumSearchResults = 10;
-    private const int MaximumMatchesPerResult = 5;
-    private const int MaximumPathCharacters = 1024;
-    private const int MaximumSnippetCharacters = 2048;
-    private const int MaximumMatchCharacters = 1024;
-
-    public override Task WriteAsync(
-        string path,
-        string content,
-        CancellationToken cancellationToken
-    )
-    {
-        RejectGitPath(path);
-        var normalized = content.Length > 0 && content[0] == '\uFEFF' ? content[1..] : content;
-        return inner.WriteAsync(path, normalized, cancellationToken);
-    }
-
-    public override Task<string?> ReadAsync(string path, CancellationToken cancellationToken)
-    {
-        RejectGitPath(path);
-        return inner.ReadAsync(path, cancellationToken);
-    }
-
-    public override Task<bool> DeleteAsync(string path, CancellationToken cancellationToken)
-    {
-        RejectGitPath(path);
-        return inner.DeleteAsync(path, cancellationToken);
-    }
-
-    public override async Task<IReadOnlyList<FileStoreEntry>> ListChildrenAsync(
-        string directory,
-        CancellationToken cancellationToken
-    ) =>
-        (await inner.ListChildrenAsync(directory, cancellationToken))
-            .Where(entry => !string.Equals(entry.Name, ".git", StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
-    public override Task<bool> FileExistsAsync(string path, CancellationToken cancellationToken)
-    {
-        RejectGitPath(path);
-        return inner.FileExistsAsync(path, cancellationToken);
-    }
-
-    public override async Task<IReadOnlyList<FileSearchResult>> SearchAsync(
-        string directory,
-        string regexPattern,
-        string? globPattern,
-        bool recursive,
-        CancellationToken cancellationToken
-    )
-    {
-        var results = (
-            await inner.SearchAsync(
-                directory,
-                regexPattern,
-                globPattern,
-                recursive,
-                cancellationToken
-            )
-        )
-            .Where(result => !IsExcludedSearchResult(result))
-            .ToList();
-        var bounded = results
-            .Take(MaximumSearchResults)
-            .Select(result => new FileSearchResult
-            {
-                FileName = Truncate(result.FileName, MaximumPathCharacters),
-                Snippet = Truncate(result.Snippet, MaximumSnippetCharacters),
-                MatchingLines =
-                [
-                    .. result
-                        .MatchingLines.Take(MaximumMatchesPerResult)
-                        .Select(match => new FileSearchMatch
-                        {
-                            LineNumber = match.LineNumber,
-                            Line = Truncate(match.Line, MaximumMatchCharacters),
-                        }),
-                ],
-            })
-            .ToList();
-        if (
-            results.Count > MaximumSearchResults
-            || results.Any(result =>
-                result.Snippet.Length > MaximumSnippetCharacters
-                || result.MatchingLines.Count > MaximumMatchesPerResult
-                || result.MatchingLines.Any(match => match.Line.Length > MaximumMatchCharacters)
-            )
-        )
-        {
-            bounded.Add(
-                new FileSearchResult
-                {
-                    FileName = "[...additional search results omitted...]",
-                    Snippet = "Narrow the directory, regex, or glob pattern for more results.",
-                }
-            );
-        }
-        return bounded;
-    }
-
-    internal static bool IsExcludedSearchResult(FileSearchResult result) =>
-        WorkspaceSearchPolicy.HasExcludedDirectorySegment(result.FileName)
-        || WorkspaceSearchPolicy.HasBinaryExtension(result.FileName)
-        || LooksBinary(result.Snippet)
-        || result.MatchingLines.Any(match => LooksBinary(match.Line));
-
-    private static bool LooksBinary(string content)
-    {
-        if (content.IndexOf('\0') >= 0)
-        {
-            return true;
-        }
-
-        var suspicious = content.Count(character =>
-            character == '\uFFFD'
-            || char.IsControl(character) && character is not ('\r' or '\n' or '\t')
-        );
-        return suspicious >= 4 && suspicious * 100 >= content.Length;
-    }
-
-    public override Task CreateDirectoryAsync(string path, CancellationToken cancellationToken)
-    {
-        RejectGitPath(path);
-        return inner.CreateDirectoryAsync(path, cancellationToken);
-    }
-
-    private static void RejectGitPath(string path)
-    {
-        if (ContainsGitSegment(path))
-        {
-            throw new WorkspacePathException($"Access to '.git' paths is denied: {path}");
-        }
-    }
-
-    private static bool ContainsGitSegment(string path) =>
-        path.Replace('\\', '/')
-            .Split('/', StringSplitOptions.RemoveEmptyEntries)
-            .Any(segment => string.Equals(segment, ".git", StringComparison.OrdinalIgnoreCase));
-
-    private static string Truncate(string value, int maximumCharacters) =>
-        value.Length <= maximumCharacters
-            ? value
-            : string.Concat(
-                value.AsSpan(0, maximumCharacters - SearchTruncationMarker.Length),
-                SearchTruncationMarker
-            );
+        throw new NotSupportedException("MAF's file tools do not create directories.");
 }
 
 #pragma warning restore MAAI001

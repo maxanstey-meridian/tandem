@@ -1,7 +1,5 @@
 namespace Tandem.Advanced;
 
-// The single owner of the workspace search exclusion policy. WorkspaceGrepTools
-// prunes traversal with it and GitExcludedFileStore filters search results with it.
 internal static class WorkspaceSearchPolicy
 {
     internal static readonly HashSet<string> ExcludedDirectories = new(
@@ -142,12 +140,6 @@ internal static class WorkspaceSearchPolicy
         || name.StartsWith("cmake-build-", StringComparison.OrdinalIgnoreCase);
 
     // Search results are filtered by non-final path segments; the final segment is the file name.
-    internal static bool HasExcludedDirectorySegment(string path)
-    {
-        var segments = path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
-        return segments.Length > 1 && segments[..^1].Any(IsExcludedDirectory);
-    }
-
     internal static bool HasBinaryExtension(string path)
     {
         var name = path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries).LastOrDefault();

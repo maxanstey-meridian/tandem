@@ -213,30 +213,6 @@ public sealed class WorkspaceAuthorityTests
     }
 
     [Fact]
-    public async Task FileTools_RejectGitMetadataCaseInsensitively()
-    {
-        var path = Path.Combine(Path.GetTempPath(), $"tandem-git-exclusion-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(Path.Combine(path, ".GIT"));
-        try
-        {
-            var store = new GitExcludedFileStore(new BomlessFileSystemAgentFileStore(path));
-
-            var read = async () => await store.ReadAsync(".GIT/config", CancellationToken.None);
-            var write = async () =>
-                await store.WriteAsync("nested/.GiT/config", "unsafe", CancellationToken.None);
-            var children = await store.ListChildrenAsync("", CancellationToken.None);
-
-            await read.Should().ThrowAsync<UnauthorizedAccessException>();
-            await write.Should().ThrowAsync<UnauthorizedAccessException>();
-            children.Should().NotContain(entry => entry.Name == ".GIT");
-        }
-        finally
-        {
-            Directory.Delete(path, recursive: true);
-        }
-    }
-
-    [Fact]
     public void CopyAndMoveFile_PreserveBytesAndEnforceWorkspaceBoundaries()
     {
         var parent = Path.Combine(Path.GetTempPath(), $"tandem-file-mutation-{Guid.NewGuid():N}");
