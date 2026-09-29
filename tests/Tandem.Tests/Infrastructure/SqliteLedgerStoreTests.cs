@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
@@ -8,15 +7,12 @@ namespace Tandem.Tests.Infrastructure;
 
 public sealed class SqliteLedgerStoreTests : IDisposable
 {
-    private readonly string _directory = Path.Combine(
-        Path.GetTempPath(),
-        $"tandem-ledger-{Guid.NewGuid():N}"
-    );
+    private readonly TempDirectory _directory = new();
 
     [Fact]
     public async Task Initialize_CreatesMissingDatabaseParentDirectory()
     {
-        var path = Path.Combine(_directory, "nested", "ledger.sqlite3");
+        var path = _directory.Combine("nested", "ledger.sqlite3");
         var store = new SqliteLedgerStore(path);
 
         await store.InitializeAsync();
@@ -636,8 +632,8 @@ public sealed class SqliteLedgerStoreTests : IDisposable
 
         var records = await store.ReadJournalAsync(runId);
         records[0].Record.ValueType.Should().Be(typeof(RunnerState).FullName);
-        records[0].Record.Payload!.Value.GetRawText().Should().Be(successPayload.GetRawText());
-        records[1].Record.Payload!.Value.GetRawText().Should().Be(failurePayload.GetRawText());
+        JsonElement.DeepEquals(records[0].Record.Payload!.Value, successPayload).Should().BeTrue();
+        JsonElement.DeepEquals(records[1].Record.Payload!.Value, failurePayload).Should().BeTrue();
     }
 
     [Fact]
@@ -1024,19 +1020,9 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         }
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_directory))
-        {
-            Directory.Delete(_directory, recursive: true);
-        }
-    }
+    public void Dispose() => _directory.Dispose();
 
-    private string DatabasePath()
-    {
-        Directory.CreateDirectory(_directory);
-        return Path.Combine(_directory, "ledger.sqlite3");
-    }
+    private string DatabasePath() => _directory.Combine("ledger.sqlite3");
 
     private static async ValueTask<SqliteLedgerStore> CreateStoreAsync(string path)
     {
@@ -1066,33 +1052,22 @@ public sealed class SqliteLedgerStoreTests : IDisposable
             )
         );
 
-    private static async Task<WorkerResult> RunWorkerAsync(
+    private static Task<LocalProcessResult> RunWorkerAsync(
         string databasePath,
         Guid runId,
         string stepId
-    )
-    {
-        var worker = Path.Combine(AppContext.BaseDirectory, "Tandem.Ledger.TestWorker.dll");
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "dotnet",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            },
-        };
-        process.StartInfo.ArgumentList.Add(worker);
-        process.StartInfo.ArgumentList.Add(databasePath);
-        process.StartInfo.ArgumentList.Add(runId.ToString("D"));
-        process.StartInfo.ArgumentList.Add(stepId);
-        process.Start();
-        var output = await process.StandardOutput.ReadToEndAsync();
-        var error = await process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        return new WorkerResult(process.ExitCode, output.Trim(), error.Trim());
-    }
+    ) =>
+        LocalProcess.RunAsync(
+            new(
+                "dotnet",
+                [
+                    Path.Combine(AppContext.BaseDirectory, "Tandem.Ledger.TestWorker.dll"),
+                    databasePath,
+                    runId.ToString("D"),
+                    stepId,
+                ]
+            )
+        );
 
     private static async Task ExecuteSqlAsync(string databasePath, string sql)
     {
@@ -1115,21 +1090,6 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         string ProposedApproach,
         IReadOnlyList<string> Evidence
     );
-
-    private sealed record WorkerResult(int ExitCode, string Output, string Error);
-
-    private sealed class RecordingObserver(List<PipelineObservation> observations)
-        : IPipelineObserver
-    {
-        public ValueTask ObserveAsync(
-            PipelineObservation observation,
-            CancellationToken cancellationToken
-        )
-        {
-            observations.Add(observation);
-            return ValueTask.CompletedTask;
-        }
-    }
 
     /// <summary>Cancels the run once its step has started, then breaks the ledger file.</summary>
     private sealed class BreakLedgerAfterCancellationObserver(
