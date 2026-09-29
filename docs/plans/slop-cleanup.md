@@ -1,6 +1,6 @@
 # Tandem slop cleanup spec
 
-Status: decisions final (2026-09-29, §4); executing.
+Status: complete on `slop/integration`; not merged. Owner actions are listed in §10.
 Baseline: `main` @ `b4a824d` (2026-09-29). Line numbers are from that commit; re-locate by symbol name if they have moved.
 **Owner WIP:** the main checkout has uncommitted edits in `.github/workflows/release.yml`, `CONTRIBUTING.md`, `docs/quickstarts/typescript.md`, `scripts/runtime-assets.mjs` and `scripts/stage-runtime.mjs`. All work happens in worktrees branched from `b4a824d`; the main checkout is never touched. No WP edits those five files. X4's script and release parts are deferred until the owner has committed that WIP; record them as follow-ups.
 Source: independent slop hunt (2026-09-29, four read-only agents plus spot verification), cross-checked afterwards against `docs/plans/post-baseline-remediation.md`. Tags: `NEW`, or `ALREADY-COVERED (Mn)` where that plan audited or decided the item.
@@ -540,3 +540,176 @@ NEW
 | W2-5 Bridge ↔ Core validation | done | src/bridge +87/−29 (net +58: rule-stating messages replace ten bare `ArgumentOutOfRangeException(nameof(x))`; the bridge loses its route rule and half of its reasoning rule); tests +106/−12 | Tandem.Tests 451 → 452, bridge 104 → 106. Red first (all failed before the change): Core `Route_RejectsASecondUnconditionalRouteForTheSameOutcome` (no exception was thrown) and `AuthoringRangeErrors_StateTheRule` (replaces `AgentTimeout_RejectsUnsupportedDurations`; timeout, temperature, max output tokens, reasoning max tokens, Harness context window and output budget, turn-policy attempts); bridge `RejectsMultipleUnconditionalRoutesForOneOutcome` now expects the builder's `routes[1]: Step 'agent' cannot declare more than one unconditional Success route.`, `SurfacesBuilderRangeRules` ×3, `RejectsInvalidAndNonAgentModelRequestControls` and `RejectsReasoningTokenBudgetBelowOpenRouterMinimum` ×2 expect the rule text, and new `RejectsAnEmptyReasoningObject`, `SurfacesBuilderRejectionOfReasoningEffortWithMaxTokens` | Cadence: none found (no duplicate unconditional outcome route in `DeliveryComposition.cs`, checked by script; it never relied on the messages). tandem-ts: none (it asserts no bridge validation text; zod rejects first) | MEDIUM `AddRoute` (13, all builder route methods), `ValidateGraph` (43, bridge tests); `RouteOutcome`, `WithTimeout`, the options/checkpoint/Harness checks LOW. detect_changes: low (8 files, 0 flows) | (1) The builder owns "one unconditional route per outcome": `AddRoute` records the outcome case of an unconditional outcome route and rejects a second one for the same source (agents, parallel groups and standard-outcome stages all route through `RouteOutcome`); the bridge's grouping rule and its comment are deleted. (2) Every authoring range check in Core and Advanced (`AgentModelRequestOptions`, `WithTimeout`, `UseHarness(…, maxContextWindowTokens, maxOutputTokens)`, `WithCheckpoint`, `AgentTurnPolicy`, checkpoint session behaviour) states its rule and the rejected value. (3) Reasoning: "effort together with maxTokens" is Core's rule (`AgentModelRequestOptions` already rejects it), so the bridge's "exactly one" check is cut to the contract-shape half, "an empty `reasoning` object", which has no Core counterpart (Core has no reasoning object, only two optional values). Checked the rest of `RegistrationContractValidator`: no numeric range rule remains; the kept duplicate-capability-name check guards the bridge's own name → capability map used for checkpoint lookup (without it a duplicate would fail as a dictionary key error before Core sees it). CHANGELOG updated. |
 | W2-1 → W2-5 gate | done | vs `90a77cd`: 105 files +3,131/−4,029; `src`+`bridge` +2,703/−3,156 (net −453; without the API text files +857/−1,516, net −659). vs `b4a824d`: 200 files +12,645/−16,996; `src`+`bridge` +7,419/−11,112 (net −3,693; without API text net −3,802; `.cs` only net −3,771) | Suites at `4ff57cc`: Tandem.Tests 452, bridge 106, Terminal 98, Packets 18, ExternalConsumer 7, PackageConsumer 1 (682, all green) | tandem-ts against the final osx-arm64 bundle (`/tmp` copy): 148/150, only the two known `run_entries` rollback tests (W2-6). Cadence items for W2-8 are in the W2-1, W2-2 rows | — | `task check` green after every package; Plumb `[]`. |
 | W2-6 Callback protocol and bridge rename (D5, D11; BUG-13) | done | vs `4f17b4d`: bridge +297/−185 (net +112: `RunEnvelope.cs` +76, `RegistrationContractException`; the rename touches every file's namespace line), bridge-tests +284/−42, CHANGELOG +2, `check.yml` +4/−1 | bridge 106 → 118: `RunEnvelopeTests` +12, all red first (the method threw): succeeded/failed ×2, callback contract, registration contract, builder rule, faulted, OCE-without-run-cancellation is faulted, cancelled ×4 (`OperationCanceledException`, `TaskCanceledException`, `AggregateException`, a JS AbortError from an interaction handler: the last was red again after the first mapping required an OCE), aggregate classification (a contract inside `AggregateException.InnerExceptions`, which `FindCallbackContractException` missed). 17 validator assertions reworded (`path: message`); `RawOutputIntegrationTests` reads `status`. Suites at `3e7b420`: Tandem.Tests 452, bridge 118, Terminal 98, Packets 18, ExternalConsumer 7, PackageConsumer 1 (694) | **tandem-ts** `slop/bridge-envelope` (worktree `~/Sites/tandem-ts-wt-bridge`, 5 commits `fb84c50`..`99eccd7`, not pushed): consumes the envelope, marker scraping and cancellation regex deleted, loader imports `Tandem.Bridge.mjs`, both bundles re-staged from this branch's publish, the 2 `run_entries` tests rewritten, the collection flake fixed, version 0.3.0; full gate green (150/150 on three consecutive runs, typecheck, typecheck:types). Cadence: none (bridge is internal) | `RunRegisteredGraphAsync`, `RunRegisteredGraphCoreAsync`, `FindCallbackContractException`, `CallbackContractFailure` LOW; `ParseAndValidate` HIGH (27 direct, all bridge tests plus `RunRegisteredGraphAsync`). detect_changes: high by breadth (39 symbols, 15 flows, all bridge registration/run flows) | **Envelope** (`[JsonPolymorphic("status")]` records): `{status:"succeeded"\|"failed", runId, state, summary}`, `{status:"cancelled", runId}`, `{status:"contract", runId, boundary, problems:[{path,message}]}`, `{status:"faulted", runId, message}`. **Deviation from the spec's four statuses:** `failed` is added, because a run that reaches a failure output is a completed run with state (Core's `PipelineRunStatus.Failed`, tandem-ts's `succeeded: false`), not a fault. `RunEnvelope.Ended` is the one mapping: callback contract (walking inner and aggregate exceptions) → registration contract → cancelled if the run's token is cancelled, whatever surfaced (a JS interaction handler that observes its aborted signal fails with an AbortError, and the runner reports that failure ahead of any OCE; this is the rule tandem-ts applied through `signal.aborted`, now also covering the terminal's own cancel) → faulted with the fault's full `ToString()` (the inner exception of a `PipelineRunException`, as before). An OCE while the run is not cancelled (a timeout) is a fault. The runId is assigned before parsing, so every envelope has one. **Only bridge defects throw — scoped honestly:** once a run is attempted every exception is reported, because a fault raised inside the run cannot be told apart from a defect; only a caller without a JavaScript synchronization context gets an exception. Registration: the validator collects `ValidationProblem(path, message)` (Core's record) and throws `RegistrationContractException`; `CoreRule` reports builder failures the same way; boundary `registration contract`; messages read `- nodes[0].id: duplicates node ID 'x'.`. **Gotcha found through tandem-ts (all 150 failed on the first bundle):** the entry method's state machine held `TaskAwaiter<PipelineRunResult<JavaScriptState>>`, so compiling it loaded `Tandem` through node-api-dotnet before `PreloadDependencies`, and every run then failed off Node's thread (0x80131509). The worker returns the envelope's JSON instead; comment at the `Task.Run`. Not unit-testable without the Node host; the `check.yml` bridge job and the tandem-ts suite cover it. **`InspectAcceptedAsync` and `RunCollectionAgentAsync` keep throwing:** neither has cancellation or a callback contract to classify; inspect's only failures are faults (unknown run, bad GUID) that tandem-ts maps to `TandemRuntimeError("inspect")`, and a collection-agent failure travels back through the JS run callback's own `CallbackResult`. **Rename:** `Tandem.NodeApiSpike*` → `Tandem.Bridge*` (projects, test project, namespace, assembly, `InternalsVisibleTo` in `Tandem.csproj` and `AssemblyInfo.cs`, `Tandem.slnx`, `check.yml`); the JS export stays `NodePipelineBridge`, runtime files become `Tandem.Bridge.*`. GitNexus `rename` is MCP-only (not in the CLI) and this is a namespace/project rename, so it was a file move plus token replacement, verified by build, tests and detect_changes. **CI:** `check.yml` checks out tandem-ts `ref: slop/bridge-envelope` (comment: switch to `main` once it merges). **Bundle:** 56 files per platform = the 51 runtime/native assets in `Tandem.Bridge.deps.json` (incl. `Dapper`, `Spectre.Console.Json`, `Tavily`, `Microsoft.JavaScript.NodeApi.Generator`) + `Tandem.Bridge.{cjs,mjs,d.ts,deps.json,runtimeconfig.json}`; linux-x64 via `dotnet publish -r linux-x64`, not runnable here (the `check.yml` bridge job covers it). **Follow-ups (owner WIP files, not edited):** `release.yml:31` publishes `bridge/Tandem.NodeApiSpike.Bridge.csproj` and **will fail until changed to `bridge/Tandem.Bridge.csproj`**; `scripts/runtime-assets.mjs:48-53` lists `Tandem.NodeApiSpike.Bridge.*` (rename, or derive from the deps.json per the X4 row); `CONTRIBUTING.md:233` names the old csproj. **Owner:** push tandem-ts `slop/bridge-envelope` so CI can check it out; merge it, switch `check.yml` to `main`; publish tandem-ts 0.3.0 after Tandem's release. `task check` green; Plumb `[]`. |
+| W2-8 Cadence adaptation (D1 consequence) | done (not merged) | Cadence only (branch `slop/tandem-cleanup`, worktree `~/Sites/cadence-wt-tandem`, commits `09de858`, `bc8c703`, `0410ce6`, `8c4486e`); no Tandem change | Cadence 194/194 | Cadence consumes the unreleased Tandem from a git-ignored `local-nupkgs/` feed through `TandemVersion` (default `0.1.1-slop.4f17b4d`, a local pack of `4f17b4d`). Adapted to every removed or renamed API recorded for W2-8 in the A6, A8, L1, W2-1 and W2-2 rows. **Product decision for the owner:** operator-instruction resume is redesigned rather than removed: it starts a fresh run seeded from the prior run's accepted state read from the journal (application-owned, as "active runs are process-owned" requires); `ReopenRunAsync` is gone. | — | Recorded in Cadence's `docs/tandem-cleanup.md`. **Before merging:** re-pack Cadence against the final integration HEAD (W2-7 built and tested it against a pack of `d391d4e`: 194/194), then re-pin to the published Tandem version once it is released (§10). Not pushed or merged. |
+| W2-7 Final sweep | done | src .cs +2,047/−2,007 (net +40: the split files' headers; the moved code is line-identical, and 2 dead pragma lines are gone); docs +9/−4; props/csproj +4/−8; tests +4/−6 (comments); `check.yml` +1/−2 | 694 → 694 (none added or removed) | none. Cadence and tandem-ts gates below. | `AgentBlock` HIGH (7 direct, 3 flows; pure move), `PipelineBuilder` LOW (2 direct). detect_changes vs `8e912be`: low, 0 flows | **Comments:** the lanes had already removed the tracker tags; a grep for tracker IDs (`[A-Z][0-9]`, `BUG-n`) and history words over `src`, `bridge`, `bridge-tests`, `tests`, `examples` and `.github` found only history tails in three test comments ("instead of failing a version check", "no snapshot check to fail", "no version state to invalidate") and the `check.yml` pointer to "the W0-1 ledger row"; those are reworded. The dead `#pragma warning disable MAAI001` in `AgentBlock.cs` is gone (no experimental API left there; build clean without it). Every *why* comment stays, including the adjacency client/injection, eager DLL loading, terminal finishing hook and assembly preload ones. **Splits (pure move, `git show -M --stat 2e96a30`: +2,047/−2,007, the +40 being file headers):** `AgentBlock.cs` 1,413 → `AgentBlock.cs` 547 (the visit: execute, user message, turn streaming, accepted-result injection, observation), `AgentBlock.Tools.cs` 347 (function-invocation middleware, diagnostics), `AgentBlock.AgentCreation.cs` 235 (agent, chat options, workspace, client selection), `AgentBlock.Runtime.cs` 168 (gates, usage, sessions, pre-invocation policies), `AgentBlock.Outcome.cs` 143 (outcome resolution, accepted capability) as one `partial` class; `PipelineStep.cs` 1,469 → `PipelineStep.cs` 329 (generated step descriptors and executor, standard outcomes, execution envelope), `PipelineBuilder.cs` 719, `PipelineNodes.cs` 213 (node interfaces and descriptors), `Pipeline.cs` 126, `PipelineInspection.cs` 95. A line-multiset comparison of old against new files differs only in usings, namespaces, braces and the `partial` modifier. No other `src`/`bridge` file is over 900 lines (largest: `AdvancedPipeline.cs` 839). **Docs:** the README persistence section states the ledger is an append-only run-history journal that cannot reopen or resume a run; "matching C# and TypeScript examples" → C# examples with the TypeScript versions in tandem-ts; `docs/quickstarts/csharp.md:57` no longer calls the progression package-backed; the Advanced README says "ledger reference", not "durable reference". The other items were already clean (no `ExportedApi.txt`/`PublicApiMembers.txt`, `NodeApiSpike`, DOT, documents/reopen or `samples/` mention outside `CHANGELOG.md`, `docs/plans/` and the owner-WIP files; `src/Tandem.Ledger/README.md` already described the journal). **Packing:** `IsPackable` is false in the root `Directory.Build.props` (and the getting-started examples' own props) and true in `src/Directory.Build.props`, and the eight redundant test-project `IsPackable` lines are gone, so `dotnet pack Tandem.slnx` produces exactly the seven packages (verified); this is what the §10 `publish.yml` change needs. **Gates:** `task check` green (Tandem.Tests 452, bridge 118, Terminal 98, Packets 18, ExternalConsumer 7, PackageConsumer 1); Plumb `[]`. tandem-ts `slop/bridge-envelope` in a `/tmp` copy with the osx-arm64 bundle published from `d391d4e` (56 files = the runtime/native assets in `Tandem.Bridge.deps.json` + `Tandem.Bridge.{cjs,mjs,d.ts,deps.json,runtimeconfig.json}`, identical in name to its committed bundle): **150/150**. Cadence `slop/tandem-cleanup` against a fresh pack of `d391d4e` (`0.1.1-slop.d391d4e` in a temp feed via `-p:TandemVersion` and `RestoreAdditionalProjectSources`; nothing written in Cadence but build output): build clean (0 warnings), **194/194** with `TAVILY_API_KEY=dummy`. Process note: `gitnexus analyze` writes `CLAUDE.md`, `.claude/skills/` and an `AGENTS.md` stats line into the worktree; they were discarded, not committed. |
+| Final (W2-7 gate) | complete on `slop/integration`; not merged | vs `b4a824d` at `d391d4e` (last code commit): 222 files +14,635/−18,587; `src`+`bridge` +9,118/−12,658 (net −3,540; without the API text files +7,272/−10,921, net −3,649; `.cs` only +7,224/−10,906, net −3,682: `src` 19,295 → 15,857 lines, `bridge` 2,640 → 2,396); `tests`+`bridge-tests` +4,790/−5,886 (net −1,096); API text files overall: +1,846/−1,737 (12 hand-kept manifests deleted, 7 generated `PublicAPI.Shipped.txt` added) | Per suite, `b4a824d` → `d391d4e`: Tandem.Tests 451 → 452, bridge 85 → 118, Terminal 92 → 98, Packets 7 → 18, ExternalConsumer 8 → 7, PackageConsumer 1 → 1 (644 → 694, all green) | tandem-ts 150/150 against the final osx-arm64 bundle; Cadence 194/194 against a pack of the final code (both W2-7) | — | Plumb `[]`. Nothing merged, pushed or tagged. Owner actions: §10. |
+
+## 10. Needs owner
+
+The cleanup is complete on `slop/integration` but needs these owner edits, because they touch the owner-WIP files (`.github/workflows/release.yml`, `CONTRIBUTING.md`, `scripts/runtime-assets.mjs`, `scripts/stage-runtime.mjs`) or are releases. The diffs are against the committed files at `b4a824d`; apply them on top of the WIP. Sources: X4, K6, W2-4, W2-6 and the integration row.
+
+### 10.1 `.github/workflows/release.yml`
+
+Required: without the csproj rename the release **fails** (the project no longer exists). The `check` dependency gates the bundle on `task check` and the tandem-ts suite (`check.yml` already has `workflow_call`). The version fix: `#v` strips nothing from `0.*` tags. The RID goes to the staging script (§10.3). If the WIP adds a linux-x64 leg, pass `linux-x64` there too.
+
+```diff
+ jobs:
++  check:
++    uses: ./.github/workflows/check.yml
++
+   bridge:
++    needs: check
+     runs-on: macos-14
+@@
+       - name: Extract version from tag
+         id: version
+-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
++        run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+ 
+       - name: Publish bridge
+-        run: dotnet publish bridge/Tandem.NodeApiSpike.Bridge.csproj -c Release -p:Version=${{ steps.version.outputs.VERSION }} -r osx-arm64 --self-contained false --output .runtime-publish
++        run: dotnet publish bridge/Tandem.Bridge.csproj -c Release -p:Version=${{ steps.version.outputs.VERSION }} -r osx-arm64 --self-contained false --output .runtime-publish
+ 
+       - name: Stage allowlisted assets
+-        run: node scripts/stage-runtime.mjs
++        run: node scripts/stage-runtime.mjs osx-arm64
+```
+
+### 10.2 `.github/workflows/publish.yml` and the pack loop
+
+This file is not WIP, but it was deferred with `release.yml` (X4) so that both land together. `IsPackable` now defaults to false in the root `Directory.Build.props` and to true in `src/Directory.Build.props` (W2-7), so one solution pack yields exactly the seven packages. The `check` job replaces the inline `dotnet test`.
+
+```diff
+ jobs:
++  check:
++    uses: ./.github/workflows/check.yml
++
+   publish:
++    needs: check
+     runs-on: ubuntu-latest
+@@
+       - run: dotnet restore
+ 
+-      - run: dotnet test Tandem.slnx --no-restore
+-
+       - name: Extract version from tag
+         id: version
+-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
++        run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+ 
+       - name: Pack Tandem packages
+-        run: |
+-          for project in Tandem.Generators Tandem Tandem.Advanced Tandem.Ledger Tandem.OpenAICompatible Tandem.Terminal Tandem.Packets; do
+-            dotnet pack src/$project/$project.csproj -c Release -p:Version=${{ steps.version.outputs.VERSION }} --no-restore -o ./nupkgs
+-          done
++        run: dotnet pack Tandem.slnx -c Release -p:Version=${{ steps.version.outputs.VERSION }} --no-restore -o ./nupkgs
+```
+
+Optional follow-up once this lands: `PackageConsumerTests.PackedPackages_…` can replace its seven `PackAsync` calls with one solution pack. Check that packing the solution from inside `dotnet test Tandem.slnx` does not contend with the running build first.
+
+### 10.3 `scripts/runtime-assets.mjs` / `scripts/stage-runtime.mjs`
+
+Required before any bundle is staged: the committed allowlist names `Tandem.NodeApiSpike.Bridge.*` and lacks `Dapper.dll` (Ledger, L2), `Spectre.Console.Json.dll` (Terminal, T1) and `Tavily.dll`. Without them tandem-ts cannot load the ledger. The WIP's additions `JsonSchema.Net*`, `Json.More`, `JsonPointer.Net`, `Humanizer`, `import.cjs` and the satellite resource folders are no longer needed (K2 removed JsonSchema.Net).
+
+**Option A (recommended, X4): derive the list from `deps.json`.** Delete `scripts/runtime-assets.mjs` and replace `scripts/stage-runtime.mjs` with the code below. W2-7 verified it against the `d391d4e` osx-arm64 publish. It stages the same 56 files as tandem-ts's committed bundle, which passed 150/150, and it rejects a publish for another RID. Then `check.yml`'s bridge job can stage through it instead of publishing straight into tandem-ts, and `release.yml` passes the RID (§10.1).
+
+```js
+import assert from "node:assert/strict";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { basename } from "node:path";
+
+const rid = process.argv[2];
+assert(rid, "usage: node scripts/stage-runtime.mjs <rid>");
+const publish = new URL("../.runtime-publish/", import.meta.url);
+const runtime = new URL("../bridge-runtime/", import.meta.url);
+const bridge = "Tandem.Bridge";
+
+// The publish's own dependency manifest is the asset list: every runtime and native file of
+// the RID-specific target, plus the bridge's JavaScript entry points and host configuration.
+const deps = JSON.parse(readFileSync(new URL(`${bridge}.deps.json`, publish), "utf8"));
+assert.equal(deps.runtimeTarget.name.split("/")[1], rid, "publish RID does not match");
+const assets = new Set(
+  ["cjs", "mjs", "d.ts", "deps.json", "runtimeconfig.json"].map((ext) => `${bridge}.${ext}`),
+);
+for (const library of Object.values(deps.targets[deps.runtimeTarget.name])) {
+  for (const group of [library.runtime, library.native]) {
+    for (const path of Object.keys(group ?? {})) assets.add(basename(path));
+  }
+}
+
+rmSync(runtime, { recursive: true, force: true });
+mkdirSync(runtime, { recursive: true });
+for (const name of assets) {
+  const source = new URL(name, publish);
+  assert(existsSync(source), `missing publish asset: ${name}`);
+  copyFileSync(source, new URL(name, runtime));
+}
+rmSync(publish, { recursive: true, force: true });
+```
+
+**Option B (minimal): keep the hand list.** This stays osx-arm64-only (`libe_sqlite3.dylib`) and keeps the drift risk. It also omits `Microsoft.JavaScript.NodeApi.Generator.dll`, which the committed allowlist never staged.
+
+```diff
+ export const runtimeAssets = [
++  "Dapper.dll",
+   "FluentValidation.dll",
+@@
+   "Spectre.Console.dll",
+   "Spectre.Console.Ansi.dll",
++  "Spectre.Console.Json.dll",
+   "System.ClientModel.dll",
+@@
+   "Tandem.Terminal.dll",
+-  "Tandem.NodeApiSpike.Bridge.cjs",
+-  "Tandem.NodeApiSpike.Bridge.deps.json",
+-  "Tandem.NodeApiSpike.Bridge.dll",
+-  "Tandem.NodeApiSpike.Bridge.d.ts",
+-  "Tandem.NodeApiSpike.Bridge.mjs",
+-  "Tandem.NodeApiSpike.Bridge.runtimeconfig.json",
++  "Tandem.Bridge.cjs",
++  "Tandem.Bridge.deps.json",
++  "Tandem.Bridge.dll",
++  "Tandem.Bridge.d.ts",
++  "Tandem.Bridge.mjs",
++  "Tandem.Bridge.runtimeconfig.json",
++  "Tavily.dll",
+ ];
+```
+
+### 10.4 `CONTRIBUTING.md`
+
+- `:143` ("one corrective response"): no change. D7 made the code match it.
+- `:176` (K6, Mermaid only):
+  ```diff
+  -into Tandem's semantic nodes and routes; Mermaid and DOT render the same projection
+  -without private MAF expansion.
+  +into Tandem's semantic nodes and routes; Mermaid (`PipelineInspection.ToMermaid()`) renders
+  +the same projection without private MAF expansion.
+  ```
+- `:224-225` (W2-4, PublicApiAnalyzers):
+  ```diff
+  -Public package boundaries are also proven through packed consumers. Changes to
+  -exported types require a deliberate update to the owning `ExportedApi.txt`.
+  +Public package boundaries are also proven through packed consumers. Public API changes
+  +fail the build (RS0016/RS0017) until the project's `PublicAPI.Unshipped.txt` is updated;
+  +move its entries to `PublicAPI.Shipped.txt` at release.
+  ```
+- `:233-234` (W2-6, the new csproj; the RID argument applies with §10.3 option A):
+  ```diff
+  -For a local macOS ARM64 bundle, run `dotnet publish bridge/Tandem.NodeApiSpike.Bridge.csproj -c Release
+  --r osx-arm64 --self-contained false --output .runtime-publish`, then `node scripts/stage-runtime.mjs`.
+  +For a local macOS ARM64 bundle, run `dotnet publish bridge/Tandem.Bridge.csproj -c Release
+  +-r osx-arm64 --self-contained false --output .runtime-publish`, then `node scripts/stage-runtime.mjs osx-arm64`.
+  ```
+
+`docs/quickstarts/typescript.md:51` (X3, WIP) links to `examples/getting-started` for a TypeScript progression that now lives in tandem-ts (`examples/getting-started`); point the link there.
+
+### 10.5 Main checkout hygiene (W0-3)
+
+In `/Users/max/Sites/tandem`: `rm -rf samples ledger.sqlite3`. Both are git-ignored leftovers, so there is nothing to commit.
+
+### 10.6 Merges, pushes and releases, in order
+
+1. **Tandem:** commit the WIP with §10.1–§10.4, merge `slop/integration` into `main`, push, then tag. The tag drives `publish.yml` (NuGet) and `release.yml` (bridge bundle). Keep `check.yml`'s tandem-ts checkout at `ref: slop/bridge-envelope` until step 2 merges.
+2. **tandem-ts 0.3.0** from branch `slop/bridge-envelope` (worktree `~/Sites/tandem-ts-wt-bridge`, `fb84c50`..`99eccd7`): push the branch (Tandem's `check.yml` checks it out), merge it, re-stage the runtime bundles from the released Tandem tag if they differ, and publish 0.3.0. Then switch `check.yml`'s tandem-ts `ref` to `main`.
+3. **Cadence** `slop/tandem-cleanup` (worktree `~/Sites/cadence-wt-tandem`): re-pin `TandemVersion` from `0.1.1-slop.4f17b4d` to the published Tandem version. Remove the `local-nupkgs` source from `nuget.config`. Rebuild, run the tests (`TAVILY_API_KEY=dummy`) and merge. Review the resume redesign decision (W2-8 row) before merging.
