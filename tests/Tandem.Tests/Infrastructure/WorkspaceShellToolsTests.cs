@@ -191,12 +191,7 @@ public sealed class WorkspaceShellToolsTests
             return;
         }
         using var workspace = TemporaryWorkspace.Create();
-        await using var executor = WorkspaceShellTools.CreateExecutor(
-            workspace.Path,
-            acknowledgeUnsafe: false,
-            timeout: null,
-            maxOutputBytes: 1024
-        );
+        await using var executor = WorkspaceShellTools.CreateExecutor(workspace.Path);
 
         System.IO.Path.GetFileName(executor.ResolvedShellBinary).Should().Be("powershell.exe");
     }
@@ -318,29 +313,6 @@ public sealed class WorkspaceShellToolsTests
     }
 
     [Fact]
-    public async Task FixedCommand_StopsAtConfiguredTimeout()
-    {
-        using var workspace = TemporaryWorkspace.Create();
-        var options = new ChatOptions();
-        WorkspaceShellTools.Add(
-            options,
-            ResolvedWorkspace(
-                workspace.Path,
-                [new AgentCommandDescriptor("slow", "Run slowly.", SlowCommand(), [])]
-            ),
-            new ToolEffectRegistry(),
-            TimeSpan.FromMilliseconds(100)
-        );
-
-        var result = Result(
-            await ((AIFunction)options.Tools!.Single()).InvokeAsync(new AIFunctionArguments())
-        );
-
-        result.TimedOut.Should().BeTrue();
-        result.ExitCode.Should().Be(124);
-    }
-
-    [Fact]
     public async Task FixedCommand_HonorsCallerCancellation()
     {
         using var workspace = TemporaryWorkspace.Create();
@@ -364,29 +336,6 @@ public sealed class WorkspaceShellToolsTests
         await invoke.Should().ThrowAsync<OperationCanceledException>();
     }
 
-    [Fact]
-    public async Task FixedCommand_TruncatesBoundedOutput()
-    {
-        using var workspace = TemporaryWorkspace.Create();
-        var options = new ChatOptions();
-        WorkspaceShellTools.Add(
-            options,
-            ResolvedWorkspace(
-                workspace.Path,
-                [new AgentCommandDescriptor("noisy", "Produce output.", NoisyCommand(), [])]
-            ),
-            new ToolEffectRegistry(),
-            maxOutputBytes: 256
-        );
-
-        var result = Result(
-            await ((AIFunction)options.Tools!.Single()).InvokeAsync(new AIFunctionArguments())
-        );
-
-        result.Truncated.Should().BeTrue();
-        result.Stdout.Length.Should().BeLessThan(1_000);
-    }
-
     private static ResolvedAgentWorkspace ResolvedWorkspace(
         string path,
         IReadOnlyList<AgentCommandDescriptor> commands,
@@ -402,6 +351,9 @@ public sealed class WorkspaceShellToolsTests
         value is JsonElement { ValueKind: JsonValueKind.String } element
             ? element.GetString()!
             : value?.ToString() ?? "";
+
+    private static string SlowCommand() =>
+        OperatingSystem.IsWindows() ? "ping -n 6 127.0.0.1 >nul" : "sleep 5";
 
     private static string CurrentDirectory() => OperatingSystem.IsWindows() ? "cd" : "pwd";
 
@@ -419,14 +371,6 @@ public sealed class WorkspaceShellToolsTests
         OperatingSystem.IsWindows()
             ? "echo %TANDEM_SHELL_STATE%"
             : "printf '%s' \"$TANDEM_SHELL_STATE\"";
-
-    private static string SlowCommand() =>
-        OperatingSystem.IsWindows() ? "ping -n 6 127.0.0.1 >nul" : "sleep 5";
-
-    private static string NoisyCommand() =>
-        OperatingSystem.IsWindows()
-            ? "powershell -NoProfile -Command \"[Console]::Out.Write('x' * 10000)\""
-            : "printf '%010000d' 0";
 
     private sealed class TemporaryWorkspace : IDisposable
     {

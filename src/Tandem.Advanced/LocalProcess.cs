@@ -40,47 +40,40 @@ public static class LocalProcess
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.FileName);
         ArgumentNullException.ThrowIfNull(request.Arguments);
-        if (request.Arguments.Any(argument => argument is null))
+        if (
+            request.Arguments.Contains(null)
+            || request.Environment?.Any(entry =>
+                string.IsNullOrWhiteSpace(entry.Key) || entry.Value is null
+            )
+                is true
+        )
         {
             throw new ArgumentException(
-                "Process arguments cannot contain null values.",
+                "Arguments and environment values cannot be null, and environment names cannot be blank.",
                 nameof(request)
             );
         }
-        if (request.Timeout is { } timeout && timeout <= TimeSpan.Zero)
+        if (request.Timeout is { } timeout)
         {
-            throw new ArgumentOutOfRangeException(nameof(request), "Timeout must be positive.");
-        }
-        if (request.MaximumOutputBytesPerStream <= 0)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(request),
-                "Maximum output bytes per stream must be positive."
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(
+                timeout,
+                TimeSpan.Zero,
+                nameof(request)
             );
         }
-        if (request.MaximumOutputBytesPerStream > MaximumAllowedOutputBytesPerStream)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(request),
-                $"Maximum output bytes per stream cannot exceed {MaximumAllowedOutputBytesPerStream}."
-            );
-        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(
+            request.MaximumOutputBytesPerStream,
+            nameof(request)
+        );
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(
+            request.MaximumOutputBytesPerStream,
+            MaximumAllowedOutputBytesPerStream,
+            nameof(request)
+        );
         if (request.WorkingDirectory is not null && !Directory.Exists(request.WorkingDirectory))
         {
             throw new DirectoryNotFoundException(
                 $"Process working directory does not exist: {request.WorkingDirectory}"
-            );
-        }
-        if (
-            request.Environment?.Any(entry =>
-                string.IsNullOrWhiteSpace(entry.Key) || entry.Value is null
-            )
-            is true
-        )
-        {
-            throw new ArgumentException(
-                "Environment variable names cannot be blank and values cannot be null.",
-                nameof(request)
             );
         }
 

@@ -2,7 +2,10 @@ using System.Buffers;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+using System.Text.RegularExpressions;
 using FluentValidation;
 using YamlDotNet.Core;
 using YamlDotNet.RepresentationModel;
@@ -14,45 +17,17 @@ public static class PacketFile
     internal const int MaximumSourceBytes = 1024 * 1024;
     internal const int MaximumDepth = 64;
 
-    public static PacketFile<T> Parse<T>(string content, string? sourceName = null) =>
-        ParseCore<T>(content, CreateSource(sourceName), null);
-
     public static PacketFile<T> Parse<T>(
         string content,
-        IValidator<T> validator,
+        IValidator<T>? validator = null,
         string? sourceName = null
-    ) =>
-        ParseCore(
-            content,
-            CreateSource(sourceName),
-            validator ?? throw new ArgumentNullException(nameof(validator))
-        );
-
-    public static PacketFile<T> Read<T>(string path) =>
-        ParseCore<T>(ReadText(path), CreateFileSource(path), null);
-
-    public static PacketFile<T> Read<T>(string path, IValidator<T> validator) =>
-        ParseCore(
-            ReadText(path),
-            CreateFileSource(path),
-            validator ?? throw new ArgumentNullException(nameof(validator))
-        );
+    ) => ParseCore(content, CreateSource(sourceName), validator);
 
     public static async ValueTask<PacketFile<T>> ReadAsync<T>(
         string path,
+        IValidator<T>? validator = null,
         CancellationToken cancellationToken = default
-    ) => ParseCore<T>(await ReadTextAsync(path, cancellationToken), CreateFileSource(path), null);
-
-    public static async ValueTask<PacketFile<T>> ReadAsync<T>(
-        string path,
-        IValidator<T> validator,
-        CancellationToken cancellationToken = default
-    ) =>
-        ParseCore(
-            await ReadTextAsync(path, cancellationToken),
-            CreateFileSource(path),
-            validator ?? throw new ArgumentNullException(nameof(validator))
-        );
+    ) => ParseCore(await ReadTextAsync(path, cancellationToken), CreateFileSource(path), validator);
 
     private static PacketFile<T> ParseCore<T>(
         string content,
@@ -79,7 +54,7 @@ public static class PacketFile
                 );
             }
 
-            var normalizedValue = NormalizeNode(
+            var json = ToJson(
                 stream.Documents[0].RootNode,
                 "$",
                 0,
@@ -87,13 +62,12 @@ public static class PacketFile
                 source.Name,
                 nodes
             );
-            if (normalizedValue is not Dictionary<string, object?>)
+            if (json is not JsonObject)
             {
                 throw Failure(source.Name, "$", "Frontmatter root must be a mapping.");
             }
 
-            var json = JsonSerializer.Serialize(normalizedValue);
-            var value = JsonSerializer.Deserialize<T>(json, _serializerOptions);
+            var value = json.Deserialize<T>(_serializerOptions);
             if (value is null)
             {
                 throw Failure(source.Name, "$", "Frontmatter cannot decode to null.");
@@ -142,12 +116,7 @@ public static class PacketFile
         }
         catch (JsonException exception)
         {
-            var path = exception.Message.Contains(
-                "could not be mapped",
-                StringComparison.OrdinalIgnoreCase
-            )
-                ? "$"
-                : ToPacketPath(exception.Path);
+            var (path, message) = ShapeProblem(typeof(T), exception.Path ?? "$");
             nodes.TryGetValue(path, out var node);
             throw new PacketFileException(
                 "Packet shape is invalid.",
@@ -155,7 +124,7 @@ public static class PacketFile
                 [
                     new PacketProblem(
                         path,
-                        ShapeMessage(exception),
+                        message,
                         node is null ? null : checked((int)node.Start.Line) + frontmatterLine,
                         node is null ? null : checked((int)node.Start.Column)
                     ),
@@ -171,10 +140,11 @@ public static class PacketFile
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
         NumberHandling = JsonNumberHandling.Strict,
         RespectNullableAnnotations = true,
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
         Converters = { new JsonStringEnumConverter(allowIntegerValues: false) },
     };
 
-    private static object? NormalizeNode(
+    private static JsonNode? ToJson(
         YamlNode node,
         string path,
         int depth,
@@ -196,7 +166,7 @@ public static class PacketFile
         RejectUnsupportedNode(node, path, lineOffset, sourceName);
         return node switch
         {
-            YamlMappingNode mapping => NormalizeMapping(
+            YamlMappingNode mapping => ToJsonObject(
                 mapping,
                 path,
                 depth,
@@ -204,25 +174,18 @@ public static class PacketFile
                 sourceName,
                 nodes
             ),
-            YamlSequenceNode sequence => sequence
-                .Children.Select(
+            YamlSequenceNode sequence => new JsonArray([
+                .. sequence.Children.Select(
                     (child, index) =>
-                        NormalizeNode(
-                            child,
-                            $"{path}[{index}]",
-                            depth + 1,
-                            lineOffset,
-                            sourceName,
-                            nodes
-                        )
-                )
-                .ToList(),
-            YamlScalarNode scalar => NormalizeScalar(scalar, path, lineOffset, sourceName),
+                        ToJson(child, $"{path}[{index}]", depth + 1, lineOffset, sourceName, nodes)
+                ),
+            ]),
+            YamlScalarNode scalar => ToJsonValue(scalar, path, lineOffset, sourceName),
             _ => throw Failure(sourceName, path, "Unsupported YAML value."),
         };
     }
 
-    private static Dictionary<string, object?> NormalizeMapping(
+    private static JsonObject ToJsonObject(
         YamlMappingNode mapping,
         string path,
         int depth,
@@ -231,9 +194,19 @@ public static class PacketFile
         IDictionary<string, YamlNode> nodes
     )
     {
-        var result = new Dictionary<string, object?>(StringComparer.Ordinal);
+        var result = new JsonObject();
         foreach (var pair in mapping.Children)
         {
+            if (pair.Key is YamlScalarNode { Value: "<<", Style: ScalarStyle.Plain })
+            {
+                throw Problem(
+                    sourceName,
+                    path,
+                    "YAML merge keys are not supported.",
+                    pair.Key,
+                    lineOffset
+                );
+            }
             if (pair.Key is not YamlScalarNode keyNode)
             {
                 throw Problem(
@@ -246,7 +219,8 @@ public static class PacketFile
             }
             RejectUnsupportedNode(keyNode, path, lineOffset, sourceName);
             if (
-                NormalizeScalar(keyNode, path, lineOffset, sourceName) is not string key
+                ToJsonValue(keyNode, path, lineOffset, sourceName) is not { } keyValue
+                || !keyValue.TryGetValue(out string? key)
                 || key.Length == 0
             )
             {
@@ -259,20 +233,27 @@ public static class PacketFile
                 );
             }
             var childPath = path == "$" ? $"$.{key}" : $"{path}.{key}";
-            if (
-                !result.TryAdd(
-                    key,
-                    NormalizeNode(pair.Value, childPath, depth + 1, lineOffset, sourceName, nodes)
-                )
-            )
+            if (result.ContainsKey(key))
             {
                 throw Problem(sourceName, childPath, "Duplicate mapping key.", keyNode, lineOffset);
             }
+            result[key] = ToJson(pair.Value, childPath, depth + 1, lineOffset, sourceName, nodes);
         }
         return result;
     }
 
-    private static object? NormalizeScalar(
+    // YAML 1.2 core schema resolution, the same schema tandem-ts reads packets with.
+    private static readonly Regex _coreNull = new(@"^(?:null|Null|NULL|~|)$");
+    private static readonly Regex _coreBool = new(@"^(?:true|True|TRUE|false|False|FALSE)$");
+    private static readonly Regex _coreInt = new(@"^[-+]?[0-9]+$");
+    private static readonly Regex _coreFloat = new(
+        @"^[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?$"
+    );
+    private static readonly Regex _coreNonFinite = new(
+        @"^(?:[-+]?\.(?:inf|Inf|INF)|\.nan|\.NaN|\.NAN)$"
+    );
+
+    private static JsonValue? ToJsonValue(
         YamlScalarNode scalar,
         string path,
         int lineOffset,
@@ -282,78 +263,39 @@ public static class PacketFile
         var value = scalar.Value ?? "";
         var tag = scalar.Tag.IsEmpty || scalar.Tag.IsNonSpecific ? "" : scalar.Tag.Value;
         var plain = scalar.Style == ScalarStyle.Plain;
-        if (
-            tag.EndsWith(":null", StringComparison.Ordinal)
-            || plain && (value is "null" or "Null" or "NULL" or "~")
-        )
+        bool Is(string type, Regex pattern) =>
+            tag.EndsWith(type, StringComparison.Ordinal)
+            || plain && tag.Length == 0 && pattern.IsMatch(value);
+
+        if (Is(":null", _coreNull))
         {
             return null;
         }
-        if (
-            (tag.EndsWith(":bool", StringComparison.Ordinal) || plain)
-            && bool.TryParse(value, out var boolean)
-        )
+        if (Is(":bool", _coreBool))
         {
-            return boolean;
+            return JsonValue.Create(value is "true" or "True" or "TRUE");
         }
         if (
-            (tag.EndsWith(":int", StringComparison.Ordinal) || plain)
-            && long.TryParse(
-                value.Replace("_", "", StringComparison.Ordinal),
-                NumberStyles.Integer,
-                CultureInfo.InvariantCulture,
-                out var integer
-            )
+            Is(":int", _coreInt)
+            && long.TryParse(value, CultureInfo.InvariantCulture, out var integer)
         )
         {
-            return integer;
+            return JsonValue.Create(integer);
         }
-        var normalizedNumber = value.Replace("_", "", StringComparison.Ordinal);
-        if (
-            tag.EndsWith(":float", StringComparison.Ordinal)
-            || plain
-                && double.TryParse(
-                    normalizedNumber,
-                    NumberStyles.Float,
-                    CultureInfo.InvariantCulture,
-                    out _
-                )
-        )
-        {
-            if (
-                !double.TryParse(
-                    normalizedNumber,
-                    NumberStyles.Float,
-                    CultureInfo.InvariantCulture,
-                    out var number
-                ) || !double.IsFinite(number)
-            )
-            {
-                throw Problem(sourceName, path, "Numbers must be finite.", scalar, lineOffset);
-            }
-            return number;
-        }
-        if (plain && IsNonFiniteYamlNumber(value))
+        if (Is(":float", _coreNonFinite) && _coreNonFinite.IsMatch(value))
         {
             throw Problem(sourceName, path, "Numbers must be finite.", scalar, lineOffset);
         }
-        return value;
+        if (Is(":float", _coreFloat) || Is(":int", _coreInt))
+        {
+            return
+                double.TryParse(value, CultureInfo.InvariantCulture, out var number)
+                && double.IsFinite(number)
+                ? JsonValue.Create(number)
+                : throw Problem(sourceName, path, "Numbers must be finite.", scalar, lineOffset);
+        }
+        return JsonValue.Create(value);
     }
-
-    private static bool IsNonFiniteYamlNumber(string value) =>
-        value
-            is ".inf"
-                or ".Inf"
-                or ".INF"
-                or "-.inf"
-                or "-.Inf"
-                or "-.INF"
-                or "+.inf"
-                or "+.Inf"
-                or "+.INF"
-                or ".nan"
-                or ".NaN"
-                or ".NAN";
 
     private static void RejectUnsupportedNode(
         YamlNode node,
@@ -419,45 +361,6 @@ public static class PacketFile
             .TrimStart('\uFEFF')
             .Replace("\r\n", "\n", StringComparison.Ordinal)
             .Replace('\r', '\n');
-
-    private static string ReadText(string path)
-    {
-        var source = CreateFileSource(path);
-        try
-        {
-            using var stream = new FileStream(
-                source.FullPath!,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read
-            );
-            EnsureSize(stream.Length, source.Name);
-            using var reader = new StreamReader(
-                stream,
-                new UTF8Encoding(false, true),
-                detectEncodingFromByteOrderMarks: true
-            );
-            return reader.ReadToEnd();
-        }
-        catch (PacketFileException)
-        {
-            throw;
-        }
-        catch (Exception exception)
-            when (exception
-                    is IOException
-                        or UnauthorizedAccessException
-                        or DecoderFallbackException
-            )
-        {
-            throw new PacketFileException(
-                "Packet file could not be read.",
-                source.Name,
-                [new PacketProblem("$", exception.Message)],
-                exception
-            );
-        }
-    }
 
     private static async ValueTask<string> ReadTextAsync(
         string path,
@@ -562,29 +465,54 @@ public static class PacketFile
         {
             return "$";
         }
-        if (path.StartsWith('$'))
-        {
-            return path;
-        }
         var segments = path.Split('.', StringSplitOptions.RemoveEmptyEntries)
             .Select(segment => JsonNamingPolicy.SnakeCaseLower.ConvertName(segment));
         return "$." + string.Join('.', segments);
     }
 
-    private static string ShapeMessage(JsonException exception)
+    // Maps a deserialization failure to the packet path and the expected type, using the
+    // serializer's own contract metadata for the requested packet type.
+    private static (string Path, string Message) ShapeProblem(Type packetType, string jsonPath)
     {
-        if (exception.Message.Contains("System.String", StringComparison.Ordinal))
+        var info = _serializerOptions.GetTypeInfo(packetType);
+        foreach (var segment in _jsonPathSegment.Matches(jsonPath).Select(match => match.Groups[1]))
         {
-            return "Value must be a string.";
+            Type? next;
+            if (!segment.Success)
+            {
+                next = info.ElementType;
+            }
+            else
+            {
+                var property = info.Properties.FirstOrDefault(candidate =>
+                    candidate.Name == segment.Value
+                );
+                if (property is null)
+                {
+                    return ("$", $"Unknown key '{segment.Value}'.");
+                }
+                next = property.PropertyType;
+            }
+            if (next is null)
+            {
+                break;
+            }
+            info = _serializerOptions.GetTypeInfo(Nullable.GetUnderlyingType(next) ?? next);
         }
-        if (exception.Message.Contains("System.Int32", StringComparison.Ordinal))
+        var message = info.Type switch
         {
-            return "Value must be an integer.";
-        }
-        if (exception.Message.Contains("System.Boolean", StringComparison.Ordinal))
-        {
-            return "Value must be true or false.";
-        }
-        return "Value does not match the requested packet type.";
+            var type when type == typeof(string) => "Value must be a string.",
+            var type when type == typeof(bool) => "Value must be true or false.",
+            var type
+                when type == typeof(int)
+                    || type == typeof(long)
+                    || type == typeof(short)
+                    || type == typeof(byte) => "Value must be an integer.",
+            var type when type.IsEnum => "Value must be one of the allowed names.",
+            _ => "Value does not match the requested packet type.",
+        };
+        return (jsonPath, message);
     }
+
+    private static readonly Regex _jsonPathSegment = new(@"\.([^.\[]+)|\[\d+\]");
 }

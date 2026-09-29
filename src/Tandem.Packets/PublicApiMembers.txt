@@ -1,11 +1,7 @@
 [packets]
 T Tandem.Packets.PacketFile
-M static System.Threading.Tasks.ValueTask<Tandem.Packets.PacketFile<T>> ReadAsync<T>(System.String path, FluentValidation.IValidator<T> validator, System.Threading.CancellationToken cancellationToken = default)
-M static System.Threading.Tasks.ValueTask<Tandem.Packets.PacketFile<T>> ReadAsync<T>(System.String path, System.Threading.CancellationToken cancellationToken = default)
-M static Tandem.Packets.PacketFile<T> Parse<T>(System.String content, FluentValidation.IValidator<T> validator, System.String? sourceName = null)
-M static Tandem.Packets.PacketFile<T> Parse<T>(System.String content, System.String? sourceName = null)
-M static Tandem.Packets.PacketFile<T> Read<T>(System.String path)
-M static Tandem.Packets.PacketFile<T> Read<T>(System.String path, FluentValidation.IValidator<T> validator)
+M static System.Threading.Tasks.ValueTask<Tandem.Packets.PacketFile<T>> ReadAsync<T>(System.String path, FluentValidation.IValidator<T>? validator = null, System.Threading.CancellationToken cancellationToken = default)
+M static Tandem.Packets.PacketFile<T> Parse<T>(System.String content, FluentValidation.IValidator<T>? validator = null, System.String? sourceName = null)
 T Tandem.Packets.PacketFileException
 C (System.String message, System.String? sourceName, System.Collections.Generic.IReadOnlyList<Tandem.Packets.PacketProblem> problems, System.Exception? innerException = null)
 P System.Collections.Generic.IReadOnlyList<Tandem.Packets.PacketProblem> Problems { get; }

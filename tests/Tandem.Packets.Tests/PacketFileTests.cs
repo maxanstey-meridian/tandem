@@ -12,9 +12,9 @@ public sealed class PacketFileTests
     );
 
     [Fact]
-    public void Parse_ConstructsImmutableNestedRecordsAndNormalizesContext()
+    public async Task ReadAsync_ConstructsImmutableNestedRecordsAndNormalizesContext()
     {
-        var input = PacketFile.Read<Packet>(Path.Combine(Fixtures, "valid-nested.md"));
+        var input = await PacketFile.ReadAsync<Packet>(Path.Combine(Fixtures, "valid-nested.md"));
 
         input.Value.Title.Should().Be("Implement registration");
         input.Value.Outcomes.Should().ContainSingle().Which.Id.Should().Be("registration");
@@ -34,7 +34,7 @@ public sealed class PacketFileTests
     {
         var content =
             "\uFEFF---\r\ntitle: Test\r\nrepository: .\r\noutcomes: []\r\nverification: []\r\nmode: normal\r\n---\r\n body \r\n";
-        var input = PacketFile.Parse<Packet>(content, "memory.packet");
+        var input = PacketFile.Parse<Packet>(content, sourceName: "memory.packet");
 
         input.Context.Should().Be("body");
         input.Value.Constraints.Should().BeEmpty();
@@ -84,7 +84,7 @@ public sealed class PacketFileTests
                 mode: normal
                 ---
                 """,
-                "shape.packet"
+                sourceName: "shape.packet"
             );
 
         var exception = action.Should().Throw<PacketFileException>().Which;
@@ -97,6 +97,63 @@ public sealed class PacketFileTests
     }
 
     [Fact]
+    public void Parse_RejectsYamlMergeKeys()
+    {
+        var action = () =>
+            PacketFile.Parse<Packet>(
+                "---\ntitle: Test\nrepository: .\noutcomes: []\nverification: []\nmode: normal\n<<: {note: merged}\n---"
+            );
+
+        action
+            .Should()
+            .Throw<PacketFileException>()
+            .Which.Problems.Should()
+            .ContainSingle()
+            .Which.Message.Should()
+            .Be("YAML merge keys are not supported.");
+    }
+
+    [Theory]
+    [InlineData("NaN", "NaN")]
+    [InlineData("Infinity", "Infinity")]
+    [InlineData("yes", "yes")]
+    [InlineData("'12'", "12")]
+    [InlineData("1_000", "1_000")]
+    public void Parse_ResolvesPlainScalarsWithTheYamlCoreSchema(string yaml, string expected)
+    {
+        var input = PacketFile.Parse<Packet>(
+            $"---\ntitle: {yaml}\nrepository: .\noutcomes: []\nverification: []\nmode: normal\n---"
+        );
+
+        input.Value.Title.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("title: 12", "$.title", "Value must be a string.")]
+    [InlineData("title: .inf", "$.title", "Numbers must be finite.")]
+    [InlineData("title: true", "$.title", "Value must be a string.")]
+    [InlineData("title: Test\nmode: 1", "$.mode", "Value must be one of the allowed names.")]
+    [InlineData("title: Test\nextra: value", "$", "Unknown key 'extra'.")]
+    public void Parse_ReportsTypedShapeProblems(string fields, string path, string message)
+    {
+        var yaml = fields.Contains("mode:", StringComparison.Ordinal)
+            ? fields
+            : fields + "\nmode: normal";
+        var action = () =>
+            PacketFile.Parse<Packet>(
+                $"---\n{yaml}\nrepository: .\noutcomes: []\nverification: []\n---"
+            );
+
+        action
+            .Should()
+            .Throw<PacketFileException>()
+            .Which.Problems.Should()
+            .ContainSingle()
+            .Which.Should()
+            .Match<PacketProblem>(problem => problem.Path == path && problem.Message == message);
+    }
+
+    [Fact]
     public async Task ReadAsync_HonorsCancellation()
     {
         using var cancellation = new CancellationTokenSource();
@@ -105,13 +162,13 @@ public sealed class PacketFileTests
         var action = async () =>
             await PacketFile.ReadAsync<Packet>(
                 Path.Combine(Fixtures, "valid-nested.md"),
-                cancellation.Token
+                cancellationToken: cancellation.Token
             );
         await action.Should().ThrowAsync<OperationCanceledException>();
     }
 
     [Fact]
-    public void SharedFixtures_MatchPortableContract()
+    public async Task SharedFixtures_MatchPortableContract()
     {
         var manifest = JsonSerializer.Deserialize<Fixture[]>(
             File.ReadAllText(Path.Combine(Fixtures, "manifest.json")),
@@ -120,16 +177,15 @@ public sealed class PacketFileTests
 
         foreach (var fixture in manifest)
         {
-            var action = () => PacketFile.Read<Packet>(Path.Combine(Fixtures, fixture.File));
+            var action = async () =>
+                await PacketFile.ReadAsync<Packet>(Path.Combine(Fixtures, fixture.File));
             if (fixture.Valid)
             {
-                action.Should().NotThrow(fixture.File);
+                await action.Should().NotThrowAsync(fixture.File);
             }
             else
             {
-                action
-                    .Should()
-                    .Throw<PacketFileException>(fixture.File)
+                (await action.Should().ThrowAsync<PacketFileException>(fixture.File))
                     .Which.Problems.Should()
                     .Contain(problem => problem.Path == fixture.Path);
             }

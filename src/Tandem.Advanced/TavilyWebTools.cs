@@ -10,21 +10,13 @@ internal static class TavilyWebTools
     internal const string SearchName = "web_search";
     internal const string FetchName = "web_fetch";
 
-    internal static void Add(
-        AgentImplementationContext context,
-        Func<string, bool, bool, (AIFunction? Search, AIFunction? Fetch)>? createTools = null,
-        Func<string, string?>? getEnvironmentVariable = null
-    )
+    internal static void Add(AgentImplementationContext context, string? apiKey)
     {
         var workspace = context.Workspace;
         if (workspace is null || (!workspace.IncludeWebSearch && !workspace.IncludeWebFetch))
         {
             return;
         }
-
-        var apiKey = (getEnvironmentVariable ?? Environment.GetEnvironmentVariable)(
-            ApiKeyEnvironmentVariable
-        );
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException(
@@ -32,18 +24,14 @@ internal static class TavilyWebTools
             );
         }
 
-        var created = (createTools ?? CreateTools)(
-            apiKey,
-            workspace.IncludeWebSearch,
-            workspace.IncludeWebFetch
-        );
+        var client = new TavilyClient(apiKey);
         if (workspace.IncludeWebSearch)
         {
-            Add(new RenamedAIFunction(created.Search!, SearchName));
+            Add(new RenamedAIFunction(client.AsSearchTool(), SearchName));
         }
         if (workspace.IncludeWebFetch)
         {
-            Add(new RenamedAIFunction(created.Fetch!, FetchName));
+            Add(new RenamedAIFunction(client.AsExtractTool(), FetchName));
         }
 
         void Add(AIFunction tool) =>
@@ -55,20 +43,7 @@ internal static class TavilyWebTools
             );
     }
 
-    private static (AIFunction? Search, AIFunction? Fetch) CreateTools(
-        string apiKey,
-        bool includeSearch,
-        bool includeFetch
-    )
-    {
-        var client = new TavilyClient(apiKey);
-        return (
-            includeSearch ? client.AsSearchTool() : null,
-            includeFetch ? client.AsExtractTool() : null
-        );
-    }
-
-    private sealed class RenamedAIFunction(AIFunction inner, string name)
+    internal sealed class RenamedAIFunction(AIFunction inner, string name)
         : DelegatingAIFunction(inner)
     {
         public override string Name => name;
