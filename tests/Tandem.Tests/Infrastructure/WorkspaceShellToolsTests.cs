@@ -172,9 +172,15 @@ public sealed class WorkspaceShellToolsTests
             );
         await tooLong.Should().ThrowAsync<ArgumentException>();
 
-        var unknownProperty = async () =>
-            await tool.InvokeAsync(new AIFunctionArguments { ["other"] = "x" });
-        await unknownProperty.Should().ThrowAsync<ArgumentException>();
+        FluentActions
+            .Invoking(() =>
+                ToolInputValidation.ValidateArguments(
+                    tool,
+                    new AIFunctionArguments { ["other"] = "x" }
+                )
+            )
+            .Should()
+            .Throw<ArgumentException>();
     }
 
     [Fact]

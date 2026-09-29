@@ -1,5 +1,7 @@
+using System.ComponentModel.DataAnnotations;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Compaction;
 using Microsoft.Agents.AI.Tools.Shell;
@@ -566,9 +568,7 @@ internal static class WorkspaceShellTools
         var tools = options.Tools?.ToList() ?? [];
         foreach (var command in workspace.Commands)
         {
-            tools.Add(
-                new WorkspaceCommandFunction(command, workspace.Path, timeout, maxOutputBytes)
-            );
+            tools.Add(CreateCommandFunction(command, workspace.Path, timeout, maxOutputBytes));
             effects.Add(
                 command.Name,
                 Infrastructure.ToolEffect.ProcessExecution,
@@ -594,236 +594,161 @@ internal static class WorkspaceShellTools
         options.Tools = tools;
     }
 
-    private sealed class WorkspaceCommandFunction : AIFunction
+    private static readonly JsonSerializerOptions _commandJson = new(AIJsonUtilities.DefaultOptions)
     {
-        private readonly AgentCommandDescriptor _command;
-        private readonly string _workspacePath;
-        private readonly TimeSpan? _timeout;
-        private readonly int _maxOutputBytes;
-        private readonly JsonElement _schema;
+        RespectNullableAnnotations = true,
+    };
 
-        internal WorkspaceCommandFunction(
-            AgentCommandDescriptor command,
-            string workspacePath,
-            TimeSpan? timeout,
-            int maxOutputBytes
+    private static AIFunction CreateCommandFunction(
+        AgentCommandDescriptor command,
+        string workspacePath,
+        TimeSpan? timeout,
+        int maxOutputBytes
+    )
+    {
+        var options = new AIFunctionFactoryOptions
+        {
+            Name = command.Name,
+            Description = command.Description,
+            SerializerOptions = _commandJson,
+            JsonSchemaCreateOptions = new AIJsonSchemaCreateOptions
+            {
+                TransformOptions = new AIJsonSchemaTransformOptions
+                {
+                    DisallowAdditionalProperties = true,
+                },
+                TransformSchemaNode = (context, node) =>
+                {
+                    if (context.Path.IsEmpty && context.TypeInfo.Type == typeof(string[]))
+                    {
+                        node["description"] = command.Description;
+                        node["examples"] = new JsonArray(
+                            new JsonArray([.. command.Arguments.Select(a => JsonValue.Create(a))])
+                        );
+                        node["items"]!["maxLength"] = AgentCommand.MaximumArgumentLength;
+                        node.AsObject().Remove("default");
+                    }
+                    return node;
+                },
+            },
+        };
+        return command.Arguments.Count == 0
+            ? AIFunctionFactory.Create(
+                (CancellationToken cancellationToken) =>
+                    RunCommandAsync(
+                        command,
+                        [],
+                        workspacePath,
+                        timeout,
+                        maxOutputBytes,
+                        cancellationToken
+                    ),
+                options
+            )
+            : new CommandArgumentsFunction(
+                AIFunctionFactory.Create(
+                    (
+                        CancellationToken cancellationToken,
+                        [Length(0, AgentCommand.MaximumArgumentCount)] string[] arguments = null!
+                    ) =>
+                        RunCommandAsync(
+                            command,
+                            arguments ?? [],
+                            workspacePath,
+                            timeout,
+                            maxOutputBytes,
+                            cancellationToken
+                        ),
+                    options
+                )
+            );
+    }
+
+    private static async Task<ShellResult> RunCommandAsync(
+        AgentCommandDescriptor command,
+        string[] arguments,
+        string workspacePath,
+        TimeSpan? timeout,
+        int maxOutputBytes,
+        CancellationToken cancellationToken
+    )
+    {
+        if (arguments.Length > AgentCommand.MaximumArgumentCount)
+        {
+            throw new ToolInputException(
+                $"Command '{command.Name}' accepts at most {AgentCommand.MaximumArgumentCount} arguments."
+            );
+        }
+        if (
+            arguments.Any(argument =>
+                argument is null || argument.Length > AgentCommand.MaximumArgumentLength
+            )
         )
         {
-            _command = command;
-            _workspacePath = workspacePath;
-            _timeout = timeout;
-            _maxOutputBytes = maxOutputBytes;
-            _schema = CreateSchema();
+            throw new ToolInputException(
+                $"Arguments of command '{command.Name}' must be strings of at most {AgentCommand.MaximumArgumentLength} characters."
+            );
         }
+        Func<string, string> quote = OperatingSystem.IsWindows() ? QuotePowerShell : QuotePosix;
+        var text = string.Join(' ', [command.Command, .. arguments.Select(quote)]);
+        await using var executor = CreateExecutor(
+            workspacePath,
+            acknowledgeUnsafe: false,
+            timeout,
+            maxOutputBytes
+        );
+        return await executor.RunAsync(text, cancellationToken);
+    }
 
-        public override string Name => _command.Name;
-        public override string Description => _command.Description;
-        public override JsonElement JsonSchema => _schema;
+    // MAF uses these same dialect-specific forms internally, but does not expose them publicly.
+    private static string QuotePowerShell(string value) =>
+        $"'{value.Replace("'", "''", StringComparison.Ordinal)}'";
 
+    private static string QuotePosix(string value) =>
+        $"'{value.Replace("'", "'\\''", StringComparison.Ordinal)}'";
+
+    // Process tools only report ToolInputException back to the model, so binding failures are translated.
+    private sealed class CommandArgumentsFunction(AIFunction inner) : DelegatingAIFunction(inner)
+    {
         protected override async ValueTask<object?> InvokeCoreAsync(
             AIFunctionArguments arguments,
             CancellationToken cancellationToken
         )
         {
-            foreach (var key in arguments.Keys)
-            {
-                if (
-                    _command.Arguments.Count == 0
-                    || !string.Equals(key, "arguments", StringComparison.OrdinalIgnoreCase)
-                )
-                {
-                    throw new ToolInputException(
-                        $"Command '{_command.Name}' does not accept an argument named '{key}'."
-                    );
-                }
-            }
-            var command = new StringBuilder(_command.Command);
-            if (arguments.TryGetValue("arguments", out var rawArguments))
-            {
-                var values = ReadStringArray(_command, rawArguments);
-                Func<string, string> quote = OperatingSystem.IsWindows()
-                    ? QuotePowerShell
-                    : QuotePosix;
-                foreach (var value in values)
-                {
-                    command.Append(' ').Append(quote(value));
-                }
-            }
-
-            var fileName =
-                OperatingSystem.IsWindows() ? "powershell.exe"
-                : OperatingSystem.IsMacOS() ? "/bin/zsh"
-                : "/bin/bash";
-            string[] processArguments = OperatingSystem.IsWindows()
-                ? ["-NoProfile", "-NonInteractive", "-Command", command.ToString()]
-                : ["-lc", command.ToString()];
-            var result = await LocalProcess.RunAsync(
-                new LocalProcessRequest(
-                    fileName,
-                    processArguments,
-                    _workspacePath,
-                    _timeout ?? TimeSpan.FromMinutes(10),
-                    _maxOutputBytes
-                ),
-                cancellationToken
-            );
-            return JsonSerializer.SerializeToElement(
-                new
-                {
-                    ExitCode = result.TimedOut ? 124 : result.ExitCode,
-                    result.Stdout,
-                    result.Stderr,
-                    result.Duration,
-                    result.TimedOut,
-                    Truncated = result.StdoutTruncated || result.StderrTruncated,
-                },
-                TandemJson.CreateTypedContract()
-            );
-        }
-
-        private static IReadOnlyList<string> ReadStringArray(
-            AgentCommandDescriptor command,
-            object? rawArguments
-        )
-        {
-            if (rawArguments is null)
+            if (
+                arguments.TryGetValue("arguments", out var value)
+                && value is null or JsonElement { ValueKind: JsonValueKind.Null }
+            )
             {
                 throw new ToolInputException(
-                    $"Argument 'arguments' of command '{command.Name}' cannot be null."
+                    $"Argument 'arguments' of command '{Name}' cannot be null."
                 );
             }
-            var element = rawArguments switch
+            try
             {
-                JsonElement json => json,
-                _ => JsonSerializer.SerializeToElement(
-                    rawArguments,
-                    TandemJson.CreateTypedContract()
-                ),
-            };
-            if (element.ValueKind != JsonValueKind.Array)
+                return await base.InvokeCoreAsync(arguments, cancellationToken);
+            }
+            catch (JsonException exception)
             {
                 throw new ToolInputException(
-                    $"Argument 'arguments' of command '{command.Name}' must be an array of strings."
+                    $"Argument 'arguments' of command '{Name}' must be an array of strings. {exception.Message}"
                 );
             }
-            var values = new List<string>();
-            foreach (var item in element.EnumerateArray())
-            {
-                if (item.ValueKind != JsonValueKind.String)
-                {
-                    throw new ToolInputException(
-                        $"Argument 'arguments' of command '{command.Name}' must contain only strings."
-                    );
-                }
-                values.Add(item.GetString()!);
-            }
-            if (values.Count > AgentCommand.MaximumArgumentCount)
-            {
-                throw new ToolInputException(
-                    $"Command '{command.Name}' accepts at most {AgentCommand.MaximumArgumentCount} arguments."
-                );
-            }
-            foreach (var value in values)
-            {
-                if (value.Length > AgentCommand.MaximumArgumentLength)
-                {
-                    throw new ToolInputException(
-                        $"Argument of command '{command.Name}' must be at most {AgentCommand.MaximumArgumentLength} characters."
-                    );
-                }
-            }
-            return values;
-        }
-
-        private JsonElement CreateSchema() =>
-            _command.Arguments.Count == 0
-                ? JsonSerializer.SerializeToElement(
-                    new
-                    {
-                        type = "object",
-                        properties = new { },
-                        additionalProperties = false,
-                    }
-                )
-                : JsonSerializer.SerializeToElement(
-                    new
-                    {
-                        type = "object",
-                        properties = new
-                        {
-                            arguments = new
-                            {
-                                type = "array",
-                                items = new
-                                {
-                                    type = "string",
-                                    maxLength = AgentCommand.MaximumArgumentLength,
-                                },
-                                description = _command.Description,
-                                examples = new[] { _command.Arguments },
-                                maxItems = AgentCommand.MaximumArgumentCount,
-                            },
-                        },
-                        additionalProperties = false,
-                    }
-                );
-
-        // MAF uses these same dialect-specific forms internally, but does not expose them publicly.
-        private static string QuotePowerShell(string value) =>
-            $"'{value.Replace("'", "''", StringComparison.Ordinal)}'";
-
-        private static string QuotePosix(string value) =>
-            $"'{value.Replace("'", "'\\''", StringComparison.Ordinal)}'";
-    }
-
-    private static ToolResultEvidenceDescriptor.Process? ToProcessEvidence(object? result)
-    {
-        if (result is ShellResult shellResult)
-        {
-            return new ToolResultEvidenceDescriptor.Process(
-                shellResult.ExitCode,
-                shellResult.Stdout,
-                shellResult.Stderr,
-                shellResult.Duration,
-                shellResult.TimedOut,
-                shellResult.Truncated
-            );
-        }
-        if (result is not JsonElement { ValueKind: JsonValueKind.Object } element)
-        {
-            return null;
-        }
-
-        try
-        {
-            var evidence = element.Deserialize<ShellResultEvidence>(
-                TandemJson.CreateTypedContract()
-            );
-            return evidence is null
-                ? null
-                : new ToolResultEvidenceDescriptor.Process(
-                    evidence.ExitCode,
-                    evidence.Stdout ?? string.Empty,
-                    evidence.Stderr ?? string.Empty,
-                    evidence.Duration,
-                    evidence.TimedOut,
-                    evidence.Truncated
-                );
-        }
-        catch (JsonException)
-        {
-            return null;
         }
     }
 
-    private sealed record ShellResultEvidence(
-        int ExitCode,
-        string? Stdout,
-        string? Stderr,
-        TimeSpan Duration,
-        bool TimedOut,
-        bool Truncated
-    );
+    private static ToolResultEvidenceDescriptor.Process? ToProcessEvidence(object? result) =>
+        result is JsonElement { ValueKind: JsonValueKind.Object } element
+        && element.Deserialize<ShellResult>(AIJsonUtilities.DefaultOptions) is { } shell
+            ? new ToolResultEvidenceDescriptor.Process(
+                shell.ExitCode,
+                shell.Stdout,
+                shell.Stderr,
+                shell.Duration,
+                shell.TimedOut,
+                shell.Truncated
+            )
+            : null;
 
     internal static LocalShellExecutor CreateExecutor(
         string workspacePath,

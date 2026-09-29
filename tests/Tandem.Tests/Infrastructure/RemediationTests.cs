@@ -93,8 +93,8 @@ public sealed class RemediationTests
     }
 
     [Theory]
+    [InlineData(7998, false, false)]
     [InlineData(7999, false, false)]
-    [InlineData(8000, false, false)]
     [InlineData(9000, true, false)]
     [InlineData(9000, true, true)]
     public async Task Acceptance_marks_shortened_process_evidence(
@@ -132,7 +132,10 @@ public sealed class RemediationTests
             "initial"
         );
         captured.Should().NotBeNull();
-        (stderr ? captured!.Stderr : captured!.Stdout).Length.Should().Be(Math.Min(length, 8000));
+        // The shell executor terminates captured output with a newline.
+        (stderr ? captured!.Stderr : captured!.Stdout)
+            .Length.Should()
+            .Be(Math.Min(length + 1, 8000));
         captured.Truncated.Should().Be(truncated);
     }
 

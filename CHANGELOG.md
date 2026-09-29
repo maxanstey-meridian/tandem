@@ -7,6 +7,7 @@
 - `RunWithTerminalAsync` raises an `AggregateException` holding both failures when a faulted or cancelled run's `TerminalizingAsync` callback also fails; it previously swallowed the terminalization failure.
 - Removed unused Advanced structured-output APIs: `StructuredOutputPolicy`, `StructuredJsonExtractor`, `StructuredOutputAcceptancePolicies`, `AgentBuilder.WithStructuredOutput(...)`, `AgentBuilder.WithMessageFromContext(...)` and `AdvancedAgentMessage<TState>`. Use `WithOutput`/`WithJsonOutput`/`WithRawOutput` and `WithMessage`.
 - Removed `RunLedger.ReadRecentAsync(...)`.
+- Fixed workspace commands (`AgentCommand`) run through MAF's `LocalShellExecutor`, the same executor as `run_shell`, instead of a login shell (`/bin/zsh -lc` on macOS, `/bin/bash -lc` on Linux). Login-profile setup such as `PATH` additions is no longer applied; commands that depended on it must use absolute paths or set up their environment explicitly. The tool result is MAF's `ShellResult`, whose captured stdout and stderr are newline-terminated.
 
 ## Unreleased — fixes and additions
 
