@@ -64,7 +64,7 @@ public sealed class RawOutputIntegrationTests
             );
             await serve;
             using var result = JsonDocument.Parse(json);
-            Assert.True(result.RootElement.GetProperty("succeeded").GetBoolean());
+            Assert.Equal("succeeded", result.RootElement.GetProperty("status").GetString());
             Assert.Equal(1, applications);
             Assert.Equal(2, validations);
             var acceptedJson = await NodePipelineBridge.InspectAcceptedAsync(

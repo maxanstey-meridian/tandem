@@ -54,9 +54,9 @@ public sealed class RegistrationContractValidatorTests
 
     [Theory]
     [InlineData("unknown-kind", "'script'")]
-    [InlineData("missing-kind", "registration JSON is invalid")]
-    [InlineData("null-node", "nodes[1] must not be null")]
-    [InlineData("null-capability", "nodes[0].capabilities[0] must not be null")]
+    [InlineData("missing-kind", "$: is invalid JSON")]
+    [InlineData("null-node", "nodes[1]: must not be null")]
+    [InlineData("null-capability", "nodes[0].capabilities[0]: must not be null")]
     public void RejectsUnknownKindsAndNullEntries(string scenario, string expected)
     {
         var value = ContractObject();
@@ -215,10 +215,10 @@ public sealed class RegistrationContractValidatorTests
     [InlineData("one-branch", true, "A parallel group requires at least two branches")]
     [InlineData("duplicate-branch", true, "Parallel branch IDs must be unique")]
     [InlineData("duplicate-participant", true, "'first'")]
-    [InlineData("nested-terminal", false, "kind 'completion' is unsupported in a parallel branch")]
+    [InlineData("nested-terminal", false, "kind: 'completion' is unsupported in a parallel branch")]
     [InlineData("duplicate-callback", false, "duplicates callback reference 'merge'")]
-    [InlineData("nested-route-target", false, "target references unknown node 'first'")]
-    [InlineData("nested-persistence", false, "ledgerPath is required when persistence is enabled")]
+    [InlineData("nested-route-target", false, "target: references unknown node 'first'")]
+    [InlineData("nested-persistence", false, "ledgerPath: is required when persistence is enabled")]
     [InlineData("parallel-field-on-stage", false, "'branches' could not be mapped")]
     public void RejectsInvalidParallelContracts(string scenario, bool coreRule, string expected)
     {
@@ -294,7 +294,7 @@ public sealed class RegistrationContractValidatorTests
         agent["client"] = Client(endpoint, keyName);
 
         var message = Assert
-            .Throws<InvalidOperationException>(() =>
+            .Throws<RegistrationContractException>(() =>
                 RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
             )
             .Message;
@@ -308,7 +308,7 @@ public sealed class RegistrationContractValidatorTests
     {
         var value = ContractObject();
         value["contractVersion"] = 1;
-        Assert.Contains("contractVersion must be 10", ContractError(value));
+        Assert.Contains("contractVersion: must be 10", ContractError(value));
 
         value["contractVersion"] = 10;
         var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
@@ -388,12 +388,12 @@ public sealed class RegistrationContractValidatorTests
         value["start"] = "done";
 
         var message = Assert
-            .Throws<InvalidOperationException>(() =>
+            .Throws<RegistrationContractException>(() =>
                 RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
             )
             .Message;
 
-        Assert.Contains("start node 'done' cannot be a terminal", message);
+        Assert.Contains("start: node 'done' cannot be a terminal", message);
     }
 
     [Fact]
@@ -404,12 +404,12 @@ public sealed class RegistrationContractValidatorTests
         agent["persist"] = true;
 
         var message = Assert
-            .Throws<InvalidOperationException>(() =>
+            .Throws<RegistrationContractException>(() =>
                 RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
             )
             .Message;
 
-        Assert.Contains("ledgerPath is required when persistence is enabled", message);
+        Assert.Contains("ledgerPath: is required when persistence is enabled", message);
     }
 
     [Theory]
@@ -456,13 +456,13 @@ public sealed class RegistrationContractValidatorTests
         var withoutPresentation = ContractObject();
         withoutPresentation["terminal"] = new { truncatedToolNames = new[] { "write_checkpoint" } };
         var presentationMessage = Assert
-            .Throws<InvalidOperationException>(() =>
+            .Throws<RegistrationContractException>(() =>
                 RegistrationContractValidator.ParseAndValidate(
                     JsonSerializer.Serialize(withoutPresentation)
                 )
             )
             .Message;
-        Assert.Contains("terminal options require terminal presentation", presentationMessage);
+        Assert.Contains("terminal: requires terminal presentation", presentationMessage);
 
         var invalidNames = ContractObject();
         invalidNames["presentation"] = "terminal";
@@ -471,15 +471,15 @@ public sealed class RegistrationContractValidatorTests
             truncatedToolNames = new[] { "write_checkpoint", " ", "write_checkpoint" },
         };
         var namesMessage = Assert
-            .Throws<InvalidOperationException>(() =>
+            .Throws<RegistrationContractException>(() =>
                 RegistrationContractValidator.ParseAndValidate(
                     JsonSerializer.Serialize(invalidNames)
                 )
             )
             .Message;
-        Assert.Contains("terminal.truncatedToolNames[1] must be non-blank", namesMessage);
+        Assert.Contains("terminal.truncatedToolNames[1]: must be non-blank", namesMessage);
         Assert.Contains(
-            "terminal.truncatedToolNames[2] duplicates 'write_checkpoint'",
+            "terminal.truncatedToolNames[2]: duplicates 'write_checkpoint'",
             namesMessage
         );
     }
@@ -503,16 +503,16 @@ public sealed class RegistrationContractValidatorTests
         var blank = ContractObject();
         blank["observationCallback"] = " ";
         var blankMessage = Assert
-            .Throws<InvalidOperationException>(() =>
+            .Throws<RegistrationContractException>(() =>
                 RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(blank))
             )
             .Message;
-        Assert.Contains("observationCallback must be non-blank", blankMessage);
+        Assert.Contains("observationCallback: must be non-blank", blankMessage);
 
         var duplicate = ContractObject();
         duplicate["observationCallback"] = "agent.message";
         var duplicateMessage = Assert
-            .Throws<InvalidOperationException>(() =>
+            .Throws<RegistrationContractException>(() =>
                 RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(duplicate))
             )
             .Message;
@@ -598,13 +598,13 @@ public sealed class RegistrationContractValidatorTests
         value["outputs"] = new[] { "unused" };
 
         var message = Assert
-            .Throws<InvalidOperationException>(() =>
+            .Throws<RegistrationContractException>(() =>
                 RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
             )
             .Message;
 
-        Assert.Contains("reachable terminal 'done' must be listed", message);
-        Assert.Contains("output 'unused' is unreachable", message);
+        Assert.Contains("outputs: must list reachable terminal 'done'", message);
+        Assert.Contains("outputs: 'unused' is unreachable", message);
     }
 
     [Fact]
@@ -673,7 +673,7 @@ public sealed class RegistrationContractValidatorTests
         };
 
         var message = Assert
-            .Throws<InvalidOperationException>(() =>
+            .Throws<RegistrationContractException>(() =>
                 RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
             )
             .Message;
@@ -681,7 +681,7 @@ public sealed class RegistrationContractValidatorTests
         Assert.Contains("duplicates interaction handler ID 'handler'", message);
         Assert.Contains("references unknown node 'missing'", message);
         Assert.Contains("node 'done' must be an interaction", message);
-        Assert.Contains("handleCallback must be non-blank", message);
+        Assert.Contains("handleCallback: must be non-blank", message);
         Assert.Contains("duplicates interaction handler target 'ask'", message);
     }
 
@@ -694,13 +694,13 @@ public sealed class RegistrationContractValidatorTests
         output["validateForCallback"] = "agent.message";
 
         var message = Assert
-            .Throws<InvalidOperationException>(() =>
+            .Throws<RegistrationContractException>(() =>
                 RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
             )
             .Message;
 
         Assert.Contains(
-            "output.validateForCallback duplicates callback reference 'agent.message'",
+            "output.validateForCallback: duplicates callback reference 'agent.message'",
             message
         );
         Assert.Contains("from nodes[0].messageCallback", message);
@@ -882,7 +882,7 @@ public sealed class RegistrationContractValidatorTests
         };
 
         var message = Assert
-            .Throws<InvalidOperationException>(() =>
+            .Throws<RegistrationContractException>(() =>
                 RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
             )
             .Message;
@@ -950,7 +950,7 @@ public sealed class RegistrationContractValidatorTests
         agent["reasoning"] = new Dictionary<string, object?>();
 
         Assert.Contains(
-            "nodes[0].reasoning must specify effort or maxTokens.",
+            "nodes[0].reasoning: must specify effort or maxTokens.",
             ContractError(value)
         );
     }
@@ -977,7 +977,7 @@ public sealed class RegistrationContractValidatorTests
 
     private static string ContractError(object value) =>
         Assert
-            .Throws<InvalidOperationException>(() =>
+            .Throws<RegistrationContractException>(() =>
                 RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
             )
             .Message;
@@ -988,7 +988,7 @@ public sealed class RegistrationContractValidatorTests
             JsonSerializer.Serialize(value)
         );
         return Assert
-            .Throws<InvalidOperationException>(() =>
+            .Throws<RegistrationContractException>(() =>
                 NodePipelineBridge.BuildGraph(contract, Callbacks())
             )
             .Message;

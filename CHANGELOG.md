@@ -2,6 +2,7 @@
 
 ## Unreleased — breaking
 
+- The Node bridge's `RunRegisteredGraphAsync` returns a status envelope for every outcome instead of throwing: `{"status":"succeeded"|"failed","runId","state","summary"}`, `{"status":"cancelled","runId","message"}`, `{"status":"contract","runId","boundary","problems":[{"path","message"}]}` or `{"status":"faulted","runId","message"}`. Callback contract failures, registration-contract and builder-rule failures (boundary `registration contract`), cancellation (`OperationCanceledException` or `TaskCanceledException`, also inside an `AggregateException`, when the run was cancelled) and faults are classified in one place. The `TANDEM_CALLBACK_CONTRACT:` message marker is gone. An operation cancelled while the run was not, such as a timeout, is a fault. Registration problems now name the contract path separately from the message (`- nodes[0].id: duplicates node ID 'x'.`).
 - Structured-output recovery allows exactly one corrective response, as `CONTRIBUTING.md` documents; the code previously allowed two.
 - Registered workspace tools and workspace commands named `copy_file`, `move_file` or `create_directory` are now rejected as collisions with the built-in workspace tools.
 - `RunWithTerminalAsync` raises an `AggregateException` holding both failures when a faulted or cancelled run's `TerminalizingAsync` callback also fails; it previously swallowed the terminalization failure.

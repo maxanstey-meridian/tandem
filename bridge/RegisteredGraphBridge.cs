@@ -33,7 +33,12 @@ public static partial class NodePipelineBridge
         return JsonSerializer.Serialize(accepted, TandemJson.CreateTypedContract());
     }
 
-    /// <summary>Registers and runs a complete JavaScript-authored Tandem graph.</summary>
+    /// <summary>
+    /// Registers and runs a complete JavaScript-authored Tandem graph and reports how it ended as a
+    /// <see cref="RunEnvelope"/>. Once a run is attempted every failure is reported, because a fault
+    /// raised inside the run cannot be told apart from a bridge defect; a fault carries the full
+    /// exception text. Only a caller without a JavaScript synchronization context gets an exception.
+    /// </summary>
     public static async Task<string> RunRegisteredGraphAsync(
         string definitionJson,
         Func<string, string, string, string> invokeSyncCallback,
@@ -47,39 +52,49 @@ public static partial class NodePipelineBridge
             ?? throw new InvalidOperationException(
                 "A JavaScript synchronization context is required."
             );
-        var definition = RegistrationContractValidator.ParseAndValidate(definitionJson);
-        using var terminalCancellation =
-            definition.Presentation == RegisteredPresentation.Terminal
-                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
-                : null;
-        var runCancellationToken = terminalCancellation?.Token ?? cancellationToken;
-        var callbacks = new CallbackDispatcher(
-            context,
-            invokeSyncCallback,
-            invokeAsyncCallback,
-            runCancellationToken
-        );
-        // SQLite's async APIs perform synchronous I/O. A busy wait must not block
-        // Node's thread while another run needs a JS callback to finish acceptance.
-        // CallbackDispatcher already marshals authored callbacks to that thread.
-        return await Task.Run(
-            () =>
-                RunRegisteredGraphCoreAsync(
-                    definition,
-                    callbacks,
-                    terminalCancellation,
-                    runCancellationToken,
-                    cancellationToken
-                ),
+        var runId = Guid.CreateVersion7();
+        // The terminal cancels the run itself as well as through the caller's token.
+        using var runCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken
         );
+        try
+        {
+            var definition = RegistrationContractValidator.ParseAndValidate(definitionJson);
+            var callbacks = new CallbackDispatcher(
+                context,
+                invokeSyncCallback,
+                invokeAsyncCallback,
+                runCancellation.Token
+            );
+            // SQLite's async APIs perform synchronous I/O. A busy wait must not block
+            // Node's thread while another run needs a JS callback to finish acceptance.
+            // CallbackDispatcher already marshals authored callbacks to that thread.
+            var result = await Task.Run(
+                () =>
+                    RunRegisteredGraphCoreAsync(
+                        runId,
+                        definition,
+                        callbacks,
+                        runCancellation,
+                        cancellationToken
+                    ),
+                cancellationToken
+            );
+            return RunEnvelope.Completed(result).ToJson();
+        }
+        catch (Exception exception)
+        {
+            return RunEnvelope
+                .Ended(runId, exception, runCancellation.IsCancellationRequested)
+                .ToJson();
+        }
     }
 
-    private static async Task<string> RunRegisteredGraphCoreAsync(
+    private static async Task<PipelineRunResult<JavaScriptState>> RunRegisteredGraphCoreAsync(
+        Guid runId,
         RegisteredGraphContract definition,
         CallbackDispatcher callbacks,
-        CancellationTokenSource? terminalCancellation,
-        CancellationToken runCancellationToken,
+        CancellationTokenSource runCancellation,
         CancellationToken cancellationToken
     )
     {
@@ -96,16 +111,15 @@ public static partial class NodePipelineBridge
                 .Where(agent => agent.Client.VerifyModel)
         )
         {
-            await OpenAiCompatibleChatClients.VerifyModelAsync(agent.Client, runCancellationToken);
+            await OpenAiCompatibleChatClients.VerifyModelAsync(agent.Client, runCancellation.Token);
         }
 
-        var runId = Guid.CreateVersion7();
         SqliteLedgerStore? store = null;
         IPipelineObserver? persistence = null;
         if (definition.LedgerPath is not null)
         {
             store = new SqliteLedgerStore(definition.LedgerPath);
-            persistence = await store.CreateObserverAsync(runId, pipeline, runCancellationToken);
+            persistence = await store.CreateObserverAsync(runId, pipeline, runCancellation.Token);
         }
         var options = new PipelineRunOptions(
             RunId: runId,
@@ -122,66 +136,41 @@ public static partial class NodePipelineBridge
         };
         var runner = new PipelineRunner();
         var initialState = new JavaScriptState(definition.InitialState);
-        var terminal = definition.Presentation == RegisteredPresentation.Terminal;
-        // The terminal records the ledger status before its display waits for the user.
-        Task<PipelineRunResult<JavaScriptState>> Run() =>
-            terminal
-                ? runner.RunWithTerminalAsync(
-                    pipeline,
-                    initialState,
-                    new TerminalPipelineRunOptions
-                    {
-                        Run = options,
-                        RunCancellation = terminalCancellation,
-                        Display = new TerminalDisplayOptions
-                        {
-                            TruncatedToolNames = new HashSet<string>(
-                                definition.Terminal?.TruncatedToolNames ?? [],
-                                StringComparer.Ordinal
-                            ),
-                        },
-                        TerminalizingAsync = store is null
-                            ? null
-                            : async (completion, token) =>
-                                await store.CompleteRunAsync(
-                                    runId,
-                                    ToLedgerStatus(completion.Status),
-                                    token
-                                ),
-                    },
-                    cancellationToken
-                )
-                : runner.RunAsync(pipeline, initialState, options, cancellationToken);
-        try
+        if (definition.Presentation != RegisteredPresentation.Terminal)
         {
-            var result =
-                store is null || terminal ? await Run() : await store.RecordRunAsync(runId, Run);
-            return JsonSerializer.Serialize(
-                new
-                {
+            return store is null
+                ? await runner.RunAsync(pipeline, initialState, options, cancellationToken)
+                : await store.RecordRunAsync(
                     runId,
-                    succeeded = result.Succeeded,
-                    state = JsonDocument.Parse(result.State.Json).RootElement,
-                    summary = result.Outcome?.Summary,
-                },
-                TandemJson.CreateTypedContract()
-            );
+                    () => runner.RunAsync(pipeline, initialState, options, cancellationToken)
+                );
         }
-        catch (CallbackContractException exception)
-        {
-            throw CallbackContractFailure(exception, exception);
-        }
-        catch (PipelineRunException exception)
-        {
-            if (FindCallbackContractException(exception) is { } contract)
+        // The terminal records the ledger status before its display waits for the user.
+        return await runner.RunWithTerminalAsync(
+            pipeline,
+            initialState,
+            new TerminalPipelineRunOptions
             {
-                throw CallbackContractFailure(contract, exception);
-            }
-            throw new InvalidOperationException(
-                exception.InnerException?.ToString() ?? exception.ToString(),
-                exception
-            );
-        }
+                Run = options,
+                RunCancellation = runCancellation,
+                Display = new TerminalDisplayOptions
+                {
+                    TruncatedToolNames = new HashSet<string>(
+                        definition.Terminal?.TruncatedToolNames ?? [],
+                        StringComparer.Ordinal
+                    ),
+                },
+                TerminalizingAsync = store is null
+                    ? null
+                    : async (completion, token) =>
+                        await store.CompleteRunAsync(
+                            runId,
+                            ToLedgerStatus(completion.Status),
+                            token
+                        ),
+            },
+            cancellationToken
+        );
     }
 
     /// <summary>
@@ -246,29 +235,6 @@ public static partial class NodePipelineBridge
             TerminalPipelineStatus.Cancelled => LedgerRunStatus.Cancelled,
             _ => LedgerRunStatus.Faulted,
         };
-
-    private static CallbackContractException? FindCallbackContractException(Exception exception)
-    {
-        for (Exception? current = exception; current is not null; current = current.InnerException)
-        {
-            if (current is CallbackContractException contract)
-                return contract;
-        }
-        return null;
-    }
-
-    private static InvalidOperationException CallbackContractFailure(
-        CallbackContractException contract,
-        Exception cause
-    ) =>
-        new(
-            "TANDEM_CALLBACK_CONTRACT:"
-                + JsonSerializer.Serialize(
-                    new { boundary = contract.Boundary, problems = contract.Problems },
-                    TandemJson.CreateTypedContract()
-                ),
-            cause
-        );
 
     private static void ApplyPersistence(
         PipelineBuilder<JavaScriptState> builder,
