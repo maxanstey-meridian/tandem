@@ -7,68 +7,62 @@ namespace Tandem.NodeApiSpike;
 
 internal static class RegisteredParticipantFactory
 {
-    public static async Task<RegisteredParticipant> CreateAsync(
+    public static RegisteredParticipant Create(
         RegisteredNodeContract node,
-        CallbackDispatcher callbacks,
-        CancellationToken cancellationToken
+        CallbackDispatcher callbacks
     ) =>
-        node.Kind switch
+        node switch
         {
-            "stage" => RegisteredParticipant.ForStage(
-                node,
+            StageNodeContract stage => RegisteredParticipant.ForStage(
+                stage,
                 PipelineNodes.Stage<JavaScriptState>(
-                    node.Id!,
+                    stage.Id,
                     async (state, token) =>
-                        new(await callbacks.InvokeAsync(node.RunCallback!, state.Json, "", token))
+                        new(await callbacks.InvokeAsync(stage.RunCallback, state.Json, "", token))
                 )
             ),
-            "interaction" => CreateInteraction(node, callbacks),
-            "agent" => await CreateAgentAsync(node, callbacks, cancellationToken),
-            "parallel" => await CreateParallelAsync(node, callbacks, cancellationToken),
-            "collection" => await RegisteredCollection.CreateAsync(
-                node,
-                callbacks,
-                cancellationToken
-            ),
-            "completion" => RegisteredParticipant.ForNode(
-                node,
+            InteractionNodeContract interaction => CreateInteraction(interaction, callbacks),
+            AgentNodeContract agent => CreateAgent(agent, callbacks),
+            ParallelNodeContract parallel => CreateParallel(parallel, callbacks),
+            CollectionNodeContract collection => RegisteredCollection.Create(collection, callbacks),
+            CompletionNodeContract completion => RegisteredParticipant.ForNode(
+                completion,
                 PipelineNodes.Complete(
                     new JavaScriptCompletion(
-                        node.Id!,
-                        state => callbacks.Invoke(node.SummaryCallback!, state, "")
+                        completion.Id,
+                        state => callbacks.Invoke(completion.SummaryCallback, state, "")
                     )
                 )
             ),
-            "failure" => RegisteredParticipant.ForNode(
-                node,
+            FailureNodeContract failure => RegisteredParticipant.ForNode(
+                failure,
                 PipelineNodes.Failed(
                     new JavaScriptFailure(
-                        node.Id!,
-                        state => callbacks.Invoke(node.SummaryCallback!, state, "")
+                        failure.Id,
+                        state => callbacks.Invoke(failure.SummaryCallback, state, "")
                     )
                 )
             ),
             _ => throw new UnreachableException(),
         };
 
-    private static async Task<RegisteredParticipant> CreateParallelAsync(
-        RegisteredNodeContract node,
-        CallbackDispatcher callbacks,
-        CancellationToken cancellationToken
+    private static RegisteredParticipant CreateParallel(
+        ParallelNodeContract node,
+        CallbackDispatcher callbacks
     )
     {
         var owned = new List<RegisteredParticipant>();
         var branches = new List<PipelineBranch<JavaScriptState>>();
-        foreach (var branch in node.Branches!)
+        foreach (var branch in node.Branches)
         {
-            var participant = await CreateAsync(branch.Participant!, callbacks, cancellationToken);
+            var participant = Create(branch.Participant, callbacks);
             owned.Add(participant);
             branches.Add(
                 participant switch
                 {
-                    RegisteredStage stage => PipelineBranch.Create(branch.Id!, stage.Stage),
+                    RegisteredStage stage => PipelineBranch.Create(branch.Id, stage.Stage),
                     RegisteredStandard standard => PipelineBranch.Create(
-                        branch.Id!,
+                        branch.Id,
                         standard.Standard
                     ),
                     _ => throw new UnreachableException(),
@@ -76,7 +70,7 @@ internal static class RegisteredParticipantFactory
             );
         }
         var parallel = PipelineNodes.Parallel(
-            node.Id!,
+            node.Id,
             state => new JavaScriptState(state.Json),
             branches,
             results =>
@@ -88,7 +82,7 @@ internal static class RegisteredParticipantFactory
                 );
                 return new JavaScriptState(
                     callbacks.Invoke(
-                        node.MergeCallback!,
+                        node.MergeCallback,
                         results.Baseline.Json,
                         JsonSerializer.Serialize(states, TandemJson.CreateTypedContract())
                     )
@@ -121,10 +115,10 @@ internal static class RegisteredParticipantFactory
             checkpoint.MaxOutputTokens,
             checkpoint.CheckpointAtPercent,
             capability,
-            checkpoint.Instructions!,
+            checkpoint.Instructions,
             context =>
                 callbacks.Invoke(
-                    checkpoint.MessageCallback!,
+                    checkpoint.MessageCallback,
                     context.State.Json,
                     context.CurrentContextTokens.ToString(
                         System.Globalization.CultureInfo.InvariantCulture
@@ -139,55 +133,42 @@ internal static class RegisteredParticipantFactory
         };
 
     private static RegisteredParticipant CreateInteraction(
-        RegisteredNodeContract node,
+        InteractionNodeContract node,
         CallbackDispatcher callbacks
     )
     {
         var interaction = PipelineNodes.WaitFor<JavaScriptState, string, string>(
-            node.Id!,
-            state => callbacks.Invoke(node.RequestCallback!, state.Json, ""),
-            (state, response) => new(callbacks.Invoke(node.ApplyCallback!, state.Json, response))
+            node.Id,
+            state => callbacks.Invoke(node.RequestCallback, state.Json, ""),
+            (state, response) => new(callbacks.Invoke(node.ApplyCallback, state.Json, response))
         );
         return RegisteredParticipant.ForInteraction(node, interaction);
     }
 
-    private static async Task<RegisteredParticipant> CreateAgentAsync(
-        RegisteredNodeContract node,
-        CallbackDispatcher callbacks,
-        CancellationToken cancellationToken
+    private static RegisteredParticipant CreateAgent(
+        AgentNodeContract node,
+        CallbackDispatcher callbacks
     )
     {
         var builder = Agent
             .Create<JavaScriptState>(
-                node.Id!,
-                node.Instructions!,
-                await OpenAiCompatibleChatClients.CreateAsync(
-                    node.Client!,
-                    cancellationToken,
-                    node.Reasoning?.MaxTokens
-                )
+                node.Id,
+                node.Instructions,
+                OpenAiCompatibleChatClients.Create(node.Client, node.Reasoning?.MaxTokens)
             )
-            .WithMessage(state => callbacks.Invoke(node.MessageCallback!, state.Json, ""));
+            .WithMessage(state => callbacks.Invoke(node.MessageCallback, state.Json, ""));
         var capabilities = new Dictionary<string, AgentCapability<JavaScriptState>>(
             StringComparer.Ordinal
         );
         builder.WithModelRequestOptions(
             new AgentModelRequestOptions(
-                reasoningEffort: node.Reasoning?.Effort switch
-                {
-                    null => null,
-                    "none" => AgentReasoningEffort.None,
-                    "low" => AgentReasoningEffort.Low,
-                    "medium" => AgentReasoningEffort.Medium,
-                    "high" => AgentReasoningEffort.High,
-                    _ => throw new UnreachableException(),
-                },
+                reasoningEffort: node.Reasoning?.Effort,
                 temperature: node.Temperature is { } temperature ? (float)temperature : null,
                 maxOutputTokens: node.MaxOutputTokens,
                 reasoningMaxTokens: node.Reasoning?.MaxTokens
             )
         );
-        foreach (var directory in node.SkillDirectories ?? [])
+        foreach (var directory in node.SkillDirectories)
         {
             builder.WithSkill(AgentSkill.FromDirectory(directory));
         }
@@ -196,7 +177,7 @@ internal static class RegisteredParticipantFactory
             Func<JavaScriptState, JsonElement, JavaScriptState> apply = (state, candidate) =>
                 new(
                     callbacks.Invoke(
-                        outputContract.ApplyCallback!,
+                        outputContract.ApplyCallback,
                         state.Json,
                         candidate.GetRawText()
                     )
@@ -215,7 +196,7 @@ internal static class RegisteredParticipantFactory
                 builder.WithJsonOutput(
                     new AgentJsonOutputDefinition<JavaScriptState>(
                         schema.RootElement.Clone(),
-                        outputContract.Instructions!,
+                        outputContract.Instructions,
                         candidate =>
                             ParseValidationProblems(
                                 callbacks.Invoke(
@@ -224,7 +205,7 @@ internal static class RegisteredParticipantFactory
                                     candidate.GetRawText()
                                 )
                             ),
-                        outputContract.ValueType!,
+                        outputContract.ValueType,
                         outputContract.ValidateForCallback is null
                             ? null
                             : (state, candidate) =>
@@ -240,18 +221,18 @@ internal static class RegisteredParticipantFactory
                 );
             }
         }
-        foreach (var capabilityContract in node.Capabilities ?? [])
+        foreach (var capabilityContract in node.Capabilities)
         {
-            using var schema = JsonDocument.Parse(capabilityContract.JsonSchema!);
+            using var schema = JsonDocument.Parse(capabilityContract.JsonSchema);
             var capability = AgentCapabilities.CreateJson(
                 new AgentJsonCapabilityDefinition<JavaScriptState>(
-                    capabilityContract.Name!,
-                    capabilityContract.Instructions!,
+                    capabilityContract.Name,
+                    capabilityContract.Instructions,
                     schema.RootElement.Clone(),
                     request =>
                         ParseValidationProblems(
                             callbacks.Invoke(
-                                capabilityContract.ValidateCallback!,
+                                capabilityContract.ValidateCallback,
                                 "",
                                 request.GetRawText()
                             )
@@ -268,22 +249,22 @@ internal static class RegisteredParticipantFactory
                             ),
                     request =>
                         callbacks.Invoke(
-                            capabilityContract.SummaryCallback!,
+                            capabilityContract.SummaryCallback,
                             "",
                             request.GetRawText()
                         ),
-                    capabilityContract.ValueType!
+                    capabilityContract.ValueType
                 ),
                 (state, request) =>
                     new(
                         callbacks.Invoke(
-                            capabilityContract.ApplyCallback!,
+                            capabilityContract.ApplyCallback,
                             state.Json,
                             request.GetRawText()
                         )
                     )
             );
-            capabilities.Add(capabilityContract.Name!, capability);
+            capabilities.Add(capabilityContract.Name, capability);
             if (node.Checkpoint?.CapabilityName != capabilityContract.Name)
             {
                 builder.WithCapability(capability);
@@ -294,7 +275,7 @@ internal static class RegisteredParticipantFactory
             builder.WithCheckpoint(
                 CreateCheckpointPolicy(
                     checkpoint,
-                    capabilities[checkpoint.CapabilityName!],
+                    capabilities[checkpoint.CapabilityName],
                     callbacks
                 )
             );
@@ -302,16 +283,16 @@ internal static class RegisteredParticipantFactory
         if (node.Workspace is { } workspaceContract)
         {
             var workspace = AgentWorkspace<JavaScriptState>.Define(
-                state => callbacks.Invoke(workspaceContract.PathCallback!, state.Json, ""),
+                state => callbacks.Invoke(workspaceContract.PathCallback, state.Json, ""),
                 state =>
                     ParseCommands(
-                        callbacks.Invoke(workspaceContract.CommandsCallback!, state.Json, "")
+                        callbacks.Invoke(workspaceContract.CommandsCallback, state.Json, "")
                     )
             );
             var groups = workspaceContract
-                .ToolGroups!.Select(group =>
+                .ToolGroups.Select(group =>
                 {
-                    var selections = group.Tools!.Select(name => (AgentToolSelection)name).ToList();
+                    var selections = group.Tools.Select(name => (AgentToolSelection)name).ToList();
                     if (group.IncludeCommands)
                     {
                         selections.Add(workspace.Commands);
@@ -395,7 +376,7 @@ internal static class RegisteredParticipantFactory
 
     private static void ApplyAgentPolicies(
         AgentBuilder<JavaScriptState> builder,
-        RegisteredNodeContract node
+        AgentNodeContract node
     )
     {
         if (node.ContinueSession)
@@ -447,7 +428,7 @@ internal static class RegisteredParticipantFactory
                         )
                     );
         return new RawOutputDefinition(
-            contract.Instructions!,
+            contract.Instructions,
             text =>
             {
                 using var document = JsonDocument.Parse(

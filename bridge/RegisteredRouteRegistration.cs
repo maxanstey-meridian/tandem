@@ -27,26 +27,27 @@ internal static class RegisteredRouteRegistration
         CallbackDispatcher callbacks
     )
     {
-        var source = nodes[route.Source!];
-        var target = nodes[route.Target!];
+        var source = nodes[route.Source];
+        var target = nodes[route.Target];
         bool Predicate(JavaScriptState state) =>
             bool.Parse(callbacks.Invoke(route.PredicateCallback!, state.Json, ""));
         if (source is RegisteredStandard standard)
         {
-            var selector = route.Outcome == "failed" ? standard.Failed : standard.Success;
+            var selector =
+                route.Outcome == RegisteredRouteOutcome.Failed ? standard.Failed : standard.Success;
             if (target is RegisteredInteraction targetInteraction)
             {
                 if (route.PredicateCallback is null)
-                    builder.Route(selector, targetInteraction.Interaction, route.Label!);
+                    builder.Route(selector, targetInteraction.Interaction, route.Label);
                 else
-                    builder.Route(selector, Predicate, targetInteraction.Interaction, route.Label!);
+                    builder.Route(selector, Predicate, targetInteraction.Interaction, route.Label);
             }
             else
             {
                 if (route.PredicateCallback is null)
-                    builder.Route(selector, Destination(target), route.Label!);
+                    builder.Route(selector, Destination(target), route.Label);
                 else
-                    builder.Route(selector, Predicate, Destination(target), route.Label!);
+                    builder.Route(selector, Predicate, Destination(target), route.Label);
             }
         }
         else if (source is RegisteredInteraction sourceInteraction)
@@ -57,42 +58,42 @@ internal static class RegisteredRouteRegistration
                     builder.Route(
                         sourceInteraction.Interaction,
                         targetInteraction.Interaction,
-                        route.Label!
+                        route.Label
                     );
                 else
                     builder.Route(
                         Predicate,
                         sourceInteraction.Interaction,
                         targetInteraction.Interaction,
-                        route.Label!
+                        route.Label
                     );
             }
             else
             {
                 if (route.PredicateCallback is null)
-                    builder.Route(sourceInteraction.Interaction, Destination(target), route.Label!);
+                    builder.Route(sourceInteraction.Interaction, Destination(target), route.Label);
                 else
                     builder.Route(
                         Predicate,
                         sourceInteraction.Interaction,
                         Destination(target),
-                        route.Label!
+                        route.Label
                     );
             }
         }
         else if (source is RegisteredStage stage && target is RegisteredInteraction interaction)
         {
             if (route.PredicateCallback is null)
-                builder.Route(stage.Stage, interaction.Interaction, route.Label!);
+                builder.Route(stage.Stage, interaction.Interaction, route.Label);
             else
-                builder.Route(Predicate, stage.Stage, interaction.Interaction, route.Label!);
+                builder.Route(Predicate, stage.Stage, interaction.Interaction, route.Label);
         }
         else if (source is RegisteredStage sourceStage)
         {
             if (route.PredicateCallback is null)
-                builder.Route(sourceStage.Stage, Destination(target), route.Label!);
+                builder.Route(sourceStage.Stage, Destination(target), route.Label);
             else
-                builder.Route(Predicate, sourceStage.Stage, Destination(target), route.Label!);
+                builder.Route(Predicate, sourceStage.Stage, Destination(target), route.Label);
         }
     }
 

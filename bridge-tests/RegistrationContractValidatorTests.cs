@@ -8,14 +8,78 @@ public sealed class RegistrationContractValidatorTests
     [Fact]
     public void AcceptsVersionTenAgentWithOutputCapabilitiesSkillsAndModelRequestControls()
     {
-        var contract = RegistrationContractValidator.ParseAndValidate(ValidContract());
+        var value = ContractObject();
+        ((Dictionary<string, object?>)((object[])value["nodes"]!)[0])["skillDirectories"] = new[]
+        {
+            "/skills/meridian",
+        };
 
+        var contract = RegistrationContractValidator.ParseAndValidate(
+            JsonSerializer.Serialize(value)
+        );
+
+        var agent = Assert.IsType<AgentNodeContract>(contract.Nodes[0]);
         Assert.Equal(10, contract.ContractVersion);
-        Assert.Equal(2, contract.Nodes![0].Capabilities!.Length);
-        Assert.Single(contract.Nodes[0].SkillDirectories!);
-        Assert.NotNull(contract.Nodes[0].Output);
-        Assert.Equal(0, contract.Nodes[0].Temperature);
-        Assert.Equal(4096, contract.Nodes[0].MaxOutputTokens);
+        Assert.Equal(2, agent.Capabilities.Length);
+        Assert.Single(agent.SkillDirectories);
+        Assert.NotNull(agent.Output);
+        Assert.Equal(0, agent.Temperature);
+        Assert.Equal(4096, agent.MaxOutputTokens);
+    }
+
+    [Theory]
+    [InlineData("agent")]
+    [InlineData("workspace")]
+    [InlineData("parallel")]
+    [InlineData("interaction")]
+    public void BuildsValidContractsThroughTandemBuilders(string fixture)
+    {
+        var value = fixture switch
+        {
+            "parallel" => ParallelContractObject(),
+            "interaction" => InteractionContractObject(),
+            _ => ContractObject(),
+        };
+        if (fixture == "workspace")
+            ((Dictionary<string, object?>)((object[])value["nodes"]!)[0])["workspace"] =
+                WorkspaceContract();
+        var contract = RegistrationContractValidator.ParseAndValidate(
+            JsonSerializer.Serialize(value)
+        );
+
+        var (pipeline, _) = NodePipelineBridge.BuildGraph(contract, Callbacks());
+
+        Assert.NotNull(pipeline);
+    }
+
+    [Theory]
+    [InlineData("unknown-kind", "'script'")]
+    [InlineData("missing-kind", "registration JSON is invalid")]
+    [InlineData("null-node", "nodes[1] must not be null")]
+    [InlineData("null-capability", "nodes[0].capabilities[0] must not be null")]
+    public void RejectsUnknownKindsAndNullEntries(string scenario, string expected)
+    {
+        var value = ContractObject();
+        var nodes = (object?[])value["nodes"]!;
+        var agent = (Dictionary<string, object?>)nodes[0]!;
+        var terminal = (Dictionary<string, object?>)nodes[1]!;
+        switch (scenario)
+        {
+            case "unknown-kind":
+                terminal["kind"] = "script";
+                break;
+            case "missing-kind":
+                terminal.Remove("kind");
+                break;
+            case "null-node":
+                nodes[1] = null;
+                break;
+            case "null-capability":
+                agent["capabilities"] = new object?[] { null };
+                break;
+        }
+
+        Assert.Contains(expected, ContractError(value));
     }
 
     [Fact]
@@ -39,7 +103,7 @@ public sealed class RegistrationContractValidatorTests
 
         Assert.Equal(
             new[] { "web_search", "web_fetch" },
-            contract.Nodes![0].Workspace!.ToolGroups![0].Tools
+            Assert.IsType<AgentNodeContract>(contract.Nodes[0]).Workspace!.ToolGroups[0].Tools
         );
     }
 
@@ -108,8 +172,7 @@ public sealed class RegistrationContractValidatorTests
             JsonSerializer.Serialize(value)
         );
 
-        Assert.Equal("parallel", contract.Nodes![0].Kind);
-        Assert.Equal(2, contract.Nodes[0].Branches!.Length);
+        Assert.Equal(2, Assert.IsType<ParallelNodeContract>(contract.Nodes[0]).Branches.Length);
     }
 
     [Theory]
@@ -123,7 +186,7 @@ public sealed class RegistrationContractValidatorTests
         var contract = RegistrationContractValidator.ParseAndValidate(
             JsonSerializer.Serialize(value)
         );
-        Assert.Equal(max, contract.Nodes![0].Max);
+        Assert.Equal(max, Assert.IsType<ParallelNodeContract>(contract.Nodes[0]).Max);
     }
 
     [Theory]
@@ -134,10 +197,8 @@ public sealed class RegistrationContractValidatorTests
         var value = ParallelContractObject();
         var node = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
         node["max"] = max;
-        var error = Assert.Throws<InvalidOperationException>(() =>
-            RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
-        );
-        Assert.Contains("max must be positive", error.Message);
+
+        Assert.Contains("nodes[0]: Parallel max must be positive", BuildError(value));
     }
 
     [Fact]
@@ -146,22 +207,20 @@ public sealed class RegistrationContractValidatorTests
         var value = ParallelContractObject();
         var node = (Dictionary<string, object?>)((object[])value["nodes"]!)[1];
         node["max"] = 5;
-        var error = Assert.Throws<InvalidOperationException>(() =>
-            RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
-        );
-        Assert.Contains("max is forbidden", error.Message);
+
+        Assert.Contains("'max' could not be mapped", ContractError(value));
     }
 
     [Theory]
-    [InlineData("one-branch", "branches must contain at least two branches")]
-    [InlineData("duplicate-branch", "duplicates branch ID 'one'")]
-    [InlineData("duplicate-participant", "duplicates participant ID 'first'")]
-    [InlineData("nested-parallel", "kind 'parallel' is unsupported in a parallel branch")]
-    [InlineData("duplicate-callback", "duplicates callback reference 'merge'")]
-    [InlineData("nested-route-target", "target references unknown node 'first'")]
-    [InlineData("nested-persistence", "ledgerPath is required when persistence is enabled")]
-    [InlineData("parallel-field-on-stage", "branches is forbidden")]
-    public void RejectsInvalidParallelContracts(string scenario, string expected)
+    [InlineData("one-branch", true, "A parallel group requires at least two branches")]
+    [InlineData("duplicate-branch", true, "Parallel branch IDs must be unique")]
+    [InlineData("duplicate-participant", true, "'first'")]
+    [InlineData("nested-terminal", false, "kind 'completion' is unsupported in a parallel branch")]
+    [InlineData("duplicate-callback", false, "duplicates callback reference 'merge'")]
+    [InlineData("nested-route-target", false, "target references unknown node 'first'")]
+    [InlineData("nested-persistence", false, "ledgerPath is required when persistence is enabled")]
+    [InlineData("parallel-field-on-stage", false, "'branches' could not be mapped")]
+    public void RejectsInvalidParallelContracts(string scenario, bool coreRule, string expected)
     {
         var value = ParallelContractObject();
         var nodes = (object[])value["nodes"]!;
@@ -183,9 +242,10 @@ public sealed class RegistrationContractValidatorTests
             case "duplicate-participant":
                 secondParticipant["id"] = "first";
                 break;
-            case "nested-parallel":
-                firstParticipant["kind"] = "parallel";
+            case "nested-terminal":
+                firstParticipant["kind"] = "completion";
                 firstParticipant.Remove("runCallback");
+                firstParticipant["summaryCallback"] = "first.summary";
                 break;
             case "duplicate-callback":
                 firstParticipant["runCallback"] = "merge";
@@ -203,13 +263,7 @@ public sealed class RegistrationContractValidatorTests
                 throw new ArgumentOutOfRangeException(nameof(scenario));
         }
 
-        var message = Assert
-            .Throws<InvalidOperationException>(() =>
-                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
-            )
-            .Message;
-
-        Assert.Contains(expected, message);
+        Assert.Contains(expected, coreRule ? BuildError(value) : ContractError(value));
     }
 
     [Fact]
@@ -220,17 +274,13 @@ public sealed class RegistrationContractValidatorTests
         var agent = (Dictionary<string, object?>)nodes[0];
         agent["capabilities"] = new object[]
         {
-            Capability("same", validate: null),
+            Capability("same", validate: "agent.first.validate"),
             Capability("same", validate: "agent.second.validate"),
         };
-        var message = Assert
-            .Throws<InvalidOperationException>(() =>
-                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
-            )
-            .Message;
+        Assert.Contains("duplicates capability 'same'", ContractError(value));
 
-        Assert.Contains("validateCallback is required", message);
-        Assert.Contains("duplicates capability 'same'", message);
+        agent["capabilities"] = new object[] { Capability("first", validate: null) };
+        Assert.Contains("validateCallback", ContractError(value));
     }
 
     [Theory]
@@ -258,18 +308,16 @@ public sealed class RegistrationContractValidatorTests
     {
         var value = ContractObject();
         value["contractVersion"] = 1;
+        Assert.Contains("contractVersion must be 10", ContractError(value));
+
+        value["contractVersion"] = 10;
         var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
         var output = (Dictionary<string, object?>)agent["output"]!;
         output["jsonSchema"] = "{\"type\":\"array\"}";
-
-        var message = Assert
-            .Throws<InvalidOperationException>(() =>
-                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
-            )
-            .Message;
-
-        Assert.Contains("contractVersion must be 10", message);
-        Assert.Contains("object root with type 'object'", message);
+        Assert.Contains(
+            "nodes[0]: Output JSON schema must declare an object root with type 'object'",
+            BuildError(value)
+        );
     }
 
     [Fact]
@@ -283,20 +331,26 @@ public sealed class RegistrationContractValidatorTests
             JsonSerializer.Serialize(value)
         );
 
-        var workspace = contract.Nodes![0].Workspace!;
+        var workspace = Assert.IsType<AgentNodeContract>(contract.Nodes[0]).Workspace!;
         Assert.Equal("workspace.path", workspace.PathCallback);
         Assert.Equal("workspace.commands", workspace.CommandsCallback);
         Assert.Null(workspace.InterceptCallback);
-        Assert.Equal(2, workspace.ToolGroups!.Length);
+        Assert.Equal(2, workspace.ToolGroups.Length);
         Assert.True(workspace.ToolGroups[0].IncludeCommands);
         Assert.Equal("workspace.can-mutate", workspace.ToolGroups[1].WhenCallback);
     }
 
     [Theory]
-    [InlineData("unknown", "unknown tool")]
-    [InlineData("duplicate", "in more than one group")]
-    [InlineData("commands-twice", "workspace commands more than once")]
-    [InlineData("empty", "must select at least one tool")]
+    [InlineData("unknown", "Unknown agent workspace tool 'unknown'")]
+    [InlineData(
+        "duplicate",
+        "A workspace cannot select the same effective tool in more than one group"
+    )]
+    [InlineData(
+        "commands-twice",
+        "A workspace cannot select the same effective tool in more than one group"
+    )]
+    [InlineData("empty", "A tool group must select at least one tool")]
     public void RejectsMalformedVersionTenWorkspacePolicies(string scenario, string expected)
     {
         var value = ContractObject();
@@ -323,13 +377,8 @@ public sealed class RegistrationContractValidatorTests
         }
         agent["workspace"] = workspace;
 
-        var message = Assert
-            .Throws<InvalidOperationException>(() =>
-                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
-            )
-            .Message;
-
-        Assert.Contains(expected, message);
+        var message = BuildError(value);
+        Assert.True(message.Contains($"nodes[0]: {expected}"), message);
     }
 
     [Fact]
@@ -375,7 +424,10 @@ public sealed class RegistrationContractValidatorTests
             JsonSerializer.Serialize(value)
         );
 
-        Assert.Equal(presentation, contract.Presentation);
+        Assert.Equal(
+            presentation is null ? null : RegisteredPresentation.Terminal,
+            contract.Presentation
+        );
     }
 
     [Fact]
@@ -474,13 +526,7 @@ public sealed class RegistrationContractValidatorTests
         var value = ContractObject();
         value["presentation"] = "events";
 
-        var message = Assert
-            .Throws<InvalidOperationException>(() =>
-                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
-            )
-            .Message;
-
-        Assert.Contains("presentation must be null or 'terminal'", message);
+        Assert.Contains("$.presentation", ContractError(value));
     }
 
     [Fact]
@@ -505,13 +551,34 @@ public sealed class RegistrationContractValidatorTests
             },
         };
 
-        var message = Assert
-            .Throws<InvalidOperationException>(() =>
-                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
-            )
-            .Message;
+        Assert.Contains(
+            "routes from 'agent' for outcome 'success' contain more than one unconditional route",
+            ContractError(value)
+        );
+    }
 
-        Assert.Contains("more than one unconditional route", message);
+    [Fact]
+    public void SurfacesBuilderRejectionOfMultipleUnconditionalStepRoutes()
+    {
+        var value = InteractionContractObject();
+        value["routes"] = new object[]
+        {
+            new
+            {
+                source = "review",
+                target = "done",
+                label = "first",
+            },
+            new
+            {
+                source = "review",
+                target = "done",
+                label = "second",
+            },
+        };
+
+        Assert.Contains("routes[1]: Step 'review", BuildError(value));
+        Assert.Contains("cannot declare more than one unconditional route", BuildError(value));
     }
 
     [Fact]
@@ -614,7 +681,7 @@ public sealed class RegistrationContractValidatorTests
         Assert.Contains("duplicates interaction handler ID 'handler'", message);
         Assert.Contains("references unknown node 'missing'", message);
         Assert.Contains("node 'done' must be an interaction", message);
-        Assert.Contains("handleCallback is required", message);
+        Assert.Contains("handleCallback must be non-blank", message);
         Assert.Contains("duplicates interaction handler target 'ask'", message);
     }
 
@@ -646,17 +713,12 @@ public sealed class RegistrationContractValidatorTests
         var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
         var output = (Dictionary<string, object?>)agent["output"]!;
         output["instructions"] = " ";
+        Assert.Contains("nodes[0]: The value cannot be an empty string", BuildError(value));
+
+        output["instructions"] = "Return a result.";
         var capability = (Dictionary<string, object?>)((object[])agent["capabilities"]!)[0];
         capability.Remove("instructions");
-
-        var message = Assert
-            .Throws<InvalidOperationException>(() =>
-                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
-            )
-            .Message;
-
-        Assert.Contains("output.instructions is required and must be non-blank", message);
-        Assert.Contains("capabilities[0].instructions is required and must be non-blank", message);
+        Assert.Contains("instructions", ContractError(value));
     }
 
     [Fact]
@@ -666,18 +728,24 @@ public sealed class RegistrationContractValidatorTests
         var nodes = (object[])value["nodes"]!;
         var agent = (Dictionary<string, object?>)nodes[0];
         var terminal = (Dictionary<string, object?>)nodes[1];
-        agent["skillDirectories"] = new[] { "/skills/one", "/skills/one", " " };
+        var skill = Directory.CreateTempSubdirectory("tandem-skill-");
+        try
+        {
+            File.WriteAllText(Path.Combine(skill.FullName, "SKILL.md"), "# Skill");
+            agent["skillDirectories"] = new[] { skill.FullName, skill.FullName };
+            Assert.Contains("more than once", BuildError(value));
+
+            agent["skillDirectories"] = new[] { " " };
+            Assert.Contains("nodes[0]: The value cannot be an empty string", BuildError(value));
+        }
+        finally
+        {
+            skill.Delete(recursive: true);
+        }
+
+        agent["skillDirectories"] = Array.Empty<string>();
         terminal["skillDirectories"] = Array.Empty<string>();
-
-        var message = Assert
-            .Throws<InvalidOperationException>(() =>
-                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
-            )
-            .Message;
-
-        Assert.Contains("skillDirectories[1] duplicates '/skills/one'", message);
-        Assert.Contains("skillDirectories[2] must be non-blank", message);
-        Assert.Contains("nodes[1].skillDirectories is forbidden", message);
+        Assert.Contains("'skillDirectories' could not be mapped", ContractError(value));
     }
 
     [Fact]
@@ -688,20 +756,51 @@ public sealed class RegistrationContractValidatorTests
         var agent = (Dictionary<string, object?>)nodes[0];
         var terminal = (Dictionary<string, object?>)nodes[1];
         agent["temperature"] = 2.1;
+        Assert.Contains("(Parameter 'temperature')", BuildError(value));
+
+        agent["temperature"] = 0;
         agent["maxOutputTokens"] = 0;
+        Assert.Contains("(Parameter 'maxOutputTokens')", BuildError(value));
+
+        agent["maxOutputTokens"] = 1;
         terminal["temperature"] = 0;
-        terminal["maxOutputTokens"] = 1;
+        Assert.Contains("'temperature' could not be mapped", ContractError(value));
+    }
 
-        var message = Assert
-            .Throws<InvalidOperationException>(() =>
-                RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
-            )
-            .Message;
+    [Theory]
+    [InlineData("timeout", "(Parameter 'timeout')")]
+    [InlineData("checkpoint-window", "(Parameter 'MaxOutputTokens')")]
+    [InlineData("checkpoint-percent", "(Parameter 'CheckpointAtPercent')")]
+    public void SurfacesBuilderRangeRules(string scenario, string expected)
+    {
+        var value = ContractObject();
+        var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        var checkpoint = new Dictionary<string, object?>
+        {
+            ["contextWindowTokens"] = 100,
+            ["maxOutputTokens"] = 20,
+            ["checkpointAtPercent"] = 80,
+            ["capabilityName"] = "first",
+            ["instructions"] = "Checkpoint.",
+            ["messageCallback"] = "checkpoint.message",
+        };
+        switch (scenario)
+        {
+            case "timeout":
+                agent["timeoutMilliseconds"] = (double)uint.MaxValue;
+                break;
+            case "checkpoint-window":
+                checkpoint["maxOutputTokens"] = 100;
+                agent["checkpoint"] = checkpoint;
+                break;
+            case "checkpoint-percent":
+                checkpoint["checkpointAtPercent"] = 100;
+                agent["checkpoint"] = checkpoint;
+                break;
+        }
 
-        Assert.Contains("nodes[0].temperature must be a finite number between 0 and 2", message);
-        Assert.Contains("nodes[0].maxOutputTokens must be a positive integer", message);
-        Assert.Contains("nodes[1].temperature is forbidden", message);
-        Assert.Contains("nodes[1].maxOutputTokens is forbidden", message);
+        Assert.Contains("nodes[0]: Specified argument was out of the range", BuildError(value));
+        Assert.Contains(expected, BuildError(value));
     }
 
     [Theory]
@@ -727,7 +826,10 @@ public sealed class RegistrationContractValidatorTests
             JsonSerializer.Serialize(value)
         );
 
-        Assert.Equal(disableCompaction, contract.Nodes![0].Checkpoint!.DisableCompaction);
+        Assert.Equal(
+            disableCompaction,
+            Assert.IsType<AgentNodeContract>(contract.Nodes[0]).Checkpoint!.DisableCompaction
+        );
     }
 
     [Fact]
@@ -750,7 +852,9 @@ public sealed class RegistrationContractValidatorTests
             JsonSerializer.Serialize(value)
         );
 
-        Assert.False(contract.Nodes![0].Checkpoint!.DisableCompaction);
+        Assert.False(
+            Assert.IsType<AgentNodeContract>(contract.Nodes[0]).Checkpoint!.DisableCompaction
+        );
     }
 
     [Fact]
@@ -775,7 +879,7 @@ public sealed class RegistrationContractValidatorTests
             )
             .Message;
 
-        Assert.Contains("nodes[1].checkpoint is forbidden", message);
+        Assert.Contains("'checkpoint' could not be mapped", message);
     }
 
     [Fact]
@@ -789,7 +893,10 @@ public sealed class RegistrationContractValidatorTests
             JsonSerializer.Serialize(value)
         );
 
-        Assert.Equal("none", contract.Nodes![0].Reasoning!.Effort);
+        Assert.Equal(
+            AgentReasoningEffort.None,
+            Assert.IsType<AgentNodeContract>(contract.Nodes[0]).Reasoning!.Effort
+        );
     }
 
     [Fact]
@@ -806,7 +913,10 @@ public sealed class RegistrationContractValidatorTests
             JsonSerializer.Serialize(value)
         );
 
-        Assert.Equal(1024, contract.Nodes![0].Reasoning!.MaxTokens);
+        Assert.Equal(
+            1024,
+            Assert.IsType<AgentNodeContract>(contract.Nodes[0]).Reasoning!.MaxTokens
+        );
     }
 
     [Theory]
@@ -816,18 +926,40 @@ public sealed class RegistrationContractValidatorTests
     {
         var value = ContractObject();
         var agent = (Dictionary<string, object?>)((object[])value["nodes"]!)[0];
+        var client = Client("http://127.0.0.1:10531/v1", null);
+        client["wireApi"] = "completions";
+        agent["client"] = client;
         agent["reasoning"] = new Dictionary<string, object?> { ["maxTokens"] = maxTokens };
 
-        var message = Assert
+        Assert.Contains("(Parameter 'reasoningMaxTokens')", BuildError(value));
+    }
+
+    private static string ContractError(object value) =>
+        Assert
             .Throws<InvalidOperationException>(() =>
                 RegistrationContractValidator.ParseAndValidate(JsonSerializer.Serialize(value))
             )
             .Message;
 
-        Assert.Contains("reasoning.maxTokens must be at least 1024", message);
+    private static string BuildError(object value)
+    {
+        var contract = RegistrationContractValidator.ParseAndValidate(
+            JsonSerializer.Serialize(value)
+        );
+        return Assert
+            .Throws<InvalidOperationException>(() =>
+                NodePipelineBridge.BuildGraph(contract, Callbacks())
+            )
+            .Message;
     }
 
-    private static string ValidContract() => JsonSerializer.Serialize(ContractObject());
+    private static CallbackDispatcher Callbacks() =>
+        new(
+            new SynchronizationContext(),
+            (_, _, _) => "",
+            (_, _, _, _) => Task.FromResult(""),
+            CancellationToken.None
+        );
 
     private static Dictionary<string, object?> ParallelContractObject() =>
         new()
@@ -918,7 +1050,7 @@ public sealed class RegistrationContractValidatorTests
                         Capability("first", "agent.first.validate"),
                         Capability("second", "agent.second.validate"),
                     },
-                    ["skillDirectories"] = new[] { "/skills/meridian" },
+                    ["skillDirectories"] = Array.Empty<string>(),
                     ["temperature"] = 0,
                     ["maxOutputTokens"] = 4096,
                 },
