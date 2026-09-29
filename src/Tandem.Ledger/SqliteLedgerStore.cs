@@ -7,11 +7,8 @@ namespace Tandem.Ledger;
 public sealed class SqliteLedgerStore
 {
     private const int SchemaVersion = 2;
-    private const int MaximumLedgerToolValueCharacters = 4_000;
-    private const int MaximumLedgerToolPageCharacters = 200_000;
-    private const string JournalStream = "runtime.journal";
     private const string SelectJournal =
-        "SELECT id AS Id, sequence AS Sequence, record AS Record, recorded_at AS RecordedAt FROM journal";
+        "SELECT id AS Id, sequence AS Sequence, record AS Record, recorded_at AS RecordedAtMilliseconds FROM journal";
     private const string SelectRun =
         "SELECT composition AS Composition, status AS Status, started_at AS StartedAt, updated_at AS UpdatedAt, ended_at AS EndedAt FROM runs WHERE run_id = @RunId;";
     private const string Schema = """
@@ -52,8 +49,7 @@ public sealed class SqliteLedgerStore
         PRAGMA user_version = 2;
         """;
 
-    private static readonly JsonSerializerOptions _serializerOptions =
-        TandemJson.CreateTypedContract();
+    internal static JsonSerializerOptions JournalJson { get; } = TandemJson.CreateTypedContract();
 
     private readonly string _databasePath;
     private readonly string _connectionString;
@@ -249,7 +245,7 @@ public sealed class SqliteLedgerStore
         CancellationToken cancellationToken
     )
     {
-        var payload = JsonSerializer.Serialize(record, _serializerOptions);
+        var payload = JsonSerializer.Serialize(record, JournalJson);
         return WithWriteTransactionAsync(
             async (connection, transaction, ct) =>
             {
@@ -360,7 +356,7 @@ public sealed class SqliteLedgerStore
         try
         {
             value =
-                payload.Deserialize<TValue>(_serializerOptions)
+                payload.Deserialize<TValue>(JournalJson)
                 ?? throw new LedgerDataException($"{location} is null.");
         }
         catch (Exception exception) when (exception is JsonException or NotSupportedException)
@@ -376,70 +372,24 @@ public sealed class SqliteLedgerStore
         );
     }
 
-    internal async ValueTask<PipelineLedgerPage> ReadPageAsync(
+    internal async ValueTask<IReadOnlyList<JournalRow>> ReadAgentReadableAsync(
         Guid runId,
-        string? query,
-        long? cursor,
+        long afterId,
+        string? valueText,
         int limit,
         CancellationToken cancellationToken
     )
     {
-        if (cursor < 0)
-        {
-            throw new Tandem.Infrastructure.PaginationValidationException(
-                nameof(cursor),
-                "Cursor cannot be negative. Restart with a null cursor; subsequently use nextCursor from the preceding page.",
-                new { cursor, retryCursor = (long?)null }
-            );
-        }
-        if (limit is < 1 or > 50)
-        {
-            throw new Tandem.Infrastructure.PaginationValidationException(
-                nameof(limit),
-                "Ledger page size must be 1 to 50.",
-                new
-                {
-                    limit,
-                    minimumLimit = 1,
-                    maximumLimit = 50,
-                    retryLimit = Math.Clamp(limit, 1, 50),
-                }
-            );
-        }
-        if (query is not null)
-        {
-            if (string.IsNullOrWhiteSpace(query))
-            {
-                throw new Tandem.Infrastructure.PaginationValidationException(
-                    nameof(query),
-                    "Supply nonblank search text, or use read_ledger to browse without a query.",
-                    new { minimumQueryLength = 1, maximumQueryLength = 1024 }
-                );
-            }
-            if (query.Length > 1_024)
-            {
-                throw new Tandem.Infrastructure.PaginationValidationException(
-                    nameof(query),
-                    "Ledger search query cannot exceed 1024 characters. Shorten the query and restart with a null cursor.",
-                    new
-                    {
-                        queryLength = query.Length,
-                        maximumQueryLength = 1024,
-                        retryCursor = (long?)null,
-                    }
-                );
-            }
-        }
         await using var connection = await OpenReadOnlyAsync(cancellationToken);
-        // Search matches JSON values, never property names. SQLite's lower() folds ASCII only.
+        // Matches JSON values, never property names. SQLite's lower() folds ASCII only.
         var rows = await connection.QueryAsync<JournalRow>(
             new CommandDefinition(
                 $"""
                 {SelectJournal}
-                WHERE run_id = @RunId AND id > @Cursor AND agent_readable
-                    AND (@Query IS NULL OR EXISTS (
+                WHERE run_id = @RunId AND id > @AfterId AND agent_readable
+                    AND (@ValueText IS NULL OR EXISTS (
                         SELECT 1 FROM json_tree(journal.record)
-                        WHERE atom IS NOT NULL AND instr(lower(atom), lower(@Query)) > 0
+                        WHERE atom IS NOT NULL AND instr(lower(atom), lower(@ValueText)) > 0
                     ))
                 ORDER BY id
                 LIMIT @Limit;
@@ -447,41 +397,30 @@ public sealed class SqliteLedgerStore
                 new
                 {
                     RunId = Key(runId),
-                    Cursor = cursor ?? 0,
-                    Query = query,
-                    Limit = limit + 1,
+                    AfterId = afterId,
+                    ValueText = valueText,
+                    Limit = limit,
                 },
                 cancellationToken: cancellationToken
             )
         );
-        var entries = new List<PipelineLedgerEntry>();
-        var pageCharacters = 0;
-        var hasMore = false;
-        foreach (var row in rows)
-        {
-            var value = row.Record;
-            var formatted = FormatLedgerToolValue(value, query);
-            if (
-                entries.Count >= limit
-                || pageCharacters + formatted.Length > MaximumLedgerToolPageCharacters
+        return rows.AsList();
+    }
+
+    internal async ValueTask<JournalRecordRow?> ReadRecordAsync(
+        Guid runId,
+        long id,
+        CancellationToken cancellationToken
+    )
+    {
+        await using var connection = await OpenReadOnlyAsync(cancellationToken);
+        return await connection.QuerySingleOrDefaultAsync<JournalRecordRow>(
+            new CommandDefinition(
+                "SELECT record AS Record, agent_readable AS AgentReadable FROM journal WHERE run_id = @RunId AND id = @Id;",
+                new { RunId = Key(runId), Id = id },
+                cancellationToken: cancellationToken
             )
-            {
-                hasMore = true;
-                break;
-            }
-            entries.Add(
-                new PipelineLedgerEntry(
-                    row.Id,
-                    JournalStream,
-                    row.Sequence,
-                    $"{JournalStream}-{row.Sequence}",
-                    formatted,
-                    FromUnix(row.RecordedAt)
-                )
-            );
-            pageCharacters += formatted.Length;
-        }
-        return new PipelineLedgerPage(entries, hasMore ? entries[^1].Cursor : null);
+        );
     }
 
     internal async ValueTask<long?> FindActionEntryAsync(
@@ -510,147 +449,6 @@ public sealed class SqliteLedgerStore
                 cancellationToken: cancellationToken
             )
         );
-    }
-
-    internal async ValueTask<object> ReadEntryPageAsync(
-        Guid runId,
-        long entryCursor,
-        int offset,
-        int limit,
-        CancellationToken cancellationToken,
-        string? diagnosticStream = null
-    )
-    {
-        if (entryCursor <= 0 || offset < 0 || limit is < 2 or > 65536)
-        {
-            throw new Tandem.Infrastructure.PaginationValidationException(
-                "page",
-                "entryCursor must be positive, offset nonnegative, and limit from 2 to 65536.",
-                new
-                {
-                    entryCursor,
-                    retryOffset = 0,
-                    retryLimit = Math.Clamp(limit, 2, 65536),
-                }
-            );
-        }
-
-        await using var connection = await OpenReadOnlyAsync(cancellationToken);
-        var entry =
-            await connection.QuerySingleOrDefaultAsync<ReadableRow>(
-                new CommandDefinition(
-                    "SELECT record AS Record, agent_readable AS AgentReadable FROM journal WHERE run_id = @RunId AND id = @Cursor;",
-                    new { RunId = Key(runId), Cursor = entryCursor },
-                    cancellationToken: cancellationToken
-                )
-            )
-            ?? throw new Tandem.Infrastructure.PaginationValidationException(
-                nameof(entryCursor),
-                "No readable entry at this cursor in the current run. Use read_ledger or search_ledger to obtain an entry cursor.",
-                new { entryCursor }
-            );
-        if (entry.AgentReadable != 1)
-        {
-            throw new Tandem.Infrastructure.PaginationValidationException(
-                nameof(entryCursor),
-                "This record is not agent-readable. Use a cursor from read_ledger or search_ledger.",
-                new { entryCursor }
-            );
-        }
-
-        var value = entry.Record;
-        bool? captureTruncated = null;
-        if (diagnosticStream is not null)
-        {
-            if (diagnosticStream is not ("stdout" or "stderr"))
-            {
-                throw new Tandem.Infrastructure.ToolInputException(
-                    "stream must be stdout or stderr."
-                );
-            }
-
-            var record = JsonSerializer.Deserialize<RuntimeJournalRecord>(
-                value,
-                _serializerOptions
-            );
-            if (
-                record
-                is not { Kind: RuntimeJournalKind.ActionCompleted, Payload: { } processPayload }
-            )
-            {
-                throw new Tandem.Infrastructure.ToolInputException(
-                    "This entry has no process diagnostics. Read it without stream."
-                );
-            }
-
-            var process =
-                processPayload.Deserialize<PipelineActionProcessPayload>()
-                ?? throw new LedgerDataException("Missing process output.");
-            value = diagnosticStream == "stdout" ? process.Stdout : process.Stderr;
-            captureTruncated = process.Truncated;
-        }
-
-        if (
-            offset > value.Length
-            || (
-                offset > 0
-                && offset < value.Length
-                && char.IsLowSurrogate(value[offset])
-                && char.IsHighSurrogate(value[offset - 1])
-            )
-        )
-        {
-            throw new Tandem.Infrastructure.PaginationValidationException(
-                nameof(offset),
-                "Offset exceeds the entry or splits a Unicode character. Restart at offset 0 and follow nextOffset.",
-                new { totalLength = value.Length, retryOffset = 0 }
-            );
-        }
-
-        var length = Math.Min(limit, value.Length - offset);
-        if (
-            length > 0
-            && offset + length < value.Length
-            && char.IsHighSurrogate(value[offset + length - 1])
-        )
-        {
-            length--;
-        }
-
-        var next = offset + length;
-        return new
-        {
-            entryCursor,
-            stream = diagnosticStream,
-            captureTruncated,
-            content = value.Substring(offset, length),
-            offset,
-            length,
-            totalLength = value.Length,
-            hasMore = next < value.Length,
-            nextOffset = next < value.Length ? (int?)next : null,
-            offsetUnit = "UTF-16 code units",
-        };
-    }
-
-    private static string FormatLedgerToolValue(string value, string? query)
-    {
-        if (value.Length <= MaximumLedgerToolValueCharacters)
-        {
-            return value;
-        }
-
-        var start = 0;
-        if (query is not null)
-        {
-            var match = value.IndexOf(query, StringComparison.OrdinalIgnoreCase);
-            start = Math.Max(0, match - MaximumLedgerToolValueCharacters / 4);
-            start = Math.Min(start, value.Length - MaximumLedgerToolValueCharacters);
-        }
-        var prefix = start > 0 ? "[...truncated...]" : "";
-        var suffix =
-            start + MaximumLedgerToolValueCharacters < value.Length ? "[...truncated...]" : "";
-        return $"{prefix}{value.Substring(start, MaximumLedgerToolValueCharacters)}{suffix}";
     }
 
     private async ValueTask<IEnumerable<JournalRow>> ReadJournalRowsAsync(
@@ -730,13 +528,13 @@ public sealed class SqliteLedgerStore
     }
 
     private static LedgerJournalEntry ToEntry(JournalRow row) =>
-        new(row.Sequence, Deserialize(row), FromUnix(row.RecordedAt));
+        new(row.Sequence, Deserialize(row), row.RecordedAt);
 
     private static RuntimeJournalRecord Deserialize(JournalRow row)
     {
         try
         {
-            return JsonSerializer.Deserialize<RuntimeJournalRecord>(row.Record, _serializerOptions)
+            return JsonSerializer.Deserialize<RuntimeJournalRecord>(row.Record, JournalJson)
                 ?? throw new JsonException("Journal record is null.");
         }
         catch (Exception exception) when (exception is JsonException or NotSupportedException)
@@ -749,12 +547,8 @@ public sealed class SqliteLedgerStore
 
     private static long NowMilliseconds() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-    private static DateTimeOffset FromUnix(long value) =>
+    internal static DateTimeOffset FromUnix(long value) =>
         DateTimeOffset.FromUnixTimeMilliseconds(value);
-
-    private sealed record JournalRow(long Id, long Sequence, string Record, long RecordedAt);
-
-    private sealed record ReadableRow(string Record, long? AgentReadable);
 
     private sealed record RunRow(
         string Composition,
@@ -763,4 +557,19 @@ public sealed class SqliteLedgerStore
         long UpdatedAt,
         long? EndedAt
     );
+}
+
+internal sealed record JournalRow(
+    long Id,
+    long Sequence,
+    string Record,
+    long RecordedAtMilliseconds
+)
+{
+    public DateTimeOffset RecordedAt => SqliteLedgerStore.FromUnix(RecordedAtMilliseconds);
+}
+
+internal sealed record JournalRecordRow(string Record, long? AgentReadable)
+{
+    public bool IsAgentReadable => AgentReadable == 1;
 }
