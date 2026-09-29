@@ -63,6 +63,32 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task AgentLedgerReader_SearchMatchesValuesNotPropertyNames()
+    {
+        var store = await CreateStoreAsync(DatabasePath());
+        var runId = Guid.CreateVersion7();
+        var observer = await store.CreateObserverAsync(runId, "test");
+        await observer.ObserveAsync(AcceptedStep(runId, "planner", new RunnerState(7)), default);
+        await observer.ObserveAsync(
+            new PipelineCommandOutput(runId, "verify", "task check", "stepId is not a key here", 1),
+            default
+        );
+
+        var reader = (IPipelineLedgerReader)store.ForRun(runId);
+        var propertyName = await reader.SearchAsync("valueType");
+        var nestedPropertyName = await reader.SearchAsync("count");
+        var value = await reader.SearchAsync("PLANNER");
+        var nestedValue = await reader.SearchAsync("7");
+        var outputValue = await reader.SearchAsync("stepId");
+
+        propertyName.Entries.Should().BeEmpty();
+        nestedPropertyName.Entries.Should().BeEmpty();
+        value.Entries.Should().ContainSingle().Which.Sequence.Should().Be(1);
+        nestedValue.Entries.Should().ContainSingle().Which.Sequence.Should().Be(1);
+        outputValue.Entries.Should().ContainSingle().Which.Sequence.Should().Be(2);
+    }
+
+    [Fact]
     public async Task AgentLedgerReader_BoundsValuesAndKeepsSearchMatchVisible()
     {
         var store = await CreateStoreAsync(DatabasePath());

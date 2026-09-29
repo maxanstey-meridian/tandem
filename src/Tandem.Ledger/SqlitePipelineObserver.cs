@@ -2,18 +2,6 @@ using System.Text.Json;
 
 namespace Tandem.Ledger;
 
-internal static class PipelineJournal
-{
-    public static bool IsAccepted(RuntimeJournalRecord record) =>
-        record.Kind
-            is RuntimeJournalKind.StructuredOutputAccepted
-                or RuntimeJournalKind.CapabilityAccepted
-                or RuntimeJournalKind.InteractionRequested
-                or RuntimeJournalKind.InteractionAnswered
-                or RuntimeJournalKind.StepCompleted
-        && (record.Payload is not null || !string.IsNullOrWhiteSpace(record.ValueType));
-}
-
 public sealed class SqlitePipelineObserver : IPipelinePersistenceObserver
 {
     private readonly SqliteLedgerStore _store;

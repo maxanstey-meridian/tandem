@@ -29,8 +29,26 @@ public sealed class SqliteLedgerStore
             sequence INTEGER NOT NULL CHECK (sequence >= 1),
             record TEXT NOT NULL CHECK (json_valid(record)),
             recorded_at INTEGER NOT NULL,
+            kind TEXT GENERATED ALWAYS AS (json_extract(record, '$.kind')) VIRTUAL,
+            step_id TEXT GENERATED ALWAYS AS (json_extract(record, '$.stepId')) VIRTUAL,
+            identity TEXT GENERATED ALWAYS AS (json_extract(record, '$.identity')) VIRTUAL,
+            value_type TEXT GENERATED ALWAYS AS (json_extract(record, '$.valueType')) VIRTUAL,
+            payload_type TEXT GENERATED ALWAYS AS (json_type(record, '$.payload')) VIRTUAL,
+            -- An accepted value: the fact a participant produced or a human supplied.
+            accepted INTEGER GENERATED ALWAYS AS (
+                kind IN ('StructuredOutputAccepted', 'CapabilityAccepted', 'InteractionRequested', 'InteractionAnswered', 'StepCompleted')
+                AND (coalesce(payload_type, 'null') <> 'null' OR trim(coalesce(value_type, '')) <> '')
+            ) VIRTUAL,
+            -- What the ledger tools show agents: accepted values and captured command output.
+            agent_readable INTEGER GENERATED ALWAYS AS (
+                accepted
+                OR (kind = 'CommandCompleted' AND coalesce(payload_type, 'null') <> 'null')
+                OR (kind = 'ActionCompleted' AND payload_type = 'object')
+            ) VIRTUAL,
             UNIQUE (run_id, sequence)
         );
+        CREATE INDEX journal_accepted ON journal (run_id, accepted, step_id, value_type);
+        CREATE INDEX journal_actions ON journal (run_id, kind, step_id, identity);
         PRAGMA user_version = 2;
         """;
 
@@ -272,15 +290,17 @@ public sealed class SqliteLedgerStore
     public async ValueTask<IReadOnlyList<LedgerJournalEntry>> ReadJournalAsync(
         Guid runId,
         CancellationToken cancellationToken = default
-    ) => (await ReadJournalRowsAsync(runId, cancellationToken)).Select(ToEntry).ToList();
+    ) =>
+        (await ReadJournalRowsAsync(runId, "ORDER BY id", new { }, cancellationToken))
+            .Select(ToEntry)
+            .ToList();
 
     public async ValueTask<IReadOnlyList<RuntimeJournalRecord>> ReadAcceptedAsync(
         Guid runId,
         CancellationToken cancellationToken = default
     ) =>
-        (await ReadJournalRowsAsync(runId, cancellationToken))
+        (await ReadJournalRowsAsync(runId, "AND accepted ORDER BY id", new { }, cancellationToken))
             .Select(Deserialize)
-            .Where(PipelineJournal.IsAccepted)
             .ToList();
 
     public ValueTask<AcceptedPipelineValue<TValue>?> ReadLatestAcceptedAsync<TValue>(
@@ -305,18 +325,21 @@ public sealed class SqliteLedgerStore
     )
     {
         var expectedType = typeof(TValue).FullName ?? typeof(TValue).Name;
-        var latest = (await ReadJournalAsync(runId, cancellationToken)).LastOrDefault(entry =>
-            PipelineJournal.IsAccepted(entry.Record)
-            && (
+        var latestRow = (
+            await ReadJournalRowsAsync(
+                runId,
                 stepId is null
-                    ? string.Equals(entry.Record.ValueType, expectedType, StringComparison.Ordinal)
-                    : string.Equals(entry.Record.StepId, stepId, StringComparison.Ordinal)
+                    ? "AND accepted AND value_type = @ValueType ORDER BY id DESC LIMIT 1"
+                    : "AND accepted AND step_id = @StepId ORDER BY id DESC LIMIT 1",
+                new { StepId = stepId, ValueType = expectedType },
+                cancellationToken
             )
-        );
-        if (latest is null)
+        ).SingleOrDefault();
+        if (latestRow is null)
         {
             return null;
         }
+        var latest = ToEntry(latestRow);
 
         var location = stepId is null
             ? $"Accepted value at sequence '{latest.Sequence}'"
@@ -408,10 +431,26 @@ public sealed class SqliteLedgerStore
             }
         }
         await using var connection = await OpenReadOnlyAsync(cancellationToken);
+        // Search matches JSON values, never property names. SQLite's lower() folds ASCII only.
         var rows = await connection.QueryAsync<JournalRow>(
             new CommandDefinition(
-                $"{SelectJournal} WHERE run_id = @RunId AND id > @Cursor ORDER BY id;",
-                new { RunId = Key(runId), Cursor = cursor ?? 0 },
+                $"""
+                {SelectJournal}
+                WHERE run_id = @RunId AND id > @Cursor AND agent_readable
+                    AND (@Query IS NULL OR EXISTS (
+                        SELECT 1 FROM json_tree(journal.record)
+                        WHERE atom IS NOT NULL AND instr(lower(atom), lower(@Query)) > 0
+                    ))
+                ORDER BY id
+                LIMIT @Limit;
+                """,
+                new
+                {
+                    RunId = Key(runId),
+                    Cursor = cursor ?? 0,
+                    Query = query,
+                    Limit = limit + 1,
+                },
                 cancellationToken: cancellationToken
             )
         );
@@ -421,10 +460,6 @@ public sealed class SqliteLedgerStore
         foreach (var row in rows)
         {
             var value = row.Record;
-            if (!IsAgentReadableLedgerEntry(value) || !Matches(value, query))
-            {
-                continue;
-            }
             var formatted = FormatLedgerToolValue(value, query);
             if (
                 entries.Count >= limit
@@ -457,19 +492,24 @@ public sealed class SqliteLedgerStore
     )
     {
         await using var connection = await OpenReadOnlyAsync(cancellationToken);
-        var rows = await connection.QueryAsync<JournalRow>(
+        return await connection.QuerySingleOrDefaultAsync<long?>(
             new CommandDefinition(
-                $"{SelectJournal} WHERE run_id = @RunId ORDER BY id DESC;",
-                new { RunId = Key(runId) },
+                """
+                SELECT id FROM journal
+                WHERE run_id = @RunId AND kind = 'ActionCompleted' AND step_id = @StepId
+                    AND identity = @Identity AND coalesce(payload_type, 'null') <> 'null'
+                ORDER BY id DESC
+                LIMIT 1;
+                """,
+                new
+                {
+                    RunId = Key(runId),
+                    StepId = stepId,
+                    Identity = invocationId,
+                },
                 cancellationToken: cancellationToken
             )
         );
-        return rows.FirstOrDefault(row =>
-            Deserialize(row)
-                is { Kind: RuntimeJournalKind.ActionCompleted, Payload: not null } record
-            && record.StepId == stepId
-            && record.Identity == invocationId
-        )?.Id;
     }
 
     internal async ValueTask<object> ReadEntryPageAsync(
@@ -496,10 +536,10 @@ public sealed class SqliteLedgerStore
         }
 
         await using var connection = await OpenReadOnlyAsync(cancellationToken);
-        var value =
-            await connection.QuerySingleOrDefaultAsync<string>(
+        var entry =
+            await connection.QuerySingleOrDefaultAsync<ReadableRow>(
                 new CommandDefinition(
-                    "SELECT record FROM journal WHERE run_id = @RunId AND id = @Cursor;",
+                    "SELECT record AS Record, agent_readable AS AgentReadable FROM journal WHERE run_id = @RunId AND id = @Cursor;",
                     new { RunId = Key(runId), Cursor = entryCursor },
                     cancellationToken: cancellationToken
                 )
@@ -509,7 +549,7 @@ public sealed class SqliteLedgerStore
                 "No readable entry at this cursor in the current run. Use read_ledger or search_ledger to obtain an entry cursor.",
                 new { entryCursor }
             );
-        if (!IsAgentReadableLedgerEntry(value))
+        if (entry.AgentReadable != 1)
         {
             throw new Tandem.Infrastructure.PaginationValidationException(
                 nameof(entryCursor),
@@ -518,6 +558,7 @@ public sealed class SqliteLedgerStore
             );
         }
 
+        var value = entry.Record;
         bool? captureTruncated = null;
         if (diagnosticStream is not null)
         {
@@ -592,49 +633,6 @@ public sealed class SqliteLedgerStore
         };
     }
 
-    private static bool IsAgentReadableLedgerEntry(string value)
-    {
-        try
-        {
-            var record = JsonSerializer.Deserialize<RuntimeJournalRecord>(
-                value,
-                _serializerOptions
-            );
-            return record is not null
-                && (PipelineJournal.IsAccepted(record) || IsReadableCommand(record));
-        }
-        catch (Exception exception) when (exception is JsonException or NotSupportedException)
-        {
-            throw new LedgerDataException(
-                "The runtime journal contains a malformed record.",
-                exception
-            );
-        }
-    }
-
-    private static bool IsReadableCommand(RuntimeJournalRecord record)
-    {
-        if (record is { Kind: RuntimeJournalKind.CommandCompleted, Payload: not null })
-        {
-            return true;
-        }
-        if (record is not { Kind: RuntimeJournalKind.ActionCompleted, Payload: { } payload })
-        {
-            return false;
-        }
-        try
-        {
-            return payload.Deserialize<PipelineActionProcessPayload>() is not null;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-    }
-
-    private static bool Matches(string value, string? query) =>
-        query is null || value.Contains(query, StringComparison.OrdinalIgnoreCase);
-
     private static string FormatLedgerToolValue(string value, string? query)
     {
         if (value.Length <= MaximumLedgerToolValueCharacters)
@@ -657,15 +655,19 @@ public sealed class SqliteLedgerStore
 
     private async ValueTask<IEnumerable<JournalRow>> ReadJournalRowsAsync(
         Guid runId,
+        string conditionAndOrder,
+        object parameters,
         CancellationToken cancellationToken
     )
     {
         await using var connection = await OpenReadOnlyAsync(cancellationToken);
         await ReadRunAsync(connection, null, runId, cancellationToken);
+        var runParameters = new DynamicParameters(parameters);
+        runParameters.Add("RunId", Key(runId));
         return await connection.QueryAsync<JournalRow>(
             new CommandDefinition(
-                $"{SelectJournal} WHERE run_id = @RunId ORDER BY id;",
-                new { RunId = Key(runId) },
+                $"{SelectJournal} WHERE run_id = @RunId {conditionAndOrder};",
+                runParameters,
                 cancellationToken: cancellationToken
             )
         );
@@ -751,6 +753,8 @@ public sealed class SqliteLedgerStore
         DateTimeOffset.FromUnixTimeMilliseconds(value);
 
     private sealed record JournalRow(long Id, long Sequence, string Record, long RecordedAt);
+
+    private sealed record ReadableRow(string Record, long? AgentReadable);
 
     private sealed record RunRow(
         string Composition,
