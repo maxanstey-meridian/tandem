@@ -679,6 +679,35 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task RecordRunAsync_RecordsTheStatusTheRunsOutcomeImplies()
+    {
+        var store = await CreateStoreAsync(DatabasePath());
+        var failedRun = Guid.CreateVersion7();
+        var faultedRun = Guid.CreateVersion7();
+        var failed = new DeclaredFailureStage();
+        var faulted = new FaultStage();
+        var failing = Pipeline.Start(failed, "record-failed").Build(failed);
+        var faulting = Pipeline.Start(faulted, "record-faulted").Build(faulted);
+        await store.CreateObserverAsync(failedRun, failing);
+        await store.CreateObserverAsync(faultedRun, faulting);
+
+        var result = await store.RecordRunAsync(
+            failedRun,
+            () => new PipelineRunner().RunAsync(failing, new RunnerState(1))
+        );
+        var fault = async () =>
+            await store.RecordRunAsync(
+                faultedRun,
+                () => new PipelineRunner().RunAsync(faulting, new RunnerState(1))
+            );
+
+        result.Status.Should().Be(PipelineRunStatus.Failed);
+        await fault.Should().ThrowAsync<PipelineRunException>();
+        (await store.GetRunAsync(failedRun)).Status.Should().Be(LedgerRunStatus.Failed);
+        (await store.GetRunAsync(faultedRun)).Status.Should().Be(LedgerRunStatus.Faulted);
+    }
+
+    [Fact]
     public async Task SqliteRunOptions_OwnSuccessfulRunLifecycleAndComposeObserver()
     {
         var path = DatabasePath();

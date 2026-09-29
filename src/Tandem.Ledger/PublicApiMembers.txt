@@ -94,6 +94,7 @@ P System.String? VisitId { get; set; }
 P Tandem.Ledger.RuntimeJournalKind Kind { get; set; }
 T Tandem.Ledger.SqliteLedgerStore
 C (System.String databasePath)
+M System.Threading.Tasks.Task<Tandem.PipelineRunResult<TState>> RecordRunAsync<TState>(System.Guid runId, System.Func<System.Threading.Tasks.Task<Tandem.PipelineRunResult<TState>>> run)
 M System.Threading.Tasks.ValueTask InitializeAsync(System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Tandem.Ledger.LedgerJournalEntry>> ReadJournalAsync(System.Guid runId, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Tandem.Ledger.RuntimeJournalRecord>> ReadAcceptedAsync(System.Guid runId, System.Threading.CancellationToken cancellationToken = default)

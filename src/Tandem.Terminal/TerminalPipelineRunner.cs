@@ -2,10 +2,7 @@ namespace Tandem.Terminal;
 
 public sealed record TerminalPipelineRunOptions
 {
-    public IPipelinePersistenceObserver? Persistence { get; init; }
-
-    public IPipelineObserver? Observer { get; init; }
-
+    /// <summary>The run's options; the display observes after <see cref="PipelineRunOptions.Observer"/>.</summary>
     public PipelineRunOptions Run { get; init; } = new();
 
     public TerminalDisplayOptions? Display { get; init; }
@@ -65,12 +62,15 @@ public static class TerminalPipelineRunner
             runId,
             displayOptions
         );
-        var observer = ComposeObservers(options.Persistence, options.Observer, display.Observer);
 
         await display.StartAsync(cancellationToken);
         try
         {
-            var runOptions = options.Run with { RunId = runId, Observer = observer };
+            var runOptions = options.Run with
+            {
+                RunId = runId,
+                Observer = PipelineObservers.Compose(options.Run.Observer, display.Observer),
+            };
             var result = await runner.RunAsync(
                 pipeline,
                 initialState,
@@ -149,49 +149,5 @@ public static class TerminalPipelineRunner
                 new TerminalPipelineCompletion(status, summary, exception),
                 CancellationToken.None
             ) ?? ValueTask.CompletedTask;
-    }
-
-    private static IPipelineObserver ComposeObservers(
-        IPipelinePersistenceObserver? persistence,
-        IPipelineObserver? observer,
-        IPipelineObserver display
-    ) =>
-        (persistence, observer) switch
-        {
-            (null, null) => display,
-            (null, not null) => new CompositeObserver(observer, display),
-            (not null, null) => new CompositePersistenceObserver(persistence, display),
-            _ => new CompositePersistenceObserver(
-                persistence!,
-                new CompositeObserver(observer!, display)
-            ),
-        };
-
-    private sealed class CompositeObserver(IPipelineObserver first, IPipelineObserver second)
-        : IPipelineObserver
-    {
-        public async ValueTask ObserveAsync(
-            PipelineObservation observation,
-            CancellationToken cancellationToken
-        )
-        {
-            await first.ObserveAsync(observation, cancellationToken);
-            await second.ObserveAsync(observation, cancellationToken);
-        }
-    }
-
-    private sealed class CompositePersistenceObserver(
-        IPipelinePersistenceObserver persistence,
-        IPipelineObserver observer
-    ) : IPipelinePersistenceObserver
-    {
-        public async ValueTask ObserveAsync(
-            PipelineObservation observation,
-            CancellationToken cancellationToken
-        )
-        {
-            await persistence.ObserveAsync(observation, cancellationToken);
-            await observer.ObserveAsync(observation, cancellationToken);
-        }
     }
 }

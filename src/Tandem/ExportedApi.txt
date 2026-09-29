@@ -83,6 +83,7 @@ Tandem.PipelineInteractionHandlers
 Tandem.PipelineInteractionRequested`1
 Tandem.PipelineInteractionRequestedObservation
 Tandem.PipelineObservation
+Tandem.PipelineObservers
 Tandem.PipelineRunException
 Tandem.PipelineRunOptions
 Tandem.PipelineRunOutcome

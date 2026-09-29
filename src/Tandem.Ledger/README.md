@@ -20,3 +20,7 @@ var result = await new PipelineRunner().RunAsync(
 
 Mark the pipeline or selected participants for persistence. The SQLite runner owns observer setup
 and run terminalization; application state remains free of runtime bookkeeping.
+
+A custom host that creates the observer itself (`store.CreateObserverAsync(runId, pipeline)`) passes it
+through `PipelineObservers.Compose(...)` and wraps the run in `store.RecordRunAsync(runId, ...)`, which
+completes the ledger run as `Ready`, `Failed`, `Cancelled` or `Faulted`.

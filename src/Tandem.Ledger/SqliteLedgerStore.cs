@@ -239,6 +239,53 @@ public sealed class SqliteLedgerStore
         );
     }
 
+    /// <summary>
+    /// Runs <paramref name="run"/> and completes the ledger run with the status its outcome
+    /// implies: <c>Ready</c> or <c>Failed</c> from the result, <c>Cancelled</c> or <c>Faulted</c>
+    /// from a thrown failure. If completing also fails after a thrown failure, both are raised
+    /// in an <see cref="AggregateException"/>.
+    /// </summary>
+    public async Task<PipelineRunResult<TState>> RecordRunAsync<TState>(
+        Guid runId,
+        Func<Task<PipelineRunResult<TState>>> run
+    )
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        PipelineRunResult<TState> result;
+        try
+        {
+            result = await run();
+        }
+        catch (Exception failure)
+        {
+            try
+            {
+                await CompleteRunAsync(
+                    runId,
+                    failure is OperationCanceledException
+                        ? LedgerRunStatus.Cancelled
+                        : LedgerRunStatus.Faulted,
+                    CancellationToken.None
+                );
+            }
+            catch (Exception terminalizationFailure)
+            {
+                throw new AggregateException(
+                    "Pipeline execution and ledger terminalization both failed.",
+                    failure,
+                    terminalizationFailure
+                );
+            }
+            throw;
+        }
+        await CompleteRunAsync(
+            runId,
+            result.Succeeded ? LedgerRunStatus.Ready : LedgerRunStatus.Failed,
+            CancellationToken.None
+        );
+        return result;
+    }
+
     internal ValueTask<long> AppendAsync(
         Guid runId,
         RuntimeJournalRecord record,

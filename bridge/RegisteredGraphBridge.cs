@@ -100,65 +100,62 @@ public static partial class NodePipelineBridge
         }
 
         var runId = Guid.CreateVersion7();
-        IPipelinePersistenceObserver? observer = null;
         SqliteLedgerStore? store = null;
+        IPipelineObserver? persistence = null;
         if (definition.LedgerPath is not null)
         {
             store = new SqliteLedgerStore(definition.LedgerPath);
-            observer = await store.CreateObserverAsync(runId, pipeline, runCancellationToken);
+            persistence = await store.CreateObserverAsync(runId, pipeline, runCancellationToken);
         }
-        var liveObserver = definition.ObservationCallback is null
-            ? null
-            : new RegisteredObservationObserver(callbacks, definition.ObservationCallback);
-        var runObserver = RegisteredRunObserver.Compose(observer, liveObserver);
-        LedgerRunStatus? terminalStatus = null;
-        string? terminalSummary = null;
-        var preserveActiveFailure = false;
-        Exception? activeFailure = null;
+        var options = new PipelineRunOptions(
+            RunId: runId,
+            Interactions: handlers,
+            Observer: PipelineObservers.Compose(
+                persistence,
+                definition.ObservationCallback is null
+                    ? null
+                    : new RegisteredObservationObserver(callbacks, definition.ObservationCallback)
+            )
+        )
+        {
+            Ledger = definition.EnableLedgerTools ? store?.ForRun(runId) : null,
+        };
+        var runner = new PipelineRunner();
+        var initialState = new JavaScriptState(definition.InitialState);
+        var terminal = definition.Presentation == RegisteredPresentation.Terminal;
+        // The terminal records the ledger status before its display waits for the user.
+        Task<PipelineRunResult<JavaScriptState>> Run() =>
+            terminal
+                ? runner.RunWithTerminalAsync(
+                    pipeline,
+                    initialState,
+                    new TerminalPipelineRunOptions
+                    {
+                        Run = options,
+                        RunCancellation = terminalCancellation,
+                        Display = new TerminalDisplayOptions
+                        {
+                            TruncatedToolNames = new HashSet<string>(
+                                definition.Terminal?.TruncatedToolNames ?? [],
+                                StringComparer.Ordinal
+                            ),
+                        },
+                        TerminalizingAsync = store is null
+                            ? null
+                            : async (completion, token) =>
+                                await store.CompleteRunAsync(
+                                    runId,
+                                    ToLedgerStatus(completion.Status),
+                                    token
+                                ),
+                    },
+                    cancellationToken
+                )
+                : runner.RunAsync(pipeline, initialState, options, cancellationToken);
         try
         {
-            var options = new PipelineRunOptions(
-                RunId: runId,
-                Interactions: handlers,
-                Observer: runObserver
-            )
-            {
-                Ledger = definition.EnableLedgerTools ? store?.ForRun(runId) : null,
-            };
-            var runner = new PipelineRunner();
-            var initialState = new JavaScriptState(definition.InitialState);
             var result =
-                definition.Presentation == RegisteredPresentation.Terminal
-                    ? await runner.RunWithTerminalAsync(
-                        pipeline,
-                        initialState,
-                        new TerminalPipelineRunOptions
-                        {
-                            Persistence = observer,
-                            Observer = liveObserver,
-                            Run = options,
-                            RunCancellation = terminalCancellation,
-                            Display = new TerminalDisplayOptions
-                            {
-                                TruncatedToolNames = new HashSet<string>(
-                                    definition.Terminal?.TruncatedToolNames ?? [],
-                                    StringComparer.Ordinal
-                                ),
-                            },
-                            TerminalizingAsync = store is null
-                                ? null
-                                : async (completion, token) =>
-                                    await store.CompleteRunAsync(
-                                        runId,
-                                        ToLedgerStatus(completion.Status),
-                                        token
-                                    ),
-                        },
-                        cancellationToken
-                    )
-                    : await runner.RunAsync(pipeline, initialState, options, cancellationToken);
-            terminalStatus = result.Succeeded ? LedgerRunStatus.Ready : LedgerRunStatus.Failed;
-            terminalSummary = result.Outcome?.Summary;
+                store is null || terminal ? await Run() : await store.RecordRunAsync(runId, Run);
             return JsonSerializer.Serialize(
                 new
                 {
@@ -172,65 +169,18 @@ public static partial class NodePipelineBridge
         }
         catch (CallbackContractException exception)
         {
-            terminalStatus = LedgerRunStatus.Faulted;
-            terminalSummary = exception.Message;
-            preserveActiveFailure = true;
-            activeFailure = CallbackContractFailure(exception, exception);
-            throw activeFailure;
+            throw CallbackContractFailure(exception, exception);
         }
         catch (PipelineRunException exception)
         {
-            terminalStatus = LedgerRunStatus.Faulted;
-            terminalSummary = exception.InnerException?.Message ?? exception.Message;
-            preserveActiveFailure = true;
             if (FindCallbackContractException(exception) is { } contract)
             {
-                activeFailure = CallbackContractFailure(contract, exception);
-                throw activeFailure;
+                throw CallbackContractFailure(contract, exception);
             }
-            activeFailure = new InvalidOperationException(
+            throw new InvalidOperationException(
                 exception.InnerException?.ToString() ?? exception.ToString(),
                 exception
             );
-            throw activeFailure;
-        }
-        catch (OperationCanceledException exception)
-        {
-            terminalStatus = LedgerRunStatus.Cancelled;
-            terminalSummary = "Pipeline cancelled";
-            preserveActiveFailure = true;
-            activeFailure = exception;
-            throw;
-        }
-        catch (Exception exception)
-        {
-            terminalStatus = LedgerRunStatus.Faulted;
-            terminalSummary = exception.Message;
-            preserveActiveFailure = true;
-            activeFailure = exception;
-            throw;
-        }
-        finally
-        {
-            if (
-                definition.Presentation != RegisteredPresentation.Terminal
-                && store is not null
-                && terminalStatus is { } status
-            )
-            {
-                try
-                {
-                    await store.CompleteRunAsync(runId, status, CancellationToken.None);
-                }
-                catch (Exception terminalizationFailure) when (preserveActiveFailure)
-                {
-                    throw new AggregateException(
-                        "Pipeline execution and ledger terminalization both failed.",
-                        activeFailure!,
-                        terminalizationFailure
-                    );
-                }
-            }
         }
     }
 

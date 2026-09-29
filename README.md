@@ -1109,7 +1109,8 @@ Console.WriteLine(result.State);
 ```
 
 `SqlitePipelineRunOptions` creates and terminalises the ledger run and supplies the persistence observer. Custom hosts
-can still compose observers directly through `PipelineRunOptions` when they need lower-level control.
+can compose observers with `PipelineObservers.Compose(persistence, live)` and record the run's terminal status with
+`SqliteLedgerStore.RecordRunAsync(runId, () => runner.RunAsync(...))`.
 
 ## C# and TypeScript
 

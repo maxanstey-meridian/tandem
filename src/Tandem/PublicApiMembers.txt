@@ -561,6 +561,8 @@ M Tandem.PipelineObservation <Clone>$()
 P System.Guid RunId { get; set; }
 P System.String StepId { get; set; }
 P System.String? VisitId { get; set; }
+T Tandem.PipelineObservers
+M static Tandem.IPipelineObserver? Compose(System.Collections.Generic.IReadOnlyList<Tandem.IPipelineObserver?> observers)
 T Tandem.PipelineRunException
 C (System.String message, System.Exception? inner = null)
 T Tandem.PipelineRunOptions

@@ -113,32 +113,3 @@ internal sealed class RegisteredObservationObserver(
         return scoped;
     }
 }
-
-internal static class RegisteredRunObserver
-{
-    public static IPipelineObserver? Compose(
-        IPipelinePersistenceObserver? persistence,
-        IPipelineObserver? live
-    ) =>
-        persistence is null ? live
-        : live is null ? new PersistenceFirstObserver(persistence, [])
-        : new PersistenceFirstObserver(persistence, [live]);
-
-    private sealed class PersistenceFirstObserver(
-        IPipelinePersistenceObserver persistence,
-        IReadOnlyList<IPipelineObserver> additional
-    ) : IPipelinePersistenceObserver
-    {
-        public async ValueTask ObserveAsync(
-            PipelineObservation observation,
-            CancellationToken cancellationToken
-        )
-        {
-            await persistence.ObserveAsync(observation, cancellationToken);
-            foreach (var observer in additional)
-            {
-                await observer.ObserveAsync(observation, cancellationToken);
-            }
-        }
-    }
-}

@@ -108,8 +108,6 @@ M System.String ToString()
 M Tandem.Terminal.TerminalPipelineRunOptions <Clone>$()
 P System.Func<Tandem.Terminal.TerminalPipelineCompletion,System.Threading.CancellationToken,System.Threading.Tasks.ValueTask>? TerminalizingAsync { get; set; }
 P System.Threading.CancellationTokenSource? RunCancellation { get; set; }
-P Tandem.IPipelineObserver? Observer { get; set; }
-P Tandem.IPipelinePersistenceObserver? Persistence { get; set; }
 P Tandem.PipelineRunOptions Run { get; set; }
 P Tandem.Terminal.TerminalDisplayOptions? Display { get; set; }
 T Tandem.Terminal.TerminalPipelineRunner

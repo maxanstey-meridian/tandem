@@ -127,9 +127,6 @@ public static class ExampleHost
                 },
             }
         );
-        IPipelineObserver observer = persistenceObserver is null
-            ? display.Observer
-            : new PersistentCompositeObserver(persistenceObserver, display.Observer);
         PipelineRunResult<TState>? result = null;
         Exception? executionFailure = null;
         Exception? terminalizationFailure = null;
@@ -140,7 +137,10 @@ public static class ExampleHost
             result = await new PipelineRunner().RunAsync(
                 run.Pipeline,
                 run.InitialState,
-                new PipelineRunOptions(runId, Observer: observer),
+                new PipelineRunOptions(
+                    runId,
+                    Observer: PipelineObservers.Compose(persistenceObserver, display.Observer)
+                ),
                 runCancellation.Token
             );
         }
@@ -253,21 +253,6 @@ public static class ExampleHost
             throw new InvalidOperationException(
                 $"{_solEndpoint}models does not expose required model '{SolModel}'."
             );
-        }
-    }
-
-    private sealed class PersistentCompositeObserver(
-        IPipelinePersistenceObserver persistenceObserver,
-        IPipelineObserver displayObserver
-    ) : IPipelinePersistenceObserver
-    {
-        public async ValueTask ObserveAsync(
-            PipelineObservation observation,
-            CancellationToken cancellationToken
-        )
-        {
-            await persistenceObserver.ObserveAsync(observation, cancellationToken);
-            await displayObserver.ObserveAsync(observation, cancellationToken);
         }
     }
 
