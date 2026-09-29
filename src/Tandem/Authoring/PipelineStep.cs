@@ -612,33 +612,6 @@ public sealed class Pipeline<TState>
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)
             .ToArray();
-        var semanticRoutes = routes
-            .OrderBy(route => route.SourceId, StringComparer.Ordinal)
-            .ThenBy(route => route.TargetId, StringComparer.Ordinal)
-            .ThenBy(route => route.Conditional)
-            .ToArray();
-        var renderedRoutes = semanticRoutes
-            .Concat(
-                _parallelGroups.SelectMany(group =>
-                    group.Branches.SelectMany(branch =>
-                        new[]
-                        {
-                            new PipelineRouteInspection(
-                                group.Id,
-                                branch.ParticipantId,
-                                Conditional: false,
-                                branch.Id
-                            ),
-                            new PipelineRouteInspection(
-                                branch.ParticipantId,
-                                group.Id,
-                                Conditional: false
-                            ),
-                        }
-                    )
-                )
-            )
-            .ToArray();
         var startStepId = SemanticId(Workflow.StartExecutorId);
         return new PipelineInspection(
             Workflow.Name ?? throw new InvalidOperationException("Pipeline name is unavailable."),
@@ -646,99 +619,19 @@ public sealed class Pipeline<TState>
             startStepId,
             stepIds,
             _interactions,
-            semanticRoutes,
+            routes
+                .OrderBy(route => route.SourceId, StringComparer.Ordinal)
+                .ThenBy(route => route.TargetId, StringComparer.Ordinal)
+                .ThenBy(route => route.Conditional)
+                .ToArray(),
             _outputStepIds,
-            stepIds.Where(_persistentStepIds.Contains).ToArray(),
-            RenderMermaid(stepIds, renderedRoutes, startStepId, _outputStepIds),
-            RenderDot(stepIds, renderedRoutes, startStepId, _outputStepIds)
+            stepIds.Where(_persistentStepIds.Contains).ToArray()
         )
         {
             ParallelGroups = _parallelGroups,
             Collections = _collections,
         };
     }
-
-    private static string RenderMermaid(
-        IReadOnlyList<string> stepIds,
-        IReadOnlyList<PipelineRouteInspection> routes,
-        string startStepId,
-        IReadOnlyList<string> outputStepIds
-    )
-    {
-        var aliases = stepIds
-            .Select((id, index) => (id, alias: $"n{index}"))
-            .ToDictionary(item => item.id, item => item.alias, StringComparer.Ordinal);
-        var lines = new List<string> { "flowchart TD" };
-        lines.AddRange(
-            stepIds.Select(id =>
-            {
-                var label = $"\"{Escape(id)}\"";
-                return id == startStepId ? $"    {aliases[id]}(({label}))"
-                    : outputStepIds.Contains(id, StringComparer.Ordinal)
-                        ? $"    {aliases[id]}{{{{{label}}}}}"
-                    : $"    {aliases[id]}[{label}]";
-            })
-        );
-        lines.AddRange(
-            routes.Select(route =>
-            {
-                var label = string.IsNullOrWhiteSpace(route.Label)
-                    ? ""
-                    : $"|\"{Escape(route.Label)}\"|";
-                var arrow = route.Conditional ? "-.->" : "-->";
-                return $"    {aliases[route.SourceId]} {arrow}{label} {aliases[route.TargetId]}";
-            })
-        );
-        return string.Join(Environment.NewLine, lines);
-    }
-
-    private static string RenderDot(
-        IReadOnlyList<string> stepIds,
-        IReadOnlyList<PipelineRouteInspection> routes,
-        string startStepId,
-        IReadOnlyList<string> outputStepIds
-    )
-    {
-        var aliases = stepIds
-            .Select((id, index) => (id, alias: $"n{index}"))
-            .ToDictionary(item => item.id, item => item.alias, StringComparer.Ordinal);
-        var lines = new List<string> { "digraph pipeline {" };
-        lines.AddRange(
-            stepIds.Select(id =>
-            {
-                var shape =
-                    id == startStepId ? ", shape=doublecircle"
-                    : outputStepIds.Contains(id, StringComparer.Ordinal) ? ", shape=box"
-                    : "";
-                return $"  {aliases[id]} [label=\"{Escape(id)}\"{shape}];";
-            })
-        );
-        lines.AddRange(
-            routes.Select(route =>
-            {
-                var attributes = new List<string>();
-                if (!string.IsNullOrWhiteSpace(route.Label))
-                {
-                    attributes.Add($"label=\"{Escape(route.Label)}\"");
-                }
-                if (route.Conditional)
-                {
-                    attributes.Add("style=dashed");
-                }
-                var suffix = attributes.Count == 0 ? "" : $" [{string.Join(", ", attributes)}]";
-                return $"  {aliases[route.SourceId]} -> {aliases[route.TargetId]}{suffix};";
-            })
-        );
-        lines.Add("}");
-        return string.Join(Environment.NewLine, lines);
-    }
-
-    private static string Escape(string value) =>
-        value
-            .Replace("\\", "\\\\", StringComparison.Ordinal)
-            .Replace("\"", "\\\"", StringComparison.Ordinal)
-            .Replace("\r", "\\r", StringComparison.Ordinal)
-            .Replace("\n", "\\n", StringComparison.Ordinal);
 }
 
 public sealed record PipelineInspection(
@@ -749,13 +642,64 @@ public sealed record PipelineInspection(
     IReadOnlyList<PipelineInteractionInspection> Interactions,
     IReadOnlyList<PipelineRouteInspection> Routes,
     IReadOnlyList<string> OutputStepIds,
-    IReadOnlyList<string> PersistentStepIds,
-    string Mermaid,
-    string Dot
+    IReadOnlyList<string> PersistentStepIds
 )
 {
     public IReadOnlyList<PipelineParallelInspection> ParallelGroups { get; init; } = [];
     public IReadOnlyList<PipelineCollectionInspection> Collections { get; init; } = [];
+
+    /// <summary>Renders the inspected routes, including parallel fan-out and fan-in, as a Mermaid flowchart.</summary>
+    public string ToMermaid()
+    {
+        var aliases = StepIds
+            .Select((id, index) => (id, alias: $"n{index}"))
+            .ToDictionary(item => item.id, item => item.alias, StringComparer.Ordinal);
+        var parallelRoutes = ParallelGroups.SelectMany(group =>
+            group.Branches.SelectMany(branch =>
+                new[]
+                {
+                    new PipelineRouteInspection(
+                        group.Id,
+                        branch.ParticipantId,
+                        Conditional: false,
+                        branch.Id
+                    ),
+                    new PipelineRouteInspection(branch.ParticipantId, group.Id, Conditional: false),
+                }
+            )
+        );
+        var lines = new List<string> { "flowchart TD" };
+        lines.AddRange(
+            StepIds.Select(id =>
+            {
+                var label = $"\"{Escape(id)}\"";
+                return id == StartStepId ? $"    {aliases[id]}(({label}))"
+                    : OutputStepIds.Contains(id, StringComparer.Ordinal)
+                        ? $"    {aliases[id]}{{{{{label}}}}}"
+                    : $"    {aliases[id]}[{label}]";
+            })
+        );
+        lines.AddRange(
+            Routes
+                .Concat(parallelRoutes)
+                .Select(route =>
+                {
+                    var label = string.IsNullOrWhiteSpace(route.Label)
+                        ? ""
+                        : $"|\"{Escape(route.Label)}\"|";
+                    var arrow = route.Conditional ? "-.->" : "-->";
+                    return $"    {aliases[route.SourceId]} {arrow}{label} {aliases[route.TargetId]}";
+                })
+        );
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string Escape(string value) =>
+        value
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal)
+            .Replace("\r", "\\r", StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal);
 }
 
 public sealed record PipelineCollectionInspection(

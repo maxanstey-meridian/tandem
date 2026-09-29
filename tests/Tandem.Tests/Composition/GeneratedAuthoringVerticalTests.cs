@@ -20,8 +20,7 @@ public sealed class GeneratedAuthoringVerticalTests
             .Build(complete)
             .Inspect();
 
-        inspection.Mermaid.Should().Contain("line\\nbreak").And.NotContain("line\nbreak");
-        inspection.Dot.Should().Contain("line\\nbreak").And.NotContain("line\nbreak");
+        inspection.ToMermaid().Should().Contain("line\\nbreak").And.NotContain("line\nbreak");
     }
 
     [Fact]

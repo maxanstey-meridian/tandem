@@ -797,7 +797,7 @@ public sealed class TerminalPipelineDisplayTests
         new("pipeline", _runId, TimeProvider.System, entries, characters, null, null);
 
     private static PipelineInspection Inspection() =>
-        new("pipeline", null, "start", ["start"], [], [], ["start"], [], "", "");
+        new("pipeline", null, "start", ["start"], [], [], ["start"], []);
 
     private static PipelineRunOutcome Outcome(string summary, int seconds) =>
         new(StandardOutcomeKinds.Success, "work", summary, default, TimeSpan.FromSeconds(seconds));

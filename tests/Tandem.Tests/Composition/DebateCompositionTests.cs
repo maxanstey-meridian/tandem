@@ -66,9 +66,8 @@ public sealed class DebateCompositionTests
             );
         inspection.Routes.Count(route => route.Conditional).Should().Be(7);
         inspection.Routes.Count(route => !route.Conditional).Should().Be(1);
-        inspection.Mermaid.Should().StartWith("flowchart");
+        inspection.ToMermaid().Should().StartWith("flowchart");
         inspection.Routes.Should().Contain(route => route.Label == "revision requested");
-        inspection.Dot.Should().StartWith("digraph");
         roundTrip.Should().BeEquivalentTo(input);
     }
 

@@ -347,8 +347,7 @@ public sealed class ParallelPipelineRunnerTests
                 new PipelineParallelBranchInspection("one", 0, "first"),
                 new PipelineParallelBranchInspection("two", 1, "second")
             );
-        inspection.Mermaid.Should().Contain("|\"one\"|").And.Contain("|\"two\"|");
-        inspection.Dot.Should().Contain("label=\"one\"").And.Contain("label=\"two\"");
+        inspection.ToMermaid().Should().Contain("|\"one\"|").And.Contain("|\"two\"|");
     }
 
     [Fact]
