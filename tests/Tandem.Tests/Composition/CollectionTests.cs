@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
@@ -66,7 +65,7 @@ public sealed class CollectionTests
     [Fact]
     public async Task CanonicalisationAndConditionalRecoveryUseDeclaredAgentsWithoutChildPipelines()
     {
-        using var client = new EchoClient();
+        using var client = EchoClient();
         using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
         AgentDefinition<Claim> Define(string id) =>
             Agent
@@ -193,7 +192,7 @@ public sealed class CollectionTests
     [InlineData(false)]
     public void ScopedAgentIdsCannotCollideWithParentNodes(bool collectionStarts)
     {
-        using var client = new EchoClient();
+        using var client = EchoClient();
         var agent = Agent
             .Create<string>("rewrite", "Rewrite.", client)
             .WithMessage(value => value)
@@ -233,7 +232,7 @@ public sealed class CollectionTests
     [Fact]
     public void AnAgentMayHaveTheSameLocalNameAsItsCollection()
     {
-        using var client = new EchoClient();
+        using var client = EchoClient();
         var agent = Agent
             .Create<string>("rewrite", "Rewrite.", client)
             .WithMessage(value => value)
@@ -253,40 +252,16 @@ public sealed class CollectionTests
 
     private sealed record Claim(string Text);
 
-    private sealed class EchoClient : IChatClient
-    {
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
+    private static TestChatClient EchoClient() =>
+        new()
         {
-            var text = messages.Last(message => message.Role == ChatRole.User).Text;
-            var response = new ChatResponse(
-                new ChatMessage(
-                    ChatRole.Assistant,
-                    JsonSerializer.Serialize(new { claim = text + "!" })
-                )
-            )
-            {
-                FinishReason = ChatFinishReason.Stop,
-                ModelId = "test",
-            };
-            foreach (var update in response.ToChatResponseUpdates())
-            {
-                yield return update;
-            }
-            await Task.CompletedTask;
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
-    }
+            Respond = (messages, _, _) =>
+                Task.FromResult(
+                    TestChatClient.Text(
+                        JsonSerializer.Serialize(
+                            new { claim = messages.Last(m => m.Role == ChatRole.User).Text + "!" }
+                        )
+                    )
+                ),
+        };
 }

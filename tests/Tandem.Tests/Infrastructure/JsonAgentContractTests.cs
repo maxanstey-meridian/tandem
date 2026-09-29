@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
@@ -19,7 +18,7 @@ public sealed class JsonAgentContractTests
         );
         var outputCall = () =>
             Agent
-                .Create<JsonState>("agent", "Decide.", new ScriptedChatClient())
+                .Create<JsonState>("agent", "Decide.", new TestChatClient())
                 .WithJsonOutput(output, (state, _) => state);
         outputCall.Should().Throw<ArgumentException>().WithMessage("*type 'object'*");
 
@@ -64,7 +63,7 @@ public sealed class JsonAgentContractTests
                     : [];
             }
         );
-        var client = new ScriptedChatClient(Response("{\"value\":0}"), Response("{\"value\":3}"));
+        var client = new TestChatClient(Response("{\"value\":0}"), Response("{\"value\":3}"));
         var mappings = 0;
         var agent = Agent
             .Create<JsonState>("agent", "Decide.", client)
@@ -110,7 +109,7 @@ public sealed class JsonAgentContractTests
     [Fact]
     public async Task JsonOutput_MalformedThenInvalid_FailsClosedWithoutMapping()
     {
-        var client = new ScriptedChatClient(Response("not json"), Response("[]"));
+        var client = new TestChatClient(Response("not json"), Response("[]"));
         var mappings = 0;
         var agent = Agent
             .Create<JsonState>("agent", "Decide.", client)
@@ -138,7 +137,7 @@ public sealed class JsonAgentContractTests
     [Fact]
     public async Task JsonOutput_CallbackFailuresAndCancellationFaultTheRun()
     {
-        var client = new ScriptedChatClient(Response("{\"value\":1}"));
+        var client = new TestChatClient(Response("{\"value\":1}"));
         var agent = Agent
             .Create<JsonState>("agent", "Decide.", client)
             .WithMessage(_ => "Return a value.")
@@ -162,7 +161,7 @@ public sealed class JsonAgentContractTests
             .Create<JsonState>(
                 "cancelled",
                 "Decide.",
-                new ScriptedChatClient(Response("{\"value\":1}"))
+                new TestChatClient(Response("{\"value\":1}"))
             )
             .WithMessage(_ => "Return a value.")
             .WithJsonOutput(
@@ -195,7 +194,7 @@ public sealed class JsonAgentContractTests
             .Create<JsonState>(
                 "contextual",
                 "Decide.",
-                new ScriptedChatClient(Response("{\"value\":1}"))
+                new TestChatClient(Response("{\"value\":1}"))
             )
             .WithMessage(_ => "Return a value.")
             .WithJsonOutput(contextual, (state, _) => state)
@@ -210,11 +209,7 @@ public sealed class JsonAgentContractTests
         contextualFailure.Which.InnerException.Should().BeOfType<InvalidOperationException>();
 
         var applyAgent = Agent
-            .Create<JsonState>(
-                "apply",
-                "Decide.",
-                new ScriptedChatClient(Response("{\"value\":1}"))
-            )
+            .Create<JsonState>("apply", "Decide.", new TestChatClient(Response("{\"value\":1}")))
             .WithMessage(_ => "Return a value.")
             .WithJsonOutput(
                 JsonOutput(_ => []),
@@ -574,19 +569,6 @@ public sealed class JsonAgentContractTests
 
     private sealed record JsonState(int Value, int Maximum);
 
-    private sealed class RecordingObserver(List<PipelineObservation> observations)
-        : IPipelinePersistenceObserver
-    {
-        public ValueTask ObserveAsync(
-            PipelineObservation observation,
-            CancellationToken cancellationToken
-        )
-        {
-            observations.Add(observation);
-            return ValueTask.CompletedTask;
-        }
-    }
-
     private sealed class DelegatingObserver(
         Func<PipelineObservation, CancellationToken, ValueTask> observe
     ) : IPipelineObserver
@@ -595,38 +577,5 @@ public sealed class JsonAgentContractTests
             PipelineObservation observation,
             CancellationToken cancellationToken
         ) => observe(observation, cancellationToken);
-    }
-
-    private sealed class ScriptedChatClient(params ChatResponse[] responses) : IChatClient
-    {
-        private readonly Queue<ChatResponse> _responses = new(responses);
-
-        public int CallCount { get; private set; }
-        public List<IReadOnlyList<ChatMessage>> Requests { get; } = [];
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
-        {
-            Requests.Add(messages.ToArray());
-            CallCount++;
-            foreach (var update in _responses.Dequeue().ToChatResponseUpdates())
-            {
-                yield return update;
-            }
-            await Task.CompletedTask;
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
     }
 }

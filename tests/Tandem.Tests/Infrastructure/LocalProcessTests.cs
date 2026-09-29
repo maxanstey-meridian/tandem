@@ -8,7 +8,7 @@ public sealed class LocalProcessTests
     [Fact]
     public async Task Arguments_working_directory_and_environment_are_literal()
     {
-        using var directory = TemporaryDirectory.Create();
+        using var directory = new TempDirectory();
         var variable = $"TANDEM_PROCESS_{Guid.NewGuid():N}";
         Environment.SetEnvironmentVariable(variable, "inherited");
         try
@@ -67,7 +67,7 @@ public sealed class LocalProcessTests
     [Fact]
     public async Task Timeout_kills_the_process_tree_and_returns_deterministic_result()
     {
-        using var directory = TemporaryDirectory.Create();
+        using var directory = new TempDirectory();
         var marker = Path.Combine(directory.Path, "descendant-alive");
 
         var result = await RunChildAsync(["tree", marker], timeout: TimeSpan.FromMilliseconds(500));
@@ -204,25 +204,6 @@ public sealed class LocalProcessTests
         Path.Combine(AppContext.BaseDirectory, "Tandem.Process.TestChild.dll");
 
     private static string MissingExecutable() => $"tandem-missing-{Guid.NewGuid():N}";
-
-    private sealed class TemporaryDirectory : IDisposable
-    {
-        private TemporaryDirectory(string path) => Path = path;
-
-        internal string Path { get; }
-
-        internal static TemporaryDirectory Create()
-        {
-            var path = System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(),
-                $"tandem-process-{Guid.NewGuid():N}"
-            );
-            Directory.CreateDirectory(path);
-            return new TemporaryDirectory(path);
-        }
-
-        public void Dispose() => Directory.Delete(Path, recursive: true);
-    }
 
     private sealed class NullKeyEnvironment : IReadOnlyDictionary<string, string>
     {

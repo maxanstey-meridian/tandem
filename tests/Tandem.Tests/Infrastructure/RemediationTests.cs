@@ -1,8 +1,6 @@
-using System.Runtime.CompilerServices;
 using System.Text;
 using FluentAssertions;
 using FluentValidation;
-using Microsoft.Extensions.AI;
 
 namespace Tandem.Tests.Infrastructure;
 
@@ -11,7 +9,7 @@ public sealed class RemediationTests
     [Fact]
     public async Task Raw_output_preserves_instructions_and_corrects_in_the_requested_format()
     {
-        using var client = new ReplyClient("bad", "accepted");
+        using var client = TestChatClient.Replying("bad", "accepted");
         var agent = Agent
             .Create<string>("raw", "Follow the output instructions.", client)
             .WithMessage(_ => "Decide.")
@@ -23,10 +21,13 @@ public sealed class RemediationTests
         );
         result.State.Should().Be("accepted");
         client.Requests.Should().HaveCount(2);
-        client.Requests[0].Should().Contain("Return the single word accepted.");
-        client.Requests[1].Should().Contain("corrected response in the requested format");
-        client.Requests[1].Should().NotContain("corrected JSON object");
-        client.Formats.Should().OnlyContain(format => format == null);
+        Prompt(client, 0).Should().Contain("Return the single word accepted.");
+        Prompt(client, 1).Should().Contain("corrected response in the requested format");
+        Prompt(client, 1).Should().NotContain("corrected JSON object");
+        client
+            .Options.Select(options => options?.ResponseFormat)
+            .Should()
+            .OnlyContain(format => format == null);
     }
 
     [Theory]
@@ -103,7 +104,10 @@ public sealed class RemediationTests
         bool stderr
     )
     {
-        using var client = new ReplyClient("accepted") { Command = "capture" };
+        using var client = new TestChatClient(
+            TestChatClient.ToolCall("capture", callId: "call"),
+            TestChatClient.Text("accepted")
+        );
         var command = OperatingSystem.IsWindows()
             ? $"[Console]::{(stderr ? "Error" : "Out")}.Write('0' * {length})"
             : $"printf '%0{length}d' 0{(stderr ? " >&2" : "")}";
@@ -185,77 +189,7 @@ public sealed class RemediationTests
                 : response;
     }
 
-    private sealed class ReplyClient(params string[] replies) : IChatClient
-    {
-        private int _reply;
-        private bool _called;
-        public string? Command { get; init; }
-        public List<string> Requests { get; } = [];
-        public List<ChatResponseFormat?> Formats { get; } = [];
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        )
-        {
-            Requests.Add(
-                (options?.Instructions ?? "")
-                    + string.Join("\n", messages.Select(message => message.Text))
-            );
-            Formats.Add(options?.ResponseFormat);
-            if (Command is not null && !_called)
-            {
-                _called = true;
-                return Task.FromResult(
-                    new ChatResponse(
-                        new ChatMessage(
-                            ChatRole.Assistant,
-                            [
-                                new FunctionCallContent(
-                                    "call",
-                                    Command,
-                                    new Dictionary<string, object?>()
-                                ),
-                            ]
-                        )
-                    )
-                    {
-                        FinishReason = ChatFinishReason.ToolCalls,
-                    }
-                );
-            }
-            return Task.FromResult(
-                new ChatResponse(
-                    new ChatMessage(
-                        ChatRole.Assistant,
-                        replies[Math.Min(_reply++, replies.Length - 1)]
-                    )
-                )
-                {
-                    FinishReason = ChatFinishReason.Stop,
-                }
-            );
-        }
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
-        {
-            foreach (
-                var update in (
-                    await GetResponseAsync(messages, options, cancellationToken)
-                ).ToChatResponseUpdates()
-            )
-            {
-                yield return update;
-            }
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
-    }
+    private static string Prompt(TestChatClient client, int request) =>
+        (client.Options[request]?.Instructions ?? "")
+        + string.Join("\n", client.Requests[request].Select(message => message.Text));
 }

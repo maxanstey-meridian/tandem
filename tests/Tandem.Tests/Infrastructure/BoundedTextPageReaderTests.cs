@@ -85,38 +85,28 @@ public sealed class BoundedTextPageReaderTests
     [Fact]
     public async Task Actual_workspace_read_tool_has_range_schema_and_structured_result()
     {
-        var directory = Path.Combine(
-            Path.GetTempPath(),
-            "tandem-read-" + Guid.NewGuid().ToString("N")
-        );
-        Directory.CreateDirectory(directory);
+        using var temp = new TempDirectory();
+        var directory = temp.Path;
         await File.WriteAllTextAsync(Path.Combine(directory, "small.txt"), "small");
-        try
-        {
-            var options = new ChatOptions();
-            WorkspaceFileReadTools.Add(options, directory);
-            var tool = (AIFunction)options.Tools!.Single();
+        var options = new ChatOptions();
+        WorkspaceFileReadTools.Add(options, directory);
+        var tool = (AIFunction)options.Tools!.Single();
 
-            tool.JsonSchema.GetProperty("properties")
-                .EnumerateObject()
-                .Select(p => p.Name)
-                .Should()
-                .BeEquivalentTo("path", "startLine", "lineCount", "characterOffset");
-            var result = await tool.InvokeAsync(new AIFunctionArguments { ["path"] = "small.txt" });
-            var json = result.Should().BeOfType<System.Text.Json.JsonElement>().Subject;
-            json.GetProperty("lines")[0].GetString().Should().Be("small");
-            json.GetProperty("startLine").GetInt32().Should().Be(1);
-            json.TryGetProperty("nextStartLine", out _).Should().BeFalse();
-            json.TryGetProperty("totalLines", out _).Should().BeFalse();
-            json.TryGetProperty("hasMore", out _).Should().BeFalse();
-            json.TryGetProperty("nextCursor", out _).Should().BeFalse();
-            json.TryGetProperty("returnedLines", out _).Should().BeFalse();
-            json.TryGetProperty("pagination", out _).Should().BeFalse();
-        }
-        finally
-        {
-            Directory.Delete(directory, true);
-        }
+        tool.JsonSchema.GetProperty("properties")
+            .EnumerateObject()
+            .Select(p => p.Name)
+            .Should()
+            .BeEquivalentTo("path", "startLine", "lineCount", "characterOffset");
+        var result = await tool.InvokeAsync(new AIFunctionArguments { ["path"] = "small.txt" });
+        var json = result.Should().BeOfType<System.Text.Json.JsonElement>().Subject;
+        json.GetProperty("lines")[0].GetString().Should().Be("small");
+        json.GetProperty("startLine").GetInt32().Should().Be(1);
+        json.TryGetProperty("nextStartLine", out _).Should().BeFalse();
+        json.TryGetProperty("totalLines", out _).Should().BeFalse();
+        json.TryGetProperty("hasMore", out _).Should().BeFalse();
+        json.TryGetProperty("nextCursor", out _).Should().BeFalse();
+        json.TryGetProperty("returnedLines", out _).Should().BeFalse();
+        json.TryGetProperty("pagination", out _).Should().BeFalse();
     }
 
     [Theory]
@@ -125,57 +115,36 @@ public sealed class BoundedTextPageReaderTests
     [InlineData(".GiT/config")]
     public async Task Actual_workspace_read_tool_rejects_unauthorized_paths(string path)
     {
-        var directory = Path.Combine(
-            Path.GetTempPath(),
-            "tandem-read-" + Guid.NewGuid().ToString("N")
-        );
-        Directory.CreateDirectory(directory);
-        try
-        {
-            var options = new ChatOptions();
-            WorkspaceFileReadTools.Add(options, directory);
-            var tool = (AIFunction)options.Tools!.Single();
-            await FluentActions
-                .Awaiting(() =>
-                    tool.InvokeAsync(new AIFunctionArguments { ["path"] = path }).AsTask()
-                )
-                .Should()
-                .ThrowAsync<UnauthorizedAccessException>();
-        }
-        finally
-        {
-            Directory.Delete(directory, true);
-        }
+        using var temp = new TempDirectory();
+        var directory = temp.Path;
+        var options = new ChatOptions();
+        WorkspaceFileReadTools.Add(options, directory);
+        var tool = (AIFunction)options.Tools!.Single();
+        await FluentActions
+            .Awaiting(() => tool.InvokeAsync(new AIFunctionArguments { ["path"] = path }).AsTask())
+            .Should()
+            .ThrowAsync<UnauthorizedAccessException>();
     }
 
     [Fact]
     public async Task Actual_workspace_read_tool_rejects_symbolic_link_escape()
     {
-        var parent = Path.Combine(
-            Path.GetTempPath(),
-            "tandem-read-link-" + Guid.NewGuid().ToString("N")
-        );
+        using var temp = new TempDirectory();
+        var parent = temp.Path;
         var workspace = Path.Combine(parent, "workspace");
         var outside = Path.Combine(parent, "outside.txt");
         Directory.CreateDirectory(workspace);
         await File.WriteAllTextAsync(outside, "secret");
         File.CreateSymbolicLink(Path.Combine(workspace, "link.txt"), outside);
-        try
-        {
-            var options = new ChatOptions();
-            WorkspaceFileReadTools.Add(options, workspace);
-            var tool = (AIFunction)options.Tools!.Single();
-            await FluentActions
-                .Awaiting(() =>
-                    tool.InvokeAsync(new AIFunctionArguments { ["path"] = "link.txt" }).AsTask()
-                )
-                .Should()
-                .ThrowAsync<UnauthorizedAccessException>();
-        }
-        finally
-        {
-            Directory.Delete(parent, true);
-        }
+        var options = new ChatOptions();
+        WorkspaceFileReadTools.Add(options, workspace);
+        var tool = (AIFunction)options.Tools!.Single();
+        await FluentActions
+            .Awaiting(() =>
+                tool.InvokeAsync(new AIFunctionArguments { ["path"] = "link.txt" }).AsTask()
+            )
+            .Should()
+            .ThrowAsync<UnauthorizedAccessException>();
     }
 }
 #pragma warning restore MAAI001

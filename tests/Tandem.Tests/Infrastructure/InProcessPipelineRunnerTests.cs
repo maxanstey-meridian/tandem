@@ -310,7 +310,7 @@ public sealed class InProcessPipelineRunnerTests
             pipeline,
             new RunnerState(1),
             new PipelineRunOptions(
-                Observer: new InlinePipelineObserver(observation => observations.Add(observation))
+                Observer: new InlineObserver(observation => observations.Add(observation))
             )
         );
 
@@ -349,7 +349,7 @@ public sealed class InProcessPipelineRunnerTests
             pipeline,
             new RunnerState(1),
             new PipelineRunOptions(
-                Observer: new InlinePipelineObserver(observation => observations.Add(observation))
+                Observer: new InlineObserver(observation => observations.Add(observation))
             )
         );
 
@@ -395,7 +395,7 @@ public sealed class InProcessPipelineRunnerTests
     {
         var fault = new FaultStage();
         var pipeline = Pipeline.Start(fault, "in-process-fault-observation").Build(fault);
-        var observer = new InlinePipelineObserver(observation =>
+        var observer = new InlineObserver(observation =>
         {
             if (observation is PipelineStepFaulted)
             {
@@ -421,7 +421,7 @@ public sealed class InProcessPipelineRunnerTests
     {
         var increment = new IncrementStage();
         var pipeline = Pipeline.Start(increment, "in-process-observer-fault").Build(increment);
-        var observer = new InlinePipelineObserver(observation =>
+        var observer = new InlineObserver(observation =>
         {
             if (observation is PipelineStepCompleted)
             {
@@ -449,7 +449,7 @@ public sealed class InProcessPipelineRunnerTests
         var pipeline = Pipeline.Start(waiting, "in-process-cancellation").Build(waiting);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
         var observations = new List<PipelineObservation>();
-        var observer = new InlinePipelineObserver(observation => observations.Add(observation));
+        var observer = new InlineObserver(observation => observations.Add(observation));
 
         var act = () =>
             new InProcessPipelineRunner().RunAsync(
@@ -475,7 +475,7 @@ public sealed class InProcessPipelineRunnerTests
             .Start(waiting, "in-process-cancellation-observation")
             .Build(waiting);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
-        var observer = new InlinePipelineObserver(observation =>
+        var observer = new InlineObserver(observation =>
         {
             if (observation is PipelineStepCancelled)
             {
@@ -503,7 +503,7 @@ public sealed class InProcessPipelineRunnerTests
             throw new IOException("handler failed")
         );
         var observations = new List<PipelineObservation>();
-        var observer = new InlinePipelineObserver(observation => observations.Add(observation));
+        var observer = new InlineObserver(observation => observations.Add(observation));
 
         var act = () =>
             new InProcessPipelineRunner().RunAsync(
@@ -745,7 +745,7 @@ public sealed class InProcessPipelineRunnerTests
             new ProbeAnswer("continue")
         ));
         var observations = new List<PipelineObservation>();
-        var observer = new InlinePipelineObserver(observation => observations.Add(observation));
+        var observer = new InlineObserver(observation => observations.Add(observation));
 
         var act = () =>
             new InProcessPipelineRunner().RunAsync(
@@ -1021,19 +1021,6 @@ public sealed class InProcessPipelineRunnerTests
             PendingExternalRequest request,
             CancellationToken cancellationToken
         ) => ValueTask.FromResult(answer(request));
-    }
-
-    private sealed class InlinePipelineObserver(Action<PipelineObservation> observe)
-        : IPipelineObserver
-    {
-        public ValueTask ObserveAsync(
-            PipelineObservation observation,
-            CancellationToken cancellationToken
-        )
-        {
-            observe(observation);
-            return ValueTask.CompletedTask;
-        }
     }
 
     private sealed class InlinePersistenceObserver(Action<PipelineObservation>? observe = null)

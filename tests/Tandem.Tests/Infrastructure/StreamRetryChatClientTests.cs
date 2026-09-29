@@ -10,7 +10,7 @@ public sealed class StreamRetryChatClientTests
     [Fact]
     public async Task Retries_when_stream_drops_before_substantive_content()
     {
-        var inner = new ScriptedStreamingClient([
+        var inner = ScriptedStreaming([
             Script.DropAfter([RoleChunk()]),
             Script.Succeed([RoleChunk(), TextChunk("hello"), TextChunk(" world")]),
         ]);
@@ -23,13 +23,13 @@ public sealed class StreamRetryChatClientTests
 
         text.Should().Be("hello world");
         updates.Should().HaveCount(3);
-        inner.Calls.Should().Be(2);
+        inner.CallCount.Should().Be(2);
     }
 
     [Fact]
     public async Task Retries_when_stream_drops_immediately()
     {
-        var inner = new ScriptedStreamingClient([
+        var inner = ScriptedStreaming([
             Script.DropAfter([]),
             Script.DropAfter([]),
             Script.Succeed([TextChunk("recovered")]),
@@ -43,13 +43,13 @@ public sealed class StreamRetryChatClientTests
         );
 
         text.Should().Be("recovered");
-        inner.Calls.Should().Be(3);
+        inner.CallCount.Should().Be(3);
     }
 
     [Fact]
     public async Task Retries_after_partial_content_without_delivering_the_failed_attempt()
     {
-        var inner = new ScriptedStreamingClient([
+        var inner = ScriptedStreaming([
             Script.DropAfter([RoleChunk(), TextChunk("partial")]),
             Script.Succeed([TextChunk("never")]),
         ]);
@@ -61,13 +61,13 @@ public sealed class StreamRetryChatClientTests
 
         string.Concat(updates).Should().Be("never");
         updates.Should().HaveCount(1);
-        inner.Calls.Should().Be(2);
+        inner.CallCount.Should().Be(2);
     }
 
     [Fact]
     public async Task Does_not_retry_non_transport_failures()
     {
-        var inner = new ScriptedStreamingClient([
+        var inner = ScriptedStreaming([
             Script.Throw(new InvalidOperationException("bad history")),
             Script.Succeed([TextChunk("never")]),
         ]);
@@ -79,13 +79,13 @@ public sealed class StreamRetryChatClientTests
             );
 
         await act.Should().ThrowAsync<InvalidOperationException>();
-        inner.Calls.Should().Be(1);
+        inner.CallCount.Should().Be(1);
     }
 
     [Fact]
     public async Task Exhausts_attempts_then_throws_original_failure()
     {
-        var inner = new ScriptedStreamingClient([
+        var inner = ScriptedStreaming([
             Script.DropAfter([RoleChunk()]),
             Script.DropAfter([RoleChunk()]),
             Script.DropAfter([RoleChunk()]),
@@ -99,13 +99,13 @@ public sealed class StreamRetryChatClientTests
             );
 
         await act.Should().ThrowAsync<IOException>();
-        inner.Calls.Should().Be(3);
+        inner.CallCount.Should().Be(3);
     }
 
     [Fact]
     public async Task GetResponse_retries_the_identical_request()
     {
-        var inner = new ScriptedResponseClient(
+        var inner = FailingThen(
             failTimes: 2,
             response: new ChatResponse([new ChatMessage(ChatRole.Assistant, "ok")])
         );
@@ -114,16 +114,13 @@ public sealed class StreamRetryChatClientTests
         var response = await client.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")]);
 
         response.Text.Should().Be("ok");
-        inner.Calls.Should().Be(3);
+        inner.CallCount.Should().Be(3);
     }
 
     [Fact]
     public async Task Messages_are_snapshotted_before_retry_enumeration()
     {
-        var inner = new ScriptedStreamingClient([
-            Script.DropAfter([]),
-            Script.Succeed([TextChunk("ok")]),
-        ]);
+        var inner = ScriptedStreaming([Script.DropAfter([]), Script.Succeed([TextChunk("ok")])]);
         var client = new StreamRetryChatClient(inner, maxAttempts: 3, retryDelay: TimeSpan.Zero);
         var messages = new CountingMessageList("hi");
 
@@ -160,82 +157,6 @@ public sealed class StreamRetryChatClientTests
         public static Script Throw(Exception error) => new([], error);
     }
 
-    private sealed class ScriptedStreamingClient(params Script[] scripts) : IChatClient
-    {
-        private int _call;
-
-        internal int Calls { get; private set; }
-
-        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        )
-        {
-            Calls++;
-            var script = scripts[Math.Min(_call++, scripts.Length - 1)];
-            return Stream(script, cancellationToken);
-        }
-
-        private static async IAsyncEnumerable<ChatResponseUpdate> Stream(
-            Script script,
-            [EnumeratorCancellation] CancellationToken cancellationToken
-        )
-        {
-            await Task.Yield();
-            foreach (var update in script.Updates ?? [])
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                yield return update;
-            }
-            if (script.Error is { } error)
-            {
-                throw error;
-            }
-        }
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public void Dispose() { }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-    }
-
-    private sealed class ScriptedResponseClient(int failTimes, ChatResponse response) : IChatClient
-    {
-        private int _calls;
-
-        internal int Calls { get; private set; }
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        )
-        {
-            Calls++;
-            if (_calls++ < failTimes)
-            {
-                throw new IOException("connection died");
-            }
-            return Task.FromResult(response);
-        }
-
-        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public void Dispose() { }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-    }
-
     private sealed class CountingMessageList(string content) : IEnumerable<ChatMessage>
     {
         internal int Enumerations { get; private set; }
@@ -248,5 +169,44 @@ public sealed class StreamRetryChatClientTests
 
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() =>
             GetEnumerator();
+    }
+
+    private static TestChatClient ScriptedStreaming(params Script[] scripts)
+    {
+        var call = 0;
+        return new TestChatClient
+        {
+            Stream = (_, _, cancellationToken) =>
+                Play(scripts[Math.Min(call++, scripts.Length - 1)], cancellationToken),
+        };
+    }
+
+    private static async IAsyncEnumerable<ChatResponseUpdate> Play(
+        Script script,
+        [EnumeratorCancellation] CancellationToken cancellationToken
+    )
+    {
+        await Task.Yield();
+        foreach (var update in script.Updates ?? [])
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return update;
+        }
+        if (script.Error is { } error)
+        {
+            throw error;
+        }
+    }
+
+    private static TestChatClient FailingThen(int failTimes, ChatResponse response)
+    {
+        var call = 0;
+        return new TestChatClient
+        {
+            Respond = (_, _, _) =>
+                call++ < failTimes
+                    ? throw new IOException("connection died")
+                    : Task.FromResult(response),
+        };
     }
 }

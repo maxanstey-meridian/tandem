@@ -1,8 +1,8 @@
-using System.Diagnostics;
 using System.IO.Compression;
 using System.Text.Json;
 using System.Xml.Linq;
 using FluentAssertions;
+using Tandem.Advanced;
 
 namespace Tandem.PackageConsumer.Tests;
 
@@ -524,28 +524,10 @@ public sealed class PackageConsumerTests
         params string[] arguments
     )
     {
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = fileName,
-                WorkingDirectory = workingDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            },
-        };
-        foreach (var argument in arguments)
-        {
-            process.StartInfo.ArgumentList.Add(argument);
-        }
-        process.Start();
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        process
+        var result = await LocalProcess.RunAsync(new(fileName, arguments, workingDirectory));
+        result
             .ExitCode.Should()
-            .Be(0, $"{fileName} {string.Join(' ', arguments)}\n{await stdout}\n{await stderr}");
+            .Be(0, $"{fileName} {string.Join(' ', arguments)}\n{result.Stdout}\n{result.Stderr}");
     }
 
     private static readonly string[] ForbiddenPackages =

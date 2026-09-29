@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using Examples.CodeWriter;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
@@ -131,8 +130,8 @@ public sealed class CodeWriterCompositionTests
     {
         private ScriptedClients(
             List<string> order,
-            ScriptedChatClient implementer,
-            ScriptedChatClient reviewer
+            TestChatClient implementer,
+            TestChatClient reviewer
         )
         {
             Order = order;
@@ -141,22 +140,22 @@ public sealed class CodeWriterCompositionTests
         }
 
         public List<string> Order { get; }
-        public ScriptedChatClient Implementer { get; }
-        public ScriptedChatClient Reviewer { get; }
+        public TestChatClient Implementer { get; }
+        public TestChatClient Reviewer { get; }
 
         public static ScriptedClients Create()
         {
             var order = new List<string>();
             return new ScriptedClients(
                 order,
-                new ScriptedChatClient(
+                Scripted(
                     order,
                     "implementer",
                     CapabilityResponse("(input) => input", "Initial attempt."),
                     CapabilityResponse(SlugImplementation, "Handles all verification cases."),
                     CapabilityResponse(SlugImplementation, "Rechecked after review.")
                 ),
-                new ScriptedChatClient(
+                Scripted(
                     order,
                     "reviewer",
                     TextResponse(
@@ -202,40 +201,6 @@ public sealed class CodeWriterCompositionTests
             "(input) => input.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')";
     }
 
-    private sealed class ScriptedChatClient(
-        List<string> order,
-        string name,
-        params ChatResponse[] responses
-    ) : IChatClient
-    {
-        private readonly Queue<ChatResponse> _responses = new(responses);
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
-        {
-            order.Add(name);
-            var response = _responses.Dequeue();
-            foreach (var update in response.ToChatResponseUpdates())
-            {
-                yield return update;
-            }
-            await Task.CompletedTask;
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
-    }
-
     private sealed class PersistenceObserver : IPipelinePersistenceObserver
     {
         public ValueTask ObserveAsync(
@@ -243,4 +208,10 @@ public sealed class CodeWriterCompositionTests
             CancellationToken cancellationToken
         ) => ValueTask.CompletedTask;
     }
+
+    private static TestChatClient Scripted(
+        List<string> order,
+        string name,
+        params ChatResponse[] responses
+    ) => new(responses) { OnRequest = () => order.Add(name) };
 }

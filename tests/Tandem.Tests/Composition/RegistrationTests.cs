@@ -11,7 +11,7 @@ public sealed class RegistrationTests
     public void AgentTimeout_RejectsUnsupportedDurations()
     {
         var builder = Agent
-            .Create<TestState>("agent", "Respond.", new FakeChatClient())
+            .Create<TestState>("agent", "Respond.", new TestChatClient())
             .WithMessage(state => state.Message);
 
         var tooLong = () => builder.WithTimeout(TimeSpan.MaxValue);
@@ -23,7 +23,7 @@ public sealed class RegistrationTests
     public void Agent_DirectClientBuildsWithDefaultFreshSession()
     {
         var definition = Agent
-            .Create<TestState>("classify", "Classify the ticket.", new FakeChatClient())
+            .Create<TestState>("classify", "Classify the ticket.", new TestChatClient())
             .WithMessage(state => state.Message)
             .Build();
 
@@ -34,7 +34,7 @@ public sealed class RegistrationTests
     public void Agent_BuildsWithoutWorkspaceCapability()
     {
         var operation = Agent
-            .Create<TestState>("classify", "Classify the ticket.", new FakeChatClient())
+            .Create<TestState>("classify", "Classify the ticket.", new TestChatClient())
             .WithMessage(state => state.Message)
             .Build();
 
@@ -44,8 +44,8 @@ public sealed class RegistrationTests
     [Fact]
     public async Task AdvancedProfilePolicy_SelectsClientBeforeTheGovernedInvocation()
     {
-        var primary = new RecordingModelClient();
-        var promoted = new RecordingModelClient();
+        var primary = TestChatClient.Replying("done");
+        var promoted = TestChatClient.Replying("done");
         IChatClient Resolve(string profile) => profile == "promoted" ? promoted : primary;
         var agent = AgentProfiles
             .Create<TestState>("profiled", "primary", "Respond once.", primary, Resolve)
@@ -82,7 +82,7 @@ public sealed class RegistrationTests
             (state, request) => state with { Count = state.Count + request.Amount }
         );
         var builder = Agent
-            .Create<FirstScope.SharedState>("agent", "Test capabilities.", new FakeChatClient())
+            .Create<FirstScope.SharedState>("agent", "Test capabilities.", new TestChatClient())
             .WithMessage(_ => "message")
             .WithCapability(first)
             .WithCapability(first);
@@ -100,7 +100,7 @@ public sealed class RegistrationTests
     public void DefaultAgentDefinition_IsDirectlyComposableWithTypedOutcomeSelectors()
     {
         var definition = Agent
-            .Create<TestState>("classify", "Classify the ticket.", new FakeChatClient())
+            .Create<TestState>("classify", "Classify the ticket.", new TestChatClient())
             .WithMessage(state => state.Message)
             .Build();
         var complete = PipelineNodes.Complete(new TestCompletion<TestState>("complete"));
@@ -117,67 +117,6 @@ public sealed class RegistrationTests
         definition.Should().BeAssignableTo<IGeneratedPipelineStep<TestState, Outcome<TestState>>>();
         inspection.StepIds.Should().BeEquivalentTo("classify", "complete", "failed");
         inspection.Routes.Should().HaveCount(2);
-    }
-
-    private sealed class FakeChatClient : IChatClient
-    {
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new InvalidOperationException("Registration must not invoke a model.");
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [System.Runtime.CompilerServices.EnumeratorCancellation]
-                CancellationToken cancellationToken = default
-        )
-        {
-            await Task.CompletedTask;
-            yield break;
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
-    }
-
-    private sealed class RecordingModelClient : IChatClient
-    {
-        public int CallCount { get; private set; }
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [System.Runtime.CompilerServices.EnumeratorCancellation]
-                CancellationToken cancellationToken = default
-        )
-        {
-            CallCount++;
-            var response = new ChatResponse(
-                new ChatMessage(ChatRole.Assistant, [new TextContent("done")])
-            )
-            {
-                FinishReason = ChatFinishReason.Stop,
-                ModelId = "test-model",
-            };
-            foreach (var update in response.ToChatResponseUpdates())
-            {
-                yield return update;
-            }
-            await Task.CompletedTask;
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
     }
 
     private sealed record TestState(string Message, bool Promote = false);

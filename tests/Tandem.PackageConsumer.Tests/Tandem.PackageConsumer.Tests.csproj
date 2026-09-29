@@ -17,4 +17,9 @@
     <ItemGroup>
         <Using Include="Xunit" />
     </ItemGroup>
+
+    <ItemGroup>
+        <!-- Only the test runner uses LocalProcess; the consumers it builds reference packed packages. -->
+        <ProjectReference Include="..\..\src\Tandem.Advanced\Tandem.Advanced.csproj" />
+    </ItemGroup>
 </Project>

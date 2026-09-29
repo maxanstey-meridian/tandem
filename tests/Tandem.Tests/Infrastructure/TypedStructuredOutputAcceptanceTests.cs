@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using FluentAssertions;
 using FluentValidation;
 using Microsoft.Extensions.AI;
@@ -26,7 +25,7 @@ public sealed class TypedStructuredOutputAcceptanceTests
     public async Task TypedStructuredOutput_PreservesAcceptedValueForInProcessObservers_AndProjectsCanonicalJson()
     {
         var observations = new List<PipelineObservation>();
-        var client = new ScriptedChatClient(Response("""{"decision":"Proceed","summary":"go"}"""));
+        var client = new TestChatClient(Response("""{"decision":"Proceed","summary":"go"}"""));
         var agent = Agent
             .Create<DecisionState>("planner", "Decide.", client)
             .WithMessage(_ => "Decide.")
@@ -68,7 +67,7 @@ public sealed class TypedStructuredOutputAcceptanceTests
     public async Task TypedStructuredOutput_CorrectsInvalidOutputThenRecordsTypedValueWithoutReserialization()
     {
         var sink = new TypedDecisionSink();
-        var client = new ScriptedChatClient(
+        var client = new TestChatClient(
             Response("""{"decision":"Proceed","summary":""}"""),
             Response("""{"decision":"Proceed","summary":"go"}""")
         );
@@ -131,19 +130,6 @@ public sealed class TypedStructuredOutputAcceptanceTests
         }
     }
 
-    private sealed class RecordingObserver(List<PipelineObservation> observations)
-        : IPipelinePersistenceObserver
-    {
-        public ValueTask ObserveAsync(
-            PipelineObservation observation,
-            CancellationToken cancellationToken
-        )
-        {
-            observations.Add(observation);
-            return ValueTask.CompletedTask;
-        }
-    }
-
     private sealed class TypedDecisionSink : IPipelinePersistenceObserver
     {
         public PlannerDecision? Recorded { get; private set; }
@@ -167,37 +153,4 @@ public sealed class TypedStructuredOutputAcceptanceTests
             FinishReason = ChatFinishReason.Stop,
             ModelId = "test-model",
         };
-
-    private sealed class ScriptedChatClient(params ChatResponse[] responses) : IChatClient
-    {
-        private readonly Queue<ChatResponse> _responses = new(responses);
-
-        public int CallCount { get; private set; }
-        public List<IReadOnlyList<ChatMessage>> Requests { get; } = [];
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
-        {
-            Requests.Add(messages.ToArray());
-            CallCount++;
-            foreach (var update in _responses.Dequeue().ToChatResponseUpdates())
-            {
-                yield return update;
-            }
-            await Task.CompletedTask;
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
-    }
 }

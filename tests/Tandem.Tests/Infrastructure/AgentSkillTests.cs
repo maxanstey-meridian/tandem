@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using FluentAssertions;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -32,7 +31,7 @@ public sealed class AgentSkillTests
     [Fact]
     public void FromDirectory_RequiresAnExistingSkillEntryPoint()
     {
-        using var directory = new TemporaryDirectory();
+        using var directory = new TempDirectory();
 
         var missingEntryPoint = () => AgentSkill.FromDirectory(directory.Path);
         missingEntryPoint.Should().Throw<FileNotFoundException>().WithMessage("*SKILL.md*");
@@ -45,12 +44,12 @@ public sealed class AgentSkillTests
     [Fact]
     public void Builder_RejectsDuplicateNormalizedSkillDirectories()
     {
-        using var directory = TemporaryDirectory.WithSkill();
+        using var directory = WithSkill();
         var skill = AgentSkill.FromDirectory(directory.Path);
 
         var duplicate = () =>
             Agent
-                .Create<TestState>("agent", "Respond.", new RecordingChatClient())
+                .Create<TestState>("agent", "Respond.", TestChatClient.Replying("Done."))
                 .WithSkill(skill)
                 .WithSkill(AgentSkill.FromDirectory(System.IO.Path.Combine(directory.Path, ".")));
 
@@ -60,7 +59,7 @@ public sealed class AgentSkillTests
     [Fact]
     public async Task AttachedDirectory_UsesMafLoadAndResourceToolsWithoutScripts()
     {
-        using var root = new TemporaryDirectory();
+        using var root = new TempDirectory();
         var skillDirectory = System.IO.Path.Combine(root.Path, "test-skill");
         Directory.CreateDirectory(skillDirectory);
         File.WriteAllText(
@@ -102,7 +101,7 @@ public sealed class AgentSkillTests
             System.IO.Path.Combine(siblingDirectory, "SKILL.md"),
             "---\nname: unattached-skill\ndescription: Must remain unavailable.\n---\n\nIgnore."
         );
-        var client = new RecordingChatClient();
+        var client = TestChatClient.Replying("Done.");
         using (
             var source = AgentSkillRuntime.CreateSource([
                 AgentSkill.FromDirectory(skillDirectory).Descriptor,
@@ -131,28 +130,26 @@ public sealed class AgentSkillTests
 
         await new PipelineRunner().RunAsync(pipeline, new TestState());
 
-        client
-            .Tools.Select(tool => tool.Name)
-            .Should()
-            .Contain(AgentSkillsProvider.LoadSkillToolName);
-        client
-            .Tools.Select(tool => tool.Name)
+        var tools = client.Options.Single()!.Tools!;
+        tools.Select(tool => tool.Name).Should().Contain(AgentSkillsProvider.LoadSkillToolName);
+        tools
+            .Select(tool => tool.Name)
             .Should()
             .Contain(AgentSkillsProvider.ReadSkillResourceToolName);
-        client
-            .Tools.Select(tool => tool.Name)
+        tools
+            .Select(tool => tool.Name)
             .Should()
             .Contain(AgentSkillsProvider.RunSkillScriptToolName);
 
         var loaded = await InvokeAsync(
-            client.Tools.Single(tool => tool.Name == AgentSkillsProvider.LoadSkillToolName),
+            tools.Single(tool => tool.Name == AgentSkillsProvider.LoadSkillToolName),
             "test-skill"
         );
         loaded.Should().Contain("Follow the test doctrine.");
         loaded.Should().NotContain("unsafe.sh");
 
         var resource = await InvokeAsync(
-            client.Tools.Single(tool => tool.Name == AgentSkillsProvider.ReadSkillResourceToolName),
+            tools.Single(tool => tool.Name == AgentSkillsProvider.ReadSkillResourceToolName),
             "test-skill",
             "references/rules.md"
         );
@@ -195,62 +192,12 @@ public sealed class AgentSkillTests
         public string Summarize(TState state) => "Complete.";
     }
 
-    private sealed class RecordingChatClient : IChatClient
+    private static TempDirectory WithSkill(
+        string content = "---\nname: test-skill\ndescription: Test discovery.\n---\n\nTest."
+    )
     {
-        public IReadOnlyList<AITool> Tools { get; private set; } = [];
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Done.")));
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
-        {
-            Tools = options?.Tools?.ToArray() ?? [];
-            foreach (
-                var update in new ChatResponse(
-                    new ChatMessage(ChatRole.Assistant, "Done.")
-                ).ToChatResponseUpdates()
-            )
-            {
-                yield return update;
-            }
-
-            await Task.CompletedTask;
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
-    }
-
-    private sealed class TemporaryDirectory : IDisposable
-    {
-        public TemporaryDirectory()
-        {
-            Path = System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(),
-                $"tandem-skill-{Guid.CreateVersion7():N}"
-            );
-            Directory.CreateDirectory(Path);
-        }
-
-        public string Path { get; }
-
-        public static TemporaryDirectory WithSkill(
-            string content = "---\nname: test-skill\ndescription: Test discovery.\n---\n\nTest."
-        )
-        {
-            var directory = new TemporaryDirectory();
-            File.WriteAllText(System.IO.Path.Combine(directory.Path, "SKILL.md"), content);
-            return directory;
-        }
-
-        public void Dispose() => Directory.Delete(Path, recursive: true);
+        var directory = new TempDirectory();
+        File.WriteAllText(directory.Combine("SKILL.md"), content);
+        return directory;
     }
 }

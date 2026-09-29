@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using FluentAssertions;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -18,7 +17,7 @@ public sealed class FilteringAIContextProviderTests
         var inner = new RecordingProvider(selected, hidden);
         var provider = new FilteringAIContextProvider(inner, new HashSet<string> { "read_file" });
         var agent = new ChatClientAgent(
-            new NoopChatClient(),
+            new TestChatClient(),
             new ChatClientAgentOptions { Id = "agent", Name = "agent" }
         );
         var session = await agent.CreateSessionAsync();
@@ -66,28 +65,5 @@ public sealed class FilteringAIContextProviderTests
             Invoked = true;
             return ValueTask.CompletedTask;
         }
-    }
-
-    private sealed class NoopChatClient : IChatClient
-    {
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
-        {
-            await Task.CompletedTask;
-            yield break;
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
     }
 }

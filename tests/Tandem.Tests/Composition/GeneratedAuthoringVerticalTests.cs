@@ -1,8 +1,6 @@
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Extensions.AI;
 using Tandem.Domain;
 
 namespace Tandem.Tests.Composition;
@@ -259,7 +257,14 @@ public sealed class GeneratedAuthoringVerticalTests
     )
     {
         var definition = Agent
-            .Create<CounterState>("reused-agent", "Decide.", new UnparseableChatClient())
+            .Create<CounterState>(
+                "reused-agent",
+                "Decide.",
+                new TestChatClient
+                {
+                    Respond = (_, _, _) => Task.FromResult(TestChatClient.Text("not json")),
+                }
+            )
             .WithMessage(_ => "Return a value.")
             .WithJsonOutput(
                 new AgentJsonOutputDefinition<CounterState>(
@@ -436,36 +441,4 @@ internal sealed class ReusableOutcomeStep : IStandardOutcomePipelineStep<Counter
     public PipelineNodeDescriptor Descriptor => _descriptor;
     public PipelineOutcomeSelector<CounterState> Success => new(this, failed: false);
     public PipelineOutcomeSelector<CounterState> Failed => new(this, failed: true);
-}
-
-internal sealed class UnparseableChatClient : IChatClient
-{
-    public Task<ChatResponse> GetResponseAsync(
-        IEnumerable<ChatMessage> messages,
-        ChatOptions? options = null,
-        CancellationToken cancellationToken = default
-    ) =>
-        Task.FromResult(
-            new ChatResponse(new ChatMessage(ChatRole.Assistant, "not json"))
-            {
-                FinishReason = ChatFinishReason.Stop,
-            }
-        );
-
-    public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-        IEnumerable<ChatMessage> messages,
-        ChatOptions? options = null,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default
-    )
-    {
-        var response = await GetResponseAsync(messages, options, cancellationToken);
-        foreach (var update in response.ToChatResponseUpdates())
-        {
-            yield return update;
-        }
-    }
-
-    public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-    public void Dispose() { }
 }

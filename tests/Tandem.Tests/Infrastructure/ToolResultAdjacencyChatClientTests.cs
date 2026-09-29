@@ -239,7 +239,7 @@ public sealed class ToolResultAdjacencyChatClientTests
     [Fact]
     public async Task GetResponse_passes_normalized_history_to_the_inner_client()
     {
-        var inner = new CapturingChatClient();
+        var inner = TestChatClient.Replying("ok");
         var client = new ToolResultAdjacencyChatClient(inner);
         var history = new List<ChatMessage>
         {
@@ -252,7 +252,8 @@ public sealed class ToolResultAdjacencyChatClientTests
         await client.GetResponseAsync(history);
 
         inner
-            .SeenMessages!.Select(message => message.Role)
+            .Requests.Single()
+            .Select(message => message.Role)
             .Should()
             .Equal(ChatRole.User, ChatRole.Assistant, ChatRole.Tool, ChatRole.User);
     }
@@ -260,7 +261,7 @@ public sealed class ToolResultAdjacencyChatClientTests
     [Fact]
     public async Task GetService_resolves_metadata_from_the_inner_client()
     {
-        var inner = new MetadataChatClient();
+        var inner = new TestChatClient { Metadata = new("gpt-test") };
         var client = new ToolResultAdjacencyChatClient(inner);
 
         client.GetService<ChatClientMetadata>().Should().BeSameAs(inner.Metadata);
@@ -280,57 +281,4 @@ public sealed class ToolResultAdjacencyChatClientTests
 
     private static ChatMessage ToolResult(string callId, string result) =>
         new(ChatRole.Tool, [new FunctionResultContent(callId, result)]);
-
-    private sealed class CapturingChatClient : IChatClient
-    {
-        internal IReadOnlyList<ChatMessage>? SeenMessages { get; private set; }
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        )
-        {
-            SeenMessages = messages.ToList();
-            return Task.FromResult(new ChatResponse([new ChatMessage(ChatRole.Assistant, "ok")]));
-        }
-
-        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) =>
-            GetResponseAsync(messages, options, cancellationToken)
-                .Result.ToChatResponseUpdates()
-                .ToAsyncEnumerable();
-
-        public void Dispose() { }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-    }
-
-    private sealed class MetadataChatClient : IChatClient
-    {
-        internal ChatClientMetadata Metadata { get; } = new("gpt-test");
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => Task.FromResult(new ChatResponse([new ChatMessage(ChatRole.Assistant, "ok")]));
-
-        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) =>
-            GetResponseAsync(messages, options, cancellationToken)
-                .Result.ToChatResponseUpdates()
-                .ToAsyncEnumerable();
-
-        public void Dispose() { }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) =>
-            serviceType == typeof(ChatClientMetadata) ? Metadata : null;
-    }
 }

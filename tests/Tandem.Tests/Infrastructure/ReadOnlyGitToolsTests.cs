@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using FluentAssertions;
 
 namespace Tandem.Tests.Infrastructure;
@@ -21,16 +20,16 @@ public sealed class ReadOnlyGitToolsTests
     [Fact]
     public async Task Changed_files_and_diff_are_complete_and_paginated()
     {
-        using var repository = TestRepository.Create();
+        using var repository = await TestRepository.CreateAsync();
         File.WriteAllText(Path.Combine(repository.Path, "feature.txt"), "before\n");
         File.WriteAllText(Path.Combine(repository.Path, "deleted.txt"), "deleted\n");
-        repository.Commit("base");
-        var baseSha = repository.Head();
+        await repository.CommitAsync("base");
+        var baseSha = await repository.HeadAsync();
 
         File.WriteAllText(Path.Combine(repository.Path, "feature.txt"), "after\nsecond\n");
         File.Delete(Path.Combine(repository.Path, "deleted.txt"));
-        repository.Commit("candidate");
-        var candidateSha = repository.Head();
+        await repository.CommitAsync("candidate");
+        var candidateSha = await repository.HeadAsync();
         var git = new ReadOnlyGitRepository(repository.Path);
 
         var changed = await git.ChangedFilesAsync(baseSha, candidateSha);
@@ -48,12 +47,12 @@ public sealed class ReadOnlyGitToolsTests
     [Fact]
     public async Task Workspace_inspection_covers_status_staged_diff_log_show_and_blame()
     {
-        using var repository = TestRepository.Create();
+        using var repository = await TestRepository.CreateAsync();
         File.WriteAllText(Path.Combine(repository.Path, "tracked.txt"), "base\n");
-        repository.Commit("base");
-        var sha = repository.Head();
+        await repository.CommitAsync("base");
+        var sha = await repository.HeadAsync();
         File.WriteAllText(Path.Combine(repository.Path, "tracked.txt"), "staged\n");
-        repository.RunPublic("add", "tracked.txt");
+        await repository.RunAsync("add", "tracked.txt");
         File.AppendAllText(Path.Combine(repository.Path, "tracked.txt"), "unstaged\n");
         File.WriteAllText(Path.Combine(repository.Path, "untracked.txt"), "new\n");
         var git = new ReadOnlyGitRepository(repository.Path);
@@ -80,13 +79,13 @@ public sealed class ReadOnlyGitToolsTests
     [Fact]
     public async Task Large_diffs_page_from_complete_on_disk_capture()
     {
-        using var repository = TestRepository.Create();
+        using var repository = await TestRepository.CreateAsync();
         File.WriteAllText(Path.Combine(repository.Path, "large.txt"), "base\n");
-        repository.Commit("base");
-        var baseSha = repository.Head();
+        await repository.CommitAsync("base");
+        var baseSha = await repository.HeadAsync();
         File.WriteAllText(Path.Combine(repository.Path, "large.txt"), new string('x', 200_000));
-        repository.Commit("large");
-        var candidateSha = repository.Head();
+        await repository.CommitAsync("large");
+        var candidateSha = await repository.HeadAsync();
         var git = new ReadOnlyGitRepository(repository.Path);
 
         var firstPage = await git.CompareAsync(baseSha, candidateSha, "large.txt", limit: 64);
@@ -101,15 +100,15 @@ public sealed class ReadOnlyGitToolsTests
     [Fact]
     public async Task Repository_wide_diff_pages_when_total_exceeds_capture_limit()
     {
-        using var repository = TestRepository.Create();
+        using var repository = await TestRepository.CreateAsync();
         File.WriteAllText(Path.Combine(repository.Path, "a.txt"), "base\n");
         File.WriteAllText(Path.Combine(repository.Path, "b.txt"), "base\n");
-        repository.Commit("base");
-        var baseSha = repository.Head();
+        await repository.CommitAsync("base");
+        var baseSha = await repository.HeadAsync();
         File.WriteAllText(Path.Combine(repository.Path, "a.txt"), new string('x', 200_000));
         File.WriteAllText(Path.Combine(repository.Path, "b.txt"), new string('y', 200_000));
-        repository.Commit("large");
-        var candidateSha = repository.Head();
+        await repository.CommitAsync("large");
+        var candidateSha = await repository.HeadAsync();
         var git = new ReadOnlyGitRepository(repository.Path);
 
         var firstPage = await git.CompareAsync(baseSha, candidateSha, limit: 64);
@@ -121,10 +120,10 @@ public sealed class ReadOnlyGitToolsTests
     [Fact]
     public async Task Every_paginated_command_reconstructs_output_beyond_process_capture_limit()
     {
-        using var repository = TestRepository.Create();
+        using var repository = await TestRepository.CreateAsync();
         File.WriteAllText(Path.Combine(repository.Path, "large.txt"), "base\n");
-        repository.Commit("base");
-        var baseSha = repository.Head();
+        await repository.CommitAsync("base");
+        var baseSha = await repository.HeadAsync();
         File.WriteAllText(Path.Combine(repository.Path, "large.txt"), new string('x', 200_000));
         for (var index = 0; index < 2_500; index++)
         {
@@ -133,8 +132,8 @@ public sealed class ReadOnlyGitToolsTests
                 "x"
             );
         }
-        repository.Commit("candidate");
-        var candidateSha = repository.Head();
+        await repository.CommitAsync("candidate");
+        var candidateSha = await repository.HeadAsync();
         var git = new ReadOnlyGitRepository(repository.Path);
 
         var compare = await Reconstruct(offset =>
@@ -150,7 +149,7 @@ public sealed class ReadOnlyGitToolsTests
         compare
             .Should()
             .Be(
-                repository.RunPublic(
+                await repository.RunAsync(
                     "diff",
                     "--find-renames",
                     "--no-ext-diff",
@@ -162,7 +161,7 @@ public sealed class ReadOnlyGitToolsTests
         changed
             .Should()
             .Be(
-                repository.RunPublic(
+                await repository.RunAsync(
                     "diff",
                     "--name-status",
                     "--find-renames",
@@ -173,7 +172,7 @@ public sealed class ReadOnlyGitToolsTests
             );
         show.Should()
             .Be(
-                repository.RunPublic(
+                await repository.RunAsync(
                     "show",
                     "--no-ext-diff",
                     "--no-textconv",
@@ -192,16 +191,16 @@ public sealed class ReadOnlyGitToolsTests
         );
         workspace
             .Should()
-            .Be(repository.RunPublic("diff", "--no-ext-diff", "--no-textconv", "--no-color"));
+            .Be(await repository.RunAsync("diff", "--no-ext-diff", "--no-textconv", "--no-color"));
         workspace.Length.Should().BeGreaterThan(128 * 1024);
     }
 
     [Fact]
     public async Task Paged_git_capture_is_deleted_after_success_failure_and_cancellation()
     {
-        using var repository = TestRepository.Create();
+        using var repository = await TestRepository.CreateAsync();
         File.WriteAllText(Path.Combine(repository.Path, "tracked.txt"), "base\n");
-        repository.Commit("base");
+        await repository.CommitAsync("base");
         File.WriteAllText(Path.Combine(repository.Path, "tracked.txt"), "changed\n");
         var captures = new List<string>();
         string CreateCapture()
@@ -255,19 +254,19 @@ public sealed class ReadOnlyGitToolsTests
     [Fact]
     public async Task Diff_disables_external_drivers_and_text_conversion()
     {
-        using var repository = TestRepository.Create();
+        using var repository = await TestRepository.CreateAsync();
         File.WriteAllText(Path.Combine(repository.Path, ".gitattributes"), "*.txt diff=hostile\n");
         File.WriteAllText(Path.Combine(repository.Path, "tracked.txt"), "before\n");
-        repository.RunPublic("config", "diff.external", "false");
-        repository.RunPublic("config", "diff.hostile.textconv", "false");
-        repository.Commit("base");
-        var baseSha = repository.Head();
+        await repository.RunAsync("config", "diff.external", "false");
+        await repository.RunAsync("config", "diff.hostile.textconv", "false");
+        await repository.CommitAsync("base");
+        var baseSha = await repository.HeadAsync();
         File.WriteAllText(Path.Combine(repository.Path, "tracked.txt"), "after\n");
-        repository.Commit("candidate");
+        await repository.CommitAsync("candidate");
 
         var output = await new ReadOnlyGitRepository(repository.Path).CompareAsync(
             baseSha,
-            repository.Head(),
+            await repository.HeadAsync(),
             "tracked.txt"
         );
 
@@ -277,9 +276,9 @@ public sealed class ReadOnlyGitToolsTests
     [Fact]
     public async Task Status_disables_repository_configured_file_system_monitor()
     {
-        using var repository = TestRepository.Create();
+        using var repository = await TestRepository.CreateAsync();
         File.WriteAllText(Path.Combine(repository.Path, "tracked.txt"), "base\n");
-        repository.Commit("base");
+        await repository.CommitAsync("base");
         var marker = Path.Combine(repository.Path, "fsmonitor-invoked");
         var hook = Path.Combine(
             repository.Path,
@@ -298,7 +297,7 @@ public sealed class ReadOnlyGitToolsTests
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
             );
         }
-        repository.RunPublic("config", "core.fsmonitor", hook);
+        await repository.RunAsync("config", "core.fsmonitor", hook);
 
         await new ReadOnlyGitRepository(repository.Path).StatusAsync();
 
@@ -308,7 +307,7 @@ public sealed class ReadOnlyGitToolsTests
     [Fact]
     public async Task Git_operations_honor_caller_cancellation()
     {
-        using var repository = TestRepository.Create();
+        using var repository = await TestRepository.CreateAsync();
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
@@ -324,7 +323,7 @@ public sealed class ReadOnlyGitToolsTests
     [InlineData("--help")]
     public async Task Exact_revision_tools_reject_non_full_shas(string revision)
     {
-        using var repository = TestRepository.Create();
+        using var repository = await TestRepository.CreateAsync();
         var git = new ReadOnlyGitRepository(repository.Path);
 
         var show = async () => await git.ShowAsync(revision);
@@ -340,10 +339,10 @@ public sealed class ReadOnlyGitToolsTests
     [InlineData("/absolute.txt")]
     public async Task Diff_rejects_paths_outside_the_read_only_repository(string path)
     {
-        using var repository = TestRepository.Create();
+        using var repository = await TestRepository.CreateAsync();
         File.WriteAllText(Path.Combine(repository.Path, "feature.txt"), "content\n");
-        repository.Commit("base");
-        var sha = repository.Head();
+        await repository.CommitAsync("base");
+        var sha = await repository.HeadAsync();
 
         var act = async () =>
             await new ReadOnlyGitRepository(repository.Path).CompareAsync(sha, sha, path);
@@ -353,63 +352,37 @@ public sealed class ReadOnlyGitToolsTests
 
     private sealed class TestRepository : IDisposable
     {
-        private TestRepository(string path)
-        {
-            Path = path;
-        }
+        private readonly TempDirectory _directory = new();
 
-        internal string Path { get; }
+        internal string Path => _directory.Path;
 
-        internal static TestRepository Create()
+        internal static async Task<TestRepository> CreateAsync()
         {
-            var path = System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(),
-                $"tandem-readonly-git-{Guid.NewGuid():N}"
-            );
-            Directory.CreateDirectory(path);
-            var repository = new TestRepository(path);
-            repository.Run("init", "-q");
-            repository.Run("config", "user.name", "Tandem Tests");
-            repository.Run("config", "user.email", "tandem-tests@localhost");
+            var repository = new TestRepository();
+            await repository.RunAsync("init", "-q");
+            await repository.RunAsync("config", "user.name", "Tandem Tests");
+            await repository.RunAsync("config", "user.email", "tandem-tests@localhost");
             return repository;
         }
 
-        internal void Commit(string message)
+        internal async Task CommitAsync(string message)
         {
-            Run("add", "-A");
-            Run("commit", "-qm", message);
+            await RunAsync("add", "-A");
+            await RunAsync("commit", "-qm", message);
         }
 
-        internal string Head() => Run("rev-parse", "HEAD").Trim();
+        internal async Task<string> HeadAsync() => (await RunAsync("rev-parse", "HEAD")).Trim();
 
-        internal string RunPublic(params string[] arguments) => Run(arguments);
-
-        private string Run(params string[] arguments)
+        internal async Task<string> RunAsync(params string[] arguments)
         {
-            var startInfo = new ProcessStartInfo("git")
-            {
-                WorkingDirectory = Path,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            foreach (var argument in arguments)
-            {
-                startInfo.ArgumentList.Add(argument);
-            }
-            using var process =
-                Process.Start(startInfo)
-                ?? throw new InvalidOperationException("Git failed to start.");
-            var stdout = process.StandardOutput.ReadToEnd();
-            var stderr = process.StandardError.ReadToEnd();
-            process.WaitForExit();
-            if (process.ExitCode != 0)
-            {
-                throw new InvalidOperationException(stderr);
-            }
-            return stdout;
+            var result = await LocalProcess.RunAsync(
+                new("git", arguments, Path, MaximumOutputBytesPerStream: 16 * 1024 * 1024)
+            );
+            return result.ExitCode == 0 && !result.StdoutTruncated
+                ? result.Stdout
+                : throw new InvalidOperationException(result.Stderr);
         }
 
-        public void Dispose() => Directory.Delete(Path, recursive: true);
+        public void Dispose() => _directory.Dispose();
     }
 }
