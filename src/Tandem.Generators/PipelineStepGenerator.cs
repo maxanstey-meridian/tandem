@@ -18,13 +18,17 @@ public sealed class PipelineStepGenerator : IIncrementalGenerator
         isEnabledByDefault: true
     );
 
+    private const string StageModelsTrackingName = "PipelineStageModels";
+
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        var steps = context.SyntaxProvider.ForAttributeWithMetadataName(
-            "Tandem.PipelineStageAttribute",
-            static (node, _) => node is ClassDeclarationSyntax,
-            static (attributeContext, _) => CreateModel(attributeContext)
-        );
+        var steps = context
+            .SyntaxProvider.ForAttributeWithMetadataName(
+                "Tandem.PipelineStageAttribute",
+                static (node, _) => node is ClassDeclarationSyntax,
+                static (attributeContext, _) => CreateModel(attributeContext)
+            )
+            .WithTrackingName(StageModelsTrackingName);
 
         context.RegisterSourceOutput(
             steps,
@@ -32,7 +36,17 @@ public sealed class PipelineStepGenerator : IIncrementalGenerator
             {
                 if (result.Diagnostic is { } diagnostic)
                 {
-                    productionContext.ReportDiagnostic(diagnostic);
+                    productionContext.ReportDiagnostic(
+                        Diagnostic.Create(
+                            InvalidDeclaration,
+                            Location.Create(
+                                diagnostic.FilePath,
+                                diagnostic.Span,
+                                diagnostic.LineSpan
+                            ),
+                            diagnostic.StageName
+                        )
+                    );
                     return;
                 }
 
@@ -114,7 +128,7 @@ public sealed class PipelineStepGenerator : IIncrementalGenerator
             return Invalid(syntax, step.Name);
         }
 
-        return StepGenerationResult.Success(
+        return new StepGenerationResult(
             new StepModel(
                 step.ContainingNamespace.IsGlobalNamespace
                     ? null
@@ -124,14 +138,24 @@ public sealed class PipelineStepGenerator : IIncrementalGenerator
                 id!,
                 stateSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                 mode
-            )
+            ),
+            null
         );
     }
 
-    private static StepGenerationResult Invalid(ClassDeclarationSyntax syntax, string name) =>
-        StepGenerationResult.Failure(
-            Diagnostic.Create(InvalidDeclaration, syntax.Identifier.GetLocation(), name)
+    private static StepGenerationResult Invalid(ClassDeclarationSyntax syntax, string name)
+    {
+        var location = syntax.Identifier.GetLocation();
+        return new StepGenerationResult(
+            null,
+            new InvalidStageDiagnostic(
+                name,
+                location.SourceTree?.FilePath ?? string.Empty,
+                location.SourceSpan,
+                location.GetLineSpan().Span
+            )
         );
+    }
 
     private static string Render(StepModel model)
     {
@@ -190,46 +214,26 @@ public sealed class PipelineStepGenerator : IIncrementalGenerator
         Outcome,
     }
 
-    private sealed class StepModel
-    {
-        public StepModel(
-            string? @namespace,
-            string accessibility,
-            string name,
-            string id,
-            string stateType,
-            StepMode mode
-        )
-        {
-            Namespace = @namespace;
-            Accessibility = accessibility;
-            Name = name;
-            Id = id;
-            StateType = stateType;
-            Mode = mode;
-        }
+    // Pipeline outputs are compared by value so unrelated edits leave them cached; the
+    // diagnostic keeps only its position, never a Location tied to one compilation.
+    private sealed record StepModel(
+        string? Namespace,
+        string Accessibility,
+        string Name,
+        string Id,
+        string StateType,
+        StepMode Mode
+    );
 
-        public string? Namespace { get; }
-        public string Accessibility { get; }
-        public string Name { get; }
-        public string Id { get; }
-        public string StateType { get; }
-        public StepMode Mode { get; }
-    }
+    private sealed record InvalidStageDiagnostic(
+        string StageName,
+        string FilePath,
+        TextSpan Span,
+        LinePositionSpan LineSpan
+    );
 
-    private sealed class StepGenerationResult
-    {
-        private StepGenerationResult(StepModel? model, Diagnostic? diagnostic)
-        {
-            Model = model;
-            Diagnostic = diagnostic;
-        }
-
-        public StepModel? Model { get; }
-        public Diagnostic? Diagnostic { get; }
-
-        public static StepGenerationResult Success(StepModel model) => new(model, null);
-
-        public static StepGenerationResult Failure(Diagnostic diagnostic) => new(null, diagnostic);
-    }
+    private sealed record StepGenerationResult(
+        StepModel? Model,
+        InvalidStageDiagnostic? Diagnostic
+    );
 }
