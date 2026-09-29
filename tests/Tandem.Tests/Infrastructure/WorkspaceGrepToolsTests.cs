@@ -240,8 +240,7 @@ public sealed class WorkspaceGrepToolsTests
             .Should()
             .OnlyHaveUniqueItems()
             .And.HaveCount(6);
-        // Continuation is stateless: after an edit the same offset honestly
-        // reflects the repository instead of failing a version check.
+        // Continuation is stateless: after an edit the same offset reflects the edited repository.
         await File.AppendAllTextAsync(Path.Combine(root, "b.txt"), "match3\n");
         var afterEdit = await WorkspaceGrepTools.SearchAsync(
             root,

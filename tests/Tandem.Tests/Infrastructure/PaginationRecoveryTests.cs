@@ -67,8 +67,7 @@ public sealed class PaginationRecoveryTests
             Call("corrected", "file_access_grep", new { regexPattern = "x", limit = 1 }),
         ]);
         await Run(directory, client);
-        // An offset beyond the match count is ordinary range validation;
-        // there is no snapshot check to fail, and the corrected call proceeds.
+        // An offset beyond the match count is ordinary range validation, so the corrected call proceeds.
         client.ToolResults()["corrected"].GetProperty("nextOffset").GetInt32().Should().Be(1);
     }
 

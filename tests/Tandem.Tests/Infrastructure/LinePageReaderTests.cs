@@ -135,8 +135,8 @@ public sealed class LinePageReaderTests
             page.TryGetProperty("hasMore", out _).Should().BeFalse();
             page.TryGetProperty("pagination", out _).Should().BeFalse();
             page.TryGetProperty("nextCursor", out _).Should().BeFalse();
-            // After an edit there is no version state to invalidate: the stale line
-            // ordinal honestly reflects the new repository as an empty final page.
+            // Continuation is stateless: after an edit a line ordinal past the new end
+            // is an empty final page.
             await File.WriteAllTextAsync(path, "changed");
             var after = await BoundedLinePageReader.ReadAsync(path, startLine: 2);
             after.StartLine.Should().Be(2);

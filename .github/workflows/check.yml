@@ -33,8 +33,7 @@ jobs:
       - run: task check
 
   # Runs the published bridge in Node through tandem-ts's suite, which includes persisted-ledger
-  # runs. This is the native-runtime check that Docker emulation could not give (see the W0-1
-  # ledger row in docs/plans/slop-cleanup.md).
+  # runs. Docker emulation cannot give this native-runtime check.
   bridge:
     strategy:
       fail-fast: false
