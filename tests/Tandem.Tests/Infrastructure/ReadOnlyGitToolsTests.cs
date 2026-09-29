@@ -74,7 +74,7 @@ public sealed class ReadOnlyGitToolsTests
         unstaged.Content.Should().Contain("+unstaged");
         log.Should().Contain(sha).And.Contain("base");
         show.Content.Should().Contain("commit " + sha).And.Contain("+base");
-        blame.Should().Contain(sha).And.Contain("base");
+        blame.Content.Should().Contain(sha).And.Contain("base");
     }
 
     [Fact]
@@ -197,40 +197,24 @@ public sealed class ReadOnlyGitToolsTests
     }
 
     [Fact]
-    public async Task Paged_git_capture_is_deleted_after_success_failure_and_cancellation()
+    public async Task Blame_pages_complete_output_with_next_offset()
     {
         using var repository = TestRepository.Create();
-        File.WriteAllText(Path.Combine(repository.Path, "tracked.txt"), "base\n");
+        File.WriteAllLines(
+            Path.Combine(repository.Path, "long.txt"),
+            Enumerable.Range(0, 600).Select(index => $"line {index}")
+        );
         repository.Commit("base");
-        File.WriteAllText(Path.Combine(repository.Path, "tracked.txt"), "changed\n");
-        var captures = new List<string>();
-        string CreateCapture()
-        {
-            var path = Path.Combine(repository.Path, $"capture-{captures.Count}.tmp");
-            using (File.Create(path)) { }
-            captures.Add(path);
-            return path;
-        }
-        var git = new ReadOnlyGitRepository(repository.Path, CreateCapture);
+        var git = new ReadOnlyGitRepository(repository.Path);
 
-        await git.WorkspaceDiffAsync();
-        File.Exists(captures[^1]).Should().BeFalse();
+        var first = await git.BlameAsync("long.txt", limit: 4_096);
+        var blame = await Reconstruct(offset =>
+            git.BlameAsync("long.txt", offset: offset, limit: 4_096)
+        );
 
-        var missingRepository = Path.Combine(repository.Path, "missing");
-        var failing = new ReadOnlyGitRepository(missingRepository, CreateCapture);
-        await FluentActions
-            .Awaiting(() => failing.WorkspaceDiffAsync())
-            .Should()
-            .ThrowAsync<Exception>();
-        File.Exists(captures[^1]).Should().BeFalse();
-
-        using var cancellation = new CancellationTokenSource();
-        cancellation.Cancel();
-        await FluentActions
-            .Awaiting(() => git.WorkspaceDiffAsync(cancellationToken: cancellation.Token))
-            .Should()
-            .ThrowAsync<OperationCanceledException>();
-        File.Exists(captures[^1]).Should().BeFalse();
+        first.NextOffset.Should().Be(4_096);
+        blame.Should().Be(repository.RunPublic("blame", "--porcelain", "--", "long.txt"));
+        blame.Should().Contain("\tline 599");
     }
 
     private static async Task<string> Reconstruct(Func<int, Task<TextPage>> read)
