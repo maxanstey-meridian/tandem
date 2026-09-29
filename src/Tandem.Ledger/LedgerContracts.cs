@@ -1,15 +1,5 @@
 namespace Tandem.Ledger;
 
-public sealed record SqliteLedgerOptions(
-    TimeSpan BusyTimeout,
-    int LockRetryAttempts,
-    TimeSpan LockRetryDelay
-)
-{
-    public static SqliteLedgerOptions Default { get; } =
-        new(TimeSpan.FromSeconds(5), 2, TimeSpan.FromMilliseconds(50));
-}
-
 public enum LedgerRunStatus
 {
     Running,

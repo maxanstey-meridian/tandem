@@ -92,20 +92,8 @@ P System.String? Result { get; set; }
 P System.String? ValueType { get; set; }
 P System.String? VisitId { get; set; }
 P Tandem.Ledger.RuntimeJournalKind Kind { get; set; }
-T Tandem.Ledger.SqliteLedgerOptions
-C (System.TimeSpan BusyTimeout, System.Int32 LockRetryAttempts, System.TimeSpan LockRetryDelay)
-M System.Boolean Equals(System.Object? obj)
-M System.Boolean Equals(Tandem.Ledger.SqliteLedgerOptions? other)
-M System.Int32 GetHashCode()
-M System.String ToString()
-M System.Void Deconstruct(out System.TimeSpan BusyTimeout, out System.Int32 LockRetryAttempts, out System.TimeSpan LockRetryDelay)
-M Tandem.Ledger.SqliteLedgerOptions <Clone>$()
-P System.Int32 LockRetryAttempts { get; set; }
-P System.TimeSpan BusyTimeout { get; set; }
-P System.TimeSpan LockRetryDelay { get; set; }
-P Tandem.Ledger.SqliteLedgerOptions Default { get; }
 T Tandem.Ledger.SqliteLedgerStore
-C (System.String databasePath, System.TimeProvider? timeProvider = null, System.Text.Json.JsonSerializerOptions? serializerOptions = null, Tandem.Ledger.SqliteLedgerOptions? options = null)
+C (System.String databasePath)
 M System.Threading.Tasks.ValueTask InitializeAsync(System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Tandem.Ledger.LedgerJournalEntry>> ReadJournalAsync(System.Guid runId, System.Threading.CancellationToken cancellationToken = default)
 M System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Tandem.Ledger.RuntimeJournalRecord>> ReadAcceptedAsync(System.Guid runId, System.Threading.CancellationToken cancellationToken = default)

@@ -243,10 +243,7 @@ public sealed class SqliteLedgerStoreTests : IDisposable
         command.CommandText = "SELECT COUNT(*) FROM journal;";
         Convert.ToInt64(await command.ExecuteScalarAsync()).Should().Be(1);
 
-        var writer = new SqliteLedgerStore(
-            path,
-            options: new SqliteLedgerOptions(TimeSpan.FromMilliseconds(20), 0, TimeSpan.Zero)
-        );
+        var writer = new SqliteLedgerStore(path);
         await writer.AppendAsync(
             runId,
             new RuntimeJournalRecord(RuntimeJournalKind.StepStarted, "second"),
@@ -275,32 +272,41 @@ public sealed class SqliteLedgerStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task LockContentionRetriesBoundedlyThenFails()
+    public async Task Append_WaitsForAnotherWriterAndFollowsItsCommit()
     {
         var path = DatabasePath();
-        var setup = await CreateStoreAsync(path);
+        var store = await CreateStoreAsync(path);
         var runId = Guid.CreateVersion7();
-        await setup.CreateRunAsync(runId, "test");
-        var options = new SqliteLedgerOptions(
-            TimeSpan.FromMilliseconds(20),
-            1,
-            TimeSpan.FromMilliseconds(10)
-        );
-        var store = new SqliteLedgerStore(path, options: options);
+        await store.CreateRunAsync(runId, "test", default);
         await using var blocker = new SqliteConnection($"Data Source={path};Pooling=False");
         await blocker.OpenAsync();
         await using var transaction = blocker.BeginTransaction(deferred: false);
-        var stopwatch = Stopwatch.StartNew();
+        await using (var insert = blocker.CreateCommand())
+        {
+            insert.Transaction = transaction;
+            insert.CommandText =
+                $"INSERT INTO journal (run_id, sequence, record, recorded_at) VALUES ('{runId:N}', 1, '{{\"kind\":\"StepStarted\",\"stepId\":\"blocker\"}}', 0);";
+            await insert.ExecuteNonQueryAsync();
+        }
 
-        var append = async () =>
+        // Microsoft.Data.Sqlite waits for the lock synchronously, so the writer needs its own thread.
+        var append = Task.Run(async () =>
             await store.AppendAsync(
                 runId,
-                new RuntimeJournalRecord(RuntimeJournalKind.StepStarted, "blocked"),
+                new RuntimeJournalRecord(RuntimeJournalKind.StepStarted, "waiting"),
                 default
-            );
+            )
+        );
+        (await Task.WhenAny(append, Task.Delay(TimeSpan.FromMilliseconds(200))))
+            .Should()
+            .NotBeSameAs(append, "the writer lock is still held");
+        await transaction.CommitAsync();
 
-        await append.Should().ThrowAsync<SqliteException>();
-        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(5));
+        (await append).Should().Be(2);
+        (await store.ReadJournalAsync(runId))
+            .Select(entry => entry.Record.StepId)
+            .Should()
+            .Equal("blocker", "waiting");
     }
 
     [Fact]

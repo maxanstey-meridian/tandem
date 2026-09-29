@@ -18,7 +18,6 @@ public sealed class SqlitePipelineObserver : IPipelinePersistenceObserver
 {
     private readonly SqliteLedgerStore _store;
     private readonly Guid _runId;
-    private readonly SemaphoreSlim _writeLock = new(1, 1);
 
     internal SqlitePipelineObserver(SqliteLedgerStore store, Guid runId)
     {
@@ -164,16 +163,5 @@ public sealed class SqlitePipelineObserver : IPipelinePersistenceObserver
     private async ValueTask AppendAsync(
         RuntimeJournalRecord record,
         CancellationToken cancellationToken
-    )
-    {
-        await _writeLock.WaitAsync(cancellationToken);
-        try
-        {
-            await _store.AppendAsync(_runId, record, cancellationToken);
-        }
-        finally
-        {
-            _writeLock.Release();
-        }
-    }
+    ) => await _store.AppendAsync(_runId, record, cancellationToken);
 }
