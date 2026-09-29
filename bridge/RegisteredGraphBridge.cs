@@ -4,7 +4,7 @@ using Tandem.Advanced;
 using Tandem.Ledger;
 using Tandem.Terminal;
 
-namespace Tandem.NodeApiSpike;
+namespace Tandem.Bridge;
 
 public static partial class NodePipelineBridge
 {

@@ -2,7 +2,7 @@ using System.Text.Json;
 using Tandem.Ledger;
 using Xunit;
 
-namespace Tandem.NodeApiSpike;
+namespace Tandem.Bridge;
 
 public sealed class InspectAcceptedTests
 {

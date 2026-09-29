@@ -3,7 +3,7 @@ using System.Text.Json;
 using FluentValidation;
 using Tandem.Advanced;
 
-namespace Tandem.NodeApiSpike;
+namespace Tandem.Bridge;
 
 internal static class RegisteredParticipantFactory
 {

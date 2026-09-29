@@ -1,7 +1,7 @@
 <Solution>
     <Folder Name="/bridge/">
-        <Project Path="bridge/Tandem.NodeApiSpike.Bridge.csproj" />
-        <Project Path="bridge-tests/Tandem.NodeApiSpike.Bridge.Tests.csproj" />
+        <Project Path="bridge/Tandem.Bridge.csproj" />
+        <Project Path="bridge-tests/Tandem.Bridge.Tests.csproj" />
     </Folder>
     <Folder Name="/src/">
         <Project Path="src/Tandem.Advanced/Tandem.Advanced.csproj" />

@@ -34,7 +34,7 @@
         <InternalsVisibleTo Include="Tandem.Tests" />
         <InternalsVisibleTo Include="Tandem.Advanced" />
         <InternalsVisibleTo Include="Tandem.Ledger" />
-        <InternalsVisibleTo Include="Tandem.NodeApiSpike.Bridge" />
+        <InternalsVisibleTo Include="Tandem.Bridge" />
         <None Include="README.md" Pack="true" PackagePath="/" />
     </ItemGroup>
 </Project>

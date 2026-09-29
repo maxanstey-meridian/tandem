@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Xunit;
 
-namespace Tandem.NodeApiSpike;
+namespace Tandem.Bridge;
 
 public sealed class RegistrationContractValidatorTests
 {

@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Loader;
 using Microsoft.JavaScript.NodeApi;
 
-namespace Tandem.NodeApiSpike;
+namespace Tandem.Bridge;
 
 /// <summary>Adapts JavaScript-authored participants to the Tandem runtime.</summary>
 [JSExport]

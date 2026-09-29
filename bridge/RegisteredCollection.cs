@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 
-namespace Tandem.NodeApiSpike;
+namespace Tandem.Bridge;
 
 public static partial class NodePipelineBridge
 {

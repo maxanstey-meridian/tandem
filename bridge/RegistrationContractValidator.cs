@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace Tandem.NodeApiSpike;
+namespace Tandem.Bridge;
 
 /// <summary>
 /// Parses the registration contract into per-kind types and checks what only the whole

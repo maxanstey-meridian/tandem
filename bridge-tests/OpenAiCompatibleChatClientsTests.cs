@@ -11,7 +11,7 @@ using OpenAI.Chat;
 using Tandem.OpenAICompatible;
 using Xunit;
 
-namespace Tandem.NodeApiSpike;
+namespace Tandem.Bridge;
 
 public sealed class OpenAiCompatibleChatClientsTests
 {

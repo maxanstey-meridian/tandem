@@ -4,7 +4,7 @@ using Microsoft.Extensions.AI;
 using OpenAI;
 using Tandem.OpenAICompatible;
 
-namespace Tandem.NodeApiSpike;
+namespace Tandem.Bridge;
 
 internal static class OpenAiCompatibleChatClients
 {

@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using Xunit;
 
-namespace Tandem.NodeApiSpike;
+namespace Tandem.Bridge;
 
 public sealed class CallbackDispatcherTests
 {

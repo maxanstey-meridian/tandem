@@ -1,4 +1,4 @@
-namespace Tandem.NodeApiSpike;
+namespace Tandem.Bridge;
 
 internal static class RegisteredRouteRegistration
 {

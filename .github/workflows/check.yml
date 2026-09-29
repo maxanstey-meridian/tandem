@@ -71,7 +71,7 @@ jobs:
       - name: Publish the bridge into tandem-ts's runtime folder
         run: |
           rm -rf tandem-ts/runtime/${{ matrix.platform }}
-          dotnet publish bridge/Tandem.NodeApiSpike.Bridge.csproj -c Release -r ${{ matrix.rid }} --self-contained false --output tandem-ts/runtime/${{ matrix.platform }}
+          dotnet publish bridge/Tandem.Bridge.csproj -c Release -r ${{ matrix.rid }} --self-contained false --output tandem-ts/runtime/${{ matrix.platform }}
 
       - name: Run the tandem-ts suite against it
         working-directory: tandem-ts

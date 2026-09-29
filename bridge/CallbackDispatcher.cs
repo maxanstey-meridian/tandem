@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Tandem.NodeApiSpike;
+namespace Tandem.Bridge;
 
 internal sealed class CallbackDispatcher(
     SynchronizationContext context,

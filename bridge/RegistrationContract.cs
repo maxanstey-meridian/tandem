@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Tandem.NodeApiSpike;
+namespace Tandem.Bridge;
 
 internal sealed record RegisteredGraphContract(
     int ContractVersion,

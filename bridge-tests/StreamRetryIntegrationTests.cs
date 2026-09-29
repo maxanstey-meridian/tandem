@@ -5,7 +5,7 @@ using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Xunit;
 
-namespace Tandem.NodeApiSpike;
+namespace Tandem.Bridge;
 
 public sealed class StreamRetryIntegrationTests
 {

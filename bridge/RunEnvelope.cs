@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Tandem.NodeApiSpike;
+namespace Tandem.Bridge;
 
 /// <summary>
 /// How a registered run ended, returned to JavaScript for every expected outcome so that the
