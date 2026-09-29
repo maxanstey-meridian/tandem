@@ -95,29 +95,25 @@ public sealed class LocalCapabilityTests
     [Fact]
     public async Task InvalidCall_ReturnsProblems_ThenAcceptsCorrectedCallInSameSession()
     {
-        var toolResults = new List<string>();
         var client = new ScriptedChatClient(
             ToolCall("invalid", "increment", new Dictionary<string, object?> { ["amount"] = 0 }),
             ToolCall("corrected", "increment", new Dictionary<string, object?> { ["amount"] = 2 })
         );
-        var block = CreateBlock(
-            client,
-            CreateCapability(),
-            (_, _, update) =>
-            {
-                if (update is AgentUpdate.ToolCompleted completed)
-                {
-                    toolResults.Add(completed.Result ?? "");
-                }
-            }
-        );
 
-        var output = await RunBlockAsync(block);
+        var output = await RunBlockAsync(CreateBlock(client, CreateCapability()));
 
         output.State.Count.Should().Be(2);
         output.LatestOutcome!.Kind.Should().Be(CapabilityKind("increment"));
         client.CallCount.Should().Be(2);
-        toolResults.Should().Contain(result => result.Contains("invalid increment call"));
+        client
+            .Requests[1]
+            .SelectMany(message => message.Contents)
+            .OfType<FunctionResultContent>()
+            .Should()
+            .ContainSingle(result => result.CallId == "invalid")
+            .Which.Result!.ToString()
+            .Should()
+            .Contain("invalid increment call");
     }
 
     [Fact]
@@ -772,6 +768,107 @@ public sealed class LocalCapabilityTests
             .Contain(result => result.CallId == "checkpoint-call");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AcceptedCapabilityResult_IsRetainedNextToItsCallInTheMafSession(bool harness)
+    {
+        var client = new ScriptedChatClient(
+            ToolCall("first-call", "increment", new Dictionary<string, object?> { ["amount"] = 1 }),
+            ToolCall("second-call", "increment", new Dictionary<string, object?> { ["amount"] = 1 })
+        );
+
+        var result = await RunRetainedCapabilityTwiceAsync(client, harness);
+
+        result.State.Count.Should().Be(2);
+        AssertEveryCallAnsweredAdjacently(client.Requests[1], "first-call");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AcceptedCapability_InAParallelCallBatch_LeavesEveryCallAnsweredInTheMafSession(
+        bool harness
+    )
+    {
+        var client = new ScriptedChatClient(
+            new ChatResponse(
+                new ChatMessage(
+                    ChatRole.Assistant,
+                    [
+                        new FunctionCallContent(
+                            "accepted-call",
+                            "increment",
+                            new Dictionary<string, object?> { ["amount"] = 1 }
+                        ),
+                        new FunctionCallContent(
+                            "sibling-call",
+                            "increment",
+                            new Dictionary<string, object?> { ["amount"] = 1 }
+                        ),
+                    ]
+                )
+            )
+            {
+                FinishReason = ChatFinishReason.ToolCalls,
+            },
+            ToolCall("second-call", "increment", new Dictionary<string, object?> { ["amount"] = 1 })
+        );
+
+        var result = await RunRetainedCapabilityTwiceAsync(client, harness);
+
+        result.State.Count.Should().Be(2);
+        AssertEveryCallAnsweredAdjacently(client.Requests[1], "accepted-call", "sibling-call");
+    }
+
+    private static async Task<PipelineRunResult<TestState>> RunRetainedCapabilityTwiceAsync(
+        ScriptedChatClient client,
+        bool harness
+    )
+    {
+        var builder = Agent
+            .Create<TestState>("agent", "Work.", client)
+            .WithMessage(state => $"Visit {state.Count}.")
+            .ContinueSession()
+            .WithCapability(CreateCapability());
+        var agent = (harness ? builder.UseHarness("Use the capability.") : builder).Build();
+        var complete = PipelineNodes.Complete(new TestCompletion<TestState>("complete"));
+        var pipeline = Pipeline
+            .Start(agent, "retained-capability")
+            .Route(agent.Success, state => state.Count == 1, agent, "again")
+            .Route(agent.Success, state => state.Count == 2, complete, "complete")
+            .Build(complete);
+        return await new PipelineRunner().RunAsync(pipeline, new TestState(0));
+    }
+
+    private static void AssertEveryCallAnsweredAdjacently(
+        IReadOnlyList<ChatMessage> history,
+        params string[] callIds
+    )
+    {
+        var callIndex = history
+            .Select((message, index) => (message, index))
+            .Single(item =>
+                item.message.Contents.OfType<FunctionCallContent>()
+                    .Any(call => call.CallId == callIds[0])
+            )
+            .index;
+        var toolMessages = history
+            .Skip(callIndex + 1)
+            .TakeWhile(message => message.Role == ChatRole.Tool)
+            .ToArray();
+        var results = toolMessages
+            .SelectMany(message => message.Contents.OfType<FunctionResultContent>())
+            .ToArray();
+        results.Select(result => result.CallId).Should().BeEquivalentTo(callIds);
+        results
+            .Single(result => result.CallId == callIds[0])
+            .Result?.ToString()
+            .Should()
+            .Contain("\"accepted\":true");
+        history[callIndex + 1 + toolMessages.Length].Text.Should().Be("Visit 1.");
+    }
+
     [Fact]
     public void CheckpointSessionBehavior_RejectsUnknownValue()
     {
@@ -856,8 +953,7 @@ public sealed class LocalCapabilityTests
 
     private static AgentBlock<TestState> CreateBlock(
         IChatClient client,
-        AgentCapability<TestState> capability,
-        Action<string, Guid, AgentUpdate>? onUpdate = null
+        AgentCapability<TestState> capability
     ) =>
         new(
             new AgentBlockConfig<TestState>(
@@ -870,8 +966,7 @@ public sealed class LocalCapabilityTests
                 null,
                 ContinueSession: true
             ),
-            client,
-            onUpdate
+            client
         );
 
     private static async Task<PipelineMessage<TestState>> RunBlockAsync(

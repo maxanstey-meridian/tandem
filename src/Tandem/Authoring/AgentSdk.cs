@@ -694,7 +694,6 @@ public sealed class AgentBuilder<TState>
                         StepId = id,
                     },
                     _chatClient,
-                    onUpdate: null,
                     _toolInterceptor,
                     _configureChatOptions,
                     _chatClientFactory,
