@@ -1139,7 +1139,7 @@ The optional packet packages decode Markdown plus YAML frontmatter at the applic
 ```csharp
 using Tandem.Packets;
 
-var input = PacketFile.Read<WorkPacket>(path);
+var input = await PacketFile.ReadAsync<WorkPacket>(path);
 var state = WorkState.Create(input.Value, input.Context, input.Source);
 ```
 

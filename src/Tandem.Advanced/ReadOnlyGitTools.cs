@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 using Tandem.Infrastructure;
 
@@ -48,7 +49,7 @@ internal static class ReadOnlyGitTools
             AIFunctionFactory.Create(
                 repository.BlameAsync,
                 BlameToolName,
-                "Read bounded line attribution for one repository-relative text file."
+                "Read porcelain line attribution for one repository-relative text file with plain integer offset/limit pagination; follow the returned nextOffset, optionally restricted to a line range."
             ),
             AIFunctionFactory.Create(
                 repository.ChangedFilesAsync,
@@ -57,41 +58,68 @@ internal static class ReadOnlyGitTools
             ),
             AIFunctionFactory.Create(repository.CompareAsync, CompareToolName, CompareDescription),
         };
-        var existing = options.Tools ?? [];
         foreach (var tool in tools)
         {
-            if (existing.Any(candidate => candidate.Name == tool.Name))
-            {
-                throw new InvalidOperationException($"Agent already exposes tool '{tool.Name}'.");
-            }
-            toolEffects.Add(
-                tool.Name,
+            HarnessTools.Add(
+                options,
+                toolEffects,
+                tool,
                 Infrastructure.ToolEffect.Read,
                 Infrastructure.ToolEvidence.RepositoryInspection
             );
         }
-        options.Tools = [.. existing, .. tools];
     }
 }
 
-internal sealed class ReadOnlyGitRepository(
-    string workspacePath,
-    Func<string>? createTempFile = null
-)
+// Repository-configured hooks such as core.fsmonitor must never run during read-only inspection.
+internal static class GitProcess
 {
     private static readonly TimeSpan _timeout = TimeSpan.FromSeconds(30);
-    private const int MaximumOutputBytesPerStream = 128 * 1024;
-    private readonly string _workspacePath = Path.GetFullPath(workspacePath);
-    private readonly Func<string> _createTempFile = createTempFile ?? Path.GetTempFileName;
-
-    private static readonly Dictionary<string, string> _gitEnvironment = new()
+    private static readonly Dictionary<string, string> _environment = new()
     {
         ["GIT_PAGER"] = "cat",
         ["GIT_TERMINAL_PROMPT"] = "0",
         ["GIT_OPTIONAL_LOCKS"] = "0",
     };
 
-    internal async Task<object> StatusAsync(
+    internal static Task<LocalProcessResult> RunAsync(
+        string workingDirectory,
+        IReadOnlyList<string> arguments,
+        int maximumOutputBytes,
+        CancellationToken cancellationToken
+    ) =>
+        LocalProcess.RunAsync(
+            new LocalProcessRequest(
+                "git",
+                ["-c", "core.fsmonitor=false", .. arguments],
+                workingDirectory,
+                _timeout,
+                maximumOutputBytes,
+                _environment
+            ),
+            cancellationToken
+        );
+}
+
+internal sealed record GitStatusChange(
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("path")] string Path,
+    [property: JsonPropertyName("originalPath")] string? OriginalPath
+);
+
+internal sealed record GitStatusPage(
+    [property: JsonPropertyName("branch")] string? Branch,
+    [property: JsonPropertyName("changes")] IReadOnlyList<GitStatusChange> Changes,
+    [property: JsonPropertyName("nextOffset")] int? NextOffset
+);
+
+internal sealed class ReadOnlyGitRepository(string workspacePath)
+{
+    private const int MaximumOutputBytesPerStream = 128 * 1024;
+    private const int MaximumCapturedOutputBytes = 16 * 1024 * 1024;
+    private readonly string _workspacePath = Path.GetFullPath(workspacePath);
+
+    internal async Task<GitStatusPage> StatusAsync(
         CancellationToken cancellationToken = default,
         [Description("Maximum change records, 1 to 500.")] int limit = 200,
         [Description(
@@ -100,30 +128,16 @@ internal sealed class ReadOnlyGitRepository(
             int offset = 0
     )
     {
-        if (limit is < 1 or > 500)
-        {
-            throw new ToolInputException("limit must be from 1 to 500.");
-        }
-
+        var page = new RecordPage(offset, limit);
         var output = await RunAsync(
             ["status", "--porcelain=v1", "-z", "--branch", "--untracked-files=all"],
             cancellationToken,
-            16 * 1024 * 1024
+            maximumOutputBytes: MaximumCapturedOutputBytes
         );
-        if (offset < 0)
-        {
-            throw new PaginationValidationException(
-                nameof(offset),
-                "Offset cannot be negative. Retry at offset 0.",
-                new { retryOffset = 0, retryLimit = Math.Clamp(limit, 1, 500) }
-            );
-        }
         var fields = output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
-        var changes = new List<object>();
+        var changes = new List<GitStatusChange>();
         string? branch = null;
         var index = 0;
-        var returned = 0;
-        var characters = 0;
         for (var i = 0; i < fields.Length; i++)
         {
             var field = fields[i];
@@ -151,43 +165,17 @@ internal sealed class ReadOnlyGitRepository(
             {
                 continue;
             }
-            if (
-                returned >= limit
-                || (returned > 0 && characters + path.Length + (originalPath?.Length ?? 0) > 64000)
-            )
+            if (!page.TryAdd(path.Length + (originalPath?.Length ?? 0)))
             {
-                return new
-                {
-                    branch,
-                    changes,
-                    nextOffset = offset + returned,
-                };
+                return new GitStatusPage(branch, changes, page.NextOffset);
             }
-            changes.Add(
-                new
-                {
-                    status,
-                    path,
-                    originalPath,
-                }
-            );
-            returned++;
-            characters += path.Length + (originalPath?.Length ?? 0);
+            changes.Add(new GitStatusChange(status, path, originalPath));
         }
         if (offset > index)
         {
-            throw new PaginationValidationException(
-                nameof(offset),
-                "Offset exceeds the change count. Restart at offset 0.",
-                new { retryOffset = 0, retryLimit = Math.Clamp(limit, 1, 500) }
-            );
+            throw page.OffsetBeyondEnd("change");
         }
-        return new
-        {
-            branch,
-            changes,
-            nextOffset = (int?)null,
-        };
+        return new GitStatusPage(branch, changes, null);
     }
 
     internal async Task<TextPage> WorkspaceDiffAsync(
@@ -241,7 +229,8 @@ internal sealed class ReadOnlyGitRepository(
             arguments.Add(ValidateRevisionExpression(revision));
         }
         AddPath(arguments, path);
-        return Page(await RunAsync(arguments, cancellationToken), 1, 500, "(no commits)");
+        var output = await RunAsync(arguments, cancellationToken);
+        return output.Length == 0 ? "(no commits)" : output.TrimEnd('\n');
     }
 
     internal async Task<TextPage> ShowAsync(
@@ -266,14 +255,18 @@ internal sealed class ReadOnlyGitRepository(
         return await RunPagedAsync(arguments, offset, limit, cancellationToken);
     }
 
-    internal async Task<string> BlameAsync(
+    internal async Task<TextPage> BlameAsync(
         [Description("Repository-relative text file path.")] string path,
         [Description("Optional exact commit SHA.")] string? revision = null,
         [Description("Optional one-based first source line.")] int? startLine = null,
         [Description("Optional one-based last source line.")] int? endLine = null,
+        [Description("Zero-based UTF-16 output offset.")] int offset = 0,
+        [Description("Maximum UTF-16 code units to return, from 1 to 65536.")]
+            int limit = BoundedTextPageReader.DefaultLimit,
         CancellationToken cancellationToken = default
     )
     {
+        BoundedTextPageReader.ValidateBounds(offset, limit);
         var arguments = new List<string> { "blame", "--porcelain" };
         if (startLine is not null || endLine is not null)
         {
@@ -289,7 +282,14 @@ internal sealed class ReadOnlyGitRepository(
         }
         arguments.Add("--");
         arguments.Add(ValidatePath(path));
-        return Page(await RunAsync(arguments, cancellationToken), 1, 500);
+        // git blame has no --output option, so its complete output is captured in memory.
+        var output = await RunAsync(
+            arguments,
+            cancellationToken,
+            maximumOutputBytes: MaximumCapturedOutputBytes
+        );
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(output));
+        return await BoundedTextPageReader.ReadAsync(stream, offset, limit, cancellationToken);
     }
 
     internal async Task<TextPage> ChangedFilesAsync(
@@ -388,44 +388,59 @@ internal sealed class ReadOnlyGitRepository(
         arguments.Add(ValidatePath(path));
     }
 
-    private string ValidatePath(string path)
+    private string ValidatePath(string path) =>
+        Path.GetRelativePath(
+                _workspacePath,
+                WorkspacePathAuthority.Resolve(_workspacePath, path, "Git inspection")
+            )
+            .Replace('\\', '/');
+
+    private async Task<TextPage> RunPagedAsync(
+        IReadOnlyList<string> arguments,
+        int offset,
+        int limit,
+        CancellationToken cancellationToken
+    )
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        if (path.IndexOfAny(['\0', '\r', '\n']) >= 0 || Path.IsPathRooted(path))
+        BoundedTextPageReader.ValidateBounds(offset, limit);
+        var outputPath = Path.GetTempFileName();
+        try
         {
-            throw new ArgumentException("A relative repository path is required.", nameof(path));
+            await RunAsync(arguments, cancellationToken, outputPath);
+            return await BoundedTextPageReader.ReadAsync(
+                outputPath,
+                offset,
+                limit,
+                cancellationToken
+            );
         }
-        var fullPath = Path.GetFullPath(Path.Combine(_workspacePath, path));
-        var relative = Path.GetRelativePath(_workspacePath, fullPath);
-        if (
-            relative == ".."
-            || relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
-            || relative
-                .Replace('\\', '/')
-                .Split('/', StringSplitOptions.RemoveEmptyEntries)
-                .Any(segment => segment == ".git")
-        )
+        finally
         {
-            throw new ArgumentException("Path must remain inside the repository.", nameof(path));
+            File.Delete(outputPath);
         }
-        return relative.Replace('\\', '/');
     }
 
+    // With an output path, git writes the complete diff there (before any "--" pathspec) instead of stdout.
     private async Task<string> RunAsync(
         IReadOnlyList<string> arguments,
         CancellationToken cancellationToken,
+        string? outputPath = null,
         int maximumOutputBytes = MaximumOutputBytesPerStream
     )
     {
-        var result = await LocalProcess.RunAsync(
-            new LocalProcessRequest(
-                "git",
-                ["-c", "core.fsmonitor=false", .. arguments],
-                _workspacePath,
-                _timeout,
-                maximumOutputBytes,
-                _gitEnvironment
-            ),
+        var separator = arguments.TakeWhile(argument => argument != "--").Count();
+        IReadOnlyList<string> command = outputPath is null
+            ? arguments
+            :
+            [
+                .. arguments.Take(separator),
+                $"--output={outputPath}",
+                .. arguments.Skip(separator),
+            ];
+        var result = await GitProcess.RunAsync(
+            _workspacePath,
+            command,
+            maximumOutputBytes,
             cancellationToken
         );
         if (result.TimedOut)
@@ -438,149 +453,22 @@ internal sealed class ReadOnlyGitRepository(
                 "Read-only Git inspection exceeded the complete-output capture limit."
             );
         }
-        if (result.ExitCode != 0)
+        if (result.ExitCode == 0)
         {
-            if (
-                result.Stderr.Contains("bad object", StringComparison.OrdinalIgnoreCase)
-                || result.Stderr.Contains("bad revision", StringComparison.OrdinalIgnoreCase)
-                || result.Stderr.Contains("unknown revision", StringComparison.OrdinalIgnoreCase)
-            )
-            {
-                throw new ToolInputException(
-                    $"Unknown Git revision. Use git_log to obtain a valid revision. {result.Stderr.Trim()}"
-                );
-            }
-
-            throw new InvalidOperationException(
-                $"Read-only Git inspection failed: {result.Stderr.Trim()}"
+            return result.Stdout;
+        }
+        if (
+            result.Stderr.Contains("bad object", StringComparison.OrdinalIgnoreCase)
+            || result.Stderr.Contains("bad revision", StringComparison.OrdinalIgnoreCase)
+            || result.Stderr.Contains("unknown revision", StringComparison.OrdinalIgnoreCase)
+        )
+        {
+            throw new ToolInputException(
+                $"Unknown Git revision. Use git_log to obtain a valid revision. {result.Stderr.Trim()}"
             );
         }
-        return result.Stdout;
-    }
-
-    private static string Page(
-        string output,
-        int startLine,
-        int maxLines,
-        string emptyResult = "(no changes)"
-    )
-    {
-        if (startLine < 1)
-        {
-            throw new ArgumentOutOfRangeException(nameof(startLine));
-        }
-        if (maxLines is < 1 or > 500)
-        {
-            throw new ArgumentOutOfRangeException(nameof(maxLines));
-        }
-        if (output.Length == 0)
-        {
-            return emptyResult;
-        }
-        using var reader = new StringReader(output);
-        var text = new System.Text.StringBuilder();
-        var lineNumber = 0;
-        string? line;
-        while ((line = reader.ReadLine()) is not null)
-        {
-            lineNumber++;
-            if (lineNumber < startLine)
-            {
-                continue;
-            }
-            if (lineNumber >= startLine + maxLines)
-            {
-                break;
-            }
-            if (text.Length > 0)
-            {
-                text.AppendLine();
-            }
-            text.Append(line);
-        }
-        return text.Length == 0 ? emptyResult : text.ToString();
-    }
-
-    private async Task<TextPage> RunPagedAsync(
-        IReadOnlyList<string> arguments,
-        int offset,
-        int limit,
-        CancellationToken cancellationToken
-    )
-    {
-        BoundedTextPageReader.ValidateBounds(offset, limit);
-        var tempPath = _createTempFile();
-        try
-        {
-            var fullArguments = new List<string> { "-c", "core.fsmonitor=false" };
-            var separatorIndex = Array.IndexOf(arguments.ToArray(), "--");
-            if (separatorIndex >= 0)
-            {
-                fullArguments.AddRange(arguments.Take(separatorIndex));
-                fullArguments.Add($"--output={tempPath}");
-                fullArguments.AddRange(arguments.Skip(separatorIndex));
-            }
-            else
-            {
-                fullArguments.AddRange(arguments);
-                fullArguments.Add($"--output={tempPath}");
-            }
-
-            var result = await LocalProcess.RunAsync(
-                new LocalProcessRequest(
-                    "git",
-                    fullArguments,
-                    _workspacePath,
-                    _timeout,
-                    MaximumOutputBytesPerStream,
-                    _gitEnvironment
-                ),
-                cancellationToken
-            );
-            if (result.TimedOut)
-            {
-                throw new TimeoutException();
-            }
-            if (result.StdoutTruncated || result.StderrTruncated)
-            {
-                throw new InvalidOperationException(
-                    "Read-only Git inspection exceeded the complete-output capture limit."
-                );
-            }
-            if (result.ExitCode != 0)
-            {
-                if (
-                    result.Stderr.Contains("bad object", StringComparison.OrdinalIgnoreCase)
-                    || result.Stderr.Contains("bad revision", StringComparison.OrdinalIgnoreCase)
-                    || result.Stderr.Contains(
-                        "unknown revision",
-                        StringComparison.OrdinalIgnoreCase
-                    )
-                )
-                {
-                    throw new ToolInputException(
-                        $"Unknown Git revision. Use git_log to obtain a valid revision. {result.Stderr.Trim()}"
-                    );
-                }
-
-                throw new InvalidOperationException(
-                    $"Read-only Git inspection failed: {result.Stderr.Trim()}"
-                );
-            }
-            return await BoundedTextPageReader.ReadAsync(
-                tempPath,
-                offset,
-                limit,
-                cancellationToken
-            );
-        }
-        finally
-        {
-            try
-            {
-                File.Delete(tempPath);
-            }
-            catch { }
-        }
+        throw new InvalidOperationException(
+            $"Read-only Git inspection failed: {result.Stderr.Trim()}"
+        );
     }
 }

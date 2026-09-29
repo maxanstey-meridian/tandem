@@ -22,13 +22,17 @@ Workspace reads use source line numbers (`startLine`, `lineCount`). Responses co
 
 Directory listings, Git status and grep paginate with plain integer `offset`/`limit`, returning
 `nextOffset`; grep's `limit` counts matching records, not characters. Grep defaults
-to case-insensitive regex matching and pruning common build/dependency directories. Use `literal`,
-`caseSensitive` and `includeExcluded` to change those choices. Explicit path prefixes can select
-normally excluded directories, but never bypass workspace, Git-metadata or symlink restrictions.
+to case-insensitive regex matching. Inside a Git work tree it searches the files Git lists as tracked
+or untracked-but-not-ignored, so `.gitignore` applies; outside Git it prunes common build/dependency
+directories. Use `literal`, `caseSensitive` and `includeExcluded` to change those choices. An explicit
+`directory` or literal path prefix can select an ignored or pruned directory, but never bypasses
+workspace, Git-metadata or symlink restrictions. Globs use `Microsoft.Extensions.FileSystemGlobbing`
+(`*` and `**`); a slashless glob matches file names at any depth.
 Skipped files and oversized matches are reported; source reads retrieve long matching lines.
 Queries do not promise snapshots across repository edits: restart after edits.
 
-Named commands capture up to 16 MiB per output stream using Tandem's process runner. The model
+Named commands run through MAF's `LocalShellExecutor`, as `run_shell` does, and capture up to
+16 MiB per output stream. The model
 receives bounded stdout/stderr previews. When ledger tools are enabled and the action is persisted,
 `diagnostics.entryCursor` identifies captured output: use `read_ledger_entry` with that cursor and
 `stream: "stdout"` or `"stderr"`, following `nextOffset`. `captureTruncated` means the hard capture

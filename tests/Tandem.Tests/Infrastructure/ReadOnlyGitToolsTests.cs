@@ -73,7 +73,7 @@ public sealed class ReadOnlyGitToolsTests
         unstaged.Content.Should().Contain("+unstaged");
         log.Should().Contain(sha).And.Contain("base");
         show.Content.Should().Contain("commit " + sha).And.Contain("+base");
-        blame.Should().Contain(sha).And.Contain("base");
+        blame.Content.Should().Contain(sha).And.Contain("base");
     }
 
     [Fact]
@@ -196,40 +196,24 @@ public sealed class ReadOnlyGitToolsTests
     }
 
     [Fact]
-    public async Task Paged_git_capture_is_deleted_after_success_failure_and_cancellation()
+    public async Task Blame_pages_complete_output_with_next_offset()
     {
         using var repository = await TestRepository.CreateAsync();
-        File.WriteAllText(Path.Combine(repository.Path, "tracked.txt"), "base\n");
+        File.WriteAllLines(
+            Path.Combine(repository.Path, "long.txt"),
+            Enumerable.Range(0, 600).Select(index => $"line {index}")
+        );
         await repository.CommitAsync("base");
-        File.WriteAllText(Path.Combine(repository.Path, "tracked.txt"), "changed\n");
-        var captures = new List<string>();
-        string CreateCapture()
-        {
-            var path = Path.Combine(repository.Path, $"capture-{captures.Count}.tmp");
-            using (File.Create(path)) { }
-            captures.Add(path);
-            return path;
-        }
-        var git = new ReadOnlyGitRepository(repository.Path, CreateCapture);
+        var git = new ReadOnlyGitRepository(repository.Path);
 
-        await git.WorkspaceDiffAsync();
-        File.Exists(captures[^1]).Should().BeFalse();
+        var first = await git.BlameAsync("long.txt", limit: 4_096);
+        var blame = await Reconstruct(offset =>
+            git.BlameAsync("long.txt", offset: offset, limit: 4_096)
+        );
 
-        var missingRepository = Path.Combine(repository.Path, "missing");
-        var failing = new ReadOnlyGitRepository(missingRepository, CreateCapture);
-        await FluentActions
-            .Awaiting(() => failing.WorkspaceDiffAsync())
-            .Should()
-            .ThrowAsync<Exception>();
-        File.Exists(captures[^1]).Should().BeFalse();
-
-        using var cancellation = new CancellationTokenSource();
-        cancellation.Cancel();
-        await FluentActions
-            .Awaiting(() => git.WorkspaceDiffAsync(cancellationToken: cancellation.Token))
-            .Should()
-            .ThrowAsync<OperationCanceledException>();
-        File.Exists(captures[^1]).Should().BeFalse();
+        first.NextOffset.Should().Be(4_096);
+        blame.Should().Be(await repository.RunAsync("blame", "--porcelain", "--", "long.txt"));
+        blame.Should().Contain("\tline 599");
     }
 
     private static async Task<string> Reconstruct(Func<int, Task<TextPage>> read)
@@ -336,18 +320,33 @@ public sealed class ReadOnlyGitToolsTests
     [Theory]
     [InlineData("../outside.txt")]
     [InlineData(".git/config")]
+    [InlineData(".GIT/config")]
+    [InlineData("nested/.Git/config")]
     [InlineData("/absolute.txt")]
-    public async Task Diff_rejects_paths_outside_the_read_only_repository(string path)
+    [InlineData("linked/secret.txt")]
+    public async Task Path_arguments_use_the_workspace_path_authority(string path)
     {
         using var repository = await TestRepository.CreateAsync();
+        using var outside = new TempDirectory();
+        File.WriteAllText(Path.Combine(outside.Path, "secret.txt"), "secret\n");
+        Directory.CreateSymbolicLink(Path.Combine(repository.Path, "linked"), outside.Path);
         File.WriteAllText(Path.Combine(repository.Path, "feature.txt"), "content\n");
         await repository.CommitAsync("base");
         var sha = await repository.HeadAsync();
+        var git = new ReadOnlyGitRepository(repository.Path);
 
-        var act = async () =>
-            await new ReadOnlyGitRepository(repository.Path).CompareAsync(sha, sha, path);
-
-        await act.Should().ThrowAsync<ArgumentException>();
+        await FluentActions
+            .Awaiting(() => git.CompareAsync(sha, sha, path))
+            .Should()
+            .ThrowAsync<UnauthorizedAccessException>();
+        await FluentActions
+            .Awaiting(() => git.BlameAsync(path))
+            .Should()
+            .ThrowAsync<UnauthorizedAccessException>();
+        await FluentActions
+            .Awaiting(() => git.WorkspaceDiffAsync(path: path))
+            .Should()
+            .ThrowAsync<UnauthorizedAccessException>();
     }
 
     private sealed class TestRepository : IDisposable

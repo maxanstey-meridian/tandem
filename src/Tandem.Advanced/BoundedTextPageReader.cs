@@ -28,7 +28,6 @@ internal static class BoundedTextPageReader
     )
     {
         ValidateBounds(offset, limit);
-
         await using var stream = new FileStream(
             path,
             FileMode.Open,
@@ -37,6 +36,17 @@ internal static class BoundedTextPageReader
             4096,
             FileOptions.Asynchronous | FileOptions.SequentialScan
         );
+        return await ReadAsync(stream, offset, limit, cancellationToken);
+    }
+
+    internal static async Task<TextPage> ReadAsync(
+        Stream stream,
+        int offset,
+        int limit,
+        CancellationToken cancellationToken
+    )
+    {
+        ValidateBounds(offset, limit);
         using var reader = new StreamReader(
             stream,
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true),

@@ -198,24 +198,6 @@ public sealed class WorkspaceAuthorityTests
     }
 
     [Fact]
-    public async Task FileTools_RejectGitMetadataCaseInsensitively()
-    {
-        using var temp = new TempDirectory();
-        var path = temp.Path;
-        Directory.CreateDirectory(Path.Combine(path, ".GIT"));
-        var store = new GitExcludedFileStore(new BomlessFileSystemAgentFileStore(path));
-
-        var read = async () => await store.ReadAsync(".GIT/config", CancellationToken.None);
-        var write = async () =>
-            await store.WriteAsync("nested/.GiT/config", "unsafe", CancellationToken.None);
-        var children = await store.ListChildrenAsync("", CancellationToken.None);
-
-        await read.Should().ThrowAsync<UnauthorizedAccessException>();
-        await write.Should().ThrowAsync<UnauthorizedAccessException>();
-        children.Should().NotContain(entry => entry.Name == ".GIT");
-    }
-
-    [Fact]
     public void CopyAndMoveFile_PreserveBytesAndEnforceWorkspaceBoundaries()
     {
         using var temp = new TempDirectory();

@@ -9,7 +9,6 @@ Tandem.Advanced.AgentConversationDecision
 Tandem.Advanced.AgentConversationPolicy`1
 Tandem.Advanced.AgentConversationRetention
 Tandem.Advanced.AgentMessageContext`1
-Tandem.Advanced.AgentMessageOutcome
 Tandem.Advanced.AgentProfileDecision
 Tandem.Advanced.AgentProfilePolicy`1
 Tandem.Advanced.AgentProfiles

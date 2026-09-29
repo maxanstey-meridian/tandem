@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using FluentAssertions;
-using Microsoft.Extensions.AI;
 
 #pragma warning disable MAAI001
 
@@ -324,6 +323,123 @@ public sealed class WorkspaceGrepToolsTests
     }
 
     [Fact]
+    public async Task Inside_git_ignored_files_are_skipped_and_tracked_build_directories_searched()
+    {
+        using var rootDirectory = new TempDirectory();
+        var root = rootDirectory.Path;
+        await Git(root, "init", "-q");
+        await File.WriteAllTextAsync(Path.Combine(root, ".gitignore"), "generated/\n*.log\n");
+        foreach (
+            var path in new[]
+            {
+                "bin/Tracked.cs",
+                "generated/Ignored.cs",
+                "node_modules/pkg/Untracked.js",
+                "src/Source.cs",
+                "trace.log",
+            }
+        )
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(root, path))!);
+            await File.WriteAllTextAsync(Path.Combine(root, path), "MATCH");
+        }
+        await Git(root, "add", "-f", "bin/Tracked.cs");
+
+        var page = await WorkspaceGrepTools.SearchAsync(root, "", "MATCH", null, true);
+        var named = await WorkspaceGrepTools.SearchAsync(
+            root,
+            "generated",
+            "MATCH",
+            null,
+            true
+        );
+        var prefixed = await WorkspaceGrepTools.SearchAsync(
+            root,
+            "",
+            "MATCH",
+            "generated/*.cs",
+            true
+        );
+
+        page.Matches.Select(m => m.Path)
+            .Should()
+            .Equal("bin/Tracked.cs", "node_modules/pkg/Untracked.js", "src/Source.cs");
+        named.Matches.Select(m => m.Path).Should().Equal("generated/Ignored.cs");
+        prefixed.Matches.Select(m => m.Path).Should().Equal("generated/Ignored.cs");
+    }
+
+    [Fact]
+    public async Task Outside_git_pruned_directories_are_not_traversed()
+    {
+        using var rootDirectory = new TempDirectory();
+        var root = rootDirectory.Path;
+        using var outsideDirectory = new TempDirectory();
+        var outside = outsideDirectory.Path;
+        Directory.CreateDirectory(Path.Combine(root, "node_modules", "pkg"));
+        await File.WriteAllTextAsync(
+            Path.Combine(root, "node_modules", "pkg", "a.js"),
+            "MATCH"
+        );
+        Directory.CreateSymbolicLink(
+            Path.Combine(root, "node_modules", "pkg", "link"),
+            outside
+        );
+        await File.WriteAllTextAsync(Path.Combine(root, "kept.txt"), "MATCH");
+
+        var pruned = await WorkspaceGrepTools.SearchAsync(root, "", "MATCH", null, true);
+        var included = await WorkspaceGrepTools.SearchAsync(
+            root,
+            "",
+            "MATCH",
+            null,
+            true,
+            includeExcluded: true
+        );
+
+        pruned.Matches.Select(m => m.Path).Should().Equal("kept.txt");
+        pruned.SkippedCount.Should().Be(0, "the pruned directory's link is never visited");
+        included
+            .Matches.Select(m => m.Path)
+            .Should()
+            .Equal("kept.txt", "node_modules/pkg/a.js");
+        included.Skipped.Should().Equal("node_modules/pkg/link: symbolic link");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_full_page_stops_before_reading_later_files(bool insideGit)
+    {
+        using var rootDirectory = new TempDirectory();
+        var root = rootDirectory.Path;
+        if (insideGit)
+        {
+            await Git(root, "init", "-q");
+        }
+        await File.WriteAllTextAsync(Path.Combine(root, "a.txt"), "MATCH\nMATCH\n");
+        await File.WriteAllBytesAsync(Path.Combine(root, "z.txt"), [0xff, 0xfe, 0xfd]);
+
+        var first = await WorkspaceGrepTools.SearchAsync(
+            root,
+            "",
+            "MATCH",
+            null,
+            true,
+            limit: 1
+        );
+        var complete = await WorkspaceGrepTools.SearchAsync(root, "", "MATCH", null, true);
+
+        first.NextOffset.Should().Be(1);
+        first.SkippedCount.Should().Be(0, "z.txt is never opened once the page is full");
+        complete.Skipped.Should().ContainSingle().Which.Should().StartWith("z.txt:");
+    }
+
+    private static async Task Git(string root, params string[] arguments) =>
+        (await LocalProcess.RunAsync(new LocalProcessRequest("git", arguments, root)))
+            .ExitCode.Should()
+            .Be(0);
+
+    [Fact]
     public void Grep_page_payload_carries_no_derivable_fields_or_instructions()
     {
         var final = JsonSerializer.SerializeToElement(
@@ -351,9 +467,7 @@ public sealed class WorkspaceGrepToolsTests
     [Fact]
     public void Grep_schema_describes_skips_in_prose_without_directory_enumeration()
     {
-        var options = new ChatOptions();
-        WorkspaceGrepTools.Add(options, Path.GetTempPath());
-        var tool = (AIFunction)options.Tools!.Single();
+        var tool = WorkspaceGrepTools.Create(Path.GetTempPath());
         var schema = tool.JsonSchema.GetRawText();
         foreach (var entry in WorkspaceSearchPolicy.ExcludedDirectories)
         {
