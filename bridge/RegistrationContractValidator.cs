@@ -3,57 +3,108 @@ using System.Text.RegularExpressions;
 
 namespace Tandem.NodeApiSpike;
 
+/// <summary>
+/// Parses the registration contract into per-kind types and checks what only the whole
+/// graph can know: references, outputs, reachability and callback identity. Range and
+/// shape rules that Tandem's builders own are enforced when the graph is built and
+/// surfaced through <see cref="CoreRule{T}"/>.
+/// </summary>
 internal static partial class RegistrationContractValidator
 {
-    private static readonly JsonSerializerOptions _options = TandemJson.CreateTypedContract();
+    private static readonly JsonSerializerOptions _options = new(TandemJson.CreateTypedContract())
+    {
+        AllowOutOfOrderMetadataProperties = true,
+        RespectNullableAnnotations = true,
+        RespectRequiredConstructorParameters = true,
+    };
 
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*$")]
     private static partial Regex EnvironmentVariableName();
 
     public static RegisteredGraphContract ParseAndValidate(string definitionJson)
     {
-        RegisteredGraphContract? graph;
-        JsonDocument document;
+        RegisteredGraphContract graph;
         try
         {
-            document = JsonDocument.Parse(definitionJson);
-            graph = JsonSerializer.Deserialize<RegisteredGraphContract>(definitionJson, _options);
+            graph =
+                JsonSerializer.Deserialize<RegisteredGraphContract>(definitionJson, _options)
+                ?? throw Invalid("registration must not be null.");
         }
-        catch (JsonException exception)
+        catch (Exception exception) when (exception is JsonException or NotSupportedException)
         {
             throw Invalid($"registration JSON is invalid: {exception.Message}");
         }
-        using (document)
-        {
-            if (document.RootElement.ValueKind != JsonValueKind.Object)
-                throw Invalid("registration must be a JSON object.");
-        }
-        if (graph is null)
-            throw Invalid("registration must not be null.");
 
         var errors = new List<string>();
+        RejectNullEntries(errors, graph);
+        if (errors.Count == 0)
+        {
+            ValidateGraph(errors, graph);
+        }
+        if (errors.Count > 0)
+            throw Invalid(string.Join("\n", errors.Select(error => $"- {error}")));
+        return graph;
+    }
+
+    /// <summary>Runs a Tandem builder step and reports its validation failure against the contract path.</summary>
+    public static T CoreRule<T>(string path, Func<T> build)
+    {
+        try
+        {
+            return build();
+        }
+        catch (Exception exception)
+            when (exception is ArgumentException or InvalidOperationException or OverflowException)
+        {
+            throw Invalid($"- {path}: {exception.Message}");
+        }
+    }
+
+    public static void CoreRule(string path, Action build) =>
+        CoreRule(
+            path,
+            () =>
+            {
+                build();
+                return true;
+            }
+        );
+
+    public static IEnumerable<RegisteredNodeContract> EnumerateNodes(
+        IEnumerable<RegisteredNodeContract> nodes
+    )
+    {
+        foreach (var node in nodes)
+        {
+            yield return node;
+            var children = node switch
+            {
+                ParallelNodeContract parallel => parallel.Branches.Select(branch =>
+                    branch.Participant
+                ),
+                CollectionNodeContract collection => collection.Agents,
+                _ => [],
+            };
+            foreach (var child in EnumerateNodes(children))
+            {
+                yield return child;
+            }
+        }
+    }
+
+    private static void ValidateGraph(List<string> errors, RegisteredGraphContract graph)
+    {
         if (graph.ContractVersion != 10)
             errors.Add($"contractVersion must be 10; received {graph.ContractVersion}.");
         Required(errors, "name", graph.Name);
-        Required(errors, "start", graph.Start);
-        Required(errors, "initialState", graph.InitialState);
-        Json(errors, "initialState", graph.InitialState, objectRoot: false);
-        if (graph.Nodes is null)
-            errors.Add("nodes is required and must not be null.");
-        if (graph.Routes is null)
-            errors.Add("routes is required and must not be null.");
-        if (graph.Outputs is null)
-            errors.Add("outputs is required and must not be null.");
-        if (graph.Outputs is { Length: 0 })
+        Json(errors, "initialState", graph.InitialState);
+        if (graph.Outputs.Length == 0)
             errors.Add("outputs must contain at least one node ID.");
         if (graph.LedgerPath is not null && string.IsNullOrWhiteSpace(graph.LedgerPath))
             errors.Add("ledgerPath must be non-blank when provided.");
-        if (graph.Presentation is not null && graph.Presentation != "terminal")
-            errors.Add("presentation must be null or 'terminal'.");
-        if (graph.Terminal is not null && graph.Presentation != "terminal")
+        if (graph.Terminal is not null && graph.Presentation != RegisteredPresentation.Terminal)
             errors.Add("terminal options require terminal presentation.");
         Unique(errors, "terminal.truncatedToolNames", graph.Terminal?.TruncatedToolNames);
-        OptionalCallback(errors, "observationCallback", graph.ObservationCallback);
         if (
             graph.LedgerPath is null
             && (graph.Persist || EnumerateNodes(graph.Nodes).Any(node => node.Persist == true))
@@ -61,164 +112,201 @@ internal static partial class RegistrationContractValidator
             errors.Add("ledgerPath is required when persistence is enabled.");
 
         var nodes = new Dictionary<string, RegisteredNodeContract>(StringComparer.Ordinal);
-        var authoredIds = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (node, index) in (graph.Nodes ?? []).Select((value, index) => (value, index)))
+        foreach (var (index, node) in graph.Nodes.Index())
         {
-            var path = $"nodes[{index}]";
-            if (node is null)
-            {
-                errors.Add($"{path} must not be null.");
-                continue;
-            }
-            Required(errors, $"{path}.id", node.Id);
-            Required(errors, $"{path}.kind", node.Kind);
-            if (!string.IsNullOrWhiteSpace(node.Id))
-            {
-                if (!nodes.TryAdd(node.Id, node))
-                    errors.Add($"{path}.id duplicates node ID '{node.Id}'.");
-                if (!authoredIds.Add(node.Id))
-                    errors.Add($"{path}.id duplicates authored participant ID '{node.Id}'.");
-            }
-            ValidateNode(errors, node, path, nested: false, authoredIds);
+            if (!nodes.TryAdd(node.Id, node))
+                errors.Add($"nodes[{index}].id duplicates node ID '{node.Id}'.");
+            ValidateNode(errors, node, $"nodes[{index}]");
         }
-        if (!string.IsNullOrWhiteSpace(graph.Start) && !nodes.ContainsKey(graph.Start))
+
+        if (!nodes.TryGetValue(graph.Start, out var start))
             errors.Add($"start references unknown node '{graph.Start}'.");
-        else if (
-            !string.IsNullOrWhiteSpace(graph.Start)
-            && nodes[graph.Start].Kind is "completion" or "failure"
-        )
+        else if (start is TerminalNodeContract)
             errors.Add($"start node '{graph.Start}' cannot be a terminal.");
 
         Unique(errors, "outputs", graph.Outputs);
-        foreach (var (id, index) in (graph.Outputs ?? []).Select((value, index) => (value, index)))
+        foreach (var (index, id) in graph.Outputs.Index())
         {
             if (string.IsNullOrWhiteSpace(id))
                 continue;
             if (!nodes.TryGetValue(id, out var node))
                 errors.Add($"outputs[{index}] references unknown node '{id}'.");
-            else if (node.Kind is not ("completion" or "failure"))
+            else if (node is not TerminalNodeContract)
                 errors.Add($"outputs[{index}] node '{id}' must be a completion or failure.");
         }
 
+        foreach (var (index, route) in graph.Routes.Index())
+            ValidateRoute(errors, nodes, route, $"routes[{index}]");
+        // Tandem's builder rejects a second unconditional route only for step and interaction
+        // sources, so outcome routes keep this rule here until it moves into the builder.
         foreach (
-            var (route, index) in (graph.Routes ?? []).Select((value, index) => (value, index))
+            var group in graph
+                .Routes.Where(route => route.Outcome is not null && route.PredicateCallback is null)
+                .GroupBy(route => (route.Source, route.Outcome))
+                .Where(group => group.Count() > 1)
         )
-        {
-            var path = $"routes[{index}]";
-            if (route is null)
-            {
-                errors.Add($"{path} must not be null.");
-                continue;
-            }
-            Required(errors, $"{path}.source", route.Source);
-            Required(errors, $"{path}.target", route.Target);
-            Required(errors, $"{path}.label", route.Label);
-            Reference(errors, nodes, $"{path}.source", route.Source);
-            Reference(errors, nodes, $"{path}.target", route.Target);
-            OptionalCallback(errors, $"{path}.predicateCallback", route.PredicateCallback);
-            if (route.Outcome is not null && route.Outcome is not ("success" or "failed"))
-                errors.Add($"{path}.outcome must be 'success' or 'failed'.");
-            if (
-                !string.IsNullOrWhiteSpace(route.Source)
-                && nodes.TryGetValue(route.Source, out var source)
-            )
-            {
-                if (source.Kind is "agent" or "parallel" && route.Outcome is null)
-                    errors.Add(
-                        $"{path}.outcome is required for {source.Kind} source '{route.Source}'."
-                    );
-                if (source.Kind is not ("agent" or "parallel") && route.Outcome is not null)
-                    errors.Add(
-                        $"{path}.outcome is forbidden for {source.Kind} source '{route.Source}'."
-                    );
-                if (source.Kind is "completion" or "failure")
-                    errors.Add(
-                        $"{path}.source terminal '{route.Source}' cannot have outgoing routes."
-                    );
-            }
-        }
-        var handlerIds = new HashSet<string>(StringComparer.Ordinal);
-        var handlerTargets = new HashSet<string>(StringComparer.Ordinal);
-        foreach (
-            var (binding, index) in (graph.InteractionHandlers ?? []).Select(
-                (value, index) => (value, index)
-            )
-        )
-        {
-            var path = $"interactionHandlers[{index}]";
-            if (binding is null)
-            {
-                errors.Add($"{path} must not be null.");
-                continue;
-            }
-            Required(errors, $"{path}.id", binding.Id);
-            if (!string.IsNullOrWhiteSpace(binding.Id) && !handlerIds.Add(binding.Id))
-                errors.Add($"{path}.id duplicates interaction handler ID '{binding.Id}'.");
-            Required(errors, $"{path}.target", binding.Target);
-            if (!string.IsNullOrWhiteSpace(binding.Target))
-            {
-                if (!handlerTargets.Add(binding.Target))
-                    errors.Add(
-                        $"{path}.target duplicates interaction handler target '{binding.Target}'."
-                    );
-                if (!nodes.TryGetValue(binding.Target, out var target))
-                    errors.Add($"{path}.target references unknown node '{binding.Target}'.");
-                else if (target.Kind != "interaction")
-                    errors.Add($"{path}.target node '{binding.Target}' must be an interaction.");
-            }
-            Required(errors, $"{path}.handleCallback", binding.HandleCallback);
-        }
-        ValidateCallbackReferences(errors, graph);
-        ValidateGraphShape(errors, graph, nodes);
-        if (errors.Count > 0)
-            throw Invalid(string.Join("\n", errors.Select(error => $"- {error}")));
-        return graph;
+            errors.Add(
+                $"routes from '{group.Key.Source}' for outcome '{group.Key.Outcome?.ToString().ToLowerInvariant()}' contain more than one unconditional route."
+            );
+        ValidateInteractionHandlers(errors, nodes, graph.InteractionHandlers ?? []);
+        ValidateCallbacks(errors, graph);
+        ValidateReachability(errors, graph, nodes);
     }
 
-    private static void ValidateGraphShape(
+    private static void ValidateNode(List<string> errors, RegisteredNodeContract node, string path)
+    {
+        switch (node)
+        {
+            case ParallelNodeContract parallel:
+                foreach (var (index, branch) in parallel.Branches.Index())
+                {
+                    var participantPath = $"{path}.branches[{index}].participant";
+                    if (branch.Participant is not (StageNodeContract or AgentNodeContract))
+                        errors.Add(
+                            $"{participantPath}.kind '{KindName(branch.Participant)}' is unsupported in a parallel branch."
+                        );
+                    ValidateNode(errors, branch.Participant, participantPath);
+                }
+                break;
+            case CollectionNodeContract collection:
+                foreach (var (index, agent) in collection.Agents.Index())
+                {
+                    if (agent is not AgentNodeContract)
+                        errors.Add($"{path}.agents[{index}] must be an agent.");
+                    ValidateNode(errors, agent, $"{path}.agents[{index}]");
+                }
+                break;
+            case AgentNodeContract agent:
+                ValidateAgent(errors, agent, path);
+                break;
+        }
+    }
+
+    private static void ValidateAgent(List<string> errors, AgentNodeContract agent, string path)
+    {
+        ValidateClient(errors, agent.Client, $"{path}.client");
+        if (agent.Reasoning is { } reasoning)
+        {
+            if ((reasoning.Effort is null) == (reasoning.MaxTokens is null))
+                errors.Add($"{path}.reasoning must specify exactly one of effort or maxTokens.");
+            if (
+                reasoning.MaxTokens is not null
+                && agent.Client.WireApi != RegisteredWireApi.Completions
+            )
+                errors.Add($"{path}.reasoning.maxTokens requires a completions client.");
+        }
+        var capabilities = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (index, capability) in agent.Capabilities.Index())
+        {
+            var capabilityPath = $"{path}.capabilities[{index}]";
+            if (!capabilities.Add(capability.Name))
+                errors.Add($"{capabilityPath}.name duplicates capability '{capability.Name}'.");
+            Json(errors, $"{capabilityPath}.jsonSchema", capability.JsonSchema);
+        }
+        if (agent.Checkpoint is { } checkpoint && !capabilities.Contains(checkpoint.CapabilityName))
+            errors.Add($"{path}.checkpoint.capabilityName must reference an attached capability.");
+        if (agent.Output is { } output)
+        {
+            var outputPath = $"{path}.output";
+            if (output.Raw)
+            {
+                if (output.RawParseCallback is null)
+                    errors.Add($"{outputPath}.rawParseCallback is required for raw output.");
+                if (output.JsonSchema is not null)
+                    errors.Add($"{outputPath}.jsonSchema is forbidden for raw output.");
+                if (output.ValidateCallback is not null)
+                    errors.Add($"{outputPath}.validateCallback is forbidden for raw output.");
+            }
+            else
+            {
+                Json(errors, $"{outputPath}.jsonSchema", output.JsonSchema);
+                if (output.ValidateCallback is null)
+                    errors.Add($"{outputPath}.validateCallback is required.");
+                if (output.RawParseCallback is not null)
+                    errors.Add($"{outputPath}.rawParseCallback is forbidden.");
+            }
+        }
+    }
+
+    private static void ValidateRoute(
         List<string> errors,
-        RegisteredGraphContract graph,
-        IReadOnlyDictionary<string, RegisteredNodeContract> nodes
+        Dictionary<string, RegisteredNodeContract> nodes,
+        RegisteredRouteContract route,
+        string path
     )
     {
-        var validRoutes = (graph.Routes ?? []).Where(route =>
-            route is not null
-            && !string.IsNullOrWhiteSpace(route.Source)
-            && !string.IsNullOrWhiteSpace(route.Target)
-            && nodes.ContainsKey(route.Source)
-            && nodes.ContainsKey(route.Target)
-        );
-        foreach (var group in validRoutes.GroupBy(route => (route!.Source!, route.Outcome)))
+        Required(errors, $"{path}.label", route.Label);
+        if (!nodes.ContainsKey(route.Target))
+            errors.Add($"{path}.target references unknown node '{route.Target}'.");
+        if (!nodes.TryGetValue(route.Source, out var source))
         {
-            if (group.Count(route => route!.PredicateCallback is null) > 1)
-            {
-                errors.Add(
-                    $"routes from '{group.Key.Item1}' for outcome '{group.Key.Outcome ?? "default"}' contain more than one unconditional route."
-                );
-            }
-        }
-
-        if (string.IsNullOrWhiteSpace(graph.Start) || !nodes.ContainsKey(graph.Start))
+            errors.Add($"{path}.source references unknown node '{route.Source}'.");
             return;
+        }
+        var routesByOutcome = source is AgentNodeContract or ParallelNodeContract;
+        if (routesByOutcome && route.Outcome is null)
+            errors.Add(
+                $"{path}.outcome is required for {KindName(source)} source '{route.Source}'."
+            );
+        if (!routesByOutcome && route.Outcome is not null)
+            errors.Add(
+                $"{path}.outcome is forbidden for {KindName(source)} source '{route.Source}'."
+            );
+        if (source is TerminalNodeContract)
+            errors.Add($"{path}.source terminal '{route.Source}' cannot have outgoing routes.");
+    }
+
+    private static void ValidateInteractionHandlers(
+        List<string> errors,
+        Dictionary<string, RegisteredNodeContract> nodes,
+        RegisteredInteractionHandlerContract[] handlers
+    )
+    {
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        var targets = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (index, handler) in handlers.Index())
+        {
+            var path = $"interactionHandlers[{index}]";
+            Required(errors, $"{path}.id", handler.Id);
+            if (!ids.Add(handler.Id))
+                errors.Add($"{path}.id duplicates interaction handler ID '{handler.Id}'.");
+            if (!targets.Add(handler.Target))
+                errors.Add(
+                    $"{path}.target duplicates interaction handler target '{handler.Target}'."
+                );
+            if (!nodes.TryGetValue(handler.Target, out var target))
+                errors.Add($"{path}.target references unknown node '{handler.Target}'.");
+            else if (target is not InteractionNodeContract)
+                errors.Add($"{path}.target node '{handler.Target}' must be an interaction.");
+        }
+    }
+
+    private static void ValidateReachability(
+        List<string> errors,
+        RegisteredGraphContract graph,
+        Dictionary<string, RegisteredNodeContract> nodes
+    )
+    {
+        if (!nodes.ContainsKey(graph.Start))
+            return;
+        var targetsBySource = graph
+            .Routes.Where(route =>
+                nodes.ContainsKey(route.Source) && nodes.ContainsKey(route.Target)
+            )
+            .ToLookup(route => route.Source, route => route.Target, StringComparer.Ordinal);
         var reachable = new HashSet<string>(StringComparer.Ordinal) { graph.Start };
-        var pending = new Queue<string>();
-        pending.Enqueue(graph.Start);
-        var bySource = validRoutes
-            .GroupBy(route => route!.Source!)
-            .ToDictionary(group => group.Key);
+        var pending = new Queue<string>([graph.Start]);
         while (pending.TryDequeue(out var source))
         {
-            if (!bySource.TryGetValue(source, out var routes))
-                continue;
-            foreach (var route in routes)
+            foreach (var target in targetsBySource[source])
             {
-                if (reachable.Add(route!.Target!))
-                    pending.Enqueue(route.Target!);
+                if (reachable.Add(target))
+                    pending.Enqueue(target);
             }
         }
 
-        var outputs = (graph.Outputs ?? []).ToHashSet(StringComparer.Ordinal);
-        foreach (var terminal in reachable.Where(id => nodes[id].Kind is "completion" or "failure"))
+        var outputs = graph.Outputs.ToHashSet(StringComparer.Ordinal);
+        foreach (var terminal in reachable.Where(id => nodes[id] is TerminalNodeContract))
         {
             if (!outputs.Contains(terminal))
                 errors.Add($"reachable terminal '{terminal}' must be listed in outputs.");
@@ -230,468 +318,120 @@ internal static partial class RegistrationContractValidator
         }
     }
 
-    private static void ValidateNode(
-        List<string> errors,
-        RegisteredNodeContract node,
-        string path,
-        bool nested,
-        HashSet<string> authoredIds
-    )
+    private static void ValidateCallbacks(List<string> errors, RegisteredGraphContract graph)
     {
-        if (
-            node.Kind
-            is not (
-                "stage"
-                or "interaction"
-                or "agent"
-                or "completion"
-                or "failure"
-                or "parallel"
-                or "collection"
-            )
-        )
+        var references = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (path, reference) in Callbacks(graph))
         {
-            if (!string.IsNullOrWhiteSpace(node.Kind))
-                errors.Add($"{path}.kind '{node.Kind}' is unsupported.");
-            return;
-        }
-        if (nested && node.Kind is not ("stage" or "agent"))
-            errors.Add($"{path}.kind '{node.Kind}' is unsupported in a parallel branch.");
-        if (node.Kind == "collection")
-        {
-            if (node.Max is null or <= 0)
-                errors.Add($"{path}.max must be positive.");
-            Required(errors, $"{path}.itemsCallback", node.ItemsCallback);
-            if (node.Agents is null)
-                errors.Add($"{path}.agents is required.");
-            foreach (var agent in node.Agents ?? [])
-            {
-                if (agent is null || agent.Kind != "agent")
-                {
-                    errors.Add($"{path}.agents must contain agents.");
-                    continue;
-                }
-                Required(errors, $"{path}.agent.id", agent.Id);
-                if (!authoredIds.Add(node.Id + "/" + agent.Id))
-                    errors.Add($"{path}.agent.id must be unique.");
-                ValidateNode(errors, agent, $"{path}.agents", true, authoredIds);
-            }
-            if (node.Branches is not null || node.MergeCallback is not null)
-                errors.Add($"{path} cannot contain parallel branches.");
-        }
-        else if (node.ItemsCallback is not null || node.Agents is not null)
-        {
-            errors.Add($"{path} cannot contain collection fields.");
-        }
-        if (node.Kind == "parallel")
-        {
-            if (node.Max is <= 0)
-                errors.Add($"{path}.max must be positive.");
-            if (nested)
-                return;
-            if (node.Branches is null)
-                errors.Add($"{path}.branches is required and must not be null.");
-            else if (node.Branches.Length < 2)
-                errors.Add($"{path}.branches must contain at least two branches.");
-            Required(errors, $"{path}.mergeCallback", node.MergeCallback);
-            var branchIds = new HashSet<string>(StringComparer.Ordinal);
-            foreach (
-                var (branch, index) in (node.Branches ?? []).Select(
-                    (value, index) => (value, index)
-                )
-            )
-            {
-                var branchPath = $"{path}.branches[{index}]";
-                if (branch is null)
-                {
-                    errors.Add($"{branchPath} must not be null.");
-                    continue;
-                }
-                Required(errors, $"{branchPath}.id", branch.Id);
-                if (!string.IsNullOrWhiteSpace(branch.Id) && !branchIds.Add(branch.Id))
-                    errors.Add($"{branchPath}.id duplicates branch ID '{branch.Id}'.");
-                if (branch.Participant is null)
-                {
-                    errors.Add($"{branchPath}.participant is required and must not be null.");
-                    continue;
-                }
-                Required(errors, $"{branchPath}.participant.id", branch.Participant.Id);
-                Required(errors, $"{branchPath}.participant.kind", branch.Participant.Kind);
-                if (
-                    !string.IsNullOrWhiteSpace(branch.Participant.Id)
-                    && !authoredIds.Add(branch.Participant.Id)
-                )
-                    errors.Add(
-                        $"{branchPath}.participant.id duplicates participant ID '{branch.Participant.Id}'."
-                    );
-                ValidateNode(
-                    errors,
-                    branch.Participant,
-                    $"{branchPath}.participant",
-                    nested: true,
-                    authoredIds
-                );
-            }
-        }
-        else if (node.Kind != "collection")
-        {
-            if (node.Max is not null)
-                errors.Add($"{path}.max is forbidden.");
-            if (node.Branches is not null)
-                errors.Add($"{path}.branches is forbidden.");
-            if (node.MergeCallback is not null)
-                errors.Add($"{path}.mergeCallback is forbidden.");
-        }
-        Field(errors, path, "runCallback", node.RunCallback, node.Kind is "stage" or "collection");
-        Field(errors, path, "requestCallback", node.RequestCallback, node.Kind == "interaction");
-        Field(
-            errors,
-            path,
-            "applyCallback",
-            node.ApplyCallback,
-            node.Kind is "interaction" or "collection"
-        );
-        Field(
-            errors,
-            path,
-            "summaryCallback",
-            node.SummaryCallback,
-            node.Kind is "completion" or "failure"
-        );
-        Field(errors, path, "messageCallback", node.MessageCallback, node.Kind == "agent");
-        if (node.Kind == "agent")
-        {
-            if (node.Output?.Raw != true || node.Instructions is null)
-                Required(errors, $"{path}.instructions", node.Instructions);
-        }
-        else if (node.Instructions is not null)
-            errors.Add($"{path}.instructions is forbidden.");
-        if (node.Kind == "agent")
-            ValidateAgent(errors, node, path);
-        else
-        {
-            if (node.Workspace is not null)
-                errors.Add($"{path}.workspace is forbidden.");
-            if (node.Checkpoint is not null)
-                errors.Add($"{path}.checkpoint is forbidden.");
-            if (node.Client is not null)
-                errors.Add($"{path}.client is forbidden.");
-            if (node.Output is not null)
-                errors.Add($"{path}.output is forbidden.");
-            if (node.Capabilities is not null)
-                errors.Add($"{path}.capabilities is forbidden.");
-            if (node.SkillDirectories is not null)
-                errors.Add($"{path}.skillDirectories is forbidden.");
-            if (node.Temperature is not null)
-                errors.Add($"{path}.temperature is forbidden.");
-            if (node.MaxOutputTokens is not null)
-                errors.Add($"{path}.maxOutputTokens is forbidden.");
-            if (node.Reasoning is not null)
-                errors.Add($"{path}.reasoning is forbidden.");
-            if (node.ContinueSession)
-                errors.Add($"{path}.continueSession is forbidden for kind '{node.Kind}'.");
-            if (node.TimeoutMilliseconds is not null)
-                errors.Add($"{path}.timeoutMilliseconds is forbidden for kind '{node.Kind}'.");
-        }
-        if (
-            node.TimeoutMilliseconds is { } timeout
-            && (!double.IsFinite(timeout) || timeout <= 0 || timeout > uint.MaxValue - 1)
-        )
-            errors.Add(
-                $"{path}.timeoutMilliseconds must be a finite positive number no greater than {uint.MaxValue - 1}."
-            );
-    }
-
-    private static void ValidateAgent(List<string> errors, RegisteredNodeContract node, string path)
-    {
-        if (node.Client is null)
-            errors.Add($"{path}.client is required.");
-        else
-            ValidateClient(errors, node.Client, $"{path}.client");
-        if (node.Capabilities is null)
-            errors.Add($"{path}.capabilities is required and must not be null.");
-        if (node.SkillDirectories is null)
-            errors.Add($"{path}.skillDirectories is required and must not be null.");
-        Unique(errors, $"{path}.skillDirectories", node.SkillDirectories);
-        if (
-            node.Temperature is { } temperature
-            && (!double.IsFinite(temperature) || temperature < 0 || temperature > 2)
-        )
-            errors.Add($"{path}.temperature must be a finite number between 0 and 2.");
-        if (node.MaxOutputTokens is <= 0)
-            errors.Add($"{path}.maxOutputTokens must be a positive integer.");
-        if (node.Reasoning is { } reasoning)
-        {
-            var hasEffort = reasoning.Effort is not null;
-            var hasMaxTokens = reasoning.MaxTokens is not null;
-            if (hasEffort == hasMaxTokens)
-                errors.Add($"{path}.reasoning must specify exactly one of effort or maxTokens.");
-            if (
-                reasoning.Effort is not null
-                && reasoning.Effort is not ("none" or "low" or "medium" or "high")
-            )
-                errors.Add($"{path}.reasoning.effort must be 'none', 'low', 'medium', or 'high'.");
-            if (reasoning.MaxTokens is < 1024)
-                errors.Add($"{path}.reasoning.maxTokens must be at least 1024.");
-            if (hasMaxTokens && node.Client?.WireApi != "completions")
-                errors.Add($"{path}.reasoning.maxTokens requires a completions client.");
-        }
-        if (node.Workspace is { } workspace)
-            ValidateWorkspace(errors, workspace, $"{path}.workspace");
-        if (node.Checkpoint is { } checkpoint)
-        {
-            if (checkpoint.ContextWindowTokens <= 0)
-                errors.Add($"{path}.checkpoint.contextWindowTokens must be positive.");
-            if (checkpoint.MaxOutputTokens <= 0)
-                errors.Add($"{path}.checkpoint.maxOutputTokens must be positive.");
-            else if (checkpoint.MaxOutputTokens >= checkpoint.ContextWindowTokens)
-                errors.Add(
-                    $"{path}.checkpoint.maxOutputTokens must be smaller than contextWindowTokens."
-                );
-            if (checkpoint.CheckpointAtPercent is <= 0 or >= 100)
-                errors.Add($"{path}.checkpoint.checkpointAtPercent must be between 1 and 99.");
-            Required(errors, $"{path}.checkpoint.capabilityName", checkpoint.CapabilityName);
-            Required(errors, $"{path}.checkpoint.instructions", checkpoint.Instructions);
-            Required(errors, $"{path}.checkpoint.messageCallback", checkpoint.MessageCallback);
-            if (
-                !(node.Capabilities ?? []).Any(capability =>
-                    capability?.Name == checkpoint.CapabilityName
-                )
-            )
-                errors.Add(
-                    $"{path}.checkpoint.capabilityName must reference an attached capability."
-                );
-        }
-        if (node.Output is { } output)
-        {
-            if (!output.Raw || output.Instructions is null)
-                Required(errors, $"{path}.output.instructions", output.Instructions);
-            Required(errors, $"{path}.output.valueType", output.ValueType);
-            if (output.Raw)
-            {
-                Required(errors, $"{path}.output.rawParseCallback", output.RawParseCallback);
-                if (output.JsonSchema is not null)
-                {
-                    errors.Add($"{path}.output.jsonSchema is forbidden for raw output.");
-                }
-                if (output.ValidateCallback is not null)
-                {
-                    errors.Add($"{path}.output.validateCallback is forbidden for raw output.");
-                }
-            }
-            else
-            {
-                Json(errors, $"{path}.output.jsonSchema", output.JsonSchema, objectRoot: true);
-                Required(errors, $"{path}.output.validateCallback", output.ValidateCallback);
-                if (output.RawParseCallback is not null)
-                {
-                    errors.Add($"{path}.output.rawParseCallback is forbidden.");
-                }
-            }
-            Required(errors, $"{path}.output.applyCallback", output.ApplyCallback);
-            OptionalCallback(
-                errors,
-                $"{path}.output.validateForCallback",
-                output.ValidateForCallback
-            );
-        }
-        var names = new HashSet<string>(StringComparer.Ordinal);
-        foreach (
-            var (capability, index) in (node.Capabilities ?? []).Select(
-                (value, index) => (value, index)
-            )
-        )
-        {
-            var capabilityPath = $"{path}.capabilities[{index}]";
-            if (capability is null)
-            {
-                errors.Add($"{capabilityPath} must not be null.");
+            if (reference is null)
                 continue;
-            }
-            Required(errors, $"{capabilityPath}.name", capability.Name);
-            Required(errors, $"{capabilityPath}.instructions", capability.Instructions);
-            if (!string.IsNullOrWhiteSpace(capability.Name) && !names.Add(capability.Name))
-                errors.Add($"{capabilityPath}.name duplicates capability '{capability.Name}'.");
-            Required(errors, $"{capabilityPath}.valueType", capability.ValueType);
-            Json(errors, $"{capabilityPath}.jsonSchema", capability.JsonSchema, objectRoot: true);
-            Required(errors, $"{capabilityPath}.validateCallback", capability.ValidateCallback);
-            Required(errors, $"{capabilityPath}.applyCallback", capability.ApplyCallback);
-            Required(errors, $"{capabilityPath}.summaryCallback", capability.SummaryCallback);
-            OptionalCallback(
-                errors,
-                $"{capabilityPath}.validateForCallback",
-                capability.ValidateForCallback
-            );
+            if (string.IsNullOrWhiteSpace(reference))
+                errors.Add($"{path} must be non-blank.");
+            else if (!references.TryAdd(reference, path))
+                errors.Add(
+                    $"{path} duplicates callback reference '{reference}' from {references[reference]}."
+                );
         }
     }
 
-    private static void ValidateWorkspace(
-        List<string> errors,
-        RegisteredWorkspaceContract workspace,
-        string path
-    )
-    {
-        Required(errors, $"{path}.pathCallback", workspace.PathCallback);
-        Required(errors, $"{path}.commandsCallback", workspace.CommandsCallback);
-        OptionalCallback(errors, $"{path}.interceptCallback", workspace.InterceptCallback);
-        if (workspace.ToolGroups is null)
-        {
-            errors.Add($"{path}.toolGroups is required and must not be null.");
-            return;
-        }
-        if (workspace.ToolGroups.Length == 0)
-            errors.Add($"{path}.toolGroups must contain at least one group.");
-        var effective = new HashSet<string>(StringComparer.Ordinal);
-        var commandsSelected = false;
-        var allowed = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "read_file",
-            "ls",
-            "grep",
-            "write_file",
-            "delete_file",
-            "replace",
-            "replace_lines",
-            "git:ro",
-            "shell",
-            "web_search",
-            "web_fetch",
-        };
-        foreach (
-            var (group, index) in workspace.ToolGroups.Select((value, index) => (value, index))
-        )
-        {
-            var groupPath = $"{path}.toolGroups[{index}]";
-            if (group is null)
-            {
-                errors.Add($"{groupPath} must not be null.");
-                continue;
-            }
-            if (group.Tools is null)
-                errors.Add($"{groupPath}.tools is required and must not be null.");
-            if ((group.Tools?.Length ?? 0) == 0 && !group.IncludeCommands)
-                errors.Add($"{groupPath} must select at least one tool.");
-            OptionalCallback(errors, $"{groupPath}.whenCallback", group.WhenCallback);
-            var local = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var tool in group.Tools ?? [])
-            {
-                if (!allowed.Contains(tool))
-                    errors.Add($"{groupPath}.tools contains unknown tool '{tool}'.");
-                if (!local.Add(tool))
-                    errors.Add($"{groupPath}.tools duplicates '{tool}'.");
-                if (!effective.Add(tool))
-                    errors.Add($"{groupPath}.tools selects '{tool}' in more than one group.");
-            }
-            if (group.IncludeCommands && commandsSelected)
-                errors.Add($"{groupPath} selects workspace commands more than once.");
-            commandsSelected |= group.IncludeCommands;
-        }
-    }
-
-    private static void ValidateCallbackReferences(
-        List<string> errors,
+    private static IEnumerable<(string Path, string? Reference)> Callbacks(
         RegisteredGraphContract graph
     )
     {
-        var references = new Dictionary<string, string>(StringComparer.Ordinal);
-        void Add(string path, string? reference)
+        yield return ("observationCallback", graph.ObservationCallback);
+        foreach (var (index, node) in graph.Nodes.Index())
         {
-            if (string.IsNullOrWhiteSpace(reference))
-                return;
-            if (references.TryGetValue(reference, out var firstPath))
-                errors.Add($"{path} duplicates callback reference '{reference}' from {firstPath}.");
-            else
-                references.Add(reference, path);
+            foreach (var callback in Callbacks(node, $"nodes[{index}]"))
+                yield return callback;
         }
-
-        Add("observationCallback", graph.ObservationCallback);
-
-        void AddNode(RegisteredNodeContract node, string path)
-        {
-            Add($"{path}.runCallback", node.RunCallback);
-            Add($"{path}.requestCallback", node.RequestCallback);
-            Add($"{path}.applyCallback", node.ApplyCallback);
-            Add($"{path}.summaryCallback", node.SummaryCallback);
-            Add($"{path}.messageCallback", node.MessageCallback);
-            Add($"{path}.mergeCallback", node.MergeCallback);
-            Add($"{path}.checkpoint.messageCallback", node.Checkpoint?.MessageCallback);
-            if (node.Workspace is { } workspace)
-            {
-                Add($"{path}.workspace.pathCallback", workspace.PathCallback);
-                Add($"{path}.workspace.commandsCallback", workspace.CommandsCallback);
-                Add($"{path}.workspace.interceptCallback", workspace.InterceptCallback);
-                foreach (
-                    var (group, index) in (workspace.ToolGroups ?? []).Select(
-                        (value, index) => (value, index)
-                    )
-                )
-                    Add($"{path}.workspace.toolGroups[{index}].whenCallback", group?.WhenCallback);
-            }
-            if (node.Output is { } output)
-            {
-                Add($"{path}.output.validateCallback", output.ValidateCallback);
-                Add($"{path}.output.validateForCallback", output.ValidateForCallback);
-                Add($"{path}.output.applyCallback", output.ApplyCallback);
-            }
-            foreach (
-                var (capability, capabilityIndex) in (node.Capabilities ?? []).Select(
-                    (value, capabilityIndex) => (value, capabilityIndex)
-                )
-            )
-            {
-                if (capability is null)
-                    continue;
-                var capabilityPath = $"{path}.capabilities[{capabilityIndex}]";
-                Add($"{capabilityPath}.validateCallback", capability.ValidateCallback);
-                Add($"{capabilityPath}.validateForCallback", capability.ValidateForCallback);
-                Add($"{capabilityPath}.applyCallback", capability.ApplyCallback);
-                Add($"{capabilityPath}.summaryCallback", capability.SummaryCallback);
-            }
-            foreach (
-                var (branch, index) in (node.Branches ?? []).Select(
-                    (value, index) => (value, index)
-                )
-            )
-            {
-                if (branch?.Participant is not null)
-                    AddNode(branch.Participant, $"{path}.branches[{index}].participant");
-            }
-        }
-        foreach (var (node, index) in (graph.Nodes ?? []).Select((value, index) => (value, index)))
-        {
-            if (node is not null)
-                AddNode(node, $"nodes[{index}]");
-        }
-        foreach (
-            var (route, index) in (graph.Routes ?? []).Select((value, index) => (value, index))
-        )
-            Add($"routes[{index}].predicateCallback", route?.PredicateCallback);
-        foreach (
-            var (binding, index) in (graph.InteractionHandlers ?? []).Select(
-                (value, index) => (value, index)
-            )
-        )
-            Add($"interactionHandlers[{index}].handleCallback", binding?.HandleCallback);
+        foreach (var (index, route) in graph.Routes.Index())
+            yield return ($"routes[{index}].predicateCallback", route.PredicateCallback);
+        foreach (var (index, handler) in (graph.InteractionHandlers ?? []).Index())
+            yield return ($"interactionHandlers[{index}].handleCallback", handler.HandleCallback);
     }
 
-    private static IEnumerable<RegisteredNodeContract> EnumerateNodes(
-        RegisteredNodeContract[]? nodes
+    private static IEnumerable<(string Path, string? Reference)> Callbacks(
+        RegisteredNodeContract node,
+        string path
     )
     {
-        foreach (var node in nodes ?? [])
+        switch (node)
         {
-            if (node is null)
-                continue;
-            yield return node;
-            foreach (var agent in node.Agents ?? [])
-            {
-                yield return agent;
-            }
-            foreach (var branch in node.Branches ?? [])
-            {
-                if (branch?.Participant is not null)
-                    yield return branch.Participant;
-            }
+            case StageNodeContract stage:
+                yield return ($"{path}.runCallback", stage.RunCallback);
+                break;
+            case InteractionNodeContract interaction:
+                yield return ($"{path}.requestCallback", interaction.RequestCallback);
+                yield return ($"{path}.applyCallback", interaction.ApplyCallback);
+                break;
+            case TerminalNodeContract terminal:
+                yield return ($"{path}.summaryCallback", terminal.SummaryCallback);
+                break;
+            case ParallelNodeContract parallel:
+                yield return ($"{path}.mergeCallback", parallel.MergeCallback);
+                foreach (var (index, branch) in parallel.Branches.Index())
+                {
+                    foreach (
+                        var callback in Callbacks(
+                            branch.Participant,
+                            $"{path}.branches[{index}].participant"
+                        )
+                    )
+                        yield return callback;
+                }
+                break;
+            case CollectionNodeContract collection:
+                yield return ($"{path}.itemsCallback", collection.ItemsCallback);
+                yield return ($"{path}.runCallback", collection.RunCallback);
+                yield return ($"{path}.applyCallback", collection.ApplyCallback);
+                foreach (var (index, agent) in collection.Agents.Index())
+                {
+                    foreach (var callback in Callbacks(agent, $"{path}.agents[{index}]"))
+                        yield return callback;
+                }
+                break;
+            case AgentNodeContract agent:
+                yield return ($"{path}.messageCallback", agent.MessageCallback);
+                yield return (
+                    $"{path}.checkpoint.messageCallback",
+                    agent.Checkpoint?.MessageCallback
+                );
+                if (agent.Workspace is { } workspace)
+                {
+                    yield return ($"{path}.workspace.pathCallback", workspace.PathCallback);
+                    yield return ($"{path}.workspace.commandsCallback", workspace.CommandsCallback);
+                    yield return (
+                        $"{path}.workspace.interceptCallback",
+                        workspace.InterceptCallback
+                    );
+                    foreach (var (index, group) in workspace.ToolGroups.Index())
+                        yield return (
+                            $"{path}.workspace.toolGroups[{index}].whenCallback",
+                            group.WhenCallback
+                        );
+                }
+                if (agent.Output is { } output)
+                {
+                    yield return ($"{path}.output.validateCallback", output.ValidateCallback);
+                    yield return ($"{path}.output.validateForCallback", output.ValidateForCallback);
+                    yield return ($"{path}.output.rawParseCallback", output.RawParseCallback);
+                    yield return ($"{path}.output.applyCallback", output.ApplyCallback);
+                }
+                foreach (var (index, capability) in agent.Capabilities.Index())
+                {
+                    var capabilityPath = $"{path}.capabilities[{index}]";
+                    yield return (
+                        $"{capabilityPath}.validateCallback",
+                        capability.ValidateCallback
+                    );
+                    yield return (
+                        $"{capabilityPath}.validateForCallback",
+                        capability.ValidateForCallback
+                    );
+                    yield return ($"{capabilityPath}.applyCallback", capability.ApplyCallback);
+                    yield return ($"{capabilityPath}.summaryCallback", capability.SummaryCallback);
+                }
+                break;
         }
     }
 
@@ -709,14 +449,9 @@ internal static partial class RegistrationContractValidator
             errors.Add(
                 $"{path} requestTimeoutMs, idleTimeoutMs and maxAttempts must be positive integers."
             );
-        if (client.Kind != "openai-compatible")
-            errors.Add($"{path}.kind must be 'openai-compatible'.");
         if (client.Version != 1)
             errors.Add($"{path}.version must be 1.");
-        Required(errors, $"{path}.endpoint", client.Endpoint);
         Required(errors, $"{path}.model", client.Model);
-        if (client.WireApi is not ("completions" or "responses"))
-            errors.Add($"{path}.wireApi must be 'completions' or 'responses'.");
         if (
             client.ApiKeyEnvironmentVariable is not null
             && !EnvironmentVariableName().IsMatch(client.ApiKeyEnvironmentVariable)
@@ -729,10 +464,7 @@ internal static partial class RegistrationContractValidator
             || endpoint.Scheme is not ("http" or "https")
         )
             errors.Add($"{path}.endpoint must be an absolute HTTP(S) URI.");
-        else if (
-            !IsLoopback(endpoint.Host)
-            && string.IsNullOrWhiteSpace(client.ApiKeyEnvironmentVariable)
-        )
+        else if (!IsLoopback(endpoint.Host) && client.ApiKeyEnvironmentVariable is null)
             errors.Add($"{path}.apiKeyEnvironmentVariable is required for non-loopback endpoints.");
     }
 
@@ -743,25 +475,58 @@ internal static partial class RegistrationContractValidator
             && System.Net.IPAddress.IsLoopback(address)
         );
 
-    private static void Field(
-        List<string> errors,
-        string path,
-        string name,
-        string? value,
-        bool required
-    )
+    // System.Text.Json does not apply nullable annotations to array elements.
+    private static void RejectNullEntries(List<string> errors, RegisteredGraphContract graph)
     {
-        if (!required && value is not null)
-            errors.Add($"{path}.{name} is forbidden.");
-        else if (required)
-            Required(errors, $"{path}.{name}", value);
+        void Check<T>(string path, T?[]? items)
+            where T : class
+        {
+            foreach (var (index, item) in (items ?? []).Index())
+            {
+                if (item is null)
+                    errors.Add($"{path}[{index}] must not be null.");
+            }
+        }
+
+        void CheckNode(RegisteredNodeContract? node, string path)
+        {
+            switch (node)
+            {
+                case ParallelNodeContract parallel:
+                    Check($"{path}.branches", parallel.Branches);
+                    foreach (var (index, branch) in parallel.Branches.Index())
+                        CheckNode(branch?.Participant, $"{path}.branches[{index}].participant");
+                    break;
+                case CollectionNodeContract collection:
+                    Check($"{path}.agents", collection.Agents);
+                    foreach (var (index, agent) in collection.Agents.Index())
+                        CheckNode(agent, $"{path}.agents[{index}]");
+                    break;
+                case AgentNodeContract agent:
+                    Check($"{path}.capabilities", agent.Capabilities);
+                    Check($"{path}.workspace.toolGroups", agent.Workspace?.ToolGroups);
+                    break;
+            }
+        }
+
+        Check("nodes", graph.Nodes);
+        Check("routes", graph.Routes);
+        Check("interactionHandlers", graph.InteractionHandlers);
+        foreach (var (index, node) in graph.Nodes.Index())
+            CheckNode(node, $"nodes[{index}]");
     }
 
-    private static void OptionalCallback(List<string> errors, string path, string? value)
-    {
-        if (value is not null && string.IsNullOrWhiteSpace(value))
-            errors.Add($"{path} must be non-blank when provided.");
-    }
+    private static string KindName(RegisteredNodeContract node) =>
+        node switch
+        {
+            StageNodeContract => "stage",
+            InteractionNodeContract => "interaction",
+            AgentNodeContract => "agent",
+            ParallelNodeContract => "parallel",
+            CollectionNodeContract => "collection",
+            CompletionNodeContract => "completion",
+            _ => "failure",
+        };
 
     private static void Required(List<string> errors, string path, string? value)
     {
@@ -769,47 +534,28 @@ internal static partial class RegistrationContractValidator
             errors.Add($"{path} is required and must be non-blank.");
     }
 
-    private static void Reference(
-        List<string> errors,
-        Dictionary<string, RegisteredNodeContract> nodes,
-        string path,
-        string? id
-    )
+    private static void Unique(List<string> errors, string path, string[]? values)
     {
-        if (!string.IsNullOrWhiteSpace(id) && !nodes.ContainsKey(id))
-            errors.Add($"{path} references unknown node '{id}'.");
-    }
-
-    private static HashSet<string> Unique(List<string> errors, string path, string[]? values)
-    {
-        var result = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (value, index) in (values ?? []).Select((value, index) => (value, index)))
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (index, value) in (values ?? []).Index())
         {
             if (string.IsNullOrWhiteSpace(value))
                 errors.Add($"{path}[{index}] must be non-blank.");
-            else if (!result.Add(value))
+            else if (!seen.Add(value))
                 errors.Add($"{path}[{index}] duplicates '{value}'.");
         }
-        return result;
     }
 
-    private static void Json(List<string> errors, string path, string? value, bool objectRoot)
+    private static void Json(List<string> errors, string path, string? value)
     {
-        Required(errors, path, value);
         if (string.IsNullOrWhiteSpace(value))
+        {
+            errors.Add($"{path} is required and must be non-blank.");
             return;
+        }
         try
         {
-            using var document = JsonDocument.Parse(value);
-            if (
-                objectRoot
-                && (
-                    document.RootElement.ValueKind != JsonValueKind.Object
-                    || !document.RootElement.TryGetProperty("type", out var type)
-                    || type.GetString() != "object"
-                )
-            )
-                errors.Add($"{path} must declare a JSON Schema object root with type 'object'.");
+            using var _ = JsonDocument.Parse(value);
         }
         catch (JsonException)
         {

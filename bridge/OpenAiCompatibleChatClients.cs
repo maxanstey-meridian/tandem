@@ -8,25 +8,13 @@ namespace Tandem.NodeApiSpike;
 
 internal static class OpenAiCompatibleChatClients
 {
-    public static async Task<IChatClient> CreateAsync(
+    public static IChatClient Create(
         RegisteredChatClientContract descriptor,
-        CancellationToken cancellationToken,
         int? reasoningMaxTokens = null
     )
     {
-        var endpoint = new Uri(descriptor.Endpoint!, UriKind.Absolute);
-        var apiKey = descriptor.ApiKeyEnvironmentVariable is null
-            ? "tandem-local-proxy-placeholder"
-            : Environment.GetEnvironmentVariable(descriptor.ApiKeyEnvironmentVariable)
-                ?? throw new InvalidOperationException(
-                    $"Chat client API key environment variable '{descriptor.ApiKeyEnvironmentVariable}' is not set."
-                );
-
-        if (descriptor.VerifyModel)
-        {
-            await VerifyModelAsync(endpoint, descriptor.Model!, apiKey, cancellationToken);
-        }
-
+        var endpoint = new Uri(descriptor.Endpoint, UriKind.Absolute);
+        var apiKey = ApiKey(descriptor);
         var clientOptions = new OpenAIClientOptions { Endpoint = endpoint };
         if (descriptor.MaxAttempts is not null)
         {
@@ -35,19 +23,19 @@ internal static class OpenAiCompatibleChatClients
         }
         var client = new OpenAIClient(new ApiKeyCredential(apiKey), clientOptions);
         IChatClient chatClient;
-        if (descriptor.WireApi == "responses")
+        if (descriptor.WireApi == RegisteredWireApi.Responses)
         {
 #pragma warning disable OPENAI001
-            chatClient = client.GetResponsesClient().AsIChatClient(descriptor.Model!);
+            chatClient = client.GetResponsesClient().AsIChatClient(descriptor.Model);
 #pragma warning restore OPENAI001
         }
         else
         {
-            chatClient = client.GetChatClient(descriptor.Model!).AsIChatClient();
+            chatClient = client.GetChatClient(descriptor.Model).AsIChatClient();
         }
 
         if (
-            descriptor.WireApi == "completions"
+            descriptor.WireApi == RegisteredWireApi.Completions
             && (
                 reasoningMaxTokens is not null
                 || endpoint.Host.Equals("openrouter.ai", StringComparison.OrdinalIgnoreCase)
@@ -69,13 +57,14 @@ internal static class OpenAiCompatibleChatClients
         return new StreamRetryChatClient(chatClient, maxAttempts: descriptor.MaxAttempts ?? 4);
     }
 
-    private static async Task VerifyModelAsync(
-        Uri endpoint,
-        string model,
-        string apiKey,
+    public static async Task VerifyModelAsync(
+        RegisteredChatClientContract descriptor,
         CancellationToken cancellationToken
     )
     {
+        var endpoint = new Uri(descriptor.Endpoint, UriKind.Absolute);
+        var model = descriptor.Model;
+        var apiKey = ApiKey(descriptor);
         using var http = new HttpClient
         {
             BaseAddress = endpoint,
@@ -98,6 +87,14 @@ internal static class OpenAiCompatibleChatClients
             );
         }
     }
+
+    private static string ApiKey(RegisteredChatClientContract descriptor) =>
+        descriptor.ApiKeyEnvironmentVariable is null
+            ? "tandem-local-proxy-placeholder"
+            : Environment.GetEnvironmentVariable(descriptor.ApiKeyEnvironmentVariable)
+                ?? throw new InvalidOperationException(
+                    $"Chat client API key environment variable '{descriptor.ApiKeyEnvironmentVariable}' is not set."
+                );
 
     private sealed record ModelList(Model[] Data);
 

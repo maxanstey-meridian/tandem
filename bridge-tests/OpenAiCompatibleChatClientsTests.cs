@@ -32,23 +32,21 @@ public sealed class OpenAiCompatibleChatClientsTests
 #pragma warning restore SCME0001
 
     [Fact]
-    public async Task OpenRouterCompletionsUseReasoningAdapter()
+    public void OpenRouterCompletionsUseReasoningAdapter()
     {
         const string environmentVariable = "TANDEM_TEST_OPENROUTER_KEY";
         Environment.SetEnvironmentVariable(environmentVariable, "test-key");
         try
         {
-            using var client = await OpenAiCompatibleChatClients.CreateAsync(
+            using var client = OpenAiCompatibleChatClients.Create(
                 new(
-                    "openai-compatible",
+                    RegisteredChatClientKind.OpenAiCompatible,
                     1,
                     "https://openrouter.ai/api/v1",
                     "model",
-                    "completions",
-                    environmentVariable,
-                    false
-                ),
-                CancellationToken.None
+                    RegisteredWireApi.Completions,
+                    environmentVariable
+                )
             );
 
             Assert.IsType<StreamRetryChatClient>(client);
@@ -135,10 +133,10 @@ public sealed class OpenAiCompatibleChatClientsTests
     public async Task ModelPreflightRequiresExactModelExposure()
     {
         using var server = new ModelServer("other-model");
-        var descriptor = Client(server.BaseUrl) with { VerifyModel = true };
+        var descriptor = Client(server.BaseUrl);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            OpenAiCompatibleChatClients.CreateAsync(descriptor, CancellationToken.None)
+            OpenAiCompatibleChatClients.VerifyModelAsync(descriptor, CancellationToken.None)
         );
 
         Assert.Contains("does not expose required model 'required-model'", exception.Message);
@@ -146,19 +144,15 @@ public sealed class OpenAiCompatibleChatClientsTests
     }
 
     [Fact]
-    public async Task ModelPreflightBuildsClientWithoutASecretForLoopback()
+    public async Task ModelPreflightAcceptsExposedModelWithoutASecretForLoopback()
     {
         using var server = new ModelServer("required-model");
 
-        using var client = await OpenAiCompatibleChatClients.CreateAsync(
-            Client(server.BaseUrl) with
-            {
-                VerifyModel = true,
-            },
+        await OpenAiCompatibleChatClients.VerifyModelAsync(
+            Client(server.BaseUrl),
             CancellationToken.None
         );
 
-        Assert.NotNull(client);
         await server.Completion;
     }
 
@@ -169,18 +163,19 @@ public sealed class OpenAiCompatibleChatClientsTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            OpenAiCompatibleChatClients.CreateAsync(
-                Client(server.BaseUrl) with
-                {
-                    VerifyModel = true,
-                },
-                cancellation.Token
-            )
+            OpenAiCompatibleChatClients.VerifyModelAsync(Client(server.BaseUrl), cancellation.Token)
         );
     }
 
     private static RegisteredChatClientContract Client(string endpoint) =>
-        new("openai-compatible", 1, endpoint, "required-model", "responses", null, false);
+        new(
+            RegisteredChatClientKind.OpenAiCompatible,
+            1,
+            endpoint,
+            "required-model",
+            RegisteredWireApi.Responses,
+            VerifyModel: true
+        );
 
     private sealed class ModelServer : IDisposable
     {

@@ -20,17 +20,14 @@ public sealed class StreamRetryIntegrationTests
         var requests = new List<string>();
         var serve = ServeAsync(listener, requests, wireApi, cancellation.Token);
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        using var client = await OpenAiCompatibleChatClients.CreateAsync(
+        using var client = OpenAiCompatibleChatClients.Create(
             new(
-                "openai-compatible",
+                RegisteredChatClientKind.OpenAiCompatible,
                 1,
                 $"http://127.0.0.1:{port}/v1",
                 "model",
-                wireApi,
-                null,
-                false
-            ),
-            cancellation.Token
+                Enum.Parse<RegisteredWireApi>(wireApi, ignoreCase: true)
+            )
         );
         var text = new StringBuilder();
         await foreach (

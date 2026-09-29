@@ -49,7 +49,7 @@ public static partial class NodePipelineBridge
             );
         var definition = RegistrationContractValidator.ParseAndValidate(definitionJson);
         using var terminalCancellation =
-            definition.Presentation == "terminal"
+            definition.Presentation == RegisteredPresentation.Terminal
                 ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
                 : null;
         var runCancellationToken = terminalCancellation?.Token ?? cancellationToken;
@@ -88,37 +88,15 @@ public static partial class NodePipelineBridge
         using var reflectionScope = AssemblyLoadContext.EnterContextualReflection(
             typeof(NodePipelineBridge).Assembly
         );
-        var nodes = new Dictionary<string, RegisteredParticipant>(StringComparer.Ordinal);
-        foreach (var node in definition.Nodes!)
+        var (pipeline, handlers) = BuildGraph(definition, callbacks);
+        foreach (
+            var agent in RegistrationContractValidator
+                .EnumerateNodes(definition.Nodes)
+                .OfType<AgentNodeContract>()
+                .Where(agent => agent.Client.VerifyModel)
+        )
         {
-            nodes.Add(
-                node.Id!,
-                await RegisteredParticipantFactory.CreateAsync(
-                    node,
-                    callbacks,
-                    runCancellationToken
-                )
-            );
-        }
-        var builder = RegisteredRouteRegistration.Start(nodes[definition.Start!], definition.Name!);
-        ApplyPersistence(builder, definition, nodes.Values);
-        foreach (var route in definition.Routes!)
-        {
-            RegisteredRouteRegistration.Add(builder, nodes, route, callbacks);
-        }
-
-        var pipeline = builder.Build(
-            definition.Outputs!.Select(id => ((RegisteredTerminal)nodes[id]).Terminal).ToArray()
-        );
-        var handlers = new PipelineInteractionHandlers();
-        foreach (var binding in definition.InteractionHandlers ?? [])
-        {
-            var participant = (RegisteredInteraction)nodes[binding.Target!];
-            handlers.Handle(
-                participant.Interaction,
-                (request, token) =>
-                    new(callbacks.InvokeAsync(binding.HandleCallback!, "", request.Request, token))
-            );
+            await OpenAiCompatibleChatClients.VerifyModelAsync(agent.Client, runCancellationToken);
         }
 
         var runId = Guid.CreateVersion7();
@@ -152,9 +130,9 @@ public static partial class NodePipelineBridge
                 options = options.WithAcceptanceUnitOfWork(new LedgerAcceptanceUnitOfWork(store));
             }
             var runner = new PipelineRunner();
-            var initialState = new JavaScriptState(definition.InitialState!);
+            var initialState = new JavaScriptState(definition.InitialState);
             var result =
-                definition.Presentation == "terminal"
+                definition.Presentation == RegisteredPresentation.Terminal
                     ? await runner.RunWithTerminalAsync(
                         pipeline,
                         initialState,
@@ -239,7 +217,7 @@ public static partial class NodePipelineBridge
         finally
         {
             if (
-                definition.Presentation != "terminal"
+                definition.Presentation != RegisteredPresentation.Terminal
                 && store is not null
                 && terminalStatus is { } status
             )
@@ -258,6 +236,60 @@ public static partial class NodePipelineBridge
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Builds the graph through Tandem's builders, which own participant and route rules, and
+    /// reports their failures as registration errors before any model preflight or ledger write.
+    /// </summary>
+    internal static (
+        Pipeline<JavaScriptState> Pipeline,
+        PipelineInteractionHandlers Handlers
+    ) BuildGraph(RegisteredGraphContract definition, CallbackDispatcher callbacks)
+    {
+        var nodes = new Dictionary<string, RegisteredParticipant>(StringComparer.Ordinal);
+        foreach (var (index, node) in definition.Nodes.Index())
+        {
+            nodes.Add(
+                node.Id,
+                RegistrationContractValidator.CoreRule(
+                    $"nodes[{index}]",
+                    () => RegisteredParticipantFactory.Create(node, callbacks)
+                )
+            );
+        }
+        var builder = RegistrationContractValidator.CoreRule(
+            "start",
+            () => RegisteredRouteRegistration.Start(nodes[definition.Start], definition.Name)
+        );
+        ApplyPersistence(builder, definition, nodes.Values);
+        foreach (var (index, route) in definition.Routes.Index())
+        {
+            RegistrationContractValidator.CoreRule(
+                $"routes[{index}]",
+                () => RegisteredRouteRegistration.Add(builder, nodes, route, callbacks)
+            );
+        }
+        var pipeline = RegistrationContractValidator.CoreRule(
+            "outputs",
+            () =>
+                builder.Build(
+                    definition
+                        .Outputs.Select(id => ((RegisteredTerminal)nodes[id]).Terminal)
+                        .ToArray()
+                )
+        );
+        var handlers = new PipelineInteractionHandlers();
+        foreach (var binding in definition.InteractionHandlers ?? [])
+        {
+            var participant = (RegisteredInteraction)nodes[binding.Target];
+            handlers.Handle(
+                participant.Interaction,
+                (request, token) =>
+                    new(callbacks.InvokeAsync(binding.HandleCallback, "", request.Request, token))
+            );
+        }
+        return (pipeline, handlers);
     }
 
     private static LedgerRunStatus ToLedgerStatus(TerminalPipelineStatus status) =>

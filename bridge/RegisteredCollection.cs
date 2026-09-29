@@ -23,41 +23,36 @@ public static partial class NodePipelineBridge
 
 internal static class RegisteredCollection
 {
-    public static async Task<RegisteredParticipant> CreateAsync(
-        RegisteredNodeContract node,
-        CallbackDispatcher callbacks,
-        CancellationToken token
+    public static RegisteredParticipant Create(
+        CollectionNodeContract node,
+        CallbackDispatcher callbacks
     )
     {
-        var owned = new List<RegisteredParticipant>();
-        foreach (var agent in node.Agents!)
-        {
-            owned.Add(await RegisteredParticipantFactory.CreateAsync(agent, callbacks, token));
-        }
-        var agents = owned
-            .Cast<RegisteredStandard>()
-            .ToDictionary(
-                value => value.Contract.Id!,
-                value => (AgentDefinition<JavaScriptState>)value.Standard,
-                StringComparer.Ordinal
-            );
+        var owned = node
+            .Agents.Select(agent =>
+                (RegisteredStandard)RegisteredParticipantFactory.Create(agent, callbacks)
+            )
+            .ToArray();
+        var agents = new Dictionary<string, AgentDefinition<JavaScriptState>>(
+            StringComparer.Ordinal
+        );
         var collection = PipelineCollection.Create<
             JavaScriptState,
             JavaScriptState,
             JavaScriptState
         >(
-            node.Id!,
+            node.Id,
             state =>
             {
                 using var json = JsonDocument.Parse(
-                    callbacks.Invoke(node.ItemsCallback!, state.Json, "")
+                    callbacks.Invoke(node.ItemsCallback, state.Json, "")
                 );
                 return json
                     .RootElement.EnumerateArray()
                     .Select(item => new JavaScriptState(item.GetRawText()))
                     .ToArray();
             },
-            agents.Values.Cast<ICollectionAgent>().ToArray(),
+            owned.Select(value => (ICollectionAgent)value.Standard).ToArray(),
             async (item, scope, cancellationToken) =>
             {
                 var key = Guid.NewGuid().ToString("N");
@@ -75,7 +70,7 @@ internal static class RegisteredCollection
                 {
                     return new JavaScriptState(
                         await callbacks.InvokeAsync(
-                            node.RunCallback!,
+                            node.RunCallback,
                             item.Json,
                             key,
                             cancellationToken
@@ -90,19 +85,22 @@ internal static class RegisteredCollection
             (state, results) =>
                 new JavaScriptState(
                     callbacks.Invoke(
-                        node.ApplyCallback!,
+                        node.ApplyCallback,
                         state.Json,
                         "[" + string.Join(",", results.Select(result => result.Json)) + "]"
                     )
                 ),
-            node.Max!.Value
+            node.Max
         );
+        foreach (var value in owned)
+        {
+            agents.Add(value.Contract.Id, (AgentDefinition<JavaScriptState>)value.Standard);
+        }
         var bindings = (
             (CollectionDescriptor<JavaScriptState, JavaScriptState, JavaScriptState>)
                 collection.Descriptor
         ).Bindings;
         var boundOwned = owned
-            .Cast<RegisteredStandard>()
             .Select(value =>
             {
                 var bound =
