@@ -4,5 +4,6 @@ node_modules/
 .runtime-publish/
 bridge-runtime/
 nupkgs/
+local-nupkgs/
 *.sqlite3*
 .idea/
