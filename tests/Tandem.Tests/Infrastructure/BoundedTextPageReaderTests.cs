@@ -93,9 +93,7 @@ public sealed class BoundedTextPageReaderTests
         await File.WriteAllTextAsync(Path.Combine(directory, "small.txt"), "small");
         try
         {
-            var options = new ChatOptions();
-            WorkspaceFileReadTools.Add(options, directory);
-            var tool = (AIFunction)options.Tools!.Single();
+            var tool = WorkspaceFileReadTools.Create(directory);
 
             tool.JsonSchema.GetProperty("properties")
                 .EnumerateObject()
@@ -132,9 +130,7 @@ public sealed class BoundedTextPageReaderTests
         Directory.CreateDirectory(directory);
         try
         {
-            var options = new ChatOptions();
-            WorkspaceFileReadTools.Add(options, directory);
-            var tool = (AIFunction)options.Tools!.Single();
+            var tool = WorkspaceFileReadTools.Create(directory);
             await FluentActions
                 .Awaiting(() =>
                     tool.InvokeAsync(new AIFunctionArguments { ["path"] = path }).AsTask()
@@ -162,9 +158,7 @@ public sealed class BoundedTextPageReaderTests
         File.CreateSymbolicLink(Path.Combine(workspace, "link.txt"), outside);
         try
         {
-            var options = new ChatOptions();
-            WorkspaceFileReadTools.Add(options, workspace);
-            var tool = (AIFunction)options.Tools!.Single();
+            var tool = WorkspaceFileReadTools.Create(workspace);
             await FluentActions
                 .Awaiting(() =>
                     tool.InvokeAsync(new AIFunctionArguments { ["path"] = "link.txt" }).AsTask()

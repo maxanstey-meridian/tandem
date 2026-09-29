@@ -337,18 +337,40 @@ public sealed class ReadOnlyGitToolsTests
     [Theory]
     [InlineData("../outside.txt")]
     [InlineData(".git/config")]
+    [InlineData(".GIT/config")]
+    [InlineData("nested/.Git/config")]
     [InlineData("/absolute.txt")]
-    public async Task Diff_rejects_paths_outside_the_read_only_repository(string path)
+    [InlineData("linked/secret.txt")]
+    public async Task Path_arguments_use_the_workspace_path_authority(string path)
     {
         using var repository = TestRepository.Create();
-        File.WriteAllText(Path.Combine(repository.Path, "feature.txt"), "content\n");
-        repository.Commit("base");
-        var sha = repository.Head();
+        var outside = Directory.CreateTempSubdirectory("tandem-git-outside-").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(outside, "secret.txt"), "secret\n");
+            Directory.CreateSymbolicLink(Path.Combine(repository.Path, "linked"), outside);
+            File.WriteAllText(Path.Combine(repository.Path, "feature.txt"), "content\n");
+            repository.Commit("base");
+            var sha = repository.Head();
+            var git = new ReadOnlyGitRepository(repository.Path);
 
-        var act = async () =>
-            await new ReadOnlyGitRepository(repository.Path).CompareAsync(sha, sha, path);
-
-        await act.Should().ThrowAsync<ArgumentException>();
+            await FluentActions
+                .Awaiting(() => git.CompareAsync(sha, sha, path))
+                .Should()
+                .ThrowAsync<UnauthorizedAccessException>();
+            await FluentActions
+                .Awaiting(() => git.BlameAsync(path))
+                .Should()
+                .ThrowAsync<UnauthorizedAccessException>();
+            await FluentActions
+                .Awaiting(() => git.WorkspaceDiffAsync(path: path))
+                .Should()
+                .ThrowAsync<UnauthorizedAccessException>();
+        }
+        finally
+        {
+            Directory.Delete(outside, recursive: true);
+        }
     }
 
     private sealed class TestRepository : IDisposable

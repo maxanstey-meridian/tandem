@@ -37,7 +37,6 @@ internal static class TavilyWebTools
             workspace.IncludeWebSearch,
             workspace.IncludeWebFetch
         );
-        var tools = context.ChatOptions.Tools?.ToList() ?? [];
         if (workspace.IncludeWebSearch)
         {
             Add(new RenamedAIFunction(created.Search!, SearchName));
@@ -46,19 +45,14 @@ internal static class TavilyWebTools
         {
             Add(new RenamedAIFunction(created.Fetch!, FetchName));
         }
-        context.ChatOptions.Tools = tools;
 
-        void Add(AIFunction tool)
-        {
-            if (tools.Any(existing => existing.Name == tool.Name))
-            {
-                throw new InvalidOperationException(
-                    $"Agent '{context.Id}' exposes more than one tool named '{tool.Name}'."
-                );
-            }
-            tools.Add(tool);
-            context.ToolEffects.Add(tool.Name, Infrastructure.ToolEffect.Read);
-        }
+        void Add(AIFunction tool) =>
+            HarnessTools.Add(
+                context.ChatOptions,
+                context.ToolEffects,
+                tool,
+                Infrastructure.ToolEffect.Read
+            );
     }
 
     private static (AIFunction? Search, AIFunction? Fetch) CreateTools(

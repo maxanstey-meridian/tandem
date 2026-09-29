@@ -13,60 +13,53 @@ internal static class WorkspaceGrepTools
 {
     private static readonly TimeSpan _regexTimeout = TimeSpan.FromSeconds(1);
 
-    internal static void Add(ChatOptions options, string workspacePath)
-    {
-        options.Tools ??= [];
-        options.Tools.Add(
-            AIFunctionFactory.Create(
-                (
-                    [Description("Pattern; regular expression by default.")] string regexPattern,
-                    [Description(
-                        "Repository-relative directory; explicitly named directories are searched."
-                    )]
-                        string directory = "",
-                    [Description(
-                        "Slashless glob matches filenames; path globs are repository-relative."
-                    )]
-                        string? globPattern = null,
-                    bool recursive = true,
-                    [Description(
-                        "Maximum matching records, 1 to 500. Output is also size bounded."
-                    )]
-                        int limit = 100,
-                    [Description(
-                        "Zero-based match offset; continue a previous page with the returned nextOffset."
-                    )]
-                        int offset = 0,
-                    [Description(
-                        "Search normally excluded directories; Git metadata and links stay excluded."
-                    )]
-                        bool includeExcluded = false,
-                    [Description("Treat regexPattern as literal text.")] bool literal = false,
-                    [Description("Case-sensitive matching; default is case-insensitive.")]
-                        bool caseSensitive = false,
-                    CancellationToken cancellationToken = default
-                ) =>
-                    SearchAsync(
-                        workspacePath,
-                        directory,
-                        regexPattern,
-                        globPattern,
-                        recursive,
-                        offset,
-                        limit,
-                        cancellationToken,
-                        includeExcluded: includeExcluded,
-                        literal: literal,
-                        caseSensitive: caseSensitive
-                    ),
-                FileAccessProvider.GrepToolName,
-                "Search text files, returning path/line/text records. Continue with the returned nextOffset; there is no total count scan. "
-                    + "By default skip binary files, symlinks and performance-excluded directories; skipped files are reported in the result. "
-                    + "Explicit path prefixes override performance exclusions, never Git metadata or link boundaries. "
-                    + "Incomplete oversized matches can be read with file_access_read at their line."
-            )
+    internal static AIFunction Create(string workspacePath) =>
+        AIFunctionFactory.Create(
+            (
+                [Description("Pattern; regular expression by default.")] string regexPattern,
+                [Description(
+                    "Repository-relative directory; explicitly named directories are searched."
+                )]
+                    string directory = "",
+                [Description(
+                    "Slashless glob matches filenames; path globs are repository-relative."
+                )]
+                    string? globPattern = null,
+                bool recursive = true,
+                [Description("Maximum matching records, 1 to 500. Output is also size bounded.")]
+                    int limit = 100,
+                [Description(
+                    "Zero-based match offset; continue a previous page with the returned nextOffset."
+                )]
+                    int offset = 0,
+                [Description(
+                    "Search normally excluded directories; Git metadata and links stay excluded."
+                )]
+                    bool includeExcluded = false,
+                [Description("Treat regexPattern as literal text.")] bool literal = false,
+                [Description("Case-sensitive matching; default is case-insensitive.")]
+                    bool caseSensitive = false,
+                CancellationToken cancellationToken = default
+            ) =>
+                SearchAsync(
+                    workspacePath,
+                    directory,
+                    regexPattern,
+                    globPattern,
+                    recursive,
+                    offset,
+                    limit,
+                    cancellationToken,
+                    includeExcluded: includeExcluded,
+                    literal: literal,
+                    caseSensitive: caseSensitive
+                ),
+            FileAccessProvider.GrepToolName,
+            "Search text files, returning path/line/text records. Continue with the returned nextOffset; there is no total count scan. "
+                + "By default skip binary files, symlinks and performance-excluded directories; skipped files are reported in the result. "
+                + "Explicit path prefixes override performance exclusions, never Git metadata or link boundaries. "
+                + "Incomplete oversized matches can be read with file_access_read at their line."
         );
-    }
 
     internal sealed record Match(
         [property: JsonPropertyName("path")] string Path,
@@ -104,20 +97,7 @@ internal static class WorkspaceGrepTools
         bool caseSensitive = false
     )
     {
-        if (limit is < 1 or > 500)
-        {
-            throw new Tandem.Infrastructure.ToolInputException(
-                "limit must be from 1 to 500 matching records."
-            );
-        }
-        if (offset < 0)
-        {
-            throw new Tandem.Infrastructure.PaginationValidationException(
-                nameof(offset),
-                "Offset cannot be negative. Retry at offset 0.",
-                new { retryOffset = 0, retryLimit = Math.Clamp(limit, 1, 500) }
-            );
-        }
+        var page = new RecordPage(offset, limit);
 
         var regex = new Regex(
             literal ? Regex.Escape(regexPattern) : regexPattern,
@@ -148,7 +128,6 @@ internal static class WorkspaceGrepTools
             }
         }
         var matches = new List<Match>();
-        var characters = 0;
         var matchIndex = 0;
         foreach (
             var path in SearchFiles(
@@ -211,25 +190,13 @@ internal static class WorkspaceGrepTools
                             {
                                 excerpt += "…";
                             }
-                            if (
-                                matches.Count == limit
-                                || (
-                                    matches.Count > 0
-                                    && characters + relative.Length + excerpt.Length + 32 > 64000
-                                )
-                            )
+                            if (!page.TryAdd(relative.Length + excerpt.Length + 32))
                             {
                                 return Task.FromResult(
-                                    new GrepPage(
-                                        matches,
-                                        skippedCount,
-                                        skipped,
-                                        offset + matches.Count
-                                    )
+                                    new GrepPage(matches, skippedCount, skipped, page.NextOffset)
                                 );
                             }
                             matches.Add(new Match(relative, line, excerpt));
-                            characters += relative.Length + excerpt.Length + 32;
                         }
                         matchIndex++;
                     }

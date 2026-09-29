@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using FluentAssertions;
-using Microsoft.Extensions.AI;
 
 #pragma warning disable MAAI001
 
@@ -423,9 +422,7 @@ public sealed class WorkspaceGrepToolsTests
     [Fact]
     public void Grep_schema_describes_skips_in_prose_without_directory_enumeration()
     {
-        var options = new ChatOptions();
-        WorkspaceGrepTools.Add(options, Path.GetTempPath());
-        var tool = (AIFunction)options.Tools!.Single();
+        var tool = WorkspaceGrepTools.Create(Path.GetTempPath());
         var schema = tool.JsonSchema.GetRawText();
         foreach (var entry in WorkspaceSearchPolicy.ExcludedDirectories)
         {

@@ -10,6 +10,34 @@ namespace Tandem.Tests.Infrastructure;
 public sealed class HarnessAgentImplementationTests
 {
     [Fact]
+    public void Every_workspace_tool_is_registered_once_with_its_effect()
+    {
+        var options = new ChatOptions
+        {
+            Tools = [AIFunctionFactory.Create(() => "", "file_access_grep")],
+        };
+        var effects = new ToolEffectRegistry();
+        var resolved = new ResolvedAgentWorkspace(
+            Path.GetTempPath(),
+            new HashSet<WorkspaceToolKind> { WorkspaceToolKind.ReadFile, WorkspaceToolKind.Grep },
+            false,
+            false,
+            false,
+            false,
+            []
+        );
+
+        FluentActions
+            .Invoking(() => HarnessTools.AddFileTools(options, effects, resolved))
+            .Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage("Agent already exposes tool 'file_access_grep'.");
+        effects.TryGet("file_access_read", out var read).Should().BeTrue();
+        read.Effect.Should().Be(Tandem.Infrastructure.ToolEffect.Read);
+        read.Evidence.Should().Be(Tandem.Infrastructure.ToolEvidence.RepositoryInspection);
+    }
+
+    [Fact]
     public void Checkpoint_limits_enable_framework_in_loop_compaction()
     {
         var options = HarnessAgentImplementation.CreateOptions(

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 using Tandem.Infrastructure;
 
@@ -57,22 +58,30 @@ internal static class ReadOnlyGitTools
             ),
             AIFunctionFactory.Create(repository.CompareAsync, CompareToolName, CompareDescription),
         };
-        var existing = options.Tools ?? [];
         foreach (var tool in tools)
         {
-            if (existing.Any(candidate => candidate.Name == tool.Name))
-            {
-                throw new InvalidOperationException($"Agent already exposes tool '{tool.Name}'.");
-            }
-            toolEffects.Add(
-                tool.Name,
+            HarnessTools.Add(
+                options,
+                toolEffects,
+                tool,
                 Infrastructure.ToolEffect.Read,
                 Infrastructure.ToolEvidence.RepositoryInspection
             );
         }
-        options.Tools = [.. existing, .. tools];
     }
 }
+
+internal sealed record GitStatusChange(
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("path")] string Path,
+    [property: JsonPropertyName("originalPath")] string? OriginalPath
+);
+
+internal sealed record GitStatusPage(
+    [property: JsonPropertyName("branch")] string? Branch,
+    [property: JsonPropertyName("changes")] IReadOnlyList<GitStatusChange> Changes,
+    [property: JsonPropertyName("nextOffset")] int? NextOffset
+);
 
 internal sealed class ReadOnlyGitRepository(
     string workspacePath,
@@ -91,7 +100,7 @@ internal sealed class ReadOnlyGitRepository(
         ["GIT_OPTIONAL_LOCKS"] = "0",
     };
 
-    internal async Task<object> StatusAsync(
+    internal async Task<GitStatusPage> StatusAsync(
         CancellationToken cancellationToken = default,
         [Description("Maximum change records, 1 to 500.")] int limit = 200,
         [Description(
@@ -100,30 +109,16 @@ internal sealed class ReadOnlyGitRepository(
             int offset = 0
     )
     {
-        if (limit is < 1 or > 500)
-        {
-            throw new ToolInputException("limit must be from 1 to 500.");
-        }
-
+        var page = new RecordPage(offset, limit);
         var output = await RunAsync(
             ["status", "--porcelain=v1", "-z", "--branch", "--untracked-files=all"],
             cancellationToken,
             16 * 1024 * 1024
         );
-        if (offset < 0)
-        {
-            throw new PaginationValidationException(
-                nameof(offset),
-                "Offset cannot be negative. Retry at offset 0.",
-                new { retryOffset = 0, retryLimit = Math.Clamp(limit, 1, 500) }
-            );
-        }
         var fields = output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
-        var changes = new List<object>();
+        var changes = new List<GitStatusChange>();
         string? branch = null;
         var index = 0;
-        var returned = 0;
-        var characters = 0;
         for (var i = 0; i < fields.Length; i++)
         {
             var field = fields[i];
@@ -151,43 +146,17 @@ internal sealed class ReadOnlyGitRepository(
             {
                 continue;
             }
-            if (
-                returned >= limit
-                || (returned > 0 && characters + path.Length + (originalPath?.Length ?? 0) > 64000)
-            )
+            if (!page.TryAdd(path.Length + (originalPath?.Length ?? 0)))
             {
-                return new
-                {
-                    branch,
-                    changes,
-                    nextOffset = offset + returned,
-                };
+                return new GitStatusPage(branch, changes, page.NextOffset);
             }
-            changes.Add(
-                new
-                {
-                    status,
-                    path,
-                    originalPath,
-                }
-            );
-            returned++;
-            characters += path.Length + (originalPath?.Length ?? 0);
+            changes.Add(new GitStatusChange(status, path, originalPath));
         }
         if (offset > index)
         {
-            throw new PaginationValidationException(
-                nameof(offset),
-                "Offset exceeds the change count. Restart at offset 0.",
-                new { retryOffset = 0, retryLimit = Math.Clamp(limit, 1, 500) }
-            );
+            throw page.OffsetBeyondEnd("change");
         }
-        return new
-        {
-            branch,
-            changes,
-            nextOffset = (int?)null,
-        };
+        return new GitStatusPage(branch, changes, null);
     }
 
     internal async Task<TextPage> WorkspaceDiffAsync(
@@ -388,28 +357,12 @@ internal sealed class ReadOnlyGitRepository(
         arguments.Add(ValidatePath(path));
     }
 
-    private string ValidatePath(string path)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        if (path.IndexOfAny(['\0', '\r', '\n']) >= 0 || Path.IsPathRooted(path))
-        {
-            throw new ArgumentException("A relative repository path is required.", nameof(path));
-        }
-        var fullPath = Path.GetFullPath(Path.Combine(_workspacePath, path));
-        var relative = Path.GetRelativePath(_workspacePath, fullPath);
-        if (
-            relative == ".."
-            || relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
-            || relative
-                .Replace('\\', '/')
-                .Split('/', StringSplitOptions.RemoveEmptyEntries)
-                .Any(segment => segment == ".git")
-        )
-        {
-            throw new ArgumentException("Path must remain inside the repository.", nameof(path));
-        }
-        return relative.Replace('\\', '/');
-    }
+    private string ValidatePath(string path) =>
+        Path.GetRelativePath(
+                _workspacePath,
+                WorkspacePathAuthority.Resolve(_workspacePath, path, "Git inspection")
+            )
+            .Replace('\\', '/');
 
     private async Task<string> RunAsync(
         IReadOnlyList<string> arguments,

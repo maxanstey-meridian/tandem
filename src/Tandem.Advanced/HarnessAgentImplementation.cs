@@ -22,48 +22,28 @@ internal static class HarnessAgentImplementation
     )
     {
         var workspace = context.Workspace;
-        AgentFileStore? fileStore = workspace is null
-            ? null
-            : new WorkspaceFileStore(workspace.Path);
         var providers =
             context.Skills.Count == 0
                 ? new List<AIContextProvider>()
                 : [AgentSkillRuntime.CreateProvider(context.Skills)];
-        if (fileStore is not null)
+        if (workspace is not null)
         {
-            var selectedFileToolNames = HarnessToolEffects.Register(
+            var mafFileToolNames = HarnessTools.AddFileTools(
+                context.ChatOptions,
                 context.ToolEffects,
-                workspace!.FileTools
+                workspace
             );
-            if (selectedFileToolNames.Contains(FileAccessProvider.ReadFileToolName))
-            {
-                WorkspaceFileReadTools.Add(context.ChatOptions, workspace.Path);
-            }
-            if (selectedFileToolNames.Contains(FileAccessProvider.GrepToolName))
-            {
-                WorkspaceGrepTools.Add(context.ChatOptions, workspace.Path);
-            }
-            if (selectedFileToolNames.Contains(FileAccessProvider.LsToolName))
-            {
-                WorkspaceListTools.Add(context.ChatOptions, workspace.Path);
-            }
-
-            var mafFileToolNames = selectedFileToolNames
-                .Where(name =>
-                    name != FileAccessProvider.GrepToolName
-                    && name != FileAccessProvider.LsToolName
-                    && name != FileAccessProvider.ReadFileToolName
-                )
-                .ToHashSet(StringComparer.Ordinal);
             if (mafFileToolNames.Count > 0)
             {
                 providers.Add(
                     new FilteringAIContextProvider(
                         new FileAccessProvider(
-                            fileStore,
+                            new WorkspaceFileStore(workspace.Path),
                             new FileAccessProviderOptions
                             {
-                                DisableWriteTools = !workspace.FileTools.Any(IsMutation),
+                                DisableWriteTools = !workspace.FileTools.Any(
+                                    HarnessTools.IsMutation
+                                ),
                                 DisableReadOnlyToolApproval = true,
                                 DisableWriteToolApproval = true,
                             }
@@ -72,36 +52,20 @@ internal static class HarnessAgentImplementation
                     )
                 );
             }
+            var existingToolCount = context.ChatOptions.Tools?.Count ?? 0;
             if (workspace.IncludeGitReadOnly)
             {
-                var existingToolCount = context.ChatOptions.Tools?.Count ?? 0;
                 ReadOnlyGitTools.Add(context.ChatOptions, workspace.Path, context.ToolEffects);
-                WorkspaceShellTools.Add(context.ChatOptions, workspace, context.ToolEffects);
-                var workspaceTools =
-                    context.ChatOptions.Tools?.Skip(existingToolCount).ToArray() ?? [];
-                if (workspaceTools.Length > 0)
-                {
-                    context.ChatOptions.Tools = context
-                        .ChatOptions.Tools?.Take(existingToolCount)
-                        .ToList();
-                    providers.Add(new StaticToolsAIContextProvider(workspaceTools));
-                }
             }
-            else
+            WorkspaceShellTools.Add(context.ChatOptions, workspace, context.ToolEffects);
+            var workspaceTools = context.ChatOptions.Tools?.Skip(existingToolCount).ToArray() ?? [];
+            if (workspaceTools.Length > 0)
             {
-                var existingToolCount = context.ChatOptions.Tools?.Count ?? 0;
-                WorkspaceShellTools.Add(context.ChatOptions, workspace, context.ToolEffects);
-                var workspaceTools =
-                    context.ChatOptions.Tools?.Skip(existingToolCount).ToArray() ?? [];
-                if (workspaceTools.Length > 0)
-                {
-                    context.ChatOptions.Tools = context
-                        .ChatOptions.Tools?.Take(existingToolCount)
-                        .ToList();
-                    providers.Add(new StaticToolsAIContextProvider(workspaceTools));
-                }
+                context.ChatOptions.Tools = context
+                    .ChatOptions.Tools?.Take(existingToolCount)
+                    .ToList();
+                providers.Add(new StaticToolsAIContextProvider(workspaceTools));
             }
-            WorkspaceFileMutationTools.Add(context.ChatOptions, workspace, context.ToolEffects);
             RegisteredWorkspaceTools.Add(context.ChatOptions, workspace, context.ToolEffects);
         }
         TavilyWebTools.Add(context, createWebTools, getEnvironmentVariable);
@@ -166,127 +130,168 @@ internal static class HarnessAgentImplementation
             )
         );
     }
-
-    private static bool IsMutation(WorkspaceToolKind kind) =>
-        kind
-            is WorkspaceToolKind.WriteFile
-                or WorkspaceToolKind.DeleteFile
-                or WorkspaceToolKind.Replace
-                or WorkspaceToolKind.ReplaceLines
-                or WorkspaceToolKind.CopyFile
-                or WorkspaceToolKind.MoveFile
-                or WorkspaceToolKind.CreateDirectory;
 }
 
-internal static class HarnessToolEffects
+internal static class HarnessTools
 {
-    internal static IReadOnlySet<string> Register(
-        ToolEffectRegistry registry,
-        IReadOnlySet<WorkspaceToolKind> selected
+    private sealed record FileTool(
+        WorkspaceToolKind Kind,
+        string Name,
+        Infrastructure.ToolEffect Effect,
+        Infrastructure.ToolEvidence Evidence,
+        Func<string, AIFunction>? Create
+    );
+
+    // MAF's FileAccessProvider supplies the tools without a Create function.
+    private static readonly FileTool[] _fileTools =
+    [
+        new(
+            WorkspaceToolKind.ReadFile,
+            FileAccessProvider.ReadFileToolName,
+            Infrastructure.ToolEffect.Read,
+            Infrastructure.ToolEvidence.RepositoryInspection,
+            WorkspaceFileReadTools.Create
+        ),
+        new(
+            WorkspaceToolKind.ListFiles,
+            FileAccessProvider.LsToolName,
+            Infrastructure.ToolEffect.Read,
+            Infrastructure.ToolEvidence.RepositoryInspection,
+            WorkspaceListTools.Create
+        ),
+        new(
+            WorkspaceToolKind.Grep,
+            FileAccessProvider.GrepToolName,
+            Infrastructure.ToolEffect.Read,
+            Infrastructure.ToolEvidence.RepositoryInspection,
+            WorkspaceGrepTools.Create
+        ),
+        new(
+            WorkspaceToolKind.WriteFile,
+            FileAccessProvider.WriteToolName,
+            Infrastructure.ToolEffect.WorkspaceMutation,
+            Infrastructure.ToolEvidence.None,
+            null
+        ),
+        new(
+            WorkspaceToolKind.DeleteFile,
+            FileAccessProvider.DeleteFileToolName,
+            Infrastructure.ToolEffect.WorkspaceMutation,
+            Infrastructure.ToolEvidence.None,
+            null
+        ),
+        new(
+            WorkspaceToolKind.Replace,
+            FileAccessProvider.ReplaceToolName,
+            Infrastructure.ToolEffect.WorkspaceMutation,
+            Infrastructure.ToolEvidence.None,
+            null
+        ),
+        new(
+            WorkspaceToolKind.ReplaceLines,
+            FileAccessProvider.ReplaceLinesToolName,
+            Infrastructure.ToolEffect.WorkspaceMutation,
+            Infrastructure.ToolEvidence.None,
+            null
+        ),
+        new(
+            WorkspaceToolKind.CopyFile,
+            WorkspaceFileMutationTools.CopyToolName,
+            Infrastructure.ToolEffect.WorkspaceMutation,
+            Infrastructure.ToolEvidence.None,
+            WorkspaceFileMutationTools.CreateCopyTool
+        ),
+        new(
+            WorkspaceToolKind.MoveFile,
+            WorkspaceFileMutationTools.MoveToolName,
+            Infrastructure.ToolEffect.WorkspaceMutation,
+            Infrastructure.ToolEvidence.None,
+            WorkspaceFileMutationTools.CreateMoveTool
+        ),
+        new(
+            WorkspaceToolKind.CreateDirectory,
+            WorkspaceFileMutationTools.CreateDirectoryToolName,
+            Infrastructure.ToolEffect.WorkspaceMutation,
+            Infrastructure.ToolEvidence.None,
+            WorkspaceFileMutationTools.CreateDirectoryTool
+        ),
+    ];
+
+    internal static bool IsMutation(WorkspaceToolKind kind) =>
+        _fileTools.Single(tool => tool.Kind == kind).Effect
+        == Infrastructure.ToolEffect.WorkspaceMutation;
+
+    // Returns the selected tools that MAF's FileAccessProvider must expose.
+    internal static IReadOnlySet<string> AddFileTools(
+        ChatOptions options,
+        ToolEffectRegistry effects,
+        ResolvedAgentWorkspace workspace
     )
     {
-        var names = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var kind in selected)
+        var mafToolNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var tool in _fileTools.Where(tool => workspace.FileTools.Contains(tool.Kind)))
         {
-            var (name, effect, evidence) = kind switch
+            if (tool.Create is null)
             {
-                WorkspaceToolKind.ReadFile => (
-                    FileAccessProvider.ReadFileToolName,
-                    Infrastructure.ToolEffect.Read,
-                    Infrastructure.ToolEvidence.RepositoryInspection
-                ),
-                WorkspaceToolKind.ListFiles => (
-                    FileAccessProvider.LsToolName,
-                    Infrastructure.ToolEffect.Read,
-                    Infrastructure.ToolEvidence.RepositoryInspection
-                ),
-                WorkspaceToolKind.Grep => (
-                    FileAccessProvider.GrepToolName,
-                    Infrastructure.ToolEffect.Read,
-                    Infrastructure.ToolEvidence.RepositoryInspection
-                ),
-                WorkspaceToolKind.WriteFile => (
-                    FileAccessProvider.WriteToolName,
-                    Infrastructure.ToolEffect.WorkspaceMutation,
-                    Infrastructure.ToolEvidence.None
-                ),
-                WorkspaceToolKind.DeleteFile => (
-                    FileAccessProvider.DeleteFileToolName,
-                    Infrastructure.ToolEffect.WorkspaceMutation,
-                    Infrastructure.ToolEvidence.None
-                ),
-                WorkspaceToolKind.Replace => (
-                    FileAccessProvider.ReplaceToolName,
-                    Infrastructure.ToolEffect.WorkspaceMutation,
-                    Infrastructure.ToolEvidence.None
-                ),
-                WorkspaceToolKind.ReplaceLines => (
-                    FileAccessProvider.ReplaceLinesToolName,
-                    Infrastructure.ToolEffect.WorkspaceMutation,
-                    Infrastructure.ToolEvidence.None
-                ),
-                WorkspaceToolKind.CopyFile
-                or WorkspaceToolKind.MoveFile
-                or WorkspaceToolKind.CreateDirectory => default,
-                _ => throw new ArgumentOutOfRangeException(nameof(kind)),
-            };
-            if (
-                kind
-                is WorkspaceToolKind.CopyFile
-                    or WorkspaceToolKind.MoveFile
-                    or WorkspaceToolKind.CreateDirectory
-            )
-            {
-                continue;
+                effects.Add(tool.Name, tool.Effect, tool.Evidence);
+                mafToolNames.Add(tool.Name);
             }
-            registry.Add(name, effect, evidence);
-            names.Add(name);
+            else
+            {
+                Add(options, effects, tool.Create(workspace.Path), tool.Effect, tool.Evidence);
+            }
         }
-        return names;
+        return mafToolNames;
+    }
+
+    internal static void Add(
+        ChatOptions options,
+        ToolEffectRegistry effects,
+        AITool tool,
+        Infrastructure.ToolEffect effect,
+        Infrastructure.ToolEvidence evidence = Infrastructure.ToolEvidence.None,
+        Func<object?, ToolResultEvidenceDescriptor?>? resultEvidence = null
+    )
+    {
+        var tools = options.Tools ?? [];
+        if (tools.Any(existing => existing.Name == tool.Name))
+        {
+            throw new InvalidOperationException($"Agent already exposes tool '{tool.Name}'.");
+        }
+        options.Tools = [.. tools, tool];
+        effects.Add(tool.Name, effect, evidence, resultEvidence);
     }
 }
 
 internal static class WorkspaceFileReadTools
 {
-    internal static void Add(ChatOptions options, string workspacePath)
-    {
-        var tools = options.Tools?.ToList() ?? [];
-        if (tools.Any(tool => tool.Name == FileAccessProvider.ReadFileToolName))
-        {
-            throw new InvalidOperationException(
-                $"Agent already exposes tool '{FileAccessProvider.ReadFileToolName}'."
-            );
-        }
-        tools.Add(
-            AIFunctionFactory.Create(
-                async (
-                    [System.ComponentModel.Description("Repository-relative text file path.")]
-                        string path,
-                    [System.ComponentModel.Description(
-                        "One-based first line to read; use line numbers from grep."
-                    )]
-                        int startLine = 1,
-                    [System.ComponentModel.Description("Maximum lines to return, from 1 to 2000.")]
-                        int lineCount = 200,
-                    [System.ComponentModel.Description(
-                        "Zero-based character offset within startLine; continues a truncated line using the returned nextCharacterOffset."
-                    )]
-                        int characterOffset = 0,
-                    CancellationToken cancellationToken = default
-                ) =>
-                    await BoundedLinePageReader.ReadAsync(
-                        WorkspacePathAuthority.Resolve(workspacePath, path, "read"),
-                        startLine,
-                        lineCount,
-                        characterOffset,
-                        cancellationToken
-                    ),
-                FileAccessProvider.ReadFileToolName,
-                "Read source lines using startLine from grep. Continue with the returned nextStartLine and nextCharacterOffset, including the remainder of oversized lines. Restart after edits."
-            )
+    internal static AIFunction Create(string workspacePath) =>
+        AIFunctionFactory.Create(
+            async (
+                [System.ComponentModel.Description("Repository-relative text file path.")]
+                    string path,
+                [System.ComponentModel.Description(
+                    "One-based first line to read; use line numbers from grep."
+                )]
+                    int startLine = 1,
+                [System.ComponentModel.Description("Maximum lines to return, from 1 to 2000.")]
+                    int lineCount = 200,
+                [System.ComponentModel.Description(
+                    "Zero-based character offset within startLine; continues a truncated line using the returned nextCharacterOffset."
+                )]
+                    int characterOffset = 0,
+                CancellationToken cancellationToken = default
+            ) =>
+                await BoundedLinePageReader.ReadAsync(
+                    WorkspacePathAuthority.Resolve(workspacePath, path, "read"),
+                    startLine,
+                    lineCount,
+                    characterOffset,
+                    cancellationToken
+                ),
+            FileAccessProvider.ReadFileToolName,
+            "Read source lines using startLine from grep. Continue with the returned nextStartLine and nextCharacterOffset, including the remainder of oversized lines. Restart after edits."
         );
-        options.Tools = tools;
-    }
 }
 
 internal static class WorkspacePathAuthority
@@ -357,73 +362,51 @@ internal static class WorkspaceFileMutationTools
     internal const string MoveToolName = "file_access_move";
     internal const string CreateDirectoryToolName = "file_access_create_directory";
 
-    internal static void Add(
-        ChatOptions options,
-        ResolvedAgentWorkspace workspace,
-        ToolEffectRegistry effects
-    )
-    {
-        var tools = options.Tools?.ToList() ?? [];
-        if (workspace.FileTools.Contains(WorkspaceToolKind.CopyFile))
-        {
-            tools.Add(
-                AIFunctionFactory.Create(
-                    (
-                        string sourceFileName,
-                        string destinationFileName,
-                        bool overwrite,
-                        CancellationToken cancellationToken
-                    ) =>
-                        Copy(
-                            workspace.Path,
-                            sourceFileName,
-                            destinationFileName,
-                            overwrite,
-                            cancellationToken
-                        ),
-                    CopyToolName,
-                    "Copy an existing file byte-for-byte within the configured workspace."
-                )
-            );
-            effects.Add(CopyToolName, Infrastructure.ToolEffect.WorkspaceMutation);
-        }
-        if (workspace.FileTools.Contains(WorkspaceToolKind.MoveFile))
-        {
-            tools.Add(
-                AIFunctionFactory.Create(
-                    (
-                        string sourceFileName,
-                        string destinationFileName,
-                        bool overwrite,
-                        CancellationToken cancellationToken
-                    ) =>
-                        Move(
-                            workspace.Path,
-                            sourceFileName,
-                            destinationFileName,
-                            overwrite,
-                            cancellationToken
-                        ),
-                    MoveToolName,
-                    "Move an existing file byte-for-byte within the configured workspace."
-                )
-            );
-            effects.Add(MoveToolName, Infrastructure.ToolEffect.WorkspaceMutation);
-        }
-        if (workspace.FileTools.Contains(WorkspaceToolKind.CreateDirectory))
-        {
-            tools.Add(
-                AIFunctionFactory.Create(
-                    (string directoryName, CancellationToken cancellationToken) =>
-                        CreateDirectory(workspace.Path, directoryName, cancellationToken),
-                    CreateDirectoryToolName,
-                    "Create a directory and any missing parent directories within the configured workspace."
-                )
-            );
-            effects.Add(CreateDirectoryToolName, Infrastructure.ToolEffect.WorkspaceMutation);
-        }
-        options.Tools = tools;
-    }
+    internal static AIFunction CreateCopyTool(string workspacePath) =>
+        AIFunctionFactory.Create(
+            (
+                string sourceFileName,
+                string destinationFileName,
+                bool overwrite,
+                CancellationToken cancellationToken
+            ) =>
+                Copy(
+                    workspacePath,
+                    sourceFileName,
+                    destinationFileName,
+                    overwrite,
+                    cancellationToken
+                ),
+            CopyToolName,
+            "Copy an existing file byte-for-byte within the configured workspace."
+        );
+
+    internal static AIFunction CreateMoveTool(string workspacePath) =>
+        AIFunctionFactory.Create(
+            (
+                string sourceFileName,
+                string destinationFileName,
+                bool overwrite,
+                CancellationToken cancellationToken
+            ) =>
+                Move(
+                    workspacePath,
+                    sourceFileName,
+                    destinationFileName,
+                    overwrite,
+                    cancellationToken
+                ),
+            MoveToolName,
+            "Move an existing file byte-for-byte within the configured workspace."
+        );
+
+    internal static AIFunction CreateDirectoryTool(string workspacePath) =>
+        AIFunctionFactory.Create(
+            (string directoryName, CancellationToken cancellationToken) =>
+                CreateDirectory(workspacePath, directoryName, cancellationToken),
+            CreateDirectoryToolName,
+            "Create a directory and any missing parent directories within the configured workspace."
+        );
 
     internal static string Copy(
         string workspacePath,
@@ -522,7 +505,6 @@ internal static class RegisteredWorkspaceTools
         ToolEffectRegistry effects
     )
     {
-        var tools = options.Tools?.ToList() ?? [];
         foreach (var registration in workspace.RegisteredTools ?? [])
         {
             var tool = registration.Create(workspace.Path);
@@ -532,14 +514,8 @@ internal static class RegisteredWorkspaceTools
                     $"Registered workspace tool '{registration.Name}' created tool '{tool.Name}'."
                 );
             }
-            if (tools.Any(existing => existing.Name == tool.Name))
-            {
-                throw new InvalidOperationException($"Agent already exposes tool '{tool.Name}'.");
-            }
-            tools.Add(tool);
-            effects.Add(tool.Name, registration.Effect, registration.Evidence);
+            HarnessTools.Add(options, effects, tool, registration.Effect, registration.Evidence);
         }
-        options.Tools = tools;
     }
 }
 
@@ -565,33 +541,30 @@ internal static class WorkspaceShellTools
         int maxOutputBytes = 16 * 1024 * 1024
     )
     {
-        var tools = options.Tools?.ToList() ?? [];
         foreach (var command in workspace.Commands)
         {
-            tools.Add(CreateCommandFunction(command, workspace.Path, timeout, maxOutputBytes));
-            effects.Add(
-                command.Name,
+            HarnessTools.Add(
+                options,
+                effects,
+                CreateCommandFunction(command, workspace.Path, timeout, maxOutputBytes),
                 Infrastructure.ToolEffect.ProcessExecution,
                 resultEvidence: ToProcessEvidence
             );
         }
         if (workspace.IncludeShell)
         {
-            var tool = CreateExecutor(
-                    workspace.Path,
-                    acknowledgeUnsafe: true,
-                    timeout,
-                    maxOutputBytes
-                )
-                .AsAIFunction(
-                    "run_shell",
-                    "Run a model-authored command in the configured workspace without approval.",
-                    requireApproval: false
-                );
-            tools.Add(tool);
-            effects.Add(tool.Name, Infrastructure.ToolEffect.ProcessExecution);
+            HarnessTools.Add(
+                options,
+                effects,
+                CreateExecutor(workspace.Path, acknowledgeUnsafe: true, timeout, maxOutputBytes)
+                    .AsAIFunction(
+                        "run_shell",
+                        "Run a model-authored command in the configured workspace without approval.",
+                        requireApproval: false
+                    ),
+                Infrastructure.ToolEffect.ProcessExecution
+            );
         }
-        options.Tools = tools;
     }
 
     private static readonly JsonSerializerOptions _commandJson = new(AIJsonUtilities.DefaultOptions)
