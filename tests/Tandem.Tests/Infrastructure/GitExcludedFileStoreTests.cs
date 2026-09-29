@@ -9,99 +9,69 @@ public sealed class GitExcludedFileStoreTests
     [Fact]
     public async Task WriteAsync_StripsLeadingUnicodeBom()
     {
-        var directory = Path.Combine(
-            Path.GetTempPath(),
-            "tandem-file-store-" + Guid.NewGuid().ToString("N")
+        using var temp = new TempDirectory();
+        var directory = temp.Path;
+
+        var store = new GitExcludedFileStore(new BomlessFileSystemAgentFileStore(directory));
+
+        await store.WriteAsync(
+            "service.ts",
+            "\uFEFFimport type { Todo } from './types';\n",
+            default
         );
-        Directory.CreateDirectory(directory);
 
-        try
-        {
-            var store = new GitExcludedFileStore(new BomlessFileSystemAgentFileStore(directory));
-
-            await store.WriteAsync(
-                "service.ts",
-                "\uFEFFimport type { Todo } from './types';\n",
-                default
-            );
-
-            var bytes = await File.ReadAllBytesAsync(Path.Combine(directory, "service.ts"));
-            bytes.Take(3).Should().NotEqual([0xEF, 0xBB, 0xBF]);
-            (await File.ReadAllTextAsync(Path.Combine(directory, "service.ts")))
-                .Should()
-                .StartWith("import type");
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
+        var bytes = await File.ReadAllBytesAsync(Path.Combine(directory, "service.ts"));
+        bytes.Take(3).Should().NotEqual([0xEF, 0xBB, 0xBF]);
+        (await File.ReadAllTextAsync(Path.Combine(directory, "service.ts")))
+            .Should()
+            .StartWith("import type");
     }
 
     [Fact]
     public async Task ReadAsync_ReturnsCompleteLargeContent()
     {
-        var directory = Path.Combine(
-            Path.GetTempPath(),
-            "tandem-file-store-" + Guid.NewGuid().ToString("N")
+        using var temp = new TempDirectory();
+        var directory = temp.Path;
+        await File.WriteAllTextAsync(
+            Path.Combine(directory, "large.txt"),
+            new string('x', 1_000_000)
         );
-        Directory.CreateDirectory(directory);
-        try
-        {
-            await File.WriteAllTextAsync(
-                Path.Combine(directory, "large.txt"),
-                new string('x', 1_000_000)
-            );
-            var store = new GitExcludedFileStore(new BomlessFileSystemAgentFileStore(directory));
+        var store = new GitExcludedFileStore(new BomlessFileSystemAgentFileStore(directory));
 
-            var content = await store.ReadAsync("large.txt", CancellationToken.None);
+        var content = await store.ReadAsync("large.txt", CancellationToken.None);
 
-            content.Should().Be(new string('x', 1_000_000));
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
+        content.Should().Be(new string('x', 1_000_000));
     }
 
     [Fact]
     public async Task SearchAsync_BoundsLargeResultSetsAndMatchingLines()
     {
-        var directory = Path.Combine(
-            Path.GetTempPath(),
-            "tandem-file-store-" + Guid.NewGuid().ToString("N")
+        using var temp = new TempDirectory();
+        var directory = temp.Path;
+        for (var file = 0; file < 20; file++)
+        {
+            var lines = Enumerable.Range(0, 20).Select(_ => $"MATCH {new string('x', 10_000)}");
+            await File.WriteAllLinesAsync(Path.Combine(directory, $"large-{file}.txt"), lines);
+        }
+        var store = new GitExcludedFileStore(new BomlessFileSystemAgentFileStore(directory));
+
+        var results = await store.SearchAsync(
+            "",
+            "MATCH",
+            "*.txt",
+            recursive: true,
+            CancellationToken.None
         );
-        Directory.CreateDirectory(directory);
-        try
-        {
-            for (var file = 0; file < 20; file++)
-            {
-                var lines = Enumerable.Range(0, 20).Select(_ => $"MATCH {new string('x', 10_000)}");
-                await File.WriteAllLinesAsync(Path.Combine(directory, $"large-{file}.txt"), lines);
-            }
-            var store = new GitExcludedFileStore(new BomlessFileSystemAgentFileStore(directory));
+        var characters = results.Sum(result =>
+            result.FileName.Length
+            + result.Snippet.Length
+            + result.MatchingLines.Sum(match => match.Line.Length)
+        );
 
-            var results = await store.SearchAsync(
-                "",
-                "MATCH",
-                "*.txt",
-                recursive: true,
-                CancellationToken.None
-            );
-            var characters = results.Sum(result =>
-                result.FileName.Length
-                + result.Snippet.Length
-                + result.MatchingLines.Sum(match => match.Line.Length)
-            );
-
-            characters.Should().BeLessThan(100_000);
-            results
-                .Should()
-                .Contain(result => result.FileName == "[...additional search results omitted...]");
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
+        characters.Should().BeLessThan(100_000);
+        results
+            .Should()
+            .Contain(result => result.FileName == "[...additional search results omitted...]");
     }
 
     [Theory]
@@ -163,36 +133,24 @@ public sealed class GitExcludedFileStoreTests
     [Fact]
     public async Task SearchAsync_ReturnsSourceButNotGeneratedOrBinaryResults()
     {
-        var directory = Path.Combine(
-            Path.GetTempPath(),
-            "tandem-file-store-" + Guid.NewGuid().ToString("N")
-        );
+        using var temp = new TempDirectory();
+        var directory = temp.Path;
         Directory.CreateDirectory(Path.Combine(directory, "src"));
         Directory.CreateDirectory(Path.Combine(directory, "obj", "Debug"));
-        try
-        {
-            await File.WriteAllTextAsync(Path.Combine(directory, "src", "keep.txt"), "MATCH");
-            await File.WriteAllTextAsync(
-                Path.Combine(directory, "obj", "Debug", "skip.txt"),
-                "MATCH"
-            );
-            await File.WriteAllTextAsync(Path.Combine(directory, "src", "skip.dll"), "MATCH");
-            var store = new GitExcludedFileStore(new BomlessFileSystemAgentFileStore(directory));
+        await File.WriteAllTextAsync(Path.Combine(directory, "src", "keep.txt"), "MATCH");
+        await File.WriteAllTextAsync(Path.Combine(directory, "obj", "Debug", "skip.txt"), "MATCH");
+        await File.WriteAllTextAsync(Path.Combine(directory, "src", "skip.dll"), "MATCH");
+        var store = new GitExcludedFileStore(new BomlessFileSystemAgentFileStore(directory));
 
-            var results = await store.SearchAsync(
-                "",
-                "MATCH",
-                null,
-                recursive: true,
-                CancellationToken.None
-            );
+        var results = await store.SearchAsync(
+            "",
+            "MATCH",
+            null,
+            recursive: true,
+            CancellationToken.None
+        );
 
-            results.Should().ContainSingle().Which.FileName.Should().Be("src/keep.txt");
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
+        results.Should().ContainSingle().Which.FileName.Should().Be("src/keep.txt");
     }
 
     [Theory]

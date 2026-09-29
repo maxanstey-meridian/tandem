@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Examples.Songwriter;
 using FluentAssertions;
@@ -18,14 +17,14 @@ public sealed class SongwriterCompositionTests
         var services = new ServiceCollection();
         services.AddSongwriter(
             new SongwriterClients(
-                new ScriptedChatClient(
+                Scripted(
                     order,
                     "songwriter",
                     "{\"lyrics\":\"First draft\"}",
                     "{\"lyrics\":\"Linted\\ndraft\"}",
                     "{\"lyrics\":\"Final\\ndraft\"}"
                 ),
-                new ScriptedChatClient(
+                Scripted(
                     order,
                     "proofreader",
                     "{\"accepted\":false,\"feedback\":\"Sharpen the ending.\"}",
@@ -60,8 +59,8 @@ public sealed class SongwriterCompositionTests
         var services = new ServiceCollection();
         services.AddSongwriter(
             new SongwriterClients(
-                new ScriptedChatClient(order, "songwriter", "{\"lyrics\":\"Valid\\ndraft\"}"),
-                new ScriptedChatClient(order, "proofreader", ["not json", "still not json"])
+                Scripted(order, "songwriter", "{\"lyrics\":\"Valid\\ndraft\"}"),
+                Scripted(order, "proofreader", ["not json", "still not json"])
             )
         );
         await using var provider = services.BuildServiceProvider();
@@ -119,39 +118,9 @@ public sealed class SongwriterCompositionTests
         return output ?? throw new InvalidOperationException("Songwriter produced no output.");
     }
 
-    private sealed class ScriptedChatClient(
+    private static TestChatClient Scripted(
         List<string> order,
         string name,
         params string[] responses
-    ) : IChatClient
-    {
-        private readonly Queue<string> _responses = new(responses);
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
-        {
-            order.Add(name);
-            var response = new ChatResponse(
-                new ChatMessage(ChatRole.Assistant, [new TextContent(_responses.Dequeue())])
-            );
-            foreach (var update in response.ToChatResponseUpdates())
-            {
-                yield return update;
-            }
-            await Task.CompletedTask;
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
-    }
+    ) => new([.. responses.Select(TestChatClient.Text)]) { OnRequest = () => order.Add(name) };
 }

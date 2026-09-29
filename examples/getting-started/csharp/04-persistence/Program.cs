@@ -12,7 +12,7 @@ public static class Program
             .Start(normalize, "persistent-normalization")
             .Persist()
             .Build(normalize);
-        var ledgerPath = Path.GetFullPath("getting-started.sqlite3");
+        var ledgerPath = Path.Combine(Path.GetTempPath(), "tandem-getting-started.sqlite3");
         var result = await new PipelineRunner().RunAsync(
             pipeline,
             new ExampleState(" Hello "),

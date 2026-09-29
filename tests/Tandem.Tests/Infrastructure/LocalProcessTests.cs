@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using FluentAssertions;
 
 namespace Tandem.Tests.Infrastructure;
@@ -8,7 +9,7 @@ public sealed class LocalProcessTests
     [Fact]
     public async Task Arguments_working_directory_and_environment_are_literal()
     {
-        using var directory = TemporaryDirectory.Create();
+        using var directory = new TempDirectory();
         var variable = $"TANDEM_PROCESS_{Guid.NewGuid():N}";
         Environment.SetEnvironmentVariable(variable, "inherited");
         try
@@ -67,14 +68,14 @@ public sealed class LocalProcessTests
     [Fact]
     public async Task Timeout_kills_the_process_tree_and_returns_deterministic_result()
     {
-        using var directory = TemporaryDirectory.Create();
+        using var directory = new TempDirectory();
         var marker = Path.Combine(directory.Path, "descendant-alive");
 
         var result = await RunChildAsync(["tree", marker], timeout: TimeSpan.FromMilliseconds(500));
 
         result.ExitCode.Should().Be(-1);
         result.TimedOut.Should().BeTrue();
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await WaitForExitAsync(int.Parse(result.Stdout.Trim()));
         File.Exists(marker).Should().BeFalse();
     }
 
@@ -203,26 +204,20 @@ public sealed class LocalProcessTests
     private static string ChildAssemblyPath() =>
         Path.Combine(AppContext.BaseDirectory, "Tandem.Process.TestChild.dll");
 
-    private static string MissingExecutable() => $"tandem-missing-{Guid.NewGuid():N}";
-
-    private sealed class TemporaryDirectory : IDisposable
+    private static async Task WaitForExitAsync(int processId)
     {
-        private TemporaryDirectory(string path) => Path = path;
-
-        internal string Path { get; }
-
-        internal static TemporaryDirectory Create()
+        try
         {
-            var path = System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(),
-                $"tandem-process-{Guid.NewGuid():N}"
-            );
-            Directory.CreateDirectory(path);
-            return new TemporaryDirectory(path);
+            using var process = Process.GetProcessById(processId);
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
         }
-
-        public void Dispose() => Directory.Delete(Path, recursive: true);
+        catch (ArgumentException)
+        {
+            // GetProcessById throws once the process has exited.
+        }
     }
+
+    private static string MissingExecutable() => $"tandem-missing-{Guid.NewGuid():N}";
 
     private sealed class NullKeyEnvironment : IReadOnlyDictionary<string, string>
     {

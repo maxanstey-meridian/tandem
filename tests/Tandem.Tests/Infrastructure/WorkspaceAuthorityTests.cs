@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
 using Tandem.Domain;
@@ -30,7 +29,7 @@ public sealed class WorkspaceAuthorityTests
 
         var configure = () =>
             Agent
-                .Create<TestState>("agent", "Test.", new NoopChatClient())
+                .Create<TestState>("agent", "Test.", new TestChatClient())
                 .WithWorkspace(first, [AgentTools.Always<TestState>(second.Commands)]);
 
         configure
@@ -60,7 +59,7 @@ public sealed class WorkspaceAuthorityTests
         );
         var block = new AgentBlock<TestState>(
             new AgentBlockConfig<TestState>("agent", "agent", "Test.", [], _ => "Test.", workspace),
-            new NoopChatClient()
+            new TestChatClient()
         );
 
         var execute = async () =>
@@ -81,185 +80,178 @@ public sealed class WorkspaceAuthorityTests
     [Fact]
     public async Task ProcessExecutionGuard_BlocksUnrestrictedShellBeforeExecution()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"tandem-guard-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(path);
-        try
-        {
-            var client = new ScriptedChatClient(
-                new ChatResponse(
-                    new ChatMessage(
-                        ChatRole.Assistant,
-                        [
-                            new FunctionCallContent(
-                                "shell-call",
-                                "run_shell",
-                                new Dictionary<string, object?>
-                                {
-                                    ["command"] = "echo blocked > blocked.txt",
-                                }
-                            ),
-                        ]
-                    )
+        using var temp = new TempDirectory();
+        var path = temp.Path;
+        var client = new TestChatClient(
+            new ChatResponse(
+                new ChatMessage(
+                    ChatRole.Assistant,
+                    [
+                        new FunctionCallContent(
+                            "shell-call",
+                            "run_shell",
+                            new Dictionary<string, object?>
+                            {
+                                ["command"] = "echo blocked > blocked.txt",
+                            }
+                        ),
+                    ]
                 )
-                {
-                    FinishReason = ChatFinishReason.ToolCalls,
-                },
-                new ChatResponse(new ChatMessage(ChatRole.Assistant, "Stopped."))
-                {
-                    FinishReason = ChatFinishReason.Stop,
-                }
-            );
-            var workspace = AgentWorkspace<TestState>.Define(_ => path, []);
-            var agent = Agent
-                .Create<TestState>("agent", "Test.", client)
-                .UseHarness("Test harness.")
-                .WithWorkspace(workspace, [AgentTools.Always<TestState>("shell")])
-                .WithStateGuard(
-                    new AgentStateGuard<TestState>(
-                        "deny-process",
-                        _ => true,
-                        new HashSet<Tandem.Advanced.ToolEffect>
-                        {
-                            Tandem.Advanced.ToolEffect.ProcessExecution,
-                        },
-                        "Process execution is unavailable."
-                    )
+            )
+            {
+                FinishReason = ChatFinishReason.ToolCalls,
+            },
+            new ChatResponse(new ChatMessage(ChatRole.Assistant, "Stopped."))
+            {
+                FinishReason = ChatFinishReason.Stop,
+            }
+        );
+        var workspace = AgentWorkspace<TestState>.Define(_ => path, []);
+        var agent = Agent
+            .Create<TestState>("agent", "Test.", client)
+            .UseHarness("Test harness.")
+            .WithWorkspace(workspace, [AgentTools.Always<TestState>("shell")])
+            .WithStateGuard(
+                new AgentStateGuard<TestState>(
+                    "deny-process",
+                    _ => true,
+                    new HashSet<Tandem.Advanced.ToolEffect>
+                    {
+                        Tandem.Advanced.ToolEffect.ProcessExecution,
+                    },
+                    "Process execution is unavailable."
                 )
-                .WithMessage(_ => "Try the shell.")
-                .Build();
-            var complete = PipelineNodes.Complete(new TestCompletion<TestState>("complete"));
-            var pipeline = Pipeline
-                .Start(agent, "guard-shell")
-                .Route(agent.Success, complete, "complete")
-                .Build(complete);
+            )
+            .WithMessage(_ => "Try the shell.")
+            .Build();
+        var complete = PipelineNodes.Complete(new TestCompletion<TestState>("complete"));
+        var pipeline = Pipeline
+            .Start(agent, "guard-shell")
+            .Route(agent.Success, complete, "complete")
+            .Build(complete);
 
-            await new PipelineRunner().RunAsync(pipeline, new TestState());
+        await new PipelineRunner().RunAsync(pipeline, new TestState());
 
-            File.Exists(Path.Combine(path, "blocked.txt")).Should().BeFalse();
-            client.CallCount.Should().Be(2);
-        }
-        finally
-        {
-            Directory.Delete(path, recursive: true);
-        }
+        File.Exists(Path.Combine(path, "blocked.txt")).Should().BeFalse();
+        client.CallCount.Should().Be(2);
     }
 
     [Fact]
     public async Task ConditionalFileTools_AreReevaluatedAndIndividuallyFilteredPerRun()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"tandem-tools-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(path);
-        try
-        {
-            var client = new ScriptedChatClient(
-                new ChatResponse(new ChatMessage(ChatRole.Assistant, "Read only."))
-                {
-                    FinishReason = ChatFinishReason.Stop,
-                },
-                new ChatResponse(new ChatMessage(ChatRole.Assistant, "Writable."))
-                {
-                    FinishReason = ChatFinishReason.Stop,
-                }
-            );
-            var workspace = AgentWorkspace<TestState>.Define(_ => path, []);
-            var agent = Agent
-                .Create<TestState>("agent", "Inspect.", client)
-                .UseHarness("Test harness.")
-                .WithWorkspace(
-                    workspace,
-                    [
-                        AgentTools.Always<TestState>("read_file"),
-                        AgentTools.When<TestState>(
-                            state => state.MutationAllowed,
-                            "write_file",
-                            "copy_file",
-                            "move_file",
-                            "create_directory"
-                        ),
-                    ]
-                )
-                .WithMessage(_ => "Inspect.")
-                .Build();
-            var complete = PipelineNodes.Complete(new TestCompletion<TestState>("complete"));
-            var pipeline = Pipeline
-                .Start(agent, "conditional-tools")
-                .Route(agent.Success, complete, "complete")
-                .Build(complete);
+        using var temp = new TempDirectory();
+        var path = temp.Path;
+        var client = new TestChatClient(
+            new ChatResponse(new ChatMessage(ChatRole.Assistant, "Read only."))
+            {
+                FinishReason = ChatFinishReason.Stop,
+            },
+            new ChatResponse(new ChatMessage(ChatRole.Assistant, "Writable."))
+            {
+                FinishReason = ChatFinishReason.Stop,
+            }
+        );
+        var workspace = AgentWorkspace<TestState>.Define(_ => path, []);
+        var agent = Agent
+            .Create<TestState>("agent", "Inspect.", client)
+            .UseHarness("Test harness.")
+            .WithWorkspace(
+                workspace,
+                [
+                    AgentTools.Always<TestState>("read_file"),
+                    AgentTools.When<TestState>(
+                        state => state.MutationAllowed,
+                        "write_file",
+                        "copy_file",
+                        "move_file",
+                        "create_directory"
+                    ),
+                ]
+            )
+            .WithMessage(_ => "Inspect.")
+            .Build();
+        var complete = PipelineNodes.Complete(new TestCompletion<TestState>("complete"));
+        var pipeline = Pipeline
+            .Start(agent, "conditional-tools")
+            .Route(agent.Success, complete, "complete")
+            .Build(complete);
 
-            await new PipelineRunner().RunAsync(pipeline, new TestState());
-            await new PipelineRunner().RunAsync(pipeline, new TestState(MutationAllowed: true));
+        await new PipelineRunner().RunAsync(pipeline, new TestState());
+        await new PipelineRunner().RunAsync(pipeline, new TestState(MutationAllowed: true));
 
-            client.AdvertisedTools[0].Count(name => name == "file_access_read").Should().Be(1);
-            client.AdvertisedTools[0].Should().NotContain("file_access_write");
-            client.AdvertisedTools[0].Should().NotContain(WorkspaceFileMutationTools.CopyToolName);
-            client.AdvertisedTools[0].Should().NotContain(WorkspaceFileMutationTools.MoveToolName);
-            client
-                .AdvertisedTools[0]
-                .Should()
-                .NotContain(WorkspaceFileMutationTools.CreateDirectoryToolName);
-            client.AdvertisedTools[1].Count(name => name == "file_access_read").Should().Be(1);
-            client.AdvertisedTools[1].Should().Contain("file_access_write");
-            client.AdvertisedTools[1].Should().Contain(WorkspaceFileMutationTools.CopyToolName);
-            client.AdvertisedTools[1].Should().Contain(WorkspaceFileMutationTools.MoveToolName);
-            client
-                .AdvertisedTools[1]
-                .Should()
-                .Contain(WorkspaceFileMutationTools.CreateDirectoryToolName);
-        }
-        finally
-        {
-            Directory.Delete(path, recursive: true);
-        }
+        client.AdvertisedTools[0].Count(name => name == "file_access_read").Should().Be(1);
+        client.AdvertisedTools[0].Should().NotContain("file_access_write");
+        client.AdvertisedTools[0].Should().NotContain(WorkspaceFileMutationTools.CopyToolName);
+        client.AdvertisedTools[0].Should().NotContain(WorkspaceFileMutationTools.MoveToolName);
+        client
+            .AdvertisedTools[0]
+            .Should()
+            .NotContain(WorkspaceFileMutationTools.CreateDirectoryToolName);
+        client.AdvertisedTools[1].Count(name => name == "file_access_read").Should().Be(1);
+        client.AdvertisedTools[1].Should().Contain("file_access_write");
+        client.AdvertisedTools[1].Should().Contain(WorkspaceFileMutationTools.CopyToolName);
+        client.AdvertisedTools[1].Should().Contain(WorkspaceFileMutationTools.MoveToolName);
+        client
+            .AdvertisedTools[1]
+            .Should()
+            .Contain(WorkspaceFileMutationTools.CreateDirectoryToolName);
     }
 
     [Fact]
     public async Task FileTools_RejectGitMetadataCaseInsensitively()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"tandem-git-exclusion-{Guid.NewGuid():N}");
+        using var temp = new TempDirectory();
+        var path = temp.Path;
         Directory.CreateDirectory(Path.Combine(path, ".GIT"));
-        try
-        {
-            var store = new GitExcludedFileStore(new BomlessFileSystemAgentFileStore(path));
+        var store = new GitExcludedFileStore(new BomlessFileSystemAgentFileStore(path));
 
-            var read = async () => await store.ReadAsync(".GIT/config", CancellationToken.None);
-            var write = async () =>
-                await store.WriteAsync("nested/.GiT/config", "unsafe", CancellationToken.None);
-            var children = await store.ListChildrenAsync("", CancellationToken.None);
+        var read = async () => await store.ReadAsync(".GIT/config", CancellationToken.None);
+        var write = async () =>
+            await store.WriteAsync("nested/.GiT/config", "unsafe", CancellationToken.None);
+        var children = await store.ListChildrenAsync("", CancellationToken.None);
 
-            await read.Should().ThrowAsync<UnauthorizedAccessException>();
-            await write.Should().ThrowAsync<UnauthorizedAccessException>();
-            children.Should().NotContain(entry => entry.Name == ".GIT");
-        }
-        finally
-        {
-            Directory.Delete(path, recursive: true);
-        }
+        await read.Should().ThrowAsync<UnauthorizedAccessException>();
+        await write.Should().ThrowAsync<UnauthorizedAccessException>();
+        children.Should().NotContain(entry => entry.Name == ".GIT");
     }
 
     [Fact]
     public void CopyAndMoveFile_PreserveBytesAndEnforceWorkspaceBoundaries()
     {
-        var parent = Path.Combine(Path.GetTempPath(), $"tandem-file-mutation-{Guid.NewGuid():N}");
+        using var temp = new TempDirectory();
+        var parent = temp.Path;
         var workspace = Path.Combine(parent, "workspace");
         Directory.CreateDirectory(Path.Combine(workspace, "source"));
         Directory.CreateDirectory(Path.Combine(workspace, "destination"));
-        try
-        {
-            WorkspaceFileMutationTools.CreateDirectory(
-                workspace,
-                "generated/nested",
-                CancellationToken.None
-            );
-            Directory.Exists(Path.Combine(workspace, "generated", "nested")).Should().BeTrue();
-            WorkspaceFileMutationTools.CreateDirectory(
-                workspace,
-                "generated/nested",
-                CancellationToken.None
-            );
+        WorkspaceFileMutationTools.CreateDirectory(
+            workspace,
+            "generated/nested",
+            CancellationToken.None
+        );
+        Directory.Exists(Path.Combine(workspace, "generated", "nested")).Should().BeTrue();
+        WorkspaceFileMutationTools.CreateDirectory(
+            workspace,
+            "generated/nested",
+            CancellationToken.None
+        );
 
-            var bytes = new byte[] { 0, 1, 2, 127, 128, 255 };
-            File.WriteAllBytes(Path.Combine(workspace, "source", "payload.bin"), bytes);
+        var bytes = new byte[] { 0, 1, 2, 127, 128, 255 };
+        File.WriteAllBytes(Path.Combine(workspace, "source", "payload.bin"), bytes);
 
+        WorkspaceFileMutationTools.Copy(
+            workspace,
+            "source/payload.bin",
+            "destination/copied.bin",
+            overwrite: false,
+            CancellationToken.None
+        );
+        File.ReadAllBytes(Path.Combine(workspace, "destination", "copied.bin"))
+            .Should()
+            .Equal(bytes);
+
+        var replacement = new byte[] { 9, 8, 7 };
+        File.WriteAllBytes(Path.Combine(workspace, "source", "payload.bin"), replacement);
+        var refuseOverwrite = () =>
             WorkspaceFileMutationTools.Copy(
                 workspace,
                 "source/payload.bin",
@@ -267,188 +259,101 @@ public sealed class WorkspaceAuthorityTests
                 overwrite: false,
                 CancellationToken.None
             );
-            File.ReadAllBytes(Path.Combine(workspace, "destination", "copied.bin"))
-                .Should()
-                .Equal(bytes);
+        refuseOverwrite.Should().Throw<ArgumentException>();
+        WorkspaceFileMutationTools.Copy(
+            workspace,
+            "source/payload.bin",
+            "destination/copied.bin",
+            overwrite: true,
+            CancellationToken.None
+        );
 
-            var replacement = new byte[] { 9, 8, 7 };
-            File.WriteAllBytes(Path.Combine(workspace, "source", "payload.bin"), replacement);
-            var refuseOverwrite = () =>
-                WorkspaceFileMutationTools.Copy(
-                    workspace,
-                    "source/payload.bin",
-                    "destination/copied.bin",
-                    overwrite: false,
-                    CancellationToken.None
-                );
-            refuseOverwrite.Should().Throw<ArgumentException>();
+        WorkspaceFileMutationTools.Move(
+            workspace,
+            "destination/copied.bin",
+            "destination/moved.bin",
+            overwrite: false,
+            CancellationToken.None
+        );
+        File.Exists(Path.Combine(workspace, "destination", "copied.bin")).Should().BeFalse();
+        File.ReadAllBytes(Path.Combine(workspace, "destination", "moved.bin"))
+            .Should()
+            .Equal(replacement);
+
+        var escape = () =>
             WorkspaceFileMutationTools.Copy(
                 workspace,
                 "source/payload.bin",
-                "destination/copied.bin",
-                overwrite: true,
+                "../escaped.bin",
+                overwrite: false,
                 CancellationToken.None
             );
+        escape.Should().Throw<UnauthorizedAccessException>();
 
+        var git = () =>
             WorkspaceFileMutationTools.Move(
                 workspace,
-                "destination/copied.bin",
-                "destination/moved.bin",
+                "source/payload.bin",
+                ".GIT/payload.bin",
                 overwrite: false,
                 CancellationToken.None
             );
-            File.Exists(Path.Combine(workspace, "destination", "copied.bin")).Should().BeFalse();
-            File.ReadAllBytes(Path.Combine(workspace, "destination", "moved.bin"))
-                .Should()
-                .Equal(replacement);
+        git.Should().Throw<UnauthorizedAccessException>();
 
-            var escape = () =>
-                WorkspaceFileMutationTools.Copy(
-                    workspace,
-                    "source/payload.bin",
-                    "../escaped.bin",
-                    overwrite: false,
-                    CancellationToken.None
-                );
-            escape.Should().Throw<UnauthorizedAccessException>();
-
-            var git = () =>
-                WorkspaceFileMutationTools.Move(
-                    workspace,
-                    "source/payload.bin",
-                    ".GIT/payload.bin",
-                    overwrite: false,
-                    CancellationToken.None
-                );
-            git.Should().Throw<UnauthorizedAccessException>();
-
-            var createGit = () =>
-                WorkspaceFileMutationTools.CreateDirectory(
-                    workspace,
-                    ".git/generated",
-                    CancellationToken.None
-                );
-            createGit.Should().Throw<UnauthorizedAccessException>();
-        }
-        finally
-        {
-            Directory.Delete(parent, recursive: true);
-        }
+        var createGit = () =>
+            WorkspaceFileMutationTools.CreateDirectory(
+                workspace,
+                ".git/generated",
+                CancellationToken.None
+            );
+        createGit.Should().Throw<UnauthorizedAccessException>();
     }
 
     [Fact]
     public void FileMutations_RejectLinksThatEscapeTheWorkspace()
     {
-        var parent = Path.Combine(Path.GetTempPath(), $"tandem-file-link-{Guid.NewGuid():N}");
+        using var temp = new TempDirectory();
+        var parent = temp.Path;
         var workspace = Path.Combine(parent, "workspace");
         var outside = Path.Combine(parent, "outside");
         Directory.CreateDirectory(workspace);
         Directory.CreateDirectory(outside);
-        try
-        {
-            var secret = Path.Combine(outside, "secret.txt");
-            File.WriteAllText(secret, "secret");
-            File.CreateSymbolicLink(Path.Combine(workspace, "secret-link.txt"), secret);
-            Directory.CreateSymbolicLink(Path.Combine(workspace, "outside-link"), outside);
-            File.WriteAllText(Path.Combine(workspace, "source.txt"), "source");
+        var secret = Path.Combine(outside, "secret.txt");
+        File.WriteAllText(secret, "secret");
+        File.CreateSymbolicLink(Path.Combine(workspace, "secret-link.txt"), secret);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "outside-link"), outside);
+        File.WriteAllText(Path.Combine(workspace, "source.txt"), "source");
 
-            var copyFromLink = () =>
-                WorkspaceFileMutationTools.Copy(
-                    workspace,
-                    "secret-link.txt",
-                    "copied-secret.txt",
-                    overwrite: false,
-                    CancellationToken.None
-                );
-            var copyThroughLink = () =>
-                WorkspaceFileMutationTools.Copy(
-                    workspace,
-                    "source.txt",
-                    "outside-link/copied.txt",
-                    overwrite: false,
-                    CancellationToken.None
-                );
-            var createThroughLink = () =>
-                WorkspaceFileMutationTools.CreateDirectory(
-                    workspace,
-                    "outside-link/generated",
-                    CancellationToken.None
-                );
+        var copyFromLink = () =>
+            WorkspaceFileMutationTools.Copy(
+                workspace,
+                "secret-link.txt",
+                "copied-secret.txt",
+                overwrite: false,
+                CancellationToken.None
+            );
+        var copyThroughLink = () =>
+            WorkspaceFileMutationTools.Copy(
+                workspace,
+                "source.txt",
+                "outside-link/copied.txt",
+                overwrite: false,
+                CancellationToken.None
+            );
+        var createThroughLink = () =>
+            WorkspaceFileMutationTools.CreateDirectory(
+                workspace,
+                "outside-link/generated",
+                CancellationToken.None
+            );
 
-            copyFromLink.Should().Throw<UnauthorizedAccessException>();
-            copyThroughLink.Should().Throw<UnauthorizedAccessException>();
-            createThroughLink.Should().Throw<UnauthorizedAccessException>();
-            File.Exists(Path.Combine(workspace, "copied-secret.txt")).Should().BeFalse();
-            File.Exists(Path.Combine(outside, "copied.txt")).Should().BeFalse();
-            Directory.Exists(Path.Combine(outside, "generated")).Should().BeFalse();
-        }
-        finally
-        {
-            Directory.Delete(parent, recursive: true);
-        }
+        copyFromLink.Should().Throw<UnauthorizedAccessException>();
+        copyThroughLink.Should().Throw<UnauthorizedAccessException>();
+        createThroughLink.Should().Throw<UnauthorizedAccessException>();
+        File.Exists(Path.Combine(workspace, "copied-secret.txt")).Should().BeFalse();
+        File.Exists(Path.Combine(outside, "copied.txt")).Should().BeFalse();
+        Directory.Exists(Path.Combine(outside, "generated")).Should().BeFalse();
     }
 
     private sealed record TestState(bool MutationAllowed = false);
-
-    private sealed class ScriptedChatClient(params ChatResponse[] responses) : IChatClient
-    {
-        private readonly Queue<ChatResponse> _responses = new(responses);
-
-        internal int CallCount { get; private set; }
-        internal List<IReadOnlyList<string>> AdvertisedTools { get; } = [];
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        )
-        {
-            CallCount++;
-            AdvertisedTools.Add(options?.Tools?.Select(tool => tool.Name).ToArray() ?? []);
-            return Task.FromResult(_responses.Dequeue());
-        }
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
-        {
-            foreach (
-                var update in (
-                    await GetResponseAsync(messages, options, cancellationToken)
-                ).ToChatResponseUpdates()
-            )
-            {
-                yield return update;
-            }
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
-    }
-
-    private sealed class NoopChatClient : IChatClient
-    {
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new InvalidOperationException("The model must not be called.");
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
-        {
-            await Task.CompletedTask;
-            yield break;
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
-    }
 }

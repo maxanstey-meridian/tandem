@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using FluentAssertions;
 using FluentValidation;
 using Microsoft.Agents.AI.Workflows;
@@ -43,60 +42,49 @@ public sealed class LocalCapabilityTests
     [Fact]
     public async Task RunLedger_AutomaticallyAdvertisesGenericReadAndSearchTools()
     {
-        var directory = Path.Combine(Path.GetTempPath(), $"tandem-agent-ledger-{Guid.NewGuid():N}");
-        try
+        using var temp = new TempDirectory();
+        var directory = temp.Path;
+        var runId = Guid.CreateVersion7();
+        var store = new SqliteLedgerStore(Path.Combine(directory, "ledger.sqlite3"));
+        await store.InitializeAsync();
+        await store.CreateRunAsync(runId, "test");
+        var client = new TestChatClient(
+            ToolCall("accepted", "increment", new Dictionary<string, object?> { ["amount"] = 1 })
+        );
+        var message = new PipelineMessage<TestState>(
+            PipelineRuntime.Create(runId),
+            new TestState(0)
+        )
         {
-            var runId = Guid.CreateVersion7();
-            var store = new SqliteLedgerStore(Path.Combine(directory, "ledger.sqlite3"));
-            await store.InitializeAsync();
-            await store.CreateRunAsync(runId, "test");
-            var client = new ScriptedChatClient(
-                ToolCall(
-                    "accepted",
-                    "increment",
-                    new Dictionary<string, object?> { ["amount"] = 1 }
-                )
-            );
-            var message = new PipelineMessage<TestState>(
-                PipelineRuntime.Create(runId),
-                new TestState(0)
-            )
-            {
-                RunContext = new PipelineRunContext(runId, null, ledger: store.ForRun(runId)),
-            };
+            RunContext = new PipelineRunContext(runId, null, ledger: store.ForRun(runId)),
+        };
 
-            await CreateBlock(client, CreateCapability())
-                .ExecuteAsync(message, CancellationToken.None);
+        await CreateBlock(client, CreateCapability()).ExecuteAsync(message, CancellationToken.None);
 
-            client
-                .AdvertisedTools.Should()
-                .ContainSingle()
-                .Which.Should()
-                .BeEquivalentTo(["increment", "read_ledger", "read_ledger_entry", "search_ledger"]);
-            var descriptions = client.AdvertisedToolDescriptions.Should().ContainSingle().Subject;
-            descriptions["read_ledger"]
-                .Should()
-                .Contain("accepted durable lifecycle history")
-                .And.Contain("verified against the current repository before reliance");
-            descriptions["search_ledger"]
-                .Should()
-                .Contain("accepted durable lifecycle history")
-                .And.Contain("does not establish current repository or implementation state");
-        }
-        finally
-        {
-            if (Directory.Exists(directory))
-            {
-                Directory.Delete(directory, recursive: true);
-            }
-        }
+        client
+            .AdvertisedTools.Should()
+            .ContainSingle()
+            .Which.Should()
+            .BeEquivalentTo(["increment", "read_ledger", "read_ledger_entry", "search_ledger"]);
+        var descriptions = client
+            .Options.Should()
+            .ContainSingle()
+            .Subject!.Tools!.ToDictionary(tool => tool.Name, tool => tool.Description);
+        descriptions["read_ledger"]
+            .Should()
+            .Contain("accepted durable lifecycle history")
+            .And.Contain("verified against the current repository before reliance");
+        descriptions["search_ledger"]
+            .Should()
+            .Contain("accepted durable lifecycle history")
+            .And.Contain("does not establish current repository or implementation state");
     }
 
     [Fact]
     public async Task InvalidCall_ReturnsProblems_ThenAcceptsCorrectedCallInSameSession()
     {
         var toolResults = new List<string>();
-        var client = new ScriptedChatClient(
+        var client = new TestChatClient(
             ToolCall("invalid", "increment", new Dictionary<string, object?> { ["amount"] = 0 }),
             ToolCall("corrected", "increment", new Dictionary<string, object?> { ["amount"] = 2 })
         );
@@ -123,7 +111,7 @@ public sealed class LocalCapabilityTests
     [Fact]
     public async Task WrongShape_ReturnsToolError_ThenAcceptsCorrectedCall()
     {
-        var client = new ScriptedChatClient(
+        var client = new TestChatClient(
             ToolCall(
                 "wrong-shape",
                 "increment",
@@ -199,7 +187,7 @@ public sealed class LocalCapabilityTests
                     return ValueTask.CompletedTask;
                 }
             );
-        var client = new ScriptedChatClient(
+        var client = new TestChatClient(
             ToolCall("first", "increment", new Dictionary<string, object?> { ["amount"] = 1 }),
             ToolCall("retry", "increment", new Dictionary<string, object?> { ["amount"] = 4 })
         );
@@ -214,64 +202,51 @@ public sealed class LocalCapabilityTests
     [Fact]
     public async Task JournalFailureAtCapabilityBoundary_DoesNotCommitStateOrCompleteVisit()
     {
-        var directory = Path.Combine(
-            Path.GetTempPath(),
-            "tandem-journal-failure-" + Guid.NewGuid().ToString("N")
+        using var temp = new TempDirectory();
+        var directory = temp.Path;
+        var store = new SqliteLedgerStore(Path.Combine(directory, "ledger.sqlite3"));
+        await store.InitializeAsync();
+        var runId = Guid.CreateVersion7();
+        await store.CreateRunAsync(runId, "test");
+        var ledger = store.ForRun(runId);
+        var accepted = new LedgerStream<IncrementRequest>(
+            "test.accepted",
+            "test.increment-accepted"
         );
-        Directory.CreateDirectory(directory);
-        try
+        var capability = CreateCapability()
+            .WithAcceptance<TestState, IncrementRequest>(
+                async (context, cancellationToken) =>
+                    await ledger.AppendAsync(
+                        accepted,
+                        context.AcceptedCallId,
+                        context.Request,
+                        cancellationToken
+                    )
+            );
+        var observer = new CompositePipelineObserver(
+            new SqlitePipelineObserver(ledger),
+            new FailingAcceptanceObserver()
+        );
+        var client = new TestChatClient(
+            ToolCall("call-1", "increment", new Dictionary<string, object?> { ["amount"] = 1 }),
+            ToolCall("call-2", "increment", new Dictionary<string, object?> { ["amount"] = 1 })
+        );
+        var input = new PipelineMessage<TestState>(PipelineRuntime.Create(runId), new TestState(0))
         {
-            var store = new SqliteLedgerStore(Path.Combine(directory, "ledger.sqlite3"));
-            await store.InitializeAsync();
-            var runId = Guid.CreateVersion7();
-            await store.CreateRunAsync(runId, "test");
-            var ledger = store.ForRun(runId);
-            var accepted = new LedgerStream<IncrementRequest>(
-                "test.accepted",
-                "test.increment-accepted"
-            );
-            var capability = CreateCapability()
-                .WithAcceptance<TestState, IncrementRequest>(
-                    async (context, cancellationToken) =>
-                        await ledger.AppendAsync(
-                            accepted,
-                            context.AcceptedCallId,
-                            context.Request,
-                            cancellationToken
-                        )
-                );
-            var observer = new CompositePipelineObserver(
-                new SqlitePipelineObserver(ledger),
-                new FailingAcceptanceObserver()
-            );
-            var client = new ScriptedChatClient(
-                ToolCall("call-1", "increment", new Dictionary<string, object?> { ["amount"] = 1 }),
-                ToolCall("call-2", "increment", new Dictionary<string, object?> { ["amount"] = 1 })
-            );
-            var input = new PipelineMessage<TestState>(
-                PipelineRuntime.Create(runId),
-                new TestState(0)
-            )
-            {
-                RunContext = new PipelineRunContext(
-                    runId,
-                    observer,
-                    new InlineAcceptanceUnitOfWork(store)
-                ),
-            };
+            RunContext = new PipelineRunContext(
+                runId,
+                observer,
+                new InlineAcceptanceUnitOfWork(store)
+            ),
+        };
 
-            var execute = async () =>
-                await CreateBlock(client, capability).ExecuteAsync(input, CancellationToken.None);
+        var execute = async () =>
+            await CreateBlock(client, capability).ExecuteAsync(input, CancellationToken.None);
 
-            await execute.Should().ThrowAsync<Exception>();
-            input.State.Count.Should().Be(0);
-            client.CallCount.Should().BeGreaterThan(1);
-            (await ledger.ReadAsync(accepted)).Should().BeEmpty();
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
+        await execute.Should().ThrowAsync<Exception>();
+        input.State.Count.Should().Be(0);
+        client.CallCount.Should().BeGreaterThan(1);
+        (await ledger.ReadAsync(accepted)).Should().BeEmpty();
     }
 
     [Fact]
@@ -279,7 +254,7 @@ public sealed class LocalCapabilityTests
     {
         var acceptances = 0;
         var capability = CreateCapability(_ => Interlocked.Increment(ref acceptances));
-        var client = new ScriptedChatClient(
+        var client = new TestChatClient(
             new ChatResponse(
                 new ChatMessage(
                     ChatRole.Assistant,
@@ -315,7 +290,7 @@ public sealed class LocalCapabilityTests
     public async Task PersistentStep_ObservesAcceptedCapabilityPayload()
     {
         var observations = new List<PipelineObservation>();
-        var observer = new RecordingPersistenceObserver(observations);
+        var observer = new RecordingObserver(observations);
         var runId = Guid.CreateVersion7();
         var input = new PipelineMessage<TestState>(PipelineRuntime.Create(runId), new TestState(0))
         {
@@ -325,7 +300,7 @@ public sealed class LocalCapabilityTests
                 persistentStepIds: new HashSet<string>(StringComparer.Ordinal) { "agent" }
             ),
         };
-        var client = new ScriptedChatClient(
+        var client = new TestChatClient(
             ToolCall("call", "increment", new Dictionary<string, object?> { ["amount"] = 3 })
         );
 
@@ -346,7 +321,7 @@ public sealed class LocalCapabilityTests
     {
         var validator = new InlineValidator<IncrementRequest>();
         validator.RuleFor(request => request.Amount).GreaterThan(0);
-        var client = new ScriptedChatClient(
+        var client = new TestChatClient(
             ToolCall("accepted", "increment", new Dictionary<string, object?> { ["amount"] = 2 })
         );
         var agent = Agent
@@ -455,7 +430,7 @@ public sealed class LocalCapabilityTests
             blockId,
             invocationId,
             new TestState(0),
-            new PipelineRunContext(runId, new RecordingPersistenceObserver(observations))
+            new PipelineRunContext(runId, new RecordingObserver(observations))
         );
         var function = capability.Bind(invocation);
         using var cancellation = new CancellationTokenSource();
@@ -529,7 +504,7 @@ public sealed class LocalCapabilityTests
         var first = CreateCapability();
         var second = CreateCapability();
         var builder = Agent
-            .Create<TestState>("agent", "Test capabilities.", new ScriptedChatClient())
+            .Create<TestState>("agent", "Test capabilities.", new TestChatClient())
             .WithMessage(_ => "message")
             .ContinueSession()
             .WithCapability(first);
@@ -555,7 +530,7 @@ public sealed class LocalCapabilityTests
             ),
             (state, request) => state with { Count = state.Count + request.Amount }
         );
-        var client = new ScriptedChatClient(
+        var client = new TestChatClient(
             ToolCall(
                 "checkpoint-call",
                 "checkpoint",
@@ -642,7 +617,7 @@ public sealed class LocalCapabilityTests
             "Write a checkpoint.",
             (_, _) => "Checkpoint now."
         );
-        var client = new ScriptedChatClient(
+        var client = new TestChatClient(
             new ChatResponse(new ChatMessage(ChatRole.Assistant, "Still working."))
             {
                 Usage = new UsageDetails { InputTokenCount = 70, OutputTokenCount = 1 },
@@ -711,7 +686,7 @@ public sealed class LocalCapabilityTests
             ),
             (state, request) => state with { Count = state.Count + request.Amount }
         );
-        var client = new ScriptedChatClient(
+        var client = new TestChatClient(
             new ChatResponse(new ChatMessage(ChatRole.Assistant, "Still working."))
             {
                 Usage = new UsageDetails { InputTokenCount = 70, OutputTokenCount = 1 },
@@ -776,7 +751,7 @@ public sealed class LocalCapabilityTests
     public void CheckpointSessionBehavior_RejectsUnknownValue()
     {
         var checkpoint = CreateCapability();
-        var builder = Agent.Create<TestState>("agent", "Work.", new ScriptedChatClient());
+        var builder = Agent.Create<TestState>("agent", "Work.", new TestChatClient());
 
         var act = () =>
             builder.WithCheckpoint(
@@ -806,7 +781,7 @@ public sealed class LocalCapabilityTests
         int checkpointAtPercent
     )
     {
-        var builder = Agent.Create<TestState>("agent", "Work.", new ScriptedChatClient());
+        var builder = Agent.Create<TestState>("agent", "Work.", new TestChatClient());
 
         var act = () =>
             builder.WithCheckpoint(
@@ -989,19 +964,6 @@ public sealed class LocalCapabilityTests
                 : ValueTask.CompletedTask;
     }
 
-    private sealed class RecordingPersistenceObserver(List<PipelineObservation> observations)
-        : IPipelinePersistenceObserver
-    {
-        public ValueTask ObserveAsync(
-            PipelineObservation observation,
-            CancellationToken cancellationToken
-        )
-        {
-            observations.Add(observation);
-            return ValueTask.CompletedTask;
-        }
-    }
-
     private sealed class InlineAcceptanceUnitOfWork(SqliteLedgerStore store)
         : IPipelineAcceptanceUnitOfWork
     {
@@ -1009,53 +971,5 @@ public sealed class LocalCapabilityTests
             Func<CancellationToken, ValueTask<T>> operation,
             CancellationToken cancellationToken
         ) => store.ExecuteAsync(operation, cancellationToken);
-    }
-
-    private sealed class ScriptedChatClient(params ChatResponse[] responses) : IChatClient
-    {
-        private readonly Queue<ChatResponse> _responses = new(responses);
-
-        public int CallCount { get; private set; }
-        public List<IReadOnlyList<string>> AdvertisedTools { get; } = [];
-        public List<IReadOnlyDictionary<string, string>> AdvertisedToolDescriptions { get; } = [];
-        public List<IReadOnlyList<ChatMessage>> Requests { get; } = [];
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => Task.FromResult(Dequeue());
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
-        {
-            Requests.Add(messages.ToArray());
-            AdvertisedTools.Add(options?.Tools?.Select(tool => tool.Name).ToArray() ?? []);
-            AdvertisedToolDescriptions.Add(
-                options?.Tools?.ToDictionary(tool => tool.Name, tool => tool.Description)
-                    ?? new Dictionary<string, string>()
-            );
-            foreach (var update in Dequeue().ToChatResponseUpdates())
-            {
-                yield return update;
-            }
-
-            await Task.CompletedTask;
-        }
-
-        private ChatResponse Dequeue()
-        {
-            CallCount++;
-            return _responses.Count > 0
-                ? _responses.Dequeue()
-                : throw new InvalidOperationException("ScriptedChatClient exhausted.");
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
     }
 }

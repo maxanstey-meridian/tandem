@@ -13,7 +13,16 @@ public sealed class ParallelPipelineRunnerTests
     {
         var active = 0;
         var peak = 0;
+        var completed = 0;
         var sync = new object();
+        // Every branch waits until the limit is saturated, and branch 0 finishes last when it
+        // can, so both the bound and the result ordering are exercised without relying on timing.
+        var saturated = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var othersDone = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
         var branches = Enumerable
             .Range(0, 15)
             .Select(index =>
@@ -23,19 +32,33 @@ public sealed class ParallelPipelineRunnerTests
                         $"limited-{index}",
                         async (state, token) =>
                         {
-                            var count = Interlocked.Increment(ref active);
                             lock (sync)
                             {
-                                peak = Math.Max(peak, count);
+                                peak = Math.Max(peak, ++active);
+                                if (active == max)
+                                {
+                                    saturated.TrySetResult();
+                                }
                             }
                             try
                             {
-                                await Task.Delay(index == 0 ? 120 : 15, token);
+                                await saturated.Task.WaitAsync(token);
+                                if (index == 0 && max > 1)
+                                {
+                                    await othersDone.Task.WaitAsync(token);
+                                }
                                 return state with { Values = [index.ToString()] };
                             }
                             finally
                             {
-                                Interlocked.Decrement(ref active);
+                                lock (sync)
+                                {
+                                    active--;
+                                    if (index != 0 && ++completed == 14)
+                                    {
+                                        othersDone.TrySetResult();
+                                    }
+                                }
                             }
                         }
                     )

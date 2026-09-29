@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
@@ -16,7 +15,16 @@ public sealed class CollectionTests
         var active = 0;
         var peak = 0;
         var applied = 0;
+        var completed = 0;
         var sync = new object();
+        // Every item waits until the limit is saturated, and item 0 finishes last, so both the
+        // bound and the result ordering are exercised without relying on timing.
+        var saturated = Gate();
+        var othersDone = Gate();
+        if (count <= 1)
+        {
+            othersDone.TrySetResult();
+        }
         var collect = PipelineCollection.Create<int[], int, int>(
             "collect",
             state => state,
@@ -26,10 +34,18 @@ public sealed class CollectionTests
                 lock (sync)
                 {
                     peak = Math.Max(peak, ++active);
+                    if (active == Math.Min(count, 3))
+                    {
+                        saturated.TrySetResult();
+                    }
                 }
                 try
                 {
-                    await Task.Delay(value == 0 ? 60 : 5, token);
+                    await saturated.Task.WaitAsync(token);
+                    if (value == 0)
+                    {
+                        await othersDone.Task.WaitAsync(token);
+                    }
                     return value * 2;
                 }
                 finally
@@ -37,6 +53,10 @@ public sealed class CollectionTests
                     lock (sync)
                     {
                         active--;
+                        if (value != 0 && ++completed == count - 1)
+                        {
+                            othersDone.TrySetResult();
+                        }
                     }
                 }
             },
@@ -66,7 +86,7 @@ public sealed class CollectionTests
     [Fact]
     public async Task CanonicalisationAndConditionalRecoveryUseDeclaredAgentsWithoutChildPipelines()
     {
-        using var client = new EchoClient();
+        using var client = EchoClient();
         using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
         AgentDefinition<Claim> Define(string id) =>
             Agent
@@ -193,7 +213,7 @@ public sealed class CollectionTests
     [InlineData(false)]
     public void ScopedAgentIdsCannotCollideWithParentNodes(bool collectionStarts)
     {
-        using var client = new EchoClient();
+        using var client = EchoClient();
         var agent = Agent
             .Create<string>("rewrite", "Rewrite.", client)
             .WithMessage(value => value)
@@ -233,7 +253,7 @@ public sealed class CollectionTests
     [Fact]
     public void AnAgentMayHaveTheSameLocalNameAsItsCollection()
     {
-        using var client = new EchoClient();
+        using var client = EchoClient();
         var agent = Agent
             .Create<string>("rewrite", "Rewrite.", client)
             .WithMessage(value => value)
@@ -253,40 +273,19 @@ public sealed class CollectionTests
 
     private sealed record Claim(string Text);
 
-    private sealed class EchoClient : IChatClient
-    {
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
+    private static TestChatClient EchoClient() =>
+        new()
         {
-            var text = messages.Last(message => message.Role == ChatRole.User).Text;
-            var response = new ChatResponse(
-                new ChatMessage(
-                    ChatRole.Assistant,
-                    JsonSerializer.Serialize(new { claim = text + "!" })
-                )
-            )
-            {
-                FinishReason = ChatFinishReason.Stop,
-                ModelId = "test",
-            };
-            foreach (var update in response.ToChatResponseUpdates())
-            {
-                yield return update;
-            }
-            await Task.CompletedTask;
-        }
+            Respond = (messages, _, _) =>
+                Task.FromResult(
+                    TestChatClient.Text(
+                        JsonSerializer.Serialize(
+                            new { claim = messages.Last(m => m.Role == ChatRole.User).Text + "!" }
+                        )
+                    )
+                ),
+        };
 
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
-    }
+    private static TaskCompletionSource Gate() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 }

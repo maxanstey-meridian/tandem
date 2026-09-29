@@ -25,7 +25,14 @@ public sealed class AgentSessionTests
                 null,
                 Timeout: explicitTimeout ? TimeSpan.FromMilliseconds(20) : null
             ),
-            new BlockingChatClient()
+            new TestChatClient
+            {
+                Respond = async (_, _, cancellationToken) =>
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    return new ChatResponse();
+                },
+            }
         );
         using var hostCancellation = new CancellationTokenSource();
         if (!explicitTimeout)
@@ -52,7 +59,7 @@ public sealed class AgentSessionTests
         bool continueSession
     )
     {
-        var client = new RecordingChatClient("first response", "second response");
+        var client = TestChatClient.Replying("first response", "second response");
         var block = new AgentBlock<TestState>(
             new AgentBlockConfig<TestState>(
                 "agent",
@@ -85,7 +92,8 @@ public sealed class AgentSessionTests
 
         client.Requests.Should().HaveCount(2);
         client
-            .Instructions.Should()
+            .Options.Select(options => options?.Instructions ?? "")
+            .Should()
             .AllSatisfy(instructions => instructions.Should().Be("Respond."));
         var retained = client
             .Requests[1]
@@ -99,7 +107,8 @@ public sealed class AgentSessionTests
     [Fact]
     public async Task Harness_budget_is_reported_without_a_checkpoint_capability()
     {
-        var client = new BlockingAfterUsageChatClient();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = BlockingAfterUsage(release);
         var observer = new UsageObserver();
         var agent = Agent
             .Create<TestState>("budget", "Respond", client)
@@ -118,7 +127,7 @@ public sealed class AgentSessionTests
         }
         finally
         {
-            client.Release.TrySetResult();
+            release.TrySetResult();
         }
         (await execution).Succeeded.Should().BeTrue();
     }
@@ -126,7 +135,8 @@ public sealed class AgentSessionTests
     [Fact]
     public async Task Usage_IsObservedBeforeTheStreamingInvocationCompletes()
     {
-        var client = new BlockingAfterUsageChatClient();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = BlockingAfterUsage(release);
         var observer = new UsageObserver();
         var runId = Guid.CreateVersion7();
         var block = new AgentBlock<TestState>(
@@ -166,14 +176,14 @@ public sealed class AgentSessionTests
         usage.CurrentContextTokens.Should().Be(47_250);
         usage.ContextWindowTokens.Should().Be(200_000);
 
-        client.Release.TrySetResult();
+        release.TrySetResult();
         await execution;
     }
 
     [Fact]
     public async Task TypedExamples_AreFreshSessionTurns_AndAreNotResentForCorrectionOrRetention()
     {
-        var client = new RecordingChatClient("{\"value\":0}", "{\"value\":1}", "{\"value\":2}");
+        var client = TestChatClient.Replying("{\"value\":0}", "{\"value\":1}", "{\"value\":2}");
         var agent = Agent
             .Create<ExampleState>("agent", "Respond.", client)
             .WithMessage(state => $"live request {state.Value}")
@@ -230,7 +240,7 @@ public sealed class AgentSessionTests
     [Fact]
     public async Task StructuredOutput_GetsOneCorrectiveResponse_ThenFailsClosed()
     {
-        var client = new RecordingChatClient("{\"value\":0}", "{\"value\":0}", "{\"value\":0}");
+        var client = TestChatClient.Replying("{\"value\":0}", "{\"value\":0}", "{\"value\":0}");
         var agent = Agent
             .Create<ExampleState>("agent", "Respond.", client)
             .WithMessage(_ => "live request")
@@ -288,110 +298,6 @@ public sealed class AgentSessionTests
         }
     }
 
-    private sealed class RecordingChatClient(params string[] responses) : IChatClient
-    {
-        private readonly Queue<string> _responses = new(responses);
-        public List<IReadOnlyList<ChatMessage>> Requests { get; } = [];
-        public List<string> Instructions { get; } = [];
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
-        {
-            Requests.Add(messages.ToArray());
-            Instructions.Add(options?.Instructions ?? "");
-            var response = new ChatResponse(
-                new ChatMessage(ChatRole.Assistant, [new TextContent(_responses.Dequeue())])
-            )
-            {
-                FinishReason = ChatFinishReason.Stop,
-                ModelId = "test-model",
-            };
-            foreach (var update in response.ToChatResponseUpdates())
-            {
-                yield return update;
-            }
-            await Task.CompletedTask;
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
-    }
-
-    private sealed class BlockingChatClient : IChatClient
-    {
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
-        {
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            yield break;
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
-    }
-
-    private sealed class BlockingAfterUsageChatClient : IChatClient
-    {
-        public TaskCompletionSource Release { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
-        {
-            var response = new ChatResponse(new ChatMessage(ChatRole.Assistant, "response"))
-            {
-                FinishReason = ChatFinishReason.Stop,
-                Usage = new UsageDetails
-                {
-                    InputTokenCount = 47_000,
-                    OutputTokenCount = 250,
-                    ReasoningTokenCount = 125,
-                },
-            };
-            foreach (var update in response.ToChatResponseUpdates())
-            {
-                yield return update;
-                if (update.Contents.Any(content => content is UsageContent))
-                {
-                    await Release.Task.WaitAsync(cancellationToken);
-                }
-            }
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
-    }
-
     private sealed class UsageObserver : IPipelineObserver
     {
         public TaskCompletionSource<PipelineAgentUsage> Observed { get; } =
@@ -407,6 +313,37 @@ public sealed class AgentSessionTests
                 Observed.TrySetResult(usage);
             }
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private static TestChatClient BlockingAfterUsage(TaskCompletionSource release) =>
+        new()
+        {
+            Stream = (_, _, cancellationToken) => StreamUntilUsage(release, cancellationToken),
+        };
+
+    private static async IAsyncEnumerable<ChatResponseUpdate> StreamUntilUsage(
+        TaskCompletionSource release,
+        [EnumeratorCancellation] CancellationToken cancellationToken
+    )
+    {
+        var response = new ChatResponse(new ChatMessage(ChatRole.Assistant, "response"))
+        {
+            FinishReason = ChatFinishReason.Stop,
+            Usage = new UsageDetails
+            {
+                InputTokenCount = 47_000,
+                OutputTokenCount = 250,
+                ReasoningTokenCount = 125,
+            },
+        };
+        foreach (var update in response.ToChatResponseUpdates())
+        {
+            yield return update;
+            if (update.Contents.Any(content => content is UsageContent))
+            {
+                await release.Task.WaitAsync(cancellationToken);
+            }
         }
     }
 }

@@ -1,8 +1,8 @@
-using System.Diagnostics;
 using System.IO.Compression;
 using System.Text.Json;
 using System.Xml.Linq;
 using FluentAssertions;
+using Tandem.Advanced;
 
 namespace Tandem.PackageConsumer.Tests;
 
@@ -51,7 +51,7 @@ public sealed class PackageConsumerTests
                 "Songwriter",
                 "examples/songwriter/csharp",
                 advanced: false,
-                SongwriterProgram
+                "SongwriterProgram.cs"
             );
             await ProveConsumerAsync(
                 temp,
@@ -61,7 +61,7 @@ public sealed class PackageConsumerTests
                 "CodeWriter",
                 "examples/code-writer/csharp",
                 advanced: false,
-                CodeWriterProgram
+                "CodeWriterProgram.cs"
             );
             await ProveConsumerAsync(
                 temp,
@@ -71,7 +71,7 @@ public sealed class PackageConsumerTests
                 "Debate",
                 "examples/debate/csharp",
                 advanced: true,
-                DebateProgram
+                "DebateProgram.cs"
             );
             await ProveLedgerConsumerAsync(temp, packages, config, version);
             await ProvePacketsConsumerAsync(temp, packages, config, version);
@@ -400,11 +400,11 @@ public sealed class PackageConsumerTests
         {
             File.Copy(source, Path.Combine(directory, Path.GetFileName(source)));
         }
-        await File.WriteAllTextAsync(
-            Path.Combine(directory, "ScriptedChatClient.cs"),
-            ScriptedClient
+        File.Copy(
+            Fixture("ScriptedChatClient.cs"),
+            Path.Combine(directory, "ScriptedChatClient.cs")
         );
-        await File.WriteAllTextAsync(Path.Combine(directory, "Program.cs"), program);
+        File.Copy(Fixture(program), Path.Combine(directory, "Program.cs"), overwrite: true);
         await File.WriteAllTextAsync(
             Path.Combine(directory, name + ".csproj"),
             Project(version, advanced)
@@ -524,28 +524,10 @@ public sealed class PackageConsumerTests
         params string[] arguments
     )
     {
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = fileName,
-                WorkingDirectory = workingDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            },
-        };
-        foreach (var argument in arguments)
-        {
-            process.StartInfo.ArgumentList.Add(argument);
-        }
-        process.Start();
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        process
+        var result = await LocalProcess.RunAsync(new(fileName, arguments, workingDirectory));
+        result
             .ExitCode.Should()
-            .Be(0, $"{fileName} {string.Join(' ', arguments)}\n{await stdout}\n{await stderr}");
+            .Be(0, $"{fileName} {string.Join(' ', arguments)}\n{result.Stdout}\n{result.Stderr}");
     }
 
     private static readonly string[] ForbiddenPackages =
@@ -573,256 +555,6 @@ public sealed class PackageConsumerTests
         "Meridian.Tandem.Terminal",
     ];
 
-    private const string ScriptedClient = """
-        using System.Runtime.CompilerServices;
-        using Microsoft.Extensions.AI;
-
-        internal sealed class ScriptedChatClient(params ChatResponse[] responses) : IChatClient
-        {
-            private readonly Queue<ChatResponse> _responses = new(responses);
-
-            public static ChatResponse Text(string value) =>
-                new(new ChatMessage(ChatRole.Assistant, [new TextContent(value)]))
-                {
-                    FinishReason = ChatFinishReason.Stop,
-                    ModelId = "package-proof",
-                };
-
-            public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
-                throw new NotSupportedException();
-
-            public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-                IEnumerable<ChatMessage> messages,
-                ChatOptions? options = null,
-                [EnumeratorCancellation] CancellationToken cancellationToken = default)
-            {
-                foreach (var update in _responses.Dequeue().ToChatResponseUpdates())
-                {
-                    yield return update;
-                }
-                await Task.CompletedTask;
-            }
-
-            public object? GetService(Type serviceType, object? serviceKey = null) => null;
-            public void Dispose() { }
-        }
-        """;
-
-    private const string SongwriterProgram = """
-        using Tandem;
-        using Examples.Songwriter;
-
-        var participants = SongwriterDefinitions.Create(
-            new SongwriterClients(
-                new ScriptedChatClient(
-                    ScriptedChatClient.Text("{\"lyrics\":\"First draft\"}"),
-                    ScriptedChatClient.Text("{\"lyrics\":\"Linted\\ndraft\"}"),
-                    ScriptedChatClient.Text("{\"lyrics\":\"Final\\ndraft\"}")
-                ),
-                new ScriptedChatClient(
-                    ScriptedChatClient.Text("{\"accepted\":false,\"feedback\":\"Sharpen it.\"}"),
-                    ScriptedChatClient.Text("{\"accepted\":true,\"feedback\":\"Accepted.\"}")
-                )
-            )
-        );
-        var result = await new PipelineRunner().RunAsync(
-            new SongwriterComposition(participants).Build(),
-            new SongwriterState("Rebuild after a storm."),
-            cancellationToken: CancellationToken.None
-        );
-        if (!result.Succeeded || result.State.Lyrics != "Final\ndraft") throw new Exception("Songwriter package proof failed.");
-        """;
-
-    private const string CodeWriterProgram = """
-        using Microsoft.Extensions.AI;
-        using Tandem;
-        using Examples.CodeWriter;
-
-        var submitImplementation = AgentCapabilities.Create<CodeWriterState, SubmitImplementation>(
-            new SubmitImplementationCapability(),
-            (state, submission) => state.RecordImplementation(submission)
-        );
-        var implementationResponse = new ChatResponse(
-            new ChatMessage(
-                ChatRole.Assistant,
-                [new FunctionCallContent(
-                    "implementation-1",
-                    "submit_implementation",
-                    new Dictionary<string, object?>
-                    {
-                        ["implementation"] = "function (input) { return input.normalize(\"NFD\").replace(/[\\u0300-\\u036f]/g, \"\").toLowerCase().replace(/[^a-z0-9]+/g, \"-\").replace(/^-+|-+$/g, \"\"); }",
-                        ["rationale"] = "Normalize diacritics, collapse separators, and trim the slug."
-                    }
-                )]
-            )
-        ) { FinishReason = ChatFinishReason.ToolCalls, ModelId = "package-proof" };
-        var participants = CodeWriterDefinitions.Create(
-            new CodeWriterClients(
-                new ScriptedChatClient(implementationResponse),
-                new ScriptedChatClient(
-                    ScriptedChatClient.Text("{\"decision\":\"Accept\",\"summary\":\"Implementation verified and accepted.\",\"findings\":[]}")
-                )
-            ),
-            submitImplementation
-        );
-        var result = await new PipelineRunner().RunAsync(
-            new CodeWriterComposition(participants).Build(),
-            new CodeWriterState(
-                [
-                    "Return a URL slug for the input string.",
-                    "Remove diacritics and non-alphanumeric separators.",
-                    "Return lowercase words joined by single hyphens."
-                ]
-            ),
-            new PipelineRunOptions(Observer: new PackagePersistenceObserver()),
-            CancellationToken.None
-        );
-        if (
-            !result.Succeeded
-            || result.State.Implementation is null
-            || result.State.Verification?.Passed is not true
-            || result.State.Review?.Decision != ReviewDisposition.Accept
-        )
-        {
-            throw new Exception("CodeWriter package proof failed.");
-        }
-
-        var approval = PipelineNodes.WaitFor<CodeWriterState, string, string>(
-            "approval",
-            _ => "Approve the implementation.",
-            (state, _) => state
-        );
-        var directComplete = PipelineNodes.Complete(new DirectCompletion());
-        var direct = Pipeline
-            .Start(approval, "direct-interaction")
-            .Persist(approval)
-            .DoNotPersist(approval)
-            .Route(approval, directComplete, "answered")
-            .Build(directComplete);
-        var handlers = new PipelineInteractionHandlers().Handle(
-            approval,
-            (_, _) => ValueTask.FromResult("Approved")
-        );
-        var directResult = await new PipelineRunner().RunAsync(
-            direct,
-            new CodeWriterState(["Approve this code."]),
-            new PipelineRunOptions(Interactions: handlers),
-            CancellationToken.None
-        );
-        if (!directResult.Succeeded) throw new Exception("Interaction package proof failed.");
-
-        sealed class PackagePersistenceObserver : IPipelinePersistenceObserver
-        {
-            public ValueTask ObserveAsync(
-                PipelineObservation observation,
-                CancellationToken cancellationToken
-            ) => ValueTask.CompletedTask;
-        }
-
-        sealed class DirectCompletion : IPipelineCompletion<CodeWriterState>
-        {
-            public string Id => "direct-complete";
-            public string Summarize(CodeWriterState state) => "Direct interaction complete";
-        }
-        """;
-
-    private const string DebateProgram = """
-        using System.Text.Json;
-        using FluentValidation;
-        using Microsoft.Extensions.AI;
-        using Tandem;
-        using Tandem.Advanced;
-        using Examples.Debate;
-
-        var verdict = AgentCapabilities.Create<DebateState, SubmitVerdict>(
-            new SubmitVerdictCapability(),
-            (state, request) => state.RecordVerdict(request)
-        );
-        var judgeResponse = new ChatResponse(
-            new ChatMessage(
-                ChatRole.Assistant,
-                [new FunctionCallContent("verdict-1", "submit_verdict", new Dictionary<string, object?> { ["verdict"] = "Affirmed", ["reason"] = "Accepted." })]
-            )
-        ) { FinishReason = ChatFinishReason.ToolCalls, ModelId = "package-proof" };
-        var participants = DebateDefinitions.Create(
-            new DebateOptions(
-                new ScriptedChatClient(ScriptedChatClient.Text("{\"text\":\"Initial case\"}"), ScriptedChatClient.Text("{\"text\":\"Revised case\"}")),
-                new ScriptedChatClient(ScriptedChatClient.Text("{\"accepted\":false,\"critique\":\"Revise\"}"), ScriptedChatClient.Text("{\"accepted\":true,\"critique\":\"Accepted\"}")),
-                new ScriptedChatClient(judgeResponse)
-            ),
-            verdict
-        );
-        var result = await new PipelineRunner().RunAsync(
-            new DebateComposition(participants).Build(),
-            new DebateState("Should we proceed?", [], 0, null),
-            cancellationToken: CancellationToken.None
-        );
-        if (!result.Succeeded || result.State.Verdict?.Value != "Affirmed") throw new Exception("Debate package proof failed.");
-
-        using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
-        var jsonOutput = Agent
-            .Create<DebateState>("json-output", "Return JSON.", new ScriptedChatClient(ScriptedChatClient.Text("{\"value\":1}")))
-            .WithMessage(_ => "Return a value.")
-            .WithJsonOutput(
-                new AgentJsonOutputDefinition<DebateState>(schema.RootElement, "Return a value.", _ => [], ValueType: "package.dynamic-output"),
-                (state, _) => state
-            )
-            .Build();
-        var outputResult = await new PipelineRunner().RunAsync(
-            Pipeline.Start(jsonOutput, "json-output-proof").Build(jsonOutput),
-            new DebateState("JSON output", [], 0, null)
-        );
-        if (!outputResult.Succeeded) throw new Exception("JSON output package proof failed.");
-
-        var jsonCapability = AgentCapabilities.CreateJson(
-            new AgentJsonCapabilityDefinition<DebateState>(
-                "accept_json",
-                "Accept JSON.",
-                schema.RootElement,
-                _ => [],
-                null,
-                _ => "Accepted JSON.",
-                "package.dynamic-capability"
-            ),
-            (state, _) => state
-        ).WithAcceptance(
-            (context, _) =>
-            {
-                IReadOnlyList<ToolInvocationObservation> invocations = context.ToolInvocations;
-                if (invocations.Count != 0) throw new Exception("Unexpected prior package invocation.");
-                return ValueTask.CompletedTask;
-            }
-        );
-        var capabilityResponse = new ChatResponse(
-            new ChatMessage(
-                ChatRole.Assistant,
-                [new FunctionCallContent("json-1", "accept_json", new Dictionary<string, object?> { ["value"] = 1 })]
-            )
-        ) { FinishReason = ChatFinishReason.ToolCalls, ModelId = "package-proof" };
-        var jsonCapabilityAgent = Agent
-            .Create<DebateState>("json-capability", "Accept JSON.", new ScriptedChatClient(capabilityResponse))
-            .WithMessage(_ => "Accept a value.")
-            .WithCapability(jsonCapability)
-            .Build();
-        var capabilityResult = await new PipelineRunner().RunAsync(
-            Pipeline.Start(jsonCapabilityAgent, "json-capability-proof").Build(jsonCapabilityAgent),
-            new DebateState("JSON capability", [], 0, null)
-        );
-        if (!capabilityResult.Succeeded) throw new Exception("JSON capability package proof failed.");
-
-        var raw = Agent.Create<string>("raw", "Return accepted.", new ScriptedChatClient(ScriptedChatClient.Text("accepted")))
-            .WithMessage(_ => "Decide.")
-            .WithRawOutput(new RawWord(), (_, word) => word)
-            .Build();
-        var rawResult = await new PipelineRunner().RunAsync(Pipeline.Start(raw, "raw-proof").Build(raw), "initial");
-        if (rawResult.State != "accepted") throw new Exception("Advanced raw output package proof failed.");
-
-        sealed class RawWord : IAgentRawOutputDefinition<string, string>
-        {
-            public string Instructions => "Return accepted.";
-            public IValidator<string> Validator { get; } = new InlineValidator<string>();
-            public string Parse(string response) => response;
-        }
-
-        """;
+    private static string Fixture(string name) =>
+        Path.Combine(AppContext.BaseDirectory, "Fixtures", name);
 }

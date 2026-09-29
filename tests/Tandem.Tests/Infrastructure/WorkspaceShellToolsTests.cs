@@ -12,7 +12,7 @@ public sealed class WorkspaceShellToolsTests
     [Fact]
     public async Task FixedCommand_IsParameterlessAndRunsInWorkspace()
     {
-        using var workspace = TemporaryWorkspace.Create();
+        using var workspace = new TempDirectory();
         var options = new ChatOptions();
         var effects = new ToolEffectRegistry();
         WorkspaceShellTools.Add(
@@ -49,7 +49,7 @@ public sealed class WorkspaceShellToolsTests
     [Fact]
     public async Task FixedCommand_ReturnsStderrAndExitCodeToTheCaller()
     {
-        using var workspace = TemporaryWorkspace.Create();
+        using var workspace = new TempDirectory();
         var options = new ChatOptions();
         WorkspaceShellTools.Add(
             options,
@@ -71,7 +71,7 @@ public sealed class WorkspaceShellToolsTests
     [Fact]
     public async Task ParameterizedCommand_EmitsArraySchemaValidatesAndQuotesArguments()
     {
-        using var workspace = TemporaryWorkspace.Create();
+        using var workspace = new TempDirectory();
         string command;
         if (OperatingSystem.IsWindows())
         {
@@ -135,7 +135,7 @@ public sealed class WorkspaceShellToolsTests
     [Fact]
     public async Task ParameterizedCommand_EnforcesCountAndLengthBoundsAtInvocation()
     {
-        using var workspace = TemporaryWorkspace.Create();
+        using var workspace = new TempDirectory();
         var options = new ChatOptions();
         WorkspaceShellTools.Add(
             options,
@@ -184,7 +184,7 @@ public sealed class WorkspaceShellToolsTests
         {
             return;
         }
-        using var workspace = TemporaryWorkspace.Create();
+        using var workspace = new TempDirectory();
         await using var executor = WorkspaceShellTools.CreateExecutor(
             workspace.Path,
             acknowledgeUnsafe: false,
@@ -242,7 +242,7 @@ public sealed class WorkspaceShellToolsTests
     [Fact]
     public void PacketCommandAdmission_CarriesOptionalArgumentsThroughToTheToolSchema()
     {
-        using var workspace = TemporaryWorkspace.Create();
+        using var workspace = new TempDirectory();
         var argumented = AgentCommand.Define(
             "run_review",
             "Run review with a path.",
@@ -281,7 +281,7 @@ public sealed class WorkspaceShellToolsTests
     [Fact]
     public async Task UnrestrictedShell_IsExplicitAndStateless()
     {
-        using var workspace = TemporaryWorkspace.Create();
+        using var workspace = new TempDirectory();
         var options = new ChatOptions();
         var effects = new ToolEffectRegistry();
         WorkspaceShellTools.Add(
@@ -314,7 +314,7 @@ public sealed class WorkspaceShellToolsTests
     [Fact]
     public async Task FixedCommand_StopsAtConfiguredTimeout()
     {
-        using var workspace = TemporaryWorkspace.Create();
+        using var workspace = new TempDirectory();
         var options = new ChatOptions();
         WorkspaceShellTools.Add(
             options,
@@ -337,7 +337,7 @@ public sealed class WorkspaceShellToolsTests
     [Fact]
     public async Task FixedCommand_HonorsCallerCancellation()
     {
-        using var workspace = TemporaryWorkspace.Create();
+        using var workspace = new TempDirectory();
         var options = new ChatOptions();
         WorkspaceShellTools.Add(
             options,
@@ -361,7 +361,7 @@ public sealed class WorkspaceShellToolsTests
     [Fact]
     public async Task FixedCommand_TruncatesBoundedOutput()
     {
-        using var workspace = TemporaryWorkspace.Create();
+        using var workspace = new TempDirectory();
         var options = new ChatOptions();
         WorkspaceShellTools.Add(
             options,
@@ -421,23 +421,4 @@ public sealed class WorkspaceShellToolsTests
         OperatingSystem.IsWindows()
             ? "powershell -NoProfile -Command \"[Console]::Out.Write('x' * 10000)\""
             : "printf '%010000d' 0";
-
-    private sealed class TemporaryWorkspace : IDisposable
-    {
-        private TemporaryWorkspace(string path) => Path = path;
-
-        internal string Path { get; }
-
-        internal static TemporaryWorkspace Create()
-        {
-            var path = System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(),
-                $"tandem-shell-{Guid.NewGuid():N}"
-            );
-            Directory.CreateDirectory(path);
-            return new TemporaryWorkspace(path);
-        }
-
-        public void Dispose() => Directory.Delete(Path, recursive: true);
-    }
 }

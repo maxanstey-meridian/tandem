@@ -8,6 +8,7 @@ using Microsoft.Agents.AI.Workflows;
 
 namespace Tandem.Tests.Composition;
 
+[Trait("Category", "MafCharacterization")]
 public sealed class MafBindingCharacterizationTests
 {
     [Fact]
@@ -25,9 +26,6 @@ public sealed class MafBindingCharacterizationTests
             FileAccessProvider.DeleteFileToolName,
             FileAccessProvider.ReplaceToolName,
             FileAccessProvider.ReplaceLinesToolName,
-            WorkspaceFileMutationTools.CopyToolName,
-            WorkspaceFileMutationTools.MoveToolName,
-            WorkspaceFileMutationTools.CreateDirectoryToolName,
         };
 
         reads.Should().Equal("file_access_read", "file_access_ls", "file_access_grep");
@@ -37,12 +35,9 @@ public sealed class MafBindingCharacterizationTests
                 "file_access_write",
                 "file_access_delete",
                 "file_access_replace",
-                "file_access_replace_lines",
-                "file_access_copy",
-                "file_access_move",
-                "file_access_create_directory"
+                "file_access_replace_lines"
             );
-        reads.Concat(mutations).Should().OnlyHaveUniqueItems().And.HaveCount(10);
+        reads.Concat(mutations).Should().OnlyHaveUniqueItems().And.HaveCount(7);
     }
 
     [Fact]
@@ -441,6 +436,9 @@ public sealed class MafBindingCharacterizationTests
         );
         var requests = new ConcurrentDictionary<string, ExternalRequest>(StringComparer.Ordinal);
         var outputs = new ConcurrentBag<string>();
+        var bothRequested = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
         var watch = Task.Run(async () =>
         {
             await foreach (var evt in run.WatchStreamAsync(CancellationToken.None))
@@ -448,6 +446,10 @@ public sealed class MafBindingCharacterizationTests
                 if (evt is RequestInfoEvent request)
                 {
                     requests.TryAdd(request.Request.PortInfo.PortId, request.Request);
+                    if (requests.Count == 2)
+                    {
+                        bothRequested.TrySetResult();
+                    }
                 }
                 else if (evt is WorkflowOutputEvent output && output.Is<string>())
                 {
@@ -456,10 +458,7 @@ public sealed class MafBindingCharacterizationTests
             }
         });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (requests.Count < 2)
-        {
-            await Task.Delay(10, timeout.Token);
-        }
+        await bothRequested.Task.WaitAsync(timeout.Token);
 
         await Task.WhenAll(
             run.SendResponseAsync(

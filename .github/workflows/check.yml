@@ -1,0 +1,80 @@
+name: Check
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - uses: go-task/setup-task@v1
+
+      - run: task check
+
+  # Runs the published bridge in Node through tandem-ts's suite, which includes persisted-ledger
+  # runs. This is the native-runtime check that Docker emulation could not give (see the W0-1
+  # ledger row in docs/plans/slop-cleanup.md).
+  bridge:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+            platform: linux-x64
+          - os: macos-latest
+            rid: osx-arm64
+            platform: darwin-arm64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: maxanstey-meridian/tandem-ts
+          path: tandem-ts
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Publish the bridge into tandem-ts's runtime folder
+        run: |
+          rm -rf tandem-ts/runtime/${{ matrix.platform }}
+          dotnet publish bridge/Tandem.NodeApiSpike.Bridge.csproj -c Release -r ${{ matrix.rid }} --self-contained false --output tandem-ts/runtime/${{ matrix.platform }}
+
+      - name: Run the tandem-ts suite against it
+        working-directory: tandem-ts
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test

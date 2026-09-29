@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Examples.Debate;
 using FluentAssertions;
@@ -22,9 +21,9 @@ public sealed class DebateCompositionTests
 
         clients.Order.Should().Equal("proposer", "critic", "proposer", "critic", "judge");
         clients.Judge.CallCount.Should().Be(1);
-        clients.Critic.ReceivedPrompts[0].Should().Contain("Initial case");
-        clients.Judge.ReceivedPrompts[0].Should().Contain("Revised case");
-        clients.Judge.ReceivedPrompts[0].Should().Contain("Accepted");
+        Prompt(clients.Critic).Should().Contain("Initial case");
+        Prompt(clients.Judge).Should().Contain("Revised case");
+        Prompt(clients.Judge).Should().Contain("Accepted");
         output.State.Round.Should().Be(2);
         output.State.Arguments.Select(argument => argument.Text).Should().Contain("Revised case");
         output.State.Verdict.Should().Be(new DebateVerdict("Affirmed", "Accepted in process."));
@@ -175,9 +174,9 @@ public sealed class DebateCompositionTests
     {
         private ScriptedClients(
             List<string> order,
-            ScriptedChatClient proposer,
-            ScriptedChatClient critic,
-            ScriptedChatClient judge
+            TestChatClient proposer,
+            TestChatClient critic,
+            TestChatClient judge
         )
         {
             Order = order;
@@ -187,28 +186,28 @@ public sealed class DebateCompositionTests
         }
 
         public List<string> Order { get; }
-        public ScriptedChatClient Proposer { get; }
-        public ScriptedChatClient Critic { get; }
-        public ScriptedChatClient Judge { get; }
+        public TestChatClient Proposer { get; }
+        public TestChatClient Critic { get; }
+        public TestChatClient Judge { get; }
 
         public static ScriptedClients Create()
         {
             var order = new List<string>();
             return new ScriptedClients(
                 order,
-                new ScriptedChatClient(
+                Scripted(
                     order,
                     "proposer",
                     TextResponse("{\"text\":\"Initial case\"}"),
                     TextResponse("{\"text\":\"Revised case\"}")
                 ),
-                new ScriptedChatClient(
+                Scripted(
                     order,
                     "critic",
                     TextResponse("{\"accepted\":false,\"critique\":\"Revise\"}"),
                     TextResponse("{\"accepted\":true,\"critique\":\"Accepted\"}")
                 ),
-                new ScriptedChatClient(
+                Scripted(
                     order,
                     "judge",
                     new ChatResponse(
@@ -243,48 +242,18 @@ public sealed class DebateCompositionTests
             };
     }
 
-    internal sealed class ScriptedChatClient(
+    private static TestChatClient Scripted(
         List<string> order,
         string name,
         params ChatResponse[] responses
-    ) : IChatClient
-    {
-        private readonly Queue<ChatResponse> _responses = new(responses);
-        public int CallCount { get; private set; }
-        public List<string> ReceivedPrompts { get; } = [];
+    ) => new(responses) { OnRequest = () => order.Add(name) };
 
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
-        {
-            CallCount++;
-            order.Add(name);
-            ReceivedPrompts.Add(
-                string.Join(
-                    '\n',
-                    messages
-                        .SelectMany(message => message.Contents.OfType<TextContent>())
-                        .Select(content => content.Text)
-                )
-            );
-            var response = _responses.Dequeue();
-            foreach (var update in response.ToChatResponseUpdates())
-            {
-                yield return update;
-            }
-            await Task.CompletedTask;
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
-    }
+    private static string Prompt(TestChatClient client) =>
+        string.Join(
+            '\n',
+            client
+                .Requests[0]
+                .SelectMany(message => message.Contents.OfType<TextContent>())
+                .Select(content => content.Text)
+        );
 }

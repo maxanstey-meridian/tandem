@@ -87,7 +87,7 @@ public sealed class HarnessAgentImplementationTests
     ) =>
         new(
             "agent",
-            new NoopChatClient(),
+            new TestChatClient(),
             new ChatOptions(),
             null,
             new ToolEffectRegistry(),
@@ -96,23 +96,4 @@ public sealed class HarnessAgentImplementationTests
             output,
             disableCompaction
         );
-
-    private sealed class NoopChatClient : IChatClient
-    {
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
-    }
 }

@@ -16,6 +16,13 @@ internal sealed class InMemoryExternalRequestBroker(
 
     public int PendingCount => _pending.Count;
 
+    /// <summary>Completes when the first request starts waiting.</summary>
+    public Task<PendingExternalRequest> FirstPending => _firstPending.Task;
+
+    private readonly TaskCompletionSource<PendingExternalRequest> _firstPending = new(
+        TaskCreationOptions.RunContinuationsAsynchronously
+    );
+
     public async ValueTask<ExternalRequestAnswer> WaitAsync(
         PendingExternalRequest request,
         CancellationToken cancellationToken
@@ -30,6 +37,7 @@ internal sealed class InMemoryExternalRequestBroker(
                 $"Run/request '{request.RunId:N}/{request.RequestId}' is already pending."
             );
         }
+        _firstPending.TrySetResult(request);
         try
         {
             if (onPending is not null)

@@ -159,7 +159,7 @@ public sealed class TavilyWebToolsTests
     private static AgentImplementationContext Context(bool search, bool fetch) =>
         new(
             "selecting-agent",
-            new NoopChatClient(),
+            new TestChatClient(),
             new ChatOptions(),
             new ResolvedAgentWorkspace(
                 ".",
@@ -175,23 +175,4 @@ public sealed class TavilyWebToolsTests
             null,
             null
         );
-
-    private sealed class NoopChatClient : IChatClient
-    {
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
-    }
 }

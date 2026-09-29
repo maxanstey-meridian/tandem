@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using FluentValidation;
 using Microsoft.Extensions.AI;
 
@@ -9,7 +8,7 @@ public sealed class InstructionlessRawOutputTests
     [Fact]
     public async Task Raw_agent_can_send_only_the_authored_user_message()
     {
-        using var client = new UserOnlyClient();
+        using var client = TestChatClient.Replying("accepted");
         var agent = Agent
             .Create<string>("raw", "", client)
             .WithMessage(state => state)
@@ -20,13 +19,17 @@ public sealed class InstructionlessRawOutputTests
             "Mr. Burns won by 0.2 seconds."
         );
         Assert.Equal("accepted", result.State);
-        Assert.True(client.Called);
+        var message = Assert.Single(Assert.Single(client.Requests));
+        Assert.Equal(ChatRole.User, message.Role);
+        Assert.Equal("Mr. Burns won by 0.2 seconds.", message.Text);
+        Assert.True(string.IsNullOrWhiteSpace(client.Options[0]?.Instructions));
+        Assert.Null(client.Options[0]?.ResponseFormat);
     }
 
     [Fact]
     public void Normal_agent_still_requires_instructions_when_built()
     {
-        using var client = new UserOnlyClient();
+        using var client = new TestChatClient();
         Assert.Throws<ArgumentException>(() =>
             Agent.Create<string>("normal", "", client).WithMessage(state => state).Build()
         );
@@ -39,36 +42,5 @@ public sealed class InstructionlessRawOutputTests
         public IValidator<string> Validator { get; } = new InlineValidator<string>();
 
         public string Parse(string response) => response;
-    }
-
-    private sealed class UserOnlyClient : IChatClient
-    {
-        public bool Called { get; private set; }
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default
-        )
-        {
-            Called = true;
-            Assert.True(string.IsNullOrWhiteSpace(options?.Instructions));
-            Assert.Null(options?.ResponseFormat);
-            var message = Assert.Single(messages);
-            Assert.Equal(ChatRole.User, message.Role);
-            Assert.Equal("Mr. Burns won by 0.2 seconds.", message.Text);
-            yield return new ChatResponseUpdate(ChatRole.Assistant, "accepted");
-            await Task.CompletedTask;
-        }
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default
-        ) => throw new NotSupportedException();
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose() { }
     }
 }
