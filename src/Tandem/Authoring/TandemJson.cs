@@ -28,6 +28,8 @@ public static class TandemJson
 
     internal static JsonSerializerOptions TypedContract => _typedContract;
 
+    internal static JsonElement EmptyObject { get; } = JsonSerializer.SerializeToElement(new { });
+
     private static JsonSerializerOptions Create()
     {
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)

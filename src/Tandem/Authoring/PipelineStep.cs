@@ -127,7 +127,7 @@ internal sealed class DefinitionCompleteNode<TState>(IPipelineCompletion<TState>
                             StandardOutcomeKinds.Success,
                             completion.Id,
                             completion.Summarize(state),
-                            JsonSerializer.SerializeToElement(new { }),
+                            TandemJson.EmptyObject,
                             stopwatch.Elapsed
                         )
                     )
@@ -157,7 +157,7 @@ internal sealed class DefinitionFailedNode<TState>(IPipelineFailure<TState> fail
                             StandardOutcomeKinds.Failed,
                             failure.Id,
                             failure.Summarize(state),
-                            JsonSerializer.SerializeToElement(new { }),
+                            TandemJson.EmptyObject,
                             stopwatch.Elapsed
                         ),
                         Status = PipelineRunStatus.Failed,
@@ -385,7 +385,7 @@ internal static class StandardOutcomes
                 StandardOutcomeKinds.Success,
                 stepId,
                 "Succeeded",
-                JsonSerializer.SerializeToElement(new { })
+                TandemJson.EmptyObject
             ),
             LatestResult = PipelineResultPayload.Create(
                 stepId,

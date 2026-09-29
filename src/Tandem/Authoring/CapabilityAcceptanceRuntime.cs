@@ -1,19 +1,14 @@
 using System.Text.Json;
+using Tandem.Infrastructure;
 
 namespace Tandem;
 
 internal static class CapabilityAcceptanceRuntime
 {
-    private static readonly JsonSerializerOptions _jsonOptions = TandemJson.TypedContract;
-
     public static async ValueTask<object?> AcceptAsync<TState>(
         CapabilityInvocationState<TState> invocation,
-        string capabilityId,
-        string toolName,
-        string requestType,
-        JsonElement payload,
-        string summary,
-        Func<JsonElement?, PipelineCapabilityAccepted>? emitAccepted,
+        PipelineCapabilityAccepted accepted,
+        Func<PipelineCapabilityAccepted, PipelineCapabilityAccepted> observation,
         Func<CancellationToken, ValueTask>? beforeAccept,
         Func<TState, TState> apply,
         CancellationToken cancellationToken
@@ -21,9 +16,14 @@ internal static class CapabilityAcceptanceRuntime
     {
         if (!invocation.TryReserve())
         {
-            return Error("conflicting capability outcome", []);
+            return new ToolError(
+                "conflicting_capability_outcome",
+                "conflicting capability outcome",
+                []
+            );
         }
 
+        var payload = accepted.Payload!.Value;
         var applying = false;
         try
         {
@@ -33,23 +33,17 @@ internal static class CapabilityAcceptanceRuntime
                 {
                     await beforeAccept(ct);
                 }
-                if (invocation.RunContext is { } observedRunContext)
+                if (invocation.RunContext is { } runContext)
                 {
-                    await observedRunContext.ObserveAsync(
-                        emitAccepted?.Invoke(
-                            observedRunContext.ShouldPersist(invocation.StepId) ? payload : null
-                        )
-                            ?? new PipelineCapabilityAccepted(
-                                invocation.RunId,
-                                invocation.StepId,
-                                invocation.InvocationId,
-                                capabilityId,
-                                toolName,
-                                $"{invocation.RunId:N}:{invocation.StepId}:{invocation.InvocationId}:{capabilityId}",
-                                summary,
-                                requestType,
-                                observedRunContext.ShouldPersist(invocation.StepId) ? payload : null
-                            ),
+                    await runContext.ObserveAsync(
+                        observation(
+                            runContext.ShouldPersist(invocation.StepId)
+                                ? accepted
+                                : accepted with
+                                {
+                                    Payload = null,
+                                }
+                        ),
                         ct
                     );
                 }
@@ -58,21 +52,21 @@ internal static class CapabilityAcceptanceRuntime
                 var acceptedState = apply(invocation.State);
                 applying = false;
                 return new AcceptedCapability<TState>(
-                    capabilityId,
-                    toolName,
+                    accepted.CapabilityId,
+                    accepted.CapabilityName,
                     acceptedState,
-                    summary,
+                    accepted.Summary,
                     payload
                 );
             }
 
-            var accepted = invocation.RunContext is { } runContext
-                ? await runContext.ExecuteAsync(AcceptCoreAsync, cancellationToken)
+            var result = invocation.RunContext is { } executionContext
+                ? await executionContext.ExecuteAsync(AcceptCoreAsync, cancellationToken)
                 : await AcceptCoreAsync(cancellationToken);
-            invocation.Commit(accepted);
+            invocation.Commit(result);
             return JsonSerializer.SerializeToElement(
-                new { accepted = true, outcome = new { kind = capabilityId, payload } },
-                _jsonOptions
+                new { accepted = true, outcome = new { kind = accepted.CapabilityId, payload } },
+                TandemJson.TypedContract
             );
         }
         catch (OperationCanceledException)
@@ -88,18 +82,11 @@ internal static class CapabilityAcceptanceRuntime
                 invocation.RecordApplicationFault(exception);
                 throw;
             }
-            return Error("capability acceptance failed", [exception.Message]);
+            return new ToolError(
+                "capability_acceptance_failed",
+                "capability acceptance failed",
+                [new ToolProblem(null, exception.Message)]
+            );
         }
     }
-
-    private static JsonElement Error(string error, IEnumerable<string> problems) =>
-        JsonSerializer.SerializeToElement(
-            new
-            {
-                isError = true,
-                error,
-                problems = problems.ToArray(),
-            },
-            _jsonOptions
-        );
 }

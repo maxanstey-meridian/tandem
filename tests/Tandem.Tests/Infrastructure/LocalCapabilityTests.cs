@@ -932,10 +932,7 @@ public sealed class LocalCapabilityTests
 
     private static AIFunctionArguments Arguments(int amount) => new() { ["amount"] = amount };
 
-    private static bool IsError(object? result) =>
-        result is System.Text.Json.JsonElement element
-        && element.TryGetProperty("isError", out var isError)
-        && isError.GetBoolean();
+    private static bool IsError(object? result) => result is Tandem.Infrastructure.ToolError;
 
     private static AgentCapability<TestState, IncrementRequest> CreateCapability(
         Action<IncrementRequest>? accepted = null

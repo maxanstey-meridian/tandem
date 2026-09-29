@@ -51,13 +51,6 @@ internal sealed record AgentCommandDescriptor(
 
 internal static class AgentSkillRuntime
 {
-    internal static void RegisterToolEffects(ToolEffectRegistry registry)
-    {
-        registry.Add(AgentSkillsProvider.LoadSkillToolName, ToolEffect.Read);
-        registry.Add(AgentSkillsProvider.ReadSkillResourceToolName, ToolEffect.Read);
-        registry.Add(AgentSkillsProvider.RunSkillScriptToolName, ToolEffect.ProcessExecution);
-    }
-
     internal static AgentSkillsSource CreateSource(IReadOnlyList<AgentSkillDescriptor> skills)
     {
         var allowedDirectories = skills

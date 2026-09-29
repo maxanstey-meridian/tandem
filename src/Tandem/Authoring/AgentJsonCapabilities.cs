@@ -1,5 +1,5 @@
 using System.Text.Json;
-using Microsoft.Extensions.AI;
+using Tandem.Infrastructure;
 
 namespace Tandem;
 
@@ -36,27 +36,43 @@ public static partial class AgentCapabilities
         ArgumentNullException.ThrowIfNull(capability.Validate);
         ArgumentNullException.ThrowIfNull(capability.Summarize);
         ArgumentNullException.ThrowIfNull(apply);
-        if (
-            capability.JsonSchema.ValueKind is not JsonValueKind.Object
-            || !capability.JsonSchema.TryGetProperty("type", out var rootType)
-            || rootType.ValueKind is not JsonValueKind.String
-            || rootType.GetString() != "object"
-        )
-        {
-            throw new ArgumentException(
-                "Capability JSON schema must declare an object root with type 'object'.",
+        var contract = new CapabilityContract<TState, JsonElement>(
+            CapabilityContract.IdFor<TState>(capability.ToolName),
+            capability.ToolName,
+            capability.Instructions,
+            CapabilityContract.RequireObjectRoot(
+                capability.JsonSchema,
+                "Capability",
                 nameof(capability)
-            );
-        }
-        capability = capability with { JsonSchema = capability.JsonSchema.Clone() };
-
-        var capabilityId = $"capability:{typeof(TState).FullName}:{capability.ToolName}";
-        return new AgentCapability<TState>(CreateDescriptor(capabilityId, capability, apply, null));
+            ),
+            capability.ValueType,
+            (request, state, _) =>
+            {
+                var problems = capability.Validate(request);
+                if (problems.Count == 0 && capability.ValidateFor is { } validateFor)
+                {
+                    problems = validateFor(state, request);
+                }
+                return ValueTask.FromResult(
+                    new CapabilityRequest<JsonElement>(
+                        request,
+                        [
+                            .. problems.Select(problem => new ToolProblem(
+                                problem.Field,
+                                problem.Message
+                            )),
+                        ]
+                    )
+                );
+            },
+            capability.Summarize,
+            apply,
+            ObserveTypedRequest: false
+        );
+        return new AgentCapability<TState>(CreateDescriptor(contract, null));
 
         static AgentCapabilityDescriptor<TState> CreateDescriptor(
-            string capabilityId,
-            AgentJsonCapabilityDefinition<TState> capability,
-            Func<TState, JsonElement, TState> apply,
+            CapabilityContract<TState, JsonElement> contract,
             Func<
                 CapabilityAcceptanceContext<TState, JsonElement>,
                 CancellationToken,
@@ -64,93 +80,14 @@ public static partial class AgentCapabilities
             >? accept
         ) =>
             new(
-                capabilityId,
-                capability.ToolName,
-                invocation => new JsonCapabilityFunction<TState>(
-                    capabilityId,
-                    capability,
-                    apply,
+                contract.CapabilityId,
+                contract.Name,
+                invocation => new CapabilityFunction<TState, JsonElement>(
+                    contract,
                     accept,
                     invocation
                 ),
-                nextAccept => CreateDescriptor(capabilityId, capability, apply, nextAccept)
+                nextAccept => CreateDescriptor(contract, nextAccept)
             );
     }
-}
-
-internal sealed class JsonCapabilityFunction<TState>(
-    string capabilityId,
-    AgentJsonCapabilityDefinition<TState> definition,
-    Func<TState, JsonElement, TState> apply,
-    Func<CapabilityAcceptanceContext<TState, JsonElement>, CancellationToken, ValueTask>? accept,
-    CapabilityInvocationState<TState> invocation
-) : AIFunction
-{
-    private static readonly JsonSerializerOptions _jsonOptions = TandemJson.TypedContract;
-
-    public override string Name => definition.ToolName;
-    public override string Description => definition.Instructions;
-    public override JsonElement JsonSchema => definition.JsonSchema;
-    public override JsonSerializerOptions JsonSerializerOptions => _jsonOptions;
-
-    protected override async ValueTask<object?> InvokeCoreAsync(
-        AIFunctionArguments arguments,
-        CancellationToken cancellationToken
-    )
-    {
-        var request = JsonSerializer.SerializeToElement(arguments, _jsonOptions);
-        var problems = definition.Validate(request).ToArray();
-        if (problems.Length > 0)
-        {
-            return ValidationError($"invalid {definition.ToolName} call", problems);
-        }
-        problems = definition.ValidateFor?.Invoke(invocation.State, request).ToArray() ?? [];
-        if (problems.Length > 0)
-        {
-            return ValidationError($"invalid {definition.ToolName} call", problems);
-        }
-
-        var summary = definition.Summarize(request);
-        var context = new CapabilityAcceptanceContext<TState, JsonElement>(
-            invocation.RunId,
-            invocation.StepId,
-            invocation.InvocationId,
-            capabilityId,
-            invocation.State,
-            request
-        )
-        {
-            ToolInvocations = invocation.ToolInvocations,
-        };
-        return await CapabilityAcceptanceRuntime.AcceptAsync(
-            invocation,
-            capabilityId,
-            definition.ToolName,
-            definition.ValueType,
-            request,
-            summary,
-            emitAccepted: null,
-            accept is null ? null : ct => accept(context, ct),
-            state => apply(state, request),
-            cancellationToken
-        );
-    }
-
-    private static JsonElement ValidationError(
-        string error,
-        IEnumerable<AgentJsonValidationProblem> problems
-    ) =>
-        JsonSerializer.SerializeToElement(
-            new
-            {
-                isError = true,
-                error,
-                problems = problems.Select(problem => new
-                {
-                    field = problem.Field,
-                    message = problem.Message,
-                }),
-            },
-            _jsonOptions
-        );
 }

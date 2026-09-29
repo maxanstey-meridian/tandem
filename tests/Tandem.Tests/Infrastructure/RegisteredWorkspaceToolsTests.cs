@@ -85,6 +85,11 @@ public sealed class RegisteredWorkspaceToolsTests
     [InlineData("copy_file")]
     [InlineData("move_file")]
     [InlineData("create_directory")]
+    [InlineData("git_blame")]
+    [InlineData("run_shell")]
+    [InlineData("web_search")]
+    [InlineData("web_fetch")]
+    [InlineData(Microsoft.Agents.AI.AgentSkillsProvider.RunSkillScriptToolName)]
     public async Task Registered_tool_cannot_take_a_workspace_tool_name(string name)
     {
         var workspace = AgentWorkspace<TestState>.Define(_ => Path.GetTempPath(), []);

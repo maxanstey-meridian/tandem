@@ -355,19 +355,11 @@ public sealed class AgentBuilder<TState>
         ArgumentException.ThrowIfNullOrWhiteSpace(output.ValueType);
         ArgumentNullException.ThrowIfNull(output.Validate);
         ArgumentNullException.ThrowIfNull(apply);
-        if (
-            output.JsonSchema.ValueKind is not JsonValueKind.Object
-            || !output.JsonSchema.TryGetProperty("type", out var rootType)
-            || rootType.ValueKind is not JsonValueKind.String
-            || rootType.GetString() != "object"
-        )
-        {
-            throw new ArgumentException(
-                "Output JSON schema must declare an object root with type 'object'.",
-                nameof(output)
-            );
-        }
-        var jsonSchema = output.JsonSchema.Clone();
+        var jsonSchema = CapabilityContract.RequireObjectRoot(
+            output.JsonSchema,
+            "Output",
+            nameof(output)
+        );
 
         _structuredOutput = new AgentStructuredOutputDescriptor<TState>(
             (response, state) => ParseJsonOutput(response, state, output),

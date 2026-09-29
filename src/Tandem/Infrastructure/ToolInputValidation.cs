@@ -51,13 +51,5 @@ internal static class ToolInputValidation
                     or RegexMatchTimeoutException
         );
 
-    internal static JsonElement Error(string message) =>
-        JsonSerializer.SerializeToElement(
-            new
-            {
-                isError = true,
-                code = "invalid_tool_input",
-                message,
-            }
-        );
+    internal static ToolError Error(string message) => new("invalid_tool_input", message, []);
 }

@@ -34,44 +34,6 @@ internal sealed class AgentBlock<TState>(
     private const int DiagnosticPreviewCharacters = 8000;
     private const string CheckpointGateId = "checkpoint-required";
     private static readonly TimeSpan _modelStreamIdleTimeout = TimeSpan.FromMinutes(20);
-    private static readonly Dictionary<string, WorkspaceToolKind> _fileToolKinds = new(
-        StringComparer.Ordinal
-    )
-    {
-        ["read_file"] = WorkspaceToolKind.ReadFile,
-        ["ls"] = WorkspaceToolKind.ListFiles,
-        ["grep"] = WorkspaceToolKind.Grep,
-        ["write_file"] = WorkspaceToolKind.WriteFile,
-        ["delete_file"] = WorkspaceToolKind.DeleteFile,
-        ["replace"] = WorkspaceToolKind.Replace,
-        ["replace_lines"] = WorkspaceToolKind.ReplaceLines,
-        ["copy_file"] = WorkspaceToolKind.CopyFile,
-        ["move_file"] = WorkspaceToolKind.MoveFile,
-        ["create_directory"] = WorkspaceToolKind.CreateDirectory,
-    };
-    private static readonly HashSet<string> _workspaceToolGroups =
-    [
-        "git:ro",
-        "shell",
-        "web_search",
-        "web_fetch",
-    ];
-    private static readonly HashSet<string> _reservedWorkspaceToolNames =
-    [
-        .. _fileToolKinds.Keys,
-        .. _workspaceToolGroups,
-        "git_status",
-        "git_diff",
-        "git_log",
-        "git_show",
-        "git_blame",
-        "git_changed_files",
-        "git_compare",
-        "run_shell",
-        AgentSkillsProvider.LoadSkillToolName,
-        AgentSkillsProvider.ReadSkillResourceToolName,
-        AgentSkillsProvider.RunSkillScriptToolName,
-    ];
 
     public override async ValueTask<PipelineMessage<TState>> HandleAsync(
         PipelineMessage<TState> message,
@@ -316,7 +278,7 @@ internal sealed class AgentBlock<TState>(
         if (
             runContext?.Ledger is not null
             && functions.Any(tool =>
-                tool.Name is "read_ledger" or "search_ledger" or "read_ledger_entry"
+                BuiltInAgentTools.Contains(BuiltInAgentTools.Ledger, tool.Name)
             )
         )
         {
@@ -327,10 +289,7 @@ internal sealed class AgentBlock<TState>(
         if (
             (config.Skills?.Count ?? 0) > 0
             && functions.Any(tool =>
-                tool.Name
-                    is AgentSkillsProvider.LoadSkillToolName
-                        or AgentSkillsProvider.ReadSkillResourceToolName
-                        or AgentSkillsProvider.RunSkillScriptToolName
+                BuiltInAgentTools.Contains(BuiltInAgentTools.Skills, tool.Name)
             )
         )
         {
@@ -725,7 +684,7 @@ internal sealed class AgentBlock<TState>(
         var effect = semantics?.Effect.ToString() ?? "Unclassified";
         var actionInvocationId =
             $"{message.Runtime.NextInvocationId(config.StepId)}--action-{reservation.Ordinal + 1}";
-        var arguments = EmptyPayload();
+        var arguments = TandemJson.EmptyObject;
 
         async ValueTask RecordAsync(
             ToolInvocationStatus status,
@@ -832,14 +791,11 @@ internal sealed class AgentBlock<TState>(
         if (gate is not null)
         {
             await FinishAsync(ToolInvocationStatus.Blocked, "Action blocked by gate.");
-            return JsonSerializer.SerializeToElement(
-                new
-                {
-                    isError = true,
-                    error = "action blocked by gate",
-                    problems = new[] { gate.Message },
-                }
-            );
+            return new ToolError(
+                "action_blocked",
+                "action blocked by gate",
+                [new ToolProblem(null, gate.Message)]
+            ).ToJson();
         }
 
         if (toolInterceptor is not null)
@@ -886,8 +842,14 @@ internal sealed class AgentBlock<TState>(
             await FinishAsync(ToolInvocationStatus.Faulted, exception.Message);
             throw;
         }
+        var toolError = result as ToolError;
+        if (toolError is not null)
+        {
+            result = toolError.ToJson();
+        }
         var isToolError =
-            IsToolError(result)
+            toolError is not null
+            || IsUntypedToolError(result)
             || (
                 semantics?.Effect == ToolEffect.ProcessExecution && IsFailedProcessExecution(result)
             );
@@ -972,7 +934,7 @@ internal sealed class AgentBlock<TState>(
                     ? new
                     {
                         entryCursor = reference,
-                        tool = "read_ledger_entry",
+                        tool = BuiltInAgentTools.ReadLedgerEntry,
                         streams = new[] { "stdout", "stderr" },
                     }
                     : null,
@@ -983,18 +945,20 @@ internal sealed class AgentBlock<TState>(
         );
     }
 
-    private static bool IsToolError(object? result) =>
+    // Tandem's own tools return ToolError. Advanced's workspace tools and pagination failures
+    // still answer with JSON carrying isError, and MAF's file tools report failures as text.
+    private static bool IsUntypedToolError(object? result) =>
         result switch
         {
-            JsonElement element
-                when element.ValueKind == JsonValueKind.Object
-                    && element.TryGetProperty("isError", out var isError)
-                    && isError.ValueKind == JsonValueKind.True => true,
+            JsonElement { ValueKind: JsonValueKind.Object } element => element.TryGetProperty(
+                "isError",
+                out var isError
+            )
+                && isError.ValueKind == JsonValueKind.True,
             string text when text.StartsWith("Error", StringComparison.OrdinalIgnoreCase) => true,
-            string text
-                when text.StartsWith("File '", StringComparison.Ordinal)
-                    && text.EndsWith("' not found.", StringComparison.Ordinal) => true,
-            _ => IsFileNotFoundResult(result),
+            _ => result?.ToString() is { } text
+                && text.StartsWith("File '", StringComparison.Ordinal)
+                && text.EndsWith("' not found.", StringComparison.Ordinal),
         };
 
     private static bool IsPreviewTruncated(ToolResultEvidenceDescriptor.Process process) =>
@@ -1025,14 +989,6 @@ internal sealed class AgentBlock<TState>(
         )
         && exitCode.TryGetInt32(out var value)
         && value != 0;
-
-    private static bool IsFileNotFoundResult(object? result)
-    {
-        var text = result?.ToString();
-        return text is not null
-            && text.StartsWith("File '", StringComparison.Ordinal)
-            && text.EndsWith("' not found.", StringComparison.Ordinal);
-    }
 
     private PipelineMessage<TState> ResolveOutcome(
         AgentStructuredOutputResult<TState>? structuredResult,
@@ -1077,7 +1033,7 @@ internal sealed class AgentBlock<TState>(
                 state,
                 "agent.failed",
                 $"Checkpoint-only mode: model did not call {config.Checkpoint!.Capability.ToolName}.",
-                EmptyPayload()
+                TandemJson.EmptyObject
             );
         }
 
@@ -1122,7 +1078,7 @@ internal sealed class AgentBlock<TState>(
                     new { continuationAttempts = continuationAttempt }
                 )
             )
-            : Outcome(state, "agent.completed", "(no lifecycle call)", EmptyPayload());
+            : Outcome(state, "agent.completed", "(no lifecycle call)", TandemJson.EmptyObject);
     }
 
     private PipelineMessage<TState> ApplyAcceptedCapability(
@@ -1203,13 +1159,11 @@ internal sealed class AgentBlock<TState>(
         }
         if (config.Skills is { Count: > 0 })
         {
-            AgentSkillRuntime.RegisterToolEffects(toolEffects);
+            BuiltInAgentTools.Register(toolEffects, BuiltInAgentTools.Skills);
         }
         if (message.RunContext?.Ledger is not null)
         {
-            toolEffects.Add("read_ledger_entry", ToolEffect.Read);
-            toolEffects.Add("read_ledger", ToolEffect.Read);
-            toolEffects.Add("search_ledger", ToolEffect.Read);
+            BuiltInAgentTools.Register(toolEffects, BuiltInAgentTools.Ledger);
         }
         var hasGates =
             (config.StateGuards?.Count ?? 0) > 0 || (config.LatchedGates?.Count ?? 0) > 0;
@@ -1282,7 +1236,7 @@ internal sealed class AgentBlock<TState>(
                         limit,
                         cancellationToken
                     ),
-            "read_ledger_entry",
+            BuiltInAgentTools.ReadLedgerEntry,
             "Read a durable entry using entryCursor from a command result or ledger listing. For readable command output specify stream stdout or stderr, then follow nextOffset until hasMore is false. Omit stream to read the raw record. Offsets are UTF-16 code units; captureTruncated indicates output lost at the hard capture limit."
         );
         yield return AIFunctionFactory.Create(
@@ -1292,7 +1246,7 @@ internal sealed class AgentBlock<TState>(
                 [System.ComponentModel.Description("Page size from 1 to 50.")] int limit = 20,
                 CancellationToken cancellationToken = default
             ) => ledger.ReadAsync(cursor, limit, cancellationToken),
-            "read_ledger",
+            BuiltInAgentTools.ReadLedger,
             "Read accepted durable lifecycle history in order: claims, decisions, findings, checkpoints, state, and transitions. Repository and implementation claims in those records must be verified against the current repository before reliance."
         );
         yield return AIFunctionFactory.Create(
@@ -1306,7 +1260,7 @@ internal sealed class AgentBlock<TState>(
                 [System.ComponentModel.Description("Page size from 1 to 50.")] int limit = 20,
                 CancellationToken cancellationToken = default
             ) => ledger.SearchAsync(query, cursor, limit, cancellationToken),
-            "search_ledger",
+            BuiltInAgentTools.SearchLedger,
             "Search accepted durable lifecycle history for relevant prior claims, decisions, findings, constraints, checkpoints, and state, then use read_ledger to inspect surrounding records. A match does not establish current repository or implementation state."
         );
     }
@@ -1386,7 +1340,7 @@ internal sealed class AgentBlock<TState>(
             .ToArray();
         var selectedCommands = includeCommands ? commands : [];
         var reservedNames = new HashSet<string>(
-            _reservedWorkspaceToolNames,
+            BuiltInAgentTools.ReservedWorkspaceNames,
             StringComparer.Ordinal
         );
         foreach (var command in selectedCommands)
@@ -1418,11 +1372,11 @@ internal sealed class AgentBlock<TState>(
         var fileTools = new HashSet<WorkspaceToolKind>();
         foreach (var name in selectedNames)
         {
-            if (_fileToolKinds.TryGetValue(name, out var kind))
+            if (BuiltInAgentTools.FileSelections.TryGetValue(name, out var kind))
             {
                 fileTools.Add(kind);
             }
-            else if (!_workspaceToolGroups.Contains(name))
+            else if (!BuiltInAgentTools.Groups.ContainsKey(name))
             {
                 throw new InvalidOperationException($"Unknown workspace tool '{name}'.");
             }
@@ -1430,10 +1384,10 @@ internal sealed class AgentBlock<TState>(
         return new ResolvedAgentWorkspace(
             Path.GetFullPath(path),
             fileTools,
-            selectedNames.Contains("git:ro"),
-            selectedNames.Contains("shell"),
-            selectedNames.Contains("web_search"),
-            selectedNames.Contains("web_fetch"),
+            selectedNames.Contains(BuiltInAgentTools.GitReadOnlyGroup),
+            selectedNames.Contains(BuiltInAgentTools.ShellGroup),
+            selectedNames.Contains(BuiltInAgentTools.WebSearchGroup),
+            selectedNames.Contains(BuiltInAgentTools.WebFetchGroup),
             selectedCommands,
             selectedRegisteredTools
         );
@@ -1464,8 +1418,6 @@ internal sealed class AgentBlock<TState>(
         );
         return active;
     }
-
-    private static JsonElement EmptyPayload() => JsonSerializer.SerializeToElement(new { });
 
     private sealed record ActiveAgentGate(
         string Id,
