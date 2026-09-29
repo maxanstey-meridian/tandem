@@ -1,7 +1,6 @@
 [advanced]
 Tandem.Advanced.AdvancedAgentBuilderExtensions
 Tandem.Advanced.AdvancedPipelineRunOptionsExtensions
-Tandem.Advanced.AdvancedAgentMessage`1
 Tandem.Advanced.AgentCapabilityAcceptanceContext`2
 Tandem.Advanced.AgentCapabilityAcceptanceExtensions
 Tandem.Advanced.AgentCheckpointContext`1
@@ -38,15 +37,12 @@ Tandem.Advanced.OutputAcceptanceObservation`2
 Tandem.Advanced.OutputAcceptancePolicy`2
 Tandem.Advanced.PipelineOperation
 Tandem.Advanced.PipelineOperationContext`1
-Tandem.Advanced.StructuredJsonExtractor
 Tandem.Advanced.StructuredOutcome`1
 Tandem.Advanced.StructuredOutputAcceptanceObservation`1
-Tandem.Advanced.StructuredOutputAcceptancePolicies
 Tandem.Advanced.StructuredOutputAcceptancePolicy`1
 Tandem.Advanced.IAgentRawOutputDefinition`2
 Tandem.Advanced.RawOutputExtensions
 Tandem.Advanced.StructuredOutputParser`1
-Tandem.Advanced.StructuredOutputPolicy
 Tandem.Advanced.StructuredOutputProblem
 Tandem.Advanced.StructuredOutputResult`1
 Tandem.Advanced.ToolEffect

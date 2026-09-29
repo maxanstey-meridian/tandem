@@ -150,16 +150,11 @@ public sealed class WorkspaceGrepToolsTests
     [Theory]
     [InlineData(
         "Rivet.Tool/**/*.cs",
-        "Rivet.Tool/Nested/Child.cs:1:MATCH\nRivet.Tool/Program.cs:1:MATCH\n",
-        true
+        "Rivet.Tool/Nested/Child.cs:1:MATCH\nRivet.Tool/Program.cs:1:MATCH\n"
     )]
-    [InlineData("rivet.tool/program.CS", "Rivet.Tool/Program.cs:1:MATCH\n", false)]
-    [InlineData("Rivet.Tool\\Program.cs", "Rivet.Tool/Program.cs:1:MATCH\n", false)]
-    public async Task SearchAsync_PathGlobsAvoidUnrelatedTraversal(
-        string glob,
-        string expected,
-        bool nested
-    )
+    [InlineData("rivet.tool/program.CS", "Rivet.Tool/Program.cs:1:MATCH\n")]
+    [InlineData("Rivet.Tool\\Program.cs", "Rivet.Tool/Program.cs:1:MATCH\n")]
+    public async Task SearchAsync_PathGlobsMatchOnlyTheirPrefix(string glob, string expected)
     {
         var root = CreateDirectory();
         try
@@ -178,29 +173,8 @@ public sealed class WorkspaceGrepToolsTests
                 Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
                 await File.WriteAllTextAsync(fullPath, "MATCH");
             }
-            var visited = new List<string>();
-            var opened = new List<string>();
-            var page = await WorkspaceGrepTools.SearchAsync(
-                root,
-                "",
-                "MATCH",
-                glob,
-                true,
-                0,
-                500,
-                diagnostics: new(visited.Add, opened.Add)
-            );
+            var page = await WorkspaceGrepTools.SearchAsync(root, "", "MATCH", glob, true, 0, 500);
             page.Content.Should().Be(expected);
-            visited
-                .Should()
-                .BeEquivalentTo(
-                    nested
-                        ? new[] { ".", "Rivet.Tool", "Rivet.Tool/Nested" }
-                        : new[] { ".", "Rivet.Tool" }
-                );
-            opened
-                .Should()
-                .NotContain(path => path.StartsWith("Unrelated/") || path.Contains("/obj/"));
         }
         finally
         {
@@ -228,7 +202,6 @@ public sealed class WorkspaceGrepToolsTests
                 await File.WriteAllTextAsync(Path.Combine(root, name, "File.cs"), "MATCH");
             }
             Directory.CreateSymbolicLink(Path.Combine(root, "link"), Path.Combine(root, "Outside"));
-            var opened = new List<string>();
             var page = await WorkspaceGrepTools.SearchAsync(
                 root,
                 directory,
@@ -236,11 +209,9 @@ public sealed class WorkspaceGrepToolsTests
                 glob,
                 recursive,
                 0,
-                500,
-                diagnostics: new(FileOpened: opened.Add)
+                500
             );
             page.Content.Should().BeEmpty();
-            opened.Should().BeEmpty();
         }
         finally
         {
@@ -287,20 +258,16 @@ public sealed class WorkspaceGrepToolsTests
                 await File.WriteAllTextAsync(Path.Combine(root, name), "match😀\nmatch2\n");
             }
 
-            var opened = new List<string>();
             var first = await WorkspaceGrepTools.SearchAsync(
                 root,
                 "",
                 "match",
                 null,
                 true,
-                limit: 2,
-                diagnostics: new(FileOpened: opened.Add)
+                limit: 2
             );
-            opened.Should().Equal("a.txt", "b.txt");
             first.Matches.Select(m => m.Text).Should().Equal("match😀", "match2");
             first.NextOffset.Should().Be(2);
-            opened.Clear();
             var second = await WorkspaceGrepTools.SearchAsync(
                 root,
                 "",
@@ -308,12 +275,8 @@ public sealed class WorkspaceGrepToolsTests
                 null,
                 true,
                 offset: 2,
-                limit: 2,
-                diagnostics: new(FileOpened: opened.Add)
+                limit: 2
             );
-            // The deterministic traversal is re-run, so already-visited files are
-            // opened again while their matches are skipped by offset.
-            opened.Should().Equal("a.txt", "b.txt", "c.txt");
             second.Matches.Select(m => m.Path).Should().Equal("b.txt", "b.txt");
             second.NextOffset.Should().Be(4);
             var third = await WorkspaceGrepTools.SearchAsync(

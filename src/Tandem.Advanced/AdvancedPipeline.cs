@@ -105,8 +105,6 @@ public sealed record AgentMessageContext<TState>(
     AgentMessageOutcome? LatestOutcome
 );
 
-public delegate string AdvancedAgentMessage<TState>(AgentMessageContext<TState> context);
-
 public enum AgentConversationRetention
 {
     Retain,
@@ -627,11 +625,6 @@ public static class AdvancedAgentBuilderExtensions
             .UseHarness(harnessInstructions);
     }
 
-    public static AgentBuilder<TState> WithMessageFromContext<TState>(
-        this AgentBuilder<TState> builder,
-        AdvancedAgentMessage<TState> message
-    ) => builder.ConfigureMessageFromContext(pipeline => message(ToContext(pipeline)));
-
     public static AgentBuilder<TState> WithWorkspace<TState>(
         this AgentBuilder<TState> builder,
         AgentWorkspace<TState> workspace,
@@ -748,22 +741,6 @@ public static class AdvancedAgentBuilderExtensions
                 }
         );
     }
-
-    public static AgentBuilder<TState> WithStructuredOutput<TState>(
-        this AgentBuilder<TState> builder,
-        StructuredOutputParser<TState> parser,
-        Action<ChatOptions>? configureChatOptions = null,
-        StructuredOutputAcceptancePolicy<TState>? acceptancePolicy = null,
-        string? correctionRequiredToolName = null
-    ) =>
-        builder.ConfigureStructuredOutput(
-            StructuredOutputDescriptors.Create(
-                parser,
-                acceptancePolicy,
-                correctionRequiredToolName
-            ),
-            configureChatOptions
-        );
 
     public static AgentBuilder<TState> WithOutput<TState, TOutput>(
         this AgentBuilder<TState> builder,
@@ -952,19 +929,6 @@ public static class AdvancedAgentBuilderExtensions
 
 public static class PipelineOperation
 {
-    internal static ValueTask ObserveCommandOutputAsync<TState>(
-        PipelineMessage<TState> pipeline,
-        string stepId,
-        string command,
-        string output,
-        int exitCode,
-        CancellationToken cancellationToken
-    ) =>
-        pipeline.RunContext?.ObserveAsync(
-            new PipelineCommandOutput(pipeline.Runtime.RunId, stepId, command, output, exitCode),
-            cancellationToken
-        ) ?? ValueTask.CompletedTask;
-
     public static async ValueTask<Outcome<TState>> RunOutcomeAsync<TState>(
         TState state,
         Func<PipelineOperationContext<TState>, ValueTask<OperationResult<TState>>> execute,

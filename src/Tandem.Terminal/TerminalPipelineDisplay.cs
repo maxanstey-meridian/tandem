@@ -130,7 +130,7 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(summary);
         if (Interlocked.Exchange(ref _terminalized, 1) == 0)
         {
-            _model.Finish(status, summary);
+            _model.Finish(status);
             if (!IsInteractive && Volatile.Read(ref _started) != 0)
             {
                 WritePlain($"pipeline {status}: {summary}");

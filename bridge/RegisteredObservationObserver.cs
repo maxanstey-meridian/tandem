@@ -118,37 +118,11 @@ internal static class RegisteredRunObserver
 {
     public static IPipelineObserver? Compose(
         IPipelinePersistenceObserver? persistence,
-        IPipelineObserver? live,
-        IPipelineObserver? presentation
-    )
-    {
-        var additional = new[] { live, presentation }.Where(value => value is not null).ToArray();
-        if (persistence is not null)
-        {
-            return new PersistenceFirstObserver(persistence, additional!);
-        }
-        return additional.Length switch
-        {
-            0 => null,
-            1 => additional[0],
-            _ => new SequentialObserver(additional!),
-        };
-    }
-
-    private sealed class SequentialObserver(IReadOnlyList<IPipelineObserver> observers)
-        : IPipelineObserver
-    {
-        public async ValueTask ObserveAsync(
-            PipelineObservation observation,
-            CancellationToken cancellationToken
-        )
-        {
-            foreach (var observer in observers)
-            {
-                await observer.ObserveAsync(observation, cancellationToken);
-            }
-        }
-    }
+        IPipelineObserver? live
+    ) =>
+        persistence is null ? live
+        : live is null ? new PersistenceFirstObserver(persistence, [])
+        : new PersistenceFirstObserver(persistence, [live]);
 
     private sealed class PersistenceFirstObserver(
         IPipelinePersistenceObserver persistence,

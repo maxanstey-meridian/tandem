@@ -911,29 +911,20 @@ public sealed class SqliteLedgerStore
         LedgerStream<TEntry> stream,
         string entryId,
         TEntry entry,
-        bool requireRunning,
         CancellationToken cancellationToken
     ) =>
         _transaction.Value is null
             ? await RetryLockedAsync(
-                ct => AppendCoreAsync(runId, stream, entryId, entry, requireRunning, ct),
+                ct => AppendCoreAsync(runId, stream, entryId, entry, ct),
                 cancellationToken
             )
-            : await AppendCoreAsync(
-                runId,
-                stream,
-                entryId,
-                entry,
-                requireRunning,
-                cancellationToken
-            );
+            : await AppendCoreAsync(runId, stream, entryId, entry, cancellationToken);
 
     private async ValueTask<AcceptedLedgerEntry<TEntry>> AppendCoreAsync<TEntry>(
         Guid runId,
         LedgerStream<TEntry> stream,
         string entryId,
         TEntry entry,
-        bool requireRunning,
         CancellationToken cancellationToken
     )
     {
@@ -955,7 +946,6 @@ public sealed class SqliteLedgerStore
                 payload,
                 hash,
                 now,
-                requireRunning,
                 cancellationToken
             );
         }
@@ -973,7 +963,6 @@ public sealed class SqliteLedgerStore
             payload,
             hash,
             now,
-            requireRunning,
             cancellationToken
         );
         await transaction.CommitAsync(cancellationToken);
@@ -991,14 +980,10 @@ public sealed class SqliteLedgerStore
         byte[] payload,
         byte[] hash,
         DateTimeOffset now,
-        bool requireRunning,
         CancellationToken cancellationToken
     )
     {
-        if (requireRunning)
-        {
-            await EnsureRunRunningAsync(connection, transaction, runId, cancellationToken);
-        }
+        await EnsureRunRunningAsync(connection, transaction, runId, cancellationToken);
         await EnsureContractAsync(
             connection,
             transaction,
@@ -1144,63 +1129,6 @@ public sealed class SqliteLedgerStore
         command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
         command.Parameters.AddWithValue("$stream", stream.ValidatedName);
         command.Parameters.AddWithValue("$sequence", sequence);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        var entries = new List<AcceptedLedgerEntry<TEntry>>();
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            entries.Add(
-                new AcceptedLedgerEntry<TEntry>(
-                    reader.GetInt64(0),
-                    reader.GetString(1),
-                    Deserialize<TEntry>((byte[])reader[2]),
-                    FromUnix(reader.GetInt64(3))
-                )
-            );
-        }
-        return entries;
-    }
-
-    internal async ValueTask<IReadOnlyList<AcceptedLedgerEntry<TEntry>>> ReadRecentAsync<TEntry>(
-        Guid runId,
-        LedgerStream<TEntry> stream,
-        int limit,
-        CancellationToken cancellationToken
-    )
-    {
-        if (limit < 1)
-        {
-            throw new ArgumentOutOfRangeException(nameof(limit));
-        }
-        await RetryLockedAsync(
-            async ct =>
-            {
-                await EnsureContractAsync(
-                    stream.ValidatedName,
-                    "stream",
-                    stream.ValidatedContract,
-                    stream.ValidatedVersion,
-                    ct
-                );
-                return true;
-            },
-            cancellationToken
-        );
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT sequence, entry_id, payload, recorded_at
-            FROM (
-                SELECT sequence, entry_id, payload, recorded_at
-                FROM run_entries
-                WHERE run_id = $run_id AND stream = $stream
-                ORDER BY sequence DESC
-                LIMIT $limit
-            )
-            ORDER BY sequence;
-            """;
-        command.Parameters.AddWithValue("$run_id", runId.ToString("N"));
-        command.Parameters.AddWithValue("$stream", stream.ValidatedName);
-        command.Parameters.AddWithValue("$limit", limit);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var entries = new List<AcceptedLedgerEntry<TEntry>>();
         while (await reader.ReadAsync(cancellationToken))

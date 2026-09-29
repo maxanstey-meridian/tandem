@@ -19,7 +19,6 @@ internal sealed record AgentBlockConfig<TState>(
     bool ContinueSession = false,
     Func<TState, AgentProfileSelection>? ProfilePolicy = null,
     Func<PipelineMessage<TState>, BlockOutcome, bool>? RetainConversation = null,
-    Func<PipelineMessage<TState>, string>? ContextUserMessage = null,
     AgentImplementationFactory? ImplementationFactory = null,
     TimeSpan? Timeout = null,
     IReadOnlyList<AgentStateGuardDescriptor<TState>>? StateGuards = null,

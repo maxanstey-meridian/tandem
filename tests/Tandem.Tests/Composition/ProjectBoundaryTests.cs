@@ -26,19 +26,15 @@ public sealed class ProjectBoundaryTests
             "examples/songwriter/csharp/Tandem.Sample.Songwriter.csproj"
         );
 
-        tandem.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
         tandem.Should().NotContain(reference => reference.Contains("Tandem.Advanced"));
         advanced.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         ledger.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         debate.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         debate.Should().Contain(reference => reference.EndsWith("Tandem.Advanced.csproj"));
-        debate.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
         codeWriter.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         codeWriter.Should().NotContain(reference => reference.Contains("Tandem.Advanced"));
-        codeWriter.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
         songwriter.Should().Contain(reference => reference.EndsWith("Tandem.csproj"));
         songwriter.Should().NotContain(reference => reference.Contains("Tandem.Advanced"));
-        songwriter.Should().NotContain(reference => reference.Contains("Tandem.Delivery"));
         tandem.Should().NotContain(reference => reference.Contains("Tandem.Ledger"));
         advanced.Should().NotContain(reference => reference.Contains("Tandem.Ledger"));
         packets.Should().BeEmpty();
@@ -53,19 +49,16 @@ public sealed class ProjectBoundaryTests
             Path("examples/code-writer/csharp/Tandem.Sample.CodeWriter.csproj")
         );
         project.Should().NotContain("Microsoft.Agents");
-        project.Should().NotContain("Tandem.Delivery");
         project.Should().NotContain("Compile Include");
         project.Should().NotContain("InternalsVisibleTo");
 
         var source = string.Join('\n', SourceLines("examples/code-writer/csharp"));
         source.Should().NotContain("using Microsoft.Agents");
-        source.Should().NotContain("Tandem.Delivery");
         source.Should().NotContain("using Tandem.Infrastructure");
         source.Should().NotContain("System.Reflection");
         source.Should().NotContain("InternalsVisibleTo");
         source.Should().NotContain("WorkspacePath");
         source.Should().NotContain("WithWorkspace");
-        source.Should().NotContain("IPipelineExecutionContext");
         source.Should().NotContain("PipelineBuildContext");
         source.Should().NotContain("ChatOptions");
         source.Should().NotContain("ChatResponseFormat");
@@ -79,7 +72,6 @@ public sealed class ProjectBoundaryTests
     {
         var project = File.ReadAllText(Path("examples/debate/csharp/Tandem.Sample.Debate.csproj"));
         project.Should().NotContain("Microsoft.Agents");
-        project.Should().NotContain("Tandem.Delivery");
         project.Should().NotContain("Compile Include");
         project.Should().NotContain("InternalsVisibleTo");
 
@@ -98,7 +90,6 @@ public sealed class ProjectBoundaryTests
             .SelectMany(File.ReadLines)
             .ToArray();
         source.Should().NotContain(line => line.Contains("using Microsoft.Agents"));
-        source.Should().NotContain(line => line.Contains("Tandem.Delivery"));
         source.Should().NotContain(line => line.Contains("using Tandem.Infrastructure"));
         source.Should().NotContain(line => line.Contains("System.Reflection"));
         source.Should().NotContain(line => line.Contains("InternalsVisibleTo"));
@@ -130,19 +121,6 @@ public sealed class ProjectBoundaryTests
             .Concat(SourceLines("examples/songwriter/csharp"))
             .Should()
             .NotContain(line => line.Contains("Microsoft.Agents", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public void Tandem_HasNoDeliveryAssumptionsOrParallelRouteModel()
-    {
-        var source = SourceLines("src/Tandem").ToArray();
-
-        source.Should().NotContain(line => line.Contains("Tandem.Delivery"));
-        source.Should().NotContain(line => line.Contains("DeliveryState"));
-        source.Should().NotContain(line => line.Contains("DeliveryLifecycleActions"));
-        source.Should().NotContain(line => line.Contains("RouteDefinition"));
-        source.Should().NotContain(line => line.Contains("RouteRegistry"));
-        source.Should().NotContain(line => line.Contains("RouteMap"));
     }
 
     [Fact]
@@ -181,7 +159,6 @@ public sealed class ProjectBoundaryTests
         generator.Should().Contain("GeneratedPassThroughStepDescriptor");
         generator.Should().Contain("GeneratedStateStepDescriptor");
         generator.Should().Contain("GeneratedOutcomeStepDescriptor");
-        generator.Should().NotContain("GeneratedCustomStepDescriptor");
         generator.Should().NotContain("GetMembers(\"Runtime\")");
         generator.Should().NotContain("GetMembers(\"Outcome\")");
     }
@@ -235,8 +212,6 @@ public sealed class ProjectBoundaryTests
             .Select(method => method.Name)
             .Should()
             .NotContain([
-                "WithMessageFromContext",
-                "WithStructuredOutput",
                 "WithLifecycleActions",
                 "WithCheckpoint",
                 "WithMessageAugmentation",

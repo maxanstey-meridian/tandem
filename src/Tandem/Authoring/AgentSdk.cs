@@ -18,13 +18,8 @@ internal sealed class AgentOperation<TState>
     > _execute;
 
     internal AgentOperation(AgentBlock<TState> runtime)
-        : this(runtime.ExecuteAsync) { }
-
-    internal AgentOperation(
-        Func<PipelineMessage<TState>, CancellationToken, ValueTask<PipelineMessage<TState>>> execute
-    )
     {
-        _execute = execute;
+        _execute = runtime.ExecuteAsync;
     }
 
     public async ValueTask<Outcome<TState>> RunAsync(
@@ -155,7 +150,6 @@ public sealed class AgentBuilder<TState>
     private readonly IChatClient _chatClient;
     private readonly Func<string, IChatClient>? _chatClientFactory;
     private Func<TState, string>? _message;
-    private Func<PipelineMessage<TState>, string>? _contextMessage;
     private AgentWorkspaceDescriptor<TState>? _workspace;
     private AgentStructuredOutputDescriptor<TState>? _structuredOutput;
     private AgentCheckpointDescriptor<TState>? _checkpoint;
@@ -213,14 +207,6 @@ public sealed class AgentBuilder<TState>
     public AgentBuilder<TState> WithMessage(Func<TState, string> message)
     {
         _message = message;
-        return this;
-    }
-
-    internal AgentBuilder<TState> ConfigureMessageFromContext(
-        Func<PipelineMessage<TState>, string> message
-    )
-    {
-        _contextMessage = message;
         return this;
     }
 
@@ -666,7 +652,7 @@ public sealed class AgentBuilder<TState>
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(_instructions);
         }
-        if (_message is null && _contextMessage is null)
+        if (_message is null)
         {
             throw new InvalidOperationException($"Agent '{_id}' must configure a user message.");
         }
@@ -691,7 +677,6 @@ public sealed class AgentBuilder<TState>
             _continueSession,
             _profilePolicy,
             _retainConversation,
-            _contextMessage,
             _implementationFactory,
             _timeout,
             _stateGuards,

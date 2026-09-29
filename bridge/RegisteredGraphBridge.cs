@@ -132,7 +132,7 @@ public static partial class NodePipelineBridge
         var liveObserver = definition.ObservationCallback is null
             ? null
             : new RegisteredObservationObserver(callbacks, definition.ObservationCallback);
-        var runObserver = RegisteredRunObserver.Compose(observer, liveObserver, null);
+        var runObserver = RegisteredRunObserver.Compose(observer, liveObserver);
         LedgerRunStatus? terminalStatus = null;
         string? terminalSummary = null;
         var preserveActiveFailure = false;
@@ -355,20 +355,6 @@ public static partial class NodePipelineBridge
             foreach (var child in Flatten(children))
             {
                 yield return child;
-            }
-        }
-    }
-
-    private static IEnumerable<RegisteredNodeContract> EnumerateNodeContracts(
-        RegisteredNodeContract node
-    )
-    {
-        yield return node;
-        foreach (var branch in node.Branches ?? [])
-        {
-            if (branch.Participant is not null)
-            {
-                yield return branch.Participant;
             }
         }
     }

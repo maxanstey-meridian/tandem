@@ -114,7 +114,7 @@ internal sealed class DefinitionCompleteNode<TState>(IPipelineCompletion<TState>
     public PipelineNodeDescriptor Descriptor { get; } =
         new DelegatePipelineNodeDescriptor<PipelineMessage<TState>, PipelineMessage<TState>>(
             completion.Id,
-            (message, _, _) =>
+            (message, _) =>
             {
                 var stopwatch = Stopwatch.StartNew();
                 var state = completion.Complete(message.State);
@@ -144,7 +144,7 @@ internal sealed class DefinitionFailedNode<TState>(IPipelineFailure<TState> fail
     public PipelineNodeDescriptor Descriptor { get; } =
         new DelegatePipelineNodeDescriptor<PipelineMessage<TState>, PipelineMessage<TState>>(
             failure.Id,
-            (message, _, _) =>
+            (message, _) =>
             {
                 var stopwatch = Stopwatch.StartNew();
                 var state = failure.Fail(message.State);
@@ -169,7 +169,7 @@ internal sealed class DefinitionFailedNode<TState>(IPipelineFailure<TState> fail
 
 internal sealed class DelegatePipelineNodeDescriptor<TInput, TOutput>(
     string id,
-    Func<TInput, IPipelineExecutionContext, CancellationToken, ValueTask<TOutput>> execute,
+    Func<TInput, CancellationToken, ValueTask<TOutput>> execute,
     string? observationId = null,
     PipelineObservationMode observationMode = PipelineObservationMode.Full
 ) : PipelineNodeDescriptor
@@ -197,7 +197,7 @@ internal sealed class DelegatePipelineNodeExecutor<TInput, TOutput>(
     string id,
     string observationId,
     PipelineObservationMode observationMode,
-    Func<TInput, IPipelineExecutionContext, CancellationToken, ValueTask<TOutput>> execute
+    Func<TInput, CancellationToken, ValueTask<TOutput>> execute
 ) : Executor<TInput, TOutput>(id, options: null, declareCrossRunShareable: true)
 {
     public override async ValueTask<TOutput> HandleAsync(
@@ -209,12 +209,10 @@ internal sealed class DelegatePipelineNodeExecutor<TInput, TOutput>(
             observationId,
             observationMode,
             input,
-            () => execute(input, new PipelineExecutionContext(), cancellationToken),
+            () => execute(input, cancellationToken),
             cancellationToken
         );
 }
-
-internal sealed class PipelineExecutionContext : IPipelineExecutionContext;
 
 [EditorBrowsable(EditorBrowsableState.Never)]
 public interface IGeneratedPipelineStep<TState, TResult>
@@ -236,8 +234,6 @@ public sealed class GeneratedPassThroughStepDescriptor<TState>(
 {
     internal override ExecutorBinding Bind() =>
         new GeneratedPassThroughStepExecutor<TState>(id, execute).Bind();
-
-    internal ExecutorBinding Bind(StandardOutcomeRouteAwareness<TState> _) => Bind();
 }
 
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -285,40 +281,6 @@ public readonly struct PipelineOutcomeSelector<TState>
     internal bool Failed { get; }
     internal string CaseId =>
         Failed ? nameof(Outcome<TState>.Failed) : nameof(Outcome<TState>.Success);
-}
-
-internal sealed class GeneratedStepExecutor<TState, TResult>(
-    string id,
-    Func<PipelineMessage<TState>, CancellationToken, ValueTask<TResult>> execute,
-    Func<PipelineMessage<TState>, TResult, PipelineMessage<TState>> adapt
-)
-    : Executor<PipelineMessage<TState>, PipelineMessage<TState>>(
-        id,
-        options: null,
-        declareCrossRunShareable: true
-    )
-{
-    internal ExecutorBinding Bind() => this.BindExecutor();
-
-    public override async ValueTask<PipelineMessage<TState>> HandleAsync(
-        PipelineMessage<TState> pipeline,
-        IWorkflowContext context,
-        CancellationToken cancellationToken
-    )
-    {
-        using var envelope = PipelineExecutionEnvelope.Begin(pipeline);
-        return await PipelineObservationPublisher.ExecuteAsync(
-            Id,
-            PipelineObservationMode.Full,
-            pipeline,
-            async () =>
-            {
-                var result = await execute(pipeline, cancellationToken);
-                return adapt(envelope.Message, result);
-            },
-            cancellationToken
-        );
-    }
 }
 
 internal sealed class GeneratedPassThroughStepExecutor<TState>

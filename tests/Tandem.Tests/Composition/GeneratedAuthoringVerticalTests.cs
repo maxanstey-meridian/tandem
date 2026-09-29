@@ -1,6 +1,8 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.AI;
 using Tandem.Domain;
 
 namespace Tandem.Tests.Composition;
@@ -256,22 +258,19 @@ public sealed class GeneratedAuthoringVerticalTests
         bool buildRecoveryLast
     )
     {
-        var definition = new AgentDefinition<CounterState>(
-            "reused-agent",
-            _ => new AgentOperation<CounterState>(
-                (pipeline, _) =>
-                    ValueTask.FromResult(
-                        pipeline with
-                        {
-                            LatestOutcome = new BlockOutcome(
-                                "agent.failed",
-                                "reused-agent",
-                                "Expected failure"
-                            ),
-                        }
-                    )
+        var definition = Agent
+            .Create<CounterState>("reused-agent", "Decide.", new UnparseableChatClient())
+            .WithMessage(_ => "Return a value.")
+            .WithJsonOutput(
+                new AgentJsonOutputDefinition<CounterState>(
+                    JsonDocument.Parse("{\"type\":\"object\"}").RootElement.Clone(),
+                    "Return JSON.",
+                    _ => [],
+                    "test.reused-agent"
+                ),
+                (state, _) => state
             )
-        );
+            .Build();
         var recovery = new RecoveryStage();
         var recoveryBuilder = Pipeline
             .Start(definition, "reused-agent-recovery")
@@ -437,4 +436,36 @@ internal sealed class ReusableOutcomeStep : IStandardOutcomePipelineStep<Counter
     public PipelineNodeDescriptor Descriptor => _descriptor;
     public PipelineOutcomeSelector<CounterState> Success => new(this, failed: false);
     public PipelineOutcomeSelector<CounterState> Failed => new(this, failed: true);
+}
+
+internal sealed class UnparseableChatClient : IChatClient
+{
+    public Task<ChatResponse> GetResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default
+    ) =>
+        Task.FromResult(
+            new ChatResponse(new ChatMessage(ChatRole.Assistant, "not json"))
+            {
+                FinishReason = ChatFinishReason.Stop,
+            }
+        );
+
+    public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default
+    )
+    {
+        var response = await GetResponseAsync(messages, options, cancellationToken);
+        foreach (var update in response.ToChatResponseUpdates())
+        {
+            yield return update;
+        }
+    }
+
+    public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+    public void Dispose() { }
 }

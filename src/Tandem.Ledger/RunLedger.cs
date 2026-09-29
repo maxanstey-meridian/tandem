@@ -51,31 +51,7 @@ public sealed class RunLedger : IPipelineLedgerReader
         string entryId,
         TEntry entry,
         CancellationToken cancellationToken = default
-    ) => _store.AppendAsync(RunId, stream, entryId, entry, requireRunning: true, cancellationToken);
-
-    internal async ValueTask<AcceptedLedgerEntry<TEntry>> AppendAfterTerminalAsync<TEntry>(
-        LedgerStream<TEntry> stream,
-        string entryId,
-        TEntry entry,
-        CancellationToken cancellationToken = default
-    )
-    {
-        var run = await _store.GetRunAsync(RunId, cancellationToken);
-        if (run.Status == LedgerRunStatus.Running)
-        {
-            throw new LedgerConflictException(
-                $"Run '{RunId:N}' is still running; this record is accepted only after termination."
-            );
-        }
-        return await _store.AppendAsync(
-            RunId,
-            stream,
-            entryId,
-            entry,
-            requireRunning: false,
-            cancellationToken
-        );
-    }
+    ) => _store.AppendAsync(RunId, stream, entryId, entry, cancellationToken);
 
     public ValueTask<IReadOnlyList<AcceptedLedgerEntry<TEntry>>> ReadAsync<TEntry>(
         LedgerStream<TEntry> stream,
@@ -87,12 +63,6 @@ public sealed class RunLedger : IPipelineLedgerReader
         long sequence,
         CancellationToken cancellationToken = default
     ) => _store.ReadAfterAsync(RunId, stream, sequence, cancellationToken);
-
-    public ValueTask<IReadOnlyList<AcceptedLedgerEntry<TEntry>>> ReadRecentAsync<TEntry>(
-        LedgerStream<TEntry> stream,
-        int limit,
-        CancellationToken cancellationToken = default
-    ) => _store.ReadRecentAsync(RunId, stream, limit, cancellationToken);
 
     public ValueTask<LedgerDocumentValue<TDocument>?> ReadDocumentAsync<TDocument>(
         LedgerDocument<TDocument> document,

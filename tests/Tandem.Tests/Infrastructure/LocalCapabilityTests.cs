@@ -593,7 +593,7 @@ public sealed class LocalCapabilityTests
         );
         var runtime = PipelineRuntime
             .Create(Guid.CreateVersion7())
-            .WithUsage("agent", new AgentUsage(90, 0, 90, 100, 100, TimeSpan.Zero))
+            .WithUsage("agent", new AgentUsage(90, 0, 90, 100))
             .WithGateLatch("agent", "checkpoint-required");
 
         var output = await block.ExecuteAsync(

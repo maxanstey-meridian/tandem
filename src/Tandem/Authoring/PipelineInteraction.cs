@@ -30,12 +30,12 @@ public sealed class PipelineInteraction<TState, TRequest, TResponse>
         public RequestStage(string id, string scope, Func<TState, TRequest> createRequest)
         {
             Id = id;
-            Descriptor = CorePipelineNodes.Stage<
+            Descriptor = new DelegatePipelineNodeDescriptor<
                 PipelineMessage<TState>,
                 InteractionRequest<TState, TRequest, TResponse>
             >(
                 id,
-                (pipeline, _, _) =>
+                (pipeline, _) =>
                     ValueTask.FromResult(
                         new InteractionRequest<TState, TRequest, TResponse>(
                             scope,
@@ -56,7 +56,7 @@ public sealed class PipelineInteraction<TState, TRequest, TResponse>
     {
         public string Id => id;
         public PipelineNodeDescriptor Descriptor { get; } =
-            CorePipelineNodes.RequestPort<
+            new RequestPortPipelineNodeDescriptor<
                 InteractionRequest<TState, TRequest, TResponse>,
                 InteractionResponse<TState, TResponse>
             >(id);
@@ -67,12 +67,12 @@ public sealed class PipelineInteraction<TState, TRequest, TResponse>
         public ResumeStage(string id, string scope, Func<TState, TResponse, TState> applyResponse)
         {
             Id = id;
-            Descriptor = CorePipelineNodes.Stage<
+            Descriptor = new DelegatePipelineNodeDescriptor<
                 InteractionResponse<TState, TResponse>,
                 PipelineMessage<TState>
             >(
                 id,
-                (response, _, _) =>
+                (response, _) =>
                 {
                     if (!string.Equals(response.InteractionId, scope, StringComparison.Ordinal))
                     {

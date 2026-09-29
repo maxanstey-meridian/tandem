@@ -10,8 +10,6 @@ internal sealed class PositionedTextReader : IDisposable
     private readonly CancellationToken _cancellationToken;
     internal bool End => _reader.Peek() < 0;
 
-    internal int Peek() => _reader.Peek();
-
     internal PositionedTextReader(string path, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

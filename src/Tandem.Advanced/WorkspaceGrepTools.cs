@@ -99,7 +99,6 @@ internal static class WorkspaceGrepTools
         int offset = 0,
         int limit = 100,
         CancellationToken cancellationToken = default,
-        SearchDiagnostics? diagnostics = null,
         bool includeExcluded = false,
         bool literal = false,
         bool caseSensitive = false
@@ -159,7 +158,6 @@ internal static class WorkspaceGrepTools
                 recursive,
                 includeExcluded,
                 Skip,
-                diagnostics,
                 cancellationToken
             )
         )
@@ -178,9 +176,7 @@ internal static class WorkspaceGrepTools
             PositionedTextReader? reader = null;
             try
             {
-                diagnostics?.FileOpened?.Invoke(relative);
                 reader = new PositionedTextReader(path, cancellationToken);
-                diagnostics?.TextDecodingStarted?.Invoke(relative);
                 var line = 1;
                 while (!reader.End)
                 {
@@ -266,7 +262,6 @@ internal static class WorkspaceGrepTools
         bool recursive,
         bool includeExcluded,
         Action<string, string> skip,
-        SearchDiagnostics? diagnostics,
         CancellationToken cancellationToken
     )
     {
@@ -281,7 +276,6 @@ internal static class WorkspaceGrepTools
             }
         }
 
-        diagnostics?.DirectoryEnumerated?.Invoke(relative);
         string[] entries;
         try
         {
@@ -351,7 +345,6 @@ internal static class WorkspaceGrepTools
                             true,
                             includeExcluded,
                             skip,
-                            diagnostics,
                             cancellationToken
                         )
                     )
@@ -429,10 +422,4 @@ internal static class WorkspaceGrepTools
             _regexTimeout
         );
     }
-
-    internal sealed record SearchDiagnostics(
-        Action<string>? DirectoryEnumerated = null,
-        Action<string>? FileOpened = null,
-        Action<string>? TextDecodingStarted = null
-    );
 }

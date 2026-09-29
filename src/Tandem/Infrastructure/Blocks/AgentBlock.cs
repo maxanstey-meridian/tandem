@@ -172,7 +172,7 @@ internal sealed class AgentBlock<TState>(
                     message.State,
                     runtime.AgentUsage.GetValueOrDefault(config.StepId)?.CurrentContextTokens ?? 0
                 )
-                : config.ContextUserMessage?.Invoke(message) ?? config.UserMessage!(message.State);
+                : config.UserMessage!(message.State);
 
             var augmentations = new List<string>();
             if (!requiresCheckpointRelease)
@@ -216,7 +216,6 @@ internal sealed class AgentBlock<TState>(
                 runtime.AgentUsage.GetValueOrDefault(config.StepId)?.CumulativeInputTokens ?? 0;
             var cumulativeOutputTokens =
                 runtime.AgentUsage.GetValueOrDefault(config.StepId)?.CumulativeOutputTokens ?? 0;
-            var lastModelCallDuration = TimeSpan.Zero;
             var continuationAttempt = 0;
             var policyExhausted = false;
             var structuredAttempt = 0;
@@ -229,7 +228,6 @@ internal sealed class AgentBlock<TState>(
                 var turnToolNames = new List<string>();
                 var turnInputTokens = default(long?);
                 var turnOutputTokens = default(long?);
-                var turnSw = Stopwatch.StartNew();
 
                 var updates = initialMessages is null
                     ? agent.RunStreamingAsync(userMessage, session, null, cts.Token)
@@ -258,8 +256,7 @@ internal sealed class AgentBlock<TState>(
                                     turnInputTokens,
                                     turnOutputTokens,
                                     cumulativeInputTokens,
-                                    cumulativeOutputTokens,
-                                    turnSw.Elapsed
+                                    cumulativeOutputTokens
                                 );
                                 await usageRunContext.ObserveAsync(
                                     new PipelineAgentUsage(
@@ -282,21 +279,18 @@ internal sealed class AgentBlock<TState>(
                     await PublishUpdatesAsync(message, runtime.RunId, update, cts.Token);
                 }
 
-                turnSw.Stop();
                 initialMessages = null;
                 inputTokens = turnInputTokens;
                 outputTokens = turnOutputTokens;
                 cumulativeInputTokens += turnInputTokens ?? 0;
                 cumulativeOutputTokens += turnOutputTokens ?? 0;
-                lastModelCallDuration += turnSw.Elapsed;
                 structuredToolObservations.Clear();
                 structuredToolObservations.UnionWith(collector.SuccessfulTools);
                 var latestTurnUsage = ResolveUsage(
                     turnInputTokens,
                     turnOutputTokens,
                     cumulativeInputTokens,
-                    cumulativeOutputTokens,
-                    turnSw.Elapsed
+                    cumulativeOutputTokens
                 );
                 var checkpointWasLatched = runtime.IsGateLatched(
                     config.StepId,
@@ -536,8 +530,7 @@ internal sealed class AgentBlock<TState>(
                 inputTokens,
                 outputTokens,
                 cumulativeInputTokens,
-                cumulativeOutputTokens,
-                lastModelCallDuration
+                cumulativeOutputTokens
             );
             var runtimeAfterUsage = LatchTriggeredGates(
                 runtime.WithUsage(config.StepId, agentUsage),
@@ -641,14 +634,12 @@ internal sealed class AgentBlock<TState>(
         long? inputTokens,
         long? outputTokens,
         long cumulativeInputTokens,
-        long cumulativeOutputTokens,
-        TimeSpan elapsed
+        long cumulativeOutputTokens
     )
     {
         var policy = config.Checkpoint;
         var contextWindow =
             config.ContextBudget?.ContextWindowTokens ?? policy?.ContextWindowTokens ?? 0;
-        var checkpointAt = policy?.CheckpointAtTokens ?? 0;
 
         var input = (int)(inputTokens ?? 0);
         var output = (int)(outputTokens ?? 0);
@@ -659,8 +650,6 @@ internal sealed class AgentBlock<TState>(
             CurrentOutputTokens: output,
             CurrentContextTokens: currentContext,
             ContextWindowTokens: contextWindow,
-            CheckpointAtTokens: checkpointAt,
-            LastModelCallDuration: elapsed,
             CumulativeInputTokens: cumulativeInputTokens,
             CumulativeOutputTokens: cumulativeOutputTokens
         );
@@ -1975,17 +1964,6 @@ internal sealed class ToolOutcomeCollector
                     .Where(observation => observation is not null)
                     .Select(observation => observation!)
                     .ToArray();
-            }
-        }
-    }
-
-    public string? LifecycleToolName
-    {
-        get
-        {
-            lock (_sync)
-            {
-                return _lifecycleToolName;
             }
         }
     }

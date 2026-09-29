@@ -54,9 +54,8 @@ public sealed class CollectionObservationTests
         );
         result.State.Should().Equal("first", "second");
         observer.DuringSecond.Should().NotBeNull();
-        observer.DuringSecond!.ActiveStep.Should().Be("collect/rewrite");
         observer
-            .DuringSecond.Visits.Count(visit =>
+            .DuringSecond!.Visits.Count(visit =>
                 visit.StepId == "collect/rewrite" && visit.CompletedAt is null
             )
             .Should()

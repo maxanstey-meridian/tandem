@@ -872,44 +872,37 @@ public sealed class InProcessPipelineRunnerTests
             PipelineRuntime.Create(runId),
             new RunnerState(0)
         );
-        var start = CorePipelineNodes
-            .Stage<PipelineMessage<RunnerState>, PipelineMessage<RunnerState>>(
-                "start",
-                (message, _, _) => ValueTask.FromResult(message)
-            )
-            .Bind();
-        var firstRequest = CorePipelineNodes
-            .Stage<PipelineMessage<RunnerState>, FirstQuestion>(
-                "first-request",
-                (_, _, _) => ValueTask.FromResult(new FirstQuestion("first"))
-            )
-            .Bind();
-        var secondRequest = CorePipelineNodes
-            .Stage<PipelineMessage<RunnerState>, SecondQuestion>(
-                "second-request",
-                async (_, _, cancellationToken) =>
-                {
-                    await Task.Delay(50, cancellationToken);
-                    return new SecondQuestion("second");
-                }
-            )
-            .Bind();
+        var start = new DelegatePipelineNodeDescriptor<
+            PipelineMessage<RunnerState>,
+            PipelineMessage<RunnerState>
+        >("start", (message, _) => ValueTask.FromResult(message)).Bind();
+        var firstRequest = new DelegatePipelineNodeDescriptor<
+            PipelineMessage<RunnerState>,
+            FirstQuestion
+        >("first-request", (_, _) => ValueTask.FromResult(new FirstQuestion("first"))).Bind();
+        var secondRequest = new DelegatePipelineNodeDescriptor<
+            PipelineMessage<RunnerState>,
+            SecondQuestion
+        >(
+            "second-request",
+            async (_, cancellationToken) =>
+            {
+                await Task.Delay(50, cancellationToken);
+                return new SecondQuestion("second");
+            }
+        ).Bind();
         var firstPort = (ExecutorBinding)
             RequestPort.Create<FirstQuestion, FirstAnswer>("first-port");
         var secondPort = (ExecutorBinding)
             RequestPort.Create<SecondQuestion, SecondAnswer>("second-port");
-        var firstResume = CorePipelineNodes
-            .Stage<FirstAnswer, PipelineMessage<RunnerState>>(
-                "first-resume",
-                (_, _, _) => ResumeAfterBothRequests()
-            )
-            .Bind();
-        var secondResume = CorePipelineNodes
-            .Stage<SecondAnswer, PipelineMessage<RunnerState>>(
-                "second-resume",
-                (_, _, _) => ResumeAfterBothRequests()
-            )
-            .Bind();
+        var firstResume = new DelegatePipelineNodeDescriptor<
+            FirstAnswer,
+            PipelineMessage<RunnerState>
+        >("first-resume", (_, _) => ResumeAfterBothRequests()).Bind();
+        var secondResume = new DelegatePipelineNodeDescriptor<
+            SecondAnswer,
+            PipelineMessage<RunnerState>
+        >("second-resume", (_, _) => ResumeAfterBothRequests()).Bind();
         var workflow = new WorkflowBuilder(start)
             .WithName("runner-multiple-requests")
             .AddFanOutEdge(start, [firstRequest, secondRequest])

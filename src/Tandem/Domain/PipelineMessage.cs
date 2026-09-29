@@ -18,12 +18,6 @@ internal sealed record PipelineMessage<TState>(
     internal PipelineRunContext? RunContext { get; init; }
     internal ParallelBranchContext<TState>? ParallelContext { get; init; }
     PipelineRunContext? IPipelineRunContextCarrier.RunContext => RunContext;
-
-    public PipelineMessage<TState> WithOutcome(BlockOutcome outcome) =>
-        this with
-        {
-            LatestOutcome = outcome,
-        };
 }
 
 internal sealed record PipelineResult(string StepId, string CaseId, JsonElement Payload);
@@ -314,8 +308,6 @@ internal sealed record AgentUsage(
     int CurrentOutputTokens,
     int CurrentContextTokens,
     int ContextWindowTokens,
-    int CheckpointAtTokens,
-    TimeSpan LastModelCallDuration,
     long CumulativeInputTokens = 0,
     long CumulativeOutputTokens = 0
 );

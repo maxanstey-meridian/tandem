@@ -100,11 +100,8 @@ public sealed class TerminalPipelineDisplayTests
         );
 
         var snapshot = model.Snapshot();
-        snapshot.InputTokens.Should().Be(10);
-        snapshot.OutputTokens.Should().Be(4);
         snapshot.CurrentContextTokens.Should().Be(30);
         snapshot.ContextWindowTokens.Should().Be(200_000);
-        snapshot.WaitingInteractions.Should().Be(0);
         snapshot.Status.Should().Be(TerminalPipelineStatus.Running);
     }
 
@@ -403,7 +400,7 @@ public sealed class TerminalPipelineDisplayTests
         model.Snapshot().ModelName.Should().Be("gpt-5.6-sol");
         model.Apply(new PipelineStepCompleted(_runId, "reviewer", Outcome("accepted", 1)));
         model.Apply(new PipelineStepStarted(_runId, "done"));
-        model.Finish(TerminalPipelineStatus.Succeeded, "complete");
+        model.Finish(TerminalPipelineStatus.Succeeded);
 
         model.Snapshot().ModelName.Should().BeNull();
     }

@@ -21,22 +21,6 @@ internal static class BoundedTextPageReader
     internal const int MaximumLimit = 64 * 1024;
 
     internal static async Task<TextPage> ReadAsync(
-        IAsyncEnumerable<string> chunks,
-        int offset = 0,
-        int limit = DefaultLimit,
-        CancellationToken cancellationToken = default
-    )
-    {
-        ValidateBounds(offset, limit);
-        var accumulator = new StreamedPageAccumulator(offset, limit);
-        await foreach (var chunk in chunks.WithCancellation(cancellationToken))
-        {
-            accumulator.Append(chunk);
-        }
-        return accumulator.Complete();
-    }
-
-    internal static async Task<TextPage> ReadAsync(
         string path,
         int offset = 0,
         int limit = DefaultLimit,
@@ -201,93 +185,4 @@ internal static class BoundedTextPageReader
                 retryLimit,
             }
         );
-
-    private sealed class StreamedPageAccumulator(int offset, int limit)
-    {
-        private readonly StringBuilder _page = new(Math.Min(limit, 4096));
-        private int _total;
-        private char? _characterBeforeOffset;
-        private char? _characterAtOffset;
-        private char? _previousCharacter;
-
-        internal void Append(string value)
-        {
-            var start = _total;
-            _total = checked(_total + value.Length);
-            if (start <= offset && offset < _total)
-            {
-                _characterAtOffset = value[offset - start];
-                _characterBeforeOffset =
-                    offset > start ? value[offset - start - 1] : _previousCharacter;
-            }
-            var from = Math.Max(offset, start);
-            var to = (int)Math.Min(_total, (long)offset + limit);
-            if (from < to)
-            {
-                _page.Append(value.AsSpan(from - start, to - from));
-            }
-            if (value.Length > 0)
-            {
-                _previousCharacter = value[^1];
-            }
-        }
-
-        internal TextPage Complete()
-        {
-            if (offset > _total)
-            {
-                throw InvalidPage(
-                    nameof(offset),
-                    $"Offset {offset} exceeds the current result length {_total}. Results may have changed, or the offset may belong to another query. Restart at offset 0, then continue with returned nextOffset values.",
-                    offset,
-                    limit,
-                    _total,
-                    0,
-                    limit
-                );
-            }
-            if (
-                offset > 0
-                && _characterAtOffset is { } first
-                && char.IsLowSurrogate(first)
-                && _characterBeforeOffset is { } before
-                && char.IsHighSurrogate(before)
-            )
-            {
-                throw InvalidPage(
-                    nameof(offset),
-                    "Offset splits a Unicode surrogate pair. Retry at the preceding complete character boundary.",
-                    offset,
-                    limit,
-                    _total,
-                    offset - 1,
-                    Math.Max(limit, 2)
-                );
-            }
-            if (
-                _page.Length > 0
-                && char.IsHighSurrogate(_page[^1])
-                && offset + _page.Length < _total
-            )
-            {
-                _page.Length--;
-                if (_page.Length == 0)
-                {
-                    throw InvalidPage(
-                        nameof(limit),
-                        "Limit is too small for the Unicode character at this offset. Retry with a limit of at least 2 UTF-16 code units.",
-                        offset,
-                        limit,
-                        _total,
-                        offset,
-                        2
-                    );
-                }
-            }
-            var content = _page.ToString();
-            var nextOffset = offset + content.Length;
-            var hasMore = nextOffset < _total;
-            return new TextPage(content, _total, hasMore ? nextOffset : null);
-        }
-    }
 }

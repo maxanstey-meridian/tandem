@@ -7,18 +7,11 @@ M static Tandem.AgentBuilder<TState> WithCheckpoint<TState>(Tandem.AgentBuilder<
 M static Tandem.AgentBuilder<TState> WithContinuationPolicy<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.AgentTurnPolicy<TState> policy)
 M static Tandem.AgentBuilder<TState> WithConversationPolicy<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.AgentConversationPolicy<TState> policy)
 M static Tandem.AgentBuilder<TState> WithMessageAugmentation<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.MessageAugmentation<TState> augmentation)
-M static Tandem.AgentBuilder<TState> WithMessageFromContext<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.AdvancedAgentMessage<TState> message)
 M static Tandem.AgentBuilder<TState> WithOutput<TState,TOutput>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.StructuredOutputParser<TState> parser, Tandem.Advanced.StructuredOutputAcceptancePolicy<TState>? acceptancePolicy = null, System.String? correctionRequiredToolName = null)
 M static Tandem.AgentBuilder<TState> WithOutputAcceptance<TState,TOutput>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.OutputAcceptance<TState,TOutput> acceptance)
 M static Tandem.AgentBuilder<TState> WithProfilePolicy<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.AgentProfilePolicy<TState> policy)
 M static Tandem.AgentBuilder<TState> WithStateGuard<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.AgentStateGuard<TState> guard)
-M static Tandem.AgentBuilder<TState> WithStructuredOutput<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.StructuredOutputParser<TState> parser, System.Action<Microsoft.Extensions.AI.ChatOptions>? configureChatOptions = null, Tandem.Advanced.StructuredOutputAcceptancePolicy<TState>? acceptancePolicy = null, System.String? correctionRequiredToolName = null)
 M static Tandem.AgentBuilder<TState> WithWorkspace<TState>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.AgentWorkspace<TState> workspace, System.Collections.Generic.IReadOnlyList<Tandem.Advanced.AgentToolGroup<TState>> tools, Tandem.Advanced.ToolInterceptor<TState>? toolInterceptor = null)
-T Tandem.Advanced.AdvancedAgentMessage<TState>
-C (System.Object object, System.IntPtr method)
-M System.IAsyncResult BeginInvoke(Tandem.Advanced.AgentMessageContext<TState> context, System.AsyncCallback callback, System.Object object)
-M System.String EndInvoke(System.IAsyncResult result)
-M System.String Invoke(Tandem.Advanced.AgentMessageContext<TState> context)
 T Tandem.Advanced.AdvancedPipelineRunOptionsExtensions
 M static Tandem.PipelineRunOptions WithAcceptanceUnitOfWork(Tandem.PipelineRunOptions options, Tandem.Advanced.IPipelineAcceptanceUnitOfWork unitOfWork)
 T Tandem.Advanced.AgentCapabilityAcceptanceContext<TState,TRequest>
@@ -302,8 +295,6 @@ P TState State { get; }
 P Tandem.Advanced.OperationOutcome? LatestOutcome { get; }
 T Tandem.Advanced.RawOutputExtensions
 M static Tandem.AgentBuilder<TState> WithRawOutput<TState,TOutput>(Tandem.AgentBuilder<TState> builder, Tandem.Advanced.IAgentRawOutputDefinition<TState,TOutput> output, System.Func<TState,TOutput,TState> apply, System.String? valueType = null)
-T Tandem.Advanced.StructuredJsonExtractor
-M static System.String Extract(System.String text)
 T Tandem.Advanced.StructuredOutcome<TState>
 C (System.String Kind, System.String Summary, System.Text.Json.JsonElement Payload, TState UpdatedState = null)
 M System.Boolean Equals(System.Object? obj)
@@ -328,8 +319,6 @@ P System.Collections.Generic.IReadOnlySet<System.String> ToolNames { get; set; }
 P System.Int32 Attempt { get; set; }
 P Tandem.Advanced.AgentMessageContext<TState> Context { get; set; }
 P Tandem.Advanced.StructuredOutputResult<TState> Result { get; set; }
-T Tandem.Advanced.StructuredOutputAcceptancePolicies
-M static Tandem.Advanced.StructuredOutputAcceptancePolicy<TState> RequireToolCallWhen<TState>(System.Func<Tandem.Advanced.StructuredOutputResult<TState>,System.Boolean> requiresToolCall, System.Func<System.String,System.Boolean>? acceptsTool = null, System.String? correction = null)
 T Tandem.Advanced.StructuredOutputAcceptancePolicy<TState>
 C (System.Object object, System.IntPtr method)
 M System.Collections.Generic.IReadOnlyList<Tandem.Advanced.StructuredOutputProblem> EndInvoke(System.IAsyncResult result)
@@ -340,8 +329,6 @@ C (System.Object object, System.IntPtr method)
 M System.IAsyncResult BeginInvoke(System.String assistantText, TState state, System.AsyncCallback callback, System.Object object)
 M Tandem.Advanced.StructuredOutputResult<TState> EndInvoke(System.IAsyncResult result)
 M Tandem.Advanced.StructuredOutputResult<TState> Invoke(System.String assistantText, TState state)
-T Tandem.Advanced.StructuredOutputPolicy
-M static Tandem.Advanced.StructuredOutputResult<TState> Parse<T,TState>(System.String response, TState state, System.Text.Json.JsonSerializerOptions options, FluentValidation.IValidator<T> validator, System.Func<T,TState,Tandem.Advanced.StructuredOutcome<TState>> map)
 T Tandem.Advanced.StructuredOutputProblem
 C (System.String Field, System.String Message)
 M System.Boolean Equals(System.Object? obj)

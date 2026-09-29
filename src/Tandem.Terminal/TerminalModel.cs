@@ -39,18 +39,13 @@ internal sealed record TerminalSnapshot(
     string PipelineName,
     Guid RunId,
     TerminalPipelineStatus Status,
-    string? Summary,
-    string? ActiveStep,
     string? ModelName,
     DateTimeOffset StartedAt,
     DateTimeOffset? CompletedAt,
     IReadOnlyList<StepVisit> Visits,
     IReadOnlyList<TranscriptEntry> Transcript,
-    long InputTokens,
-    long OutputTokens,
     long CurrentContextTokens,
     int? ContextWindowTokens,
-    int WaitingInteractions,
     TerminalInteractionPrompt? Interaction,
     string Draft,
     string? Title,
@@ -74,10 +69,7 @@ internal sealed class TerminalModel(
     private readonly List<TranscriptEntry> _transcript = [];
     private int _characters;
     private string? _activeStep;
-    private string? _summary;
     private TerminalPipelineStatus _status = TerminalPipelineStatus.Running;
-    private long _inputTokens;
-    private long _outputTokens;
     private long _currentContextTokens;
     private int? _contextWindowTokens;
     private readonly HashSet<string> _waiting = new(StringComparer.Ordinal);
@@ -213,8 +205,6 @@ internal sealed class TerminalModel(
                     );
                     break;
                 case PipelineAgentUsage usage:
-                    _inputTokens += usage.InputTokens;
-                    _outputTokens += usage.OutputTokens;
                     _usage[key] = (usage.CurrentContextTokens, usage.ContextWindowTokens);
                     _usageOrder[key] = ++_usageSequence;
                     if (_activeSteps.Contains(key))
@@ -321,12 +311,11 @@ internal sealed class TerminalModel(
         }
     }
 
-    public void Finish(TerminalPipelineStatus status, string summary)
+    public void Finish(TerminalPipelineStatus status)
     {
         lock (_gate)
         {
             _status = status;
-            _summary = summary;
             _activeStep = null;
             _completedAt = timeProvider.GetUtcNow();
         }
@@ -340,18 +329,13 @@ internal sealed class TerminalModel(
                 pipelineName,
                 runId,
                 _status,
-                _summary,
-                _activeStep is null ? null : _stepNames.GetValueOrDefault(_activeStep, _activeStep),
                 _modelName,
                 _startedAt,
                 _completedAt,
                 _visits.ToArray(),
                 _transcript.ToArray(),
-                _inputTokens,
-                _outputTokens,
                 _currentContextTokens,
                 _contextWindowTokens,
-                _waiting.Count,
                 _interaction,
                 _draft,
                 title,
