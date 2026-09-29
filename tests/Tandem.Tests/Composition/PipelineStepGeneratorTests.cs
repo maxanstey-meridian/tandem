@@ -229,18 +229,71 @@ public sealed class PipelineStepGeneratorTests
         }
     }
 
-    private static GeneratorDriverRunResult RunGenerator(string source)
+    [Theory]
+    [InlineData("public sealed partial class NormalizeStage")]
+    [InlineData("public sealed class NormalizeStage")]
+    public void Generator_CachesStageModelsAcrossAnUnrelatedEdit(string declaration)
     {
-        var syntaxTree = CSharpSyntaxTree.ParseText(source);
-        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
-            .Split(Path.PathSeparator)
-            .Select(path => MetadataReference.CreateFromFile(path));
-        var compilation = CSharpCompilation.Create(
+        var source = $$"""
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+            namespace Tandem
+            {
+                [AttributeUsage(AttributeTargets.Class)]
+                public sealed class PipelineStageAttribute(string id) : Attribute;
+                public sealed class GeneratedStepCompletion;
+                public interface IGeneratedPipelineStep<TState, TResult>;
+                public abstract class PipelineNodeDescriptor;
+                public sealed class GeneratedStateStepDescriptor<TState>(string id, object execute) : PipelineNodeDescriptor;
+            }
+            public sealed record State(string Value);
+            [Tandem.PipelineStage("normalize")]
+            {{declaration}}
+            {
+                public ValueTask<State> ExecuteAsync(State state, CancellationToken cancellationToken) =>
+                    throw new NotImplementedException();
+            }
+            """;
+        var compilation = Compilation(CSharpSyntaxTree.ParseText(source));
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new PipelineStepGenerator().AsSourceGenerator()],
+            driverOptions: new GeneratorDriverOptions(
+                IncrementalGeneratorOutputKind.None,
+                trackIncrementalGeneratorSteps: true
+            )
+        );
+        driver = driver.RunGenerators(compilation);
+
+        driver = driver.RunGenerators(
+            compilation.AddSyntaxTrees(CSharpSyntaxTree.ParseText("public sealed class Unrelated;"))
+        );
+
+        driver
+            .GetRunResult()
+            .Results.Single()
+            .TrackedSteps["PipelineStageModels"]
+            .SelectMany(step => step.Outputs)
+            .Should()
+            .OnlyContain(output =>
+                output.Reason == IncrementalStepRunReason.Unchanged
+                || output.Reason == IncrementalStepRunReason.Cached
+            );
+    }
+
+    private static CSharpCompilation Compilation(SyntaxTree syntaxTree) =>
+        CSharpCompilation.Create(
             "GeneratorDiagnosticProof",
             [syntaxTree],
-            references,
+            ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
+                .Split(Path.PathSeparator)
+                .Select(path => MetadataReference.CreateFromFile(path)),
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
         );
+
+    private static GeneratorDriverRunResult RunGenerator(string source)
+    {
+        var compilation = Compilation(CSharpSyntaxTree.ParseText(source));
         GeneratorDriver driver = CSharpGeneratorDriver.Create(
             new PipelineStepGenerator().AsSourceGenerator()
         );

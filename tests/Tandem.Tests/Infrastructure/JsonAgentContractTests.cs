@@ -229,8 +229,8 @@ public sealed class JsonAgentContractTests
         var function = capability.Bind(invocation);
 
         function.JsonSchema.GetProperty("type").GetString().Should().Be("object");
-        var invalid = (JsonElement)(await function.InvokeAsync(Arguments(0)))!;
-        invalid.GetProperty("problems")[0].GetProperty("field").GetString().Should().Be("$.value");
+        var invalid = (Tandem.Infrastructure.ToolError)(await function.InvokeAsync(Arguments(0)))!;
+        invalid.Problems[0].Field.Should().Be("$.value");
         invocation.Accepted.Should().BeNull();
         await function.InvokeAsync(Arguments(3));
 
@@ -265,12 +265,12 @@ public sealed class JsonAgentContractTests
         var function = capability.Bind(invocation);
         var first = Task.Run(async () => await function.InvokeAsync(Arguments(1)));
         entered.Wait();
-        var second = (JsonElement)(await function.InvokeAsync(Arguments(2)))!;
+        var second = (Tandem.Infrastructure.ToolError)(await function.InvokeAsync(Arguments(2)))!;
         release.Set();
         await first;
 
         mappings.Should().Be(1);
-        second.GetProperty("error").GetString().Should().Be("conflicting capability outcome");
+        second.Code.Should().Be("conflicting_capability_outcome");
         invocation.Accepted!.State.Value.Should().Be(1);
     }
 
@@ -442,8 +442,9 @@ public sealed class JsonAgentContractTests
             );
         var function = capability.Bind(invocation);
 
-        var failed = (JsonElement)(await function.InvokeAsync(Arguments(1)))!;
-        failed.GetProperty("isError").GetBoolean().Should().BeTrue();
+        (await function.InvokeAsync(Arguments(1)))
+            .Should()
+            .BeOfType<Tandem.Infrastructure.ToolError>();
         invocation.Accepted.Should().BeNull();
         await function.InvokeAsync(Arguments(3));
 

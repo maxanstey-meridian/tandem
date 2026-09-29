@@ -156,12 +156,13 @@ T Tandem.PipelineCollection<TState,TItem,TResult>
 P System.String Id { get; }
 P Tandem.PipelineNodeDescriptor Descriptor { get; }
 T Tandem.PipelineInspection
-C (System.String Name, System.String? Description, System.String StartStepId, System.Collections.Generic.IReadOnlyList<System.String> StepIds, System.Collections.Generic.IReadOnlyList<Tandem.PipelineInteractionInspection> Interactions, System.Collections.Generic.IReadOnlyList<Tandem.PipelineRouteInspection> Routes, System.Collections.Generic.IReadOnlyList<System.String> OutputStepIds, System.Collections.Generic.IReadOnlyList<System.String> PersistentStepIds, System.String Mermaid, System.String Dot)
+C (System.String Name, System.String? Description, System.String StartStepId, System.Collections.Generic.IReadOnlyList<System.String> StepIds, System.Collections.Generic.IReadOnlyList<Tandem.PipelineInteractionInspection> Interactions, System.Collections.Generic.IReadOnlyList<Tandem.PipelineRouteInspection> Routes, System.Collections.Generic.IReadOnlyList<System.String> OutputStepIds, System.Collections.Generic.IReadOnlyList<System.String> PersistentStepIds)
 M System.Boolean Equals(System.Object? obj)
 M System.Boolean Equals(Tandem.PipelineInspection? other)
 M System.Int32 GetHashCode()
+M System.String ToMermaid()
 M System.String ToString()
-M System.Void Deconstruct(out System.String Name, out System.String? Description, out System.String StartStepId, out System.Collections.Generic.IReadOnlyList<System.String> StepIds, out System.Collections.Generic.IReadOnlyList<Tandem.PipelineInteractionInspection> Interactions, out System.Collections.Generic.IReadOnlyList<Tandem.PipelineRouteInspection> Routes, out System.Collections.Generic.IReadOnlyList<System.String> OutputStepIds, out System.Collections.Generic.IReadOnlyList<System.String> PersistentStepIds, out System.String Mermaid, out System.String Dot)
+M System.Void Deconstruct(out System.String Name, out System.String? Description, out System.String StartStepId, out System.Collections.Generic.IReadOnlyList<System.String> StepIds, out System.Collections.Generic.IReadOnlyList<Tandem.PipelineInteractionInspection> Interactions, out System.Collections.Generic.IReadOnlyList<Tandem.PipelineRouteInspection> Routes, out System.Collections.Generic.IReadOnlyList<System.String> OutputStepIds, out System.Collections.Generic.IReadOnlyList<System.String> PersistentStepIds)
 M Tandem.PipelineInspection <Clone>$()
 P System.Collections.Generic.IReadOnlyList<System.String> OutputStepIds { get; set; }
 P System.Collections.Generic.IReadOnlyList<System.String> PersistentStepIds { get; set; }
@@ -170,8 +171,6 @@ P System.Collections.Generic.IReadOnlyList<Tandem.PipelineCollectionInspection> 
 P System.Collections.Generic.IReadOnlyList<Tandem.PipelineInteractionInspection> Interactions { get; set; }
 P System.Collections.Generic.IReadOnlyList<Tandem.PipelineParallelInspection> ParallelGroups { get; set; }
 P System.Collections.Generic.IReadOnlyList<Tandem.PipelineRouteInspection> Routes { get; set; }
-P System.String Dot { get; set; }
-P System.String Mermaid { get; set; }
 P System.String Name { get; set; }
 P System.String StartStepId { get; set; }
 P System.String? Description { get; set; }

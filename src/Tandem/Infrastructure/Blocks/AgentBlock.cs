@@ -13,7 +13,6 @@ namespace Tandem.Infrastructure.Blocks;
 internal sealed class AgentBlock<TState>(
     AgentBlockConfig<TState> config,
     IChatClient chatClient,
-    Action<string, Guid, AgentUpdate>? onUpdate = null,
     Func<
         PipelineMessage<TState>,
         string,
@@ -23,8 +22,7 @@ internal sealed class AgentBlock<TState>(
         ValueTask<string?>
     >? toolInterceptor = null,
     Action<ChatOptions>? configureChatOptions = null,
-    Func<string, IChatClient>? chatClientFactory = null,
-    Action<ChatOptions>? configureModelRequestOptions = null
+    Func<string, IChatClient>? chatClientFactory = null
 )
     : Executor<PipelineMessage<TState>, PipelineMessage<TState>>(
         config.StepId,
@@ -33,45 +31,9 @@ internal sealed class AgentBlock<TState>(
     )
 {
     private const int StructuredOutputCorrectionLimit = 1;
+    private const int DiagnosticPreviewCharacters = 8000;
+    private const string CheckpointGateId = "checkpoint-required";
     private static readonly TimeSpan _modelStreamIdleTimeout = TimeSpan.FromMinutes(20);
-    private static readonly Dictionary<string, WorkspaceToolKind> _fileToolKinds = new(
-        StringComparer.Ordinal
-    )
-    {
-        ["read_file"] = WorkspaceToolKind.ReadFile,
-        ["ls"] = WorkspaceToolKind.ListFiles,
-        ["grep"] = WorkspaceToolKind.Grep,
-        ["write_file"] = WorkspaceToolKind.WriteFile,
-        ["delete_file"] = WorkspaceToolKind.DeleteFile,
-        ["replace"] = WorkspaceToolKind.Replace,
-        ["replace_lines"] = WorkspaceToolKind.ReplaceLines,
-        ["copy_file"] = WorkspaceToolKind.CopyFile,
-        ["move_file"] = WorkspaceToolKind.MoveFile,
-        ["create_directory"] = WorkspaceToolKind.CreateDirectory,
-    };
-    private static readonly HashSet<string> _workspaceToolGroups =
-    [
-        "git:ro",
-        "shell",
-        "web_search",
-        "web_fetch",
-    ];
-    private static readonly HashSet<string> _reservedWorkspaceToolNames =
-    [
-        .. _fileToolKinds.Keys,
-        .. _workspaceToolGroups,
-        "git_status",
-        "git_diff",
-        "git_log",
-        "git_show",
-        "git_blame",
-        "git_changed_files",
-        "git_compare",
-        "run_shell",
-        AgentSkillsProvider.LoadSkillToolName,
-        AgentSkillsProvider.ReadSkillResourceToolName,
-        AgentSkillsProvider.RunSkillScriptToolName,
-    ];
 
     public override async ValueTask<PipelineMessage<TState>> HandleAsync(
         PipelineMessage<TState> message,
@@ -103,13 +65,220 @@ internal sealed class AgentBlock<TState>(
             message.State,
             message.RunContext
         );
-        var capabilityFunctions = config
+        var capabilityFunctions = BindCapabilities(capabilityInvocation, message.RunContext);
+        var collector = new ToolOutcomeCollector(runtime.Step(config.StepId).ToolInvocations);
+        capabilityInvocation.AttachToolOutcomeCollector(collector);
+
+        var instructions = requiresCheckpointRelease
+            ? config.Checkpoint!.Instructions
+            : InitialInstructions();
+        var tools = capabilityFunctions.Cast<AITool>().ToList();
+        var boundCapabilityNames = capabilityFunctions
+            .Select(function => function.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        var selectedChatClient = SelectChatClient(message);
+        await PublishModelSelectedAsync(message, selectedChatClient, cts.Token);
+        AIAgent CreateTurnAgent(string? requiredToolName, bool configureStructuredOutput = true) =>
+            CreateAgent(
+                instructions,
+                tools,
+                message,
+                selectedChatClient,
+                requiredToolName,
+                collector,
+                boundCapabilityNames,
+                capabilityInvocation,
+                configureStructuredOutput
+            );
+
+        var agent = CreateTurnAgent(
+            requiresCheckpointRelease ? config.Checkpoint!.Capability.ToolName : null
+        );
+        var freshSession = runtime.Step(config.StepId).Session is null;
+        var session = await RestoreOrCreateSessionAsync(agent, runtime, cts.Token);
+        var userMessage = await BuildUserMessageAsync(
+            message,
+            requiresCheckpointRelease,
+            cts.Token
+        );
+        IReadOnlyList<ChatMessage> turnInput =
+            freshSession && !requiresCheckpointRelease
+                ? ExampleConversation(message.State, userMessage)
+                : [new ChatMessage(ChatRole.User, userMessage)];
+
+        var priorUsage = runtime.Step(config.StepId).Usage;
+        var cumulativeInputTokens = priorUsage?.CumulativeInputTokens ?? 0;
+        var cumulativeOutputTokens = priorUsage?.CumulativeOutputTokens ?? 0;
+        var continuationAttempt = 0;
+        var policyExhausted = false;
+        var structuredAttempt = 0;
+        AgentStructuredOutputResult<TState>? structuredResult = null;
+
+        while (true)
+        {
+            var turn = await StreamTurnAsync(
+                agent,
+                session,
+                turnInput,
+                message,
+                cumulativeInputTokens,
+                cumulativeOutputTokens,
+                cts.Token
+            );
+            cumulativeInputTokens += turn.InputTokens ?? 0;
+            cumulativeOutputTokens += turn.OutputTokens ?? 0;
+            var turnUsage = ResolveUsage(
+                turn.InputTokens,
+                turn.OutputTokens,
+                cumulativeInputTokens,
+                cumulativeOutputTokens
+            );
+            var checkpointWasLatched = runtime.IsGateLatched(config.StepId, CheckpointGateId);
+            runtime = LatchTriggeredGates(
+                runtime.WithStep(config.StepId, step => step with { Usage = turnUsage }),
+                turnUsage
+            );
+            message = message with { Runtime = runtime };
+            capabilityInvocation.ThrowIfApplicationFaulted();
+            if (capabilityInvocation.Accepted is not null)
+            {
+                break;
+            }
+
+            if (
+                !checkpointWasLatched
+                && runtime.IsGateLatched(config.StepId, CheckpointGateId)
+                && config.Checkpoint is { } activatedCheckpoint
+            )
+            {
+                requiresCheckpointRelease = true;
+                instructions = activatedCheckpoint.Instructions;
+                turnInput = UserTurn(
+                    activatedCheckpoint.UserMessage(message.State, turnUsage.CurrentContextTokens)
+                );
+                agent = CreateTurnAgent(activatedCheckpoint.Capability.ToolName);
+                continue;
+            }
+
+            if (config.StructuredOutput is { } structuredOutput)
+            {
+                structuredResult = await EvaluateStructuredOutputAsync(
+                    structuredOutput,
+                    turn.Text,
+                    message,
+                    collector,
+                    acceptedOutputId,
+                    structuredAttempt,
+                    cts.Token
+                );
+                if (
+                    structuredResult.Success
+                    || structuredAttempt >= StructuredOutputCorrectionLimit
+                )
+                {
+                    break;
+                }
+
+                await ObserveAsync(
+                    message,
+                    new PipelineStructuredOutputRejected(
+                        runtime.RunId,
+                        config.StepId,
+                        structuredAttempt + 1,
+                        structuredResult
+                            .Problems.Select(problem => new PipelineStructuredOutputProblem(
+                                problem.Field,
+                                problem.Message
+                            ))
+                            .ToArray(),
+                        structuredResult.RawResponse
+                    ),
+                    cts.Token
+                );
+                structuredAttempt++;
+                turnInput = UserTurn(
+                    structuredResult.CorrectionPrompt(structuredOutput.JsonSchema)
+                );
+                if (!string.IsNullOrWhiteSpace(structuredOutput.CorrectionRequiredToolName))
+                {
+                    agent = CreateTurnAgent(
+                        structuredOutput.CorrectionRequiredToolName,
+                        configureStructuredOutput: false
+                    );
+                }
+                continue;
+            }
+
+            if (
+                requiresCheckpointRelease
+                || collector.HasLifecycleCall
+                || config.TurnPolicy is null
+            )
+            {
+                break;
+            }
+
+            if (continuationAttempt >= config.TurnPolicy.MaxContinuationAttempts)
+            {
+                policyExhausted = true;
+                break;
+            }
+
+            var directive = await config.TurnPolicy.Continue(
+                message,
+                turn.Text,
+                turn.ToolNames,
+                collector.HasLifecycleCall,
+                continuationAttempt,
+                cts.Token
+            );
+            if (directive is null)
+            {
+                policyExhausted = true;
+                break;
+            }
+
+            continuationAttempt++;
+            turnInput = UserTurn(directive.Prompt);
+            agent = CreateTurnAgent(directive.RequiredToolName);
+        }
+
+        await InjectAcceptedCapabilityResultAsync(agent, session, capabilityInvocation, cts.Token);
+        var updatedRuntime = CaptureToolInvocations(
+            await CaptureSessionAsync(agent, session, runtime, cts.Token),
+            collector
+        );
+
+        var outcome = ResolveOutcome(
+            structuredResult,
+            updatedRuntime,
+            capabilityInvocation,
+            requiresCheckpointRelease,
+            policyExhausted,
+            continuationAttempt,
+            message.RunContext
+        );
+        blockSw.Stop();
+        if (outcome.LatestOutcome is null)
+        {
+            return outcome;
+        }
+        var timedOutcome = outcome.LatestOutcome with { Duration = blockSw.Elapsed };
+        return FinalizeConversation(outcome with { LatestOutcome = timedOutcome });
+    }
+
+    private AIFunction[] BindCapabilities(
+        CapabilityInvocationState<TState> capabilityInvocation,
+        PipelineRunContext? runContext
+    )
+    {
+        var functions = config
             .Capabilities.Select(capability => capability.Bind(capabilityInvocation))
             .ToArray();
         if (
-            message.RunContext?.Ledger is not null
-            && capabilityFunctions.Any(tool =>
-                tool.Name is "read_ledger" or "search_ledger" or "read_ledger_entry"
+            runContext?.Ledger is not null
+            && functions.Any(tool =>
+                BuiltInAgentTools.Contains(BuiltInAgentTools.Ledger, tool.Name)
             )
         )
         {
@@ -119,11 +288,8 @@ internal sealed class AgentBlock<TState>(
         }
         if (
             (config.Skills?.Count ?? 0) > 0
-            && capabilityFunctions.Any(tool =>
-                tool.Name
-                    is AgentSkillsProvider.LoadSkillToolName
-                        or AgentSkillsProvider.ReadSkillResourceToolName
-                        or AgentSkillsProvider.RunSkillScriptToolName
+            && functions.Any(tool =>
+                BuiltInAgentTools.Contains(BuiltInAgentTools.Skills, tool.Name)
             )
         )
         {
@@ -131,454 +297,269 @@ internal sealed class AgentBlock<TState>(
                 $"Agent '{config.StepId}' has a capability that collides with a skill tool."
             );
         }
-        {
-            var collector = new ToolOutcomeCollector(RestoreToolInvocations(runtime));
-            capabilityInvocation.AttachToolOutcomeCollector(collector);
+        return functions;
+    }
 
-            var instructions = requiresCheckpointRelease
-                ? config.Checkpoint!.Instructions
-                : string.Join(
-                    "\n\n",
+    private string InitialInstructions() =>
+        string.Join(
+            "\n\n",
+            new[]
+            {
+                config.SystemInstructions,
+                config.StructuredOutput is { } structuredOutput
+                    ? AgentStructuredOutputPrompt.Initial(structuredOutput)
+                    : null,
+            }.Where(value => !string.IsNullOrWhiteSpace(value))
+        );
+
+    private async ValueTask<string> BuildUserMessageAsync(
+        PipelineMessage<TState> message,
+        bool requiresCheckpointRelease,
+        CancellationToken cancellationToken
+    )
+    {
+        if (requiresCheckpointRelease)
+        {
+            return config.Checkpoint!.UserMessage(
+                message.State,
+                message.Runtime.Step(config.StepId).Usage?.CurrentContextTokens ?? 0
+            );
+        }
+
+        var augmentations = new List<string>();
+        foreach (var augment in config.MessageAugmentations ?? [])
+        {
+            if (await augment(message, cancellationToken) is { } value)
+            {
+                augmentations.Add(value);
+            }
+        }
+        var baseMessage = config.UserMessage!(message.State);
+        return augmentations.Count > 0
+            ? $"{baseMessage}\n\n{string.Join("\n\n", augmentations)}"
+            : baseMessage;
+    }
+
+    private IReadOnlyList<ChatMessage> ExampleConversation(TState state, string userMessage) =>
+        config.StructuredOutput?.Examples?.Invoke(state) is { Count: > 0 } examples
+            ?
+            [
+                .. examples.SelectMany(example =>
                     new[]
                     {
-                        config.SystemInstructions,
-                        config.StructuredOutput is { } structuredOutput
-                            ? AgentStructuredOutputPrompt.Initial(structuredOutput)
-                            : null,
-                    }.Where(value => !string.IsNullOrWhiteSpace(value))
-                );
-            var tools = capabilityFunctions.Cast<AITool>().ToList();
-            var boundCapabilityNames = capabilityFunctions
-                .Select(function => function.Name)
-                .ToHashSet(StringComparer.Ordinal);
-            var selectedChatClient = SelectChatClient(message);
-            await PublishModelSelectedAsync(message, selectedChatClient, cts.Token);
-            var agent = CreateAgent(
-                instructions,
-                tools,
-                message,
-                selectedChatClient,
-                requiredToolName: requiresCheckpointRelease
-                    ? config.Checkpoint!.Capability.ToolName
-                    : null,
-                collector: collector,
-                boundCapabilityNames: boundCapabilityNames,
-                capabilityInvocation: capabilityInvocation
-            );
-            var freshSession = !runtime.AgentSessions.ContainsKey(config.StepId);
-            var session = await RestoreOrCreateSessionAsync(agent, runtime, cts.Token);
-            var baseMessage = requiresCheckpointRelease
-                ? config.Checkpoint!.UserMessage(
-                    message.State,
-                    runtime.AgentUsage.GetValueOrDefault(config.StepId)?.CurrentContextTokens ?? 0
-                )
-                : config.UserMessage!(message.State);
-
-            var augmentations = new List<string>();
-            if (!requiresCheckpointRelease)
-            {
-                foreach (var augment in config.MessageAugmentations ?? [])
-                {
-                    if (await augment(message, cts.Token) is { } value)
-                    {
-                        augmentations.Add(value);
+                        new ChatMessage(ChatRole.User, example.Input),
+                        new ChatMessage(ChatRole.Assistant, example.Output),
                     }
-                }
-            }
-            var userMessage =
-                augmentations.Count > 0
-                    ? $"{baseMessage}\n\n{string.Join("\n\n", augmentations)}"
-                    : baseMessage;
-            IReadOnlyList<ChatMessage>? initialMessages = null;
-            if (
-                freshSession
-                && !requiresCheckpointRelease
-                && config.StructuredOutput?.Examples?.Invoke(message.State)
-                    is { Count: > 0 } examples
-            )
+                ),
+                new ChatMessage(ChatRole.User, userMessage),
+            ]
+            : UserTurn(userMessage);
+
+    private static IReadOnlyList<ChatMessage> UserTurn(string text) =>
+        [new ChatMessage(ChatRole.User, text)];
+
+    private sealed record ModelTurn(
+        string Text,
+        IReadOnlyList<string> ToolNames,
+        long? InputTokens,
+        long? OutputTokens
+    );
+
+    private async ValueTask<ModelTurn> StreamTurnAsync(
+        AIAgent agent,
+        AgentSession session,
+        IReadOnlyList<ChatMessage> input,
+        PipelineMessage<TState> message,
+        long cumulativeInputTokens,
+        long cumulativeOutputTokens,
+        CancellationToken cancellationToken
+    )
+    {
+        var text = new StringBuilder();
+        var toolNames = new List<string>();
+        long? inputTokens = null;
+        long? outputTokens = null;
+        var updates = agent.RunStreamingAsync(input, session, null, cancellationToken);
+        await foreach (
+            var update in WithIdleTimeout(updates, _modelStreamIdleTimeout, cancellationToken)
+        )
+        {
+            foreach (var content in update.Contents)
             {
-                initialMessages =
-                [
-                    .. examples.SelectMany(example =>
-                        new[]
-                        {
-                            new ChatMessage(ChatRole.User, example.Input),
-                            new ChatMessage(ChatRole.Assistant, example.Output),
-                        }
-                    ),
-                    new ChatMessage(ChatRole.User, userMessage),
-                ];
-            }
-
-            long? inputTokens = null;
-            long? outputTokens = null;
-            var cumulativeInputTokens =
-                runtime.AgentUsage.GetValueOrDefault(config.StepId)?.CumulativeInputTokens ?? 0;
-            var cumulativeOutputTokens =
-                runtime.AgentUsage.GetValueOrDefault(config.StepId)?.CumulativeOutputTokens ?? 0;
-            var continuationAttempt = 0;
-            var policyExhausted = false;
-            var structuredAttempt = 0;
-            AgentStructuredOutputResult<TState>? structuredResult = null;
-            var structuredToolObservations = new HashSet<ToolObservationDescriptor>();
-
-            while (true)
-            {
-                var turnText = new StringBuilder();
-                var turnToolNames = new List<string>();
-                var turnInputTokens = default(long?);
-                var turnOutputTokens = default(long?);
-
-                var updates = initialMessages is null
-                    ? agent.RunStreamingAsync(userMessage, session, null, cts.Token)
-                    : agent.RunStreamingAsync(initialMessages, session, null, cts.Token);
-                await foreach (
-                    var update in WithIdleTimeout(updates, _modelStreamIdleTimeout, cts.Token)
-                )
+                if (content is TextContent textContent)
                 {
-                    foreach (var content in update.Contents)
-                    {
-                        if (content is TextContent text)
-                        {
-                            turnText.Append(text.Text);
-                        }
-                        else if (content is FunctionCallContent functionCall)
-                        {
-                            turnToolNames.Add(functionCall.Name);
-                        }
-                        else if (content is UsageContent usageContent)
-                        {
-                            turnInputTokens = usageContent.Details.InputTokenCount;
-                            turnOutputTokens = usageContent.Details.OutputTokenCount;
-                            if (message.RunContext is { } usageRunContext)
-                            {
-                                var liveUsage = ResolveUsage(
-                                    turnInputTokens,
-                                    turnOutputTokens,
-                                    cumulativeInputTokens,
-                                    cumulativeOutputTokens
-                                );
-                                await usageRunContext.ObserveAsync(
-                                    new PipelineAgentUsage(
-                                        runtime.RunId,
-                                        config.StepId,
-                                        liveUsage.CurrentInputTokens,
-                                        liveUsage.CurrentOutputTokens,
-                                        liveUsage.CurrentContextTokens,
-                                        liveUsage.ContextWindowTokens,
-                                        ReasoningTokens: (int)(
-                                            usageContent.Details.ReasoningTokenCount ?? 0
-                                        )
-                                    ),
-                                    cts.Token
-                                );
-                            }
-                        }
-                    }
-
-                    await PublishUpdatesAsync(message, runtime.RunId, update, cts.Token);
+                    text.Append(textContent.Text);
                 }
-
-                initialMessages = null;
-                inputTokens = turnInputTokens;
-                outputTokens = turnOutputTokens;
-                cumulativeInputTokens += turnInputTokens ?? 0;
-                cumulativeOutputTokens += turnOutputTokens ?? 0;
-                structuredToolObservations.Clear();
-                structuredToolObservations.UnionWith(collector.SuccessfulTools);
-                var latestTurnUsage = ResolveUsage(
-                    turnInputTokens,
-                    turnOutputTokens,
-                    cumulativeInputTokens,
-                    cumulativeOutputTokens
-                );
-                var checkpointWasLatched = runtime.IsGateLatched(
-                    config.StepId,
-                    "checkpoint-required"
-                );
-                runtime = LatchTriggeredGates(
-                    runtime.WithUsage(config.StepId, latestTurnUsage),
-                    latestTurnUsage
-                );
-                message = message with { Runtime = runtime };
-                capabilityInvocation.ThrowIfApplicationFaulted();
-                if (capabilityInvocation.Accepted is not null)
+                else if (content is FunctionCallContent functionCall)
                 {
-                    break;
+                    toolNames.Add(functionCall.Name);
                 }
-
-                if (
-                    !checkpointWasLatched
-                    && runtime.IsGateLatched(config.StepId, "checkpoint-required")
-                    && config.Checkpoint is { } activatedCheckpoint
-                )
+                else if (content is UsageContent usageContent)
                 {
-                    requiresCheckpointRelease = true;
-                    instructions = activatedCheckpoint.Instructions;
-                    userMessage = activatedCheckpoint.UserMessage(
-                        message.State,
-                        latestTurnUsage.CurrentContextTokens
+                    inputTokens = usageContent.Details.InputTokenCount;
+                    outputTokens = usageContent.Details.OutputTokenCount;
+                    var liveUsage = ResolveUsage(
+                        inputTokens,
+                        outputTokens,
+                        cumulativeInputTokens,
+                        cumulativeOutputTokens
                     );
-                    agent = CreateAgent(
-                        instructions,
-                        tools,
+                    await ObserveAsync(
                         message,
-                        selectedChatClient,
-                        activatedCheckpoint.Capability.ToolName,
-                        collector,
-                        boundCapabilityNames,
-                        capabilityInvocation
-                    );
-                    continue;
-                }
-
-                if (config.StructuredOutput is not null)
-                {
-                    structuredResult = config.StructuredOutput.Parse(
-                        turnText.ToString(),
-                        message.State
-                    );
-                    if (structuredResult.Success && config.StructuredOutput.Accept is not null)
-                    {
-                        var problems = config.StructuredOutput.Accept(
-                            message,
-                            structuredResult,
-                            structuredToolObservations,
-                            collector.ToolInvocations,
-                            acceptedOutputId,
-                            structuredAttempt
-                        );
-                        if (problems.Count > 0)
-                        {
-                            structuredResult = structuredResult with
-                            {
-                                Outcome = null,
-                                Problems = [.. structuredResult.Problems, .. problems],
-                            };
-                        }
-                    }
-                    if (structuredResult.Success)
-                    {
-                        async ValueTask<bool> AcceptAsync(CancellationToken cancellationToken)
-                        {
-                            if (config.StructuredOutput.AcceptAsync is not null)
-                            {
-                                await config.StructuredOutput.AcceptAsync(
-                                    message,
-                                    structuredResult,
-                                    structuredToolObservations,
-                                    collector.ToolInvocations,
-                                    acceptedOutputId,
-                                    structuredAttempt,
-                                    cancellationToken
-                                );
-                            }
-                            if (message.RunContext is { } observedRunContext)
-                            {
-                                await observedRunContext.ObserveAsync(
-                                    (
-                                        config.StructuredOutput!.EmitAccepted is { } emit
-                                            ? emit(
-                                                runtime.RunId,
-                                                config.StepId,
-                                                acceptedOutputId,
-                                                structuredResult.Outcome!.Kind,
-                                                observedRunContext.ShouldPersist(config.StepId)
-                                                    ? structuredResult.Outcome!.Payload
-                                                    : null,
-                                                structuredResult.Candidate!
-                                            )
-                                            : new PipelineStructuredOutputAccepted(
-                                                runtime.RunId,
-                                                config.StepId,
-                                                acceptedOutputId,
-                                                structuredResult.Outcome!.Kind,
-                                                config.StructuredOutput.ValueType
-                                                    ?? config.StructuredOutput.OutputType?.FullName
-                                                    ?? config.StructuredOutput.OutputType?.Name,
-                                                observedRunContext.ShouldPersist(config.StepId)
-                                                    ? structuredResult.Outcome!.Payload
-                                                    : null
-                                            )
-                                    ),
-                                    cancellationToken
-                                );
-                            }
-                            cancellationToken.ThrowIfCancellationRequested();
-                            if (
-                                config.StructuredOutput.Apply is { } apply
-                                && structuredResult.Candidate is { } candidate
-                            )
-                            {
-                                var mapped = apply(message.State, candidate);
-                                structuredResult = structuredResult with
-                                {
-                                    Outcome = structuredResult.Outcome! with
-                                    {
-                                        UpdatedState = mapped,
-                                    },
-                                };
-                            }
-                            return true;
-                        }
-
-                        if (message.RunContext is { } structuredRunContext)
-                        {
-                            await structuredRunContext.ExecuteAsync(AcceptAsync, cts.Token);
-                        }
-                        else
-                        {
-                            await AcceptAsync(cts.Token);
-                        }
-                    }
-                    if (
-                        structuredResult.Success
-                        || structuredAttempt >= StructuredOutputCorrectionLimit
-                    )
-                    {
-                        break;
-                    }
-
-                    if (message.RunContext is { } rejectionRunContext)
-                    {
-                        await rejectionRunContext.ObserveAsync(
-                            new PipelineStructuredOutputRejected(
-                                runtime.RunId,
-                                config.StepId,
-                                structuredAttempt + 1,
-                                structuredResult
-                                    .Problems.Select(problem => new PipelineStructuredOutputProblem(
-                                        problem.Field,
-                                        problem.Message
-                                    ))
-                                    .ToArray(),
-                                structuredResult.RawResponse
-                            ),
-                            cts.Token
-                        );
-                    }
-
-                    structuredAttempt++;
-                    userMessage = structuredResult.CorrectionPrompt(
-                        config.StructuredOutput.JsonSchema
-                    );
-                    if (
-                        !string.IsNullOrWhiteSpace(
-                            config.StructuredOutput.CorrectionRequiredToolName
-                        )
-                    )
-                    {
-                        agent = CreateAgent(
-                            instructions,
-                            tools,
-                            message,
-                            selectedChatClient,
-                            config.StructuredOutput.CorrectionRequiredToolName,
-                            collector,
-                            boundCapabilityNames,
-                            capabilityInvocation,
-                            configureStructuredOutput: false
-                        );
-                    }
-                    continue;
-                }
-
-                if (
-                    requiresCheckpointRelease
-                    || collector.HasLifecycleCall
-                    || config.TurnPolicy is null
-                )
-                {
-                    break;
-                }
-
-                if (continuationAttempt >= config.TurnPolicy.MaxContinuationAttempts)
-                {
-                    policyExhausted = true;
-                    break;
-                }
-
-                var directive = await config.TurnPolicy.Continue(
-                    message,
-                    turnText.ToString(),
-                    turnToolNames,
-                    collector.HasLifecycleCall,
-                    continuationAttempt,
-                    cts.Token
-                );
-                if (directive is null)
-                {
-                    policyExhausted = true;
-                    break;
-                }
-
-                continuationAttempt++;
-                userMessage = directive.Prompt;
-                agent = CreateAgent(
-                    instructions,
-                    tools,
-                    message,
-                    selectedChatClient,
-                    directive.RequiredToolName,
-                    collector,
-                    boundCapabilityNames,
-                    capabilityInvocation
-                );
-            }
-
-            var agentUsage = ResolveUsage(
-                inputTokens,
-                outputTokens,
-                cumulativeInputTokens,
-                cumulativeOutputTokens
-            );
-            var runtimeAfterUsage = LatchTriggeredGates(
-                runtime.WithUsage(config.StepId, agentUsage),
-                agentUsage
-            );
-
-            if (
-                capabilityInvocation.AcceptedCallId is { } acceptedCallId
-                && agent.GetService<MessageInjectingChatClient>() is { } injectingClient
-            )
-            {
-                await injectingClient.EnqueueMessagesAsync(
-                    session,
-                    [
-                        new ChatMessage(
-                            ChatRole.Tool,
-                            [
-                                new FunctionResultContent(
-                                    acceptedCallId,
-                                    capabilityInvocation.AcceptedResult
-                                ),
-                            ]
+                        new PipelineAgentUsage(
+                            message.Runtime.RunId,
+                            config.StepId,
+                            liveUsage.CurrentInputTokens,
+                            liveUsage.CurrentOutputTokens,
+                            liveUsage.CurrentContextTokens,
+                            liveUsage.ContextWindowTokens,
+                            ReasoningTokens: (int)(usageContent.Details.ReasoningTokenCount ?? 0)
                         ),
-                    ],
-                    cts.Token
+                        cancellationToken
+                    );
+                }
+            }
+
+            await PublishUpdatesAsync(message, update, cancellationToken);
+        }
+        return new ModelTurn(text.ToString(), toolNames, inputTokens, outputTokens);
+    }
+
+    private async ValueTask<AgentStructuredOutputResult<TState>> EvaluateStructuredOutputAsync(
+        AgentStructuredOutputDescriptor<TState> structuredOutput,
+        string responseText,
+        PipelineMessage<TState> message,
+        ToolOutcomeCollector collector,
+        string acceptedOutputId,
+        int structuredAttempt,
+        CancellationToken cancellationToken
+    )
+    {
+        var successfulTools = collector.SuccessfulTools;
+        var structuredResult = structuredOutput.Parse(responseText, message.State);
+        if (structuredResult.Success && structuredOutput.Accept is not null)
+        {
+            var problems = structuredOutput.Accept(
+                message,
+                structuredResult,
+                successfulTools,
+                collector.ToolInvocations,
+                acceptedOutputId,
+                structuredAttempt
+            );
+            if (problems.Count > 0)
+            {
+                structuredResult = structuredResult with
+                {
+                    Outcome = null,
+                    Problems = [.. structuredResult.Problems, .. problems],
+                };
+            }
+        }
+        if (!structuredResult.Success)
+        {
+            return structuredResult;
+        }
+
+        async ValueTask<bool> AcceptAsync(CancellationToken token)
+        {
+            if (structuredOutput.AcceptAsync is not null)
+            {
+                await structuredOutput.AcceptAsync(
+                    message,
+                    structuredResult,
+                    successfulTools,
+                    collector.ToolInvocations,
+                    acceptedOutputId,
+                    structuredAttempt,
+                    token
                 );
             }
-            var updatedRuntime = CaptureToolInvocations(
-                await CaptureSessionAsync(agent, session, runtimeAfterUsage, cts.Token),
-                collector
-            );
-
-            var outcome = await ResolveOutcomeAsync(
-                structuredResult,
-                updatedRuntime,
-                capabilityInvocation,
-                requiresCheckpointRelease,
-                policyExhausted,
-                continuationAttempt,
-                message.RunContext
-            );
-            blockSw.Stop();
-            if (outcome.LatestOutcome is null)
+            if (message.RunContext is { } runContext)
             {
-                return outcome;
+                JsonElement? payload = runContext.ShouldPersist(config.StepId)
+                    ? structuredResult.Outcome!.Payload
+                    : null;
+                await runContext.ObserveAsync(
+                    structuredOutput.EmitAccepted is { } emit
+                        ? emit(
+                            message.Runtime.RunId,
+                            config.StepId,
+                            acceptedOutputId,
+                            structuredResult.Outcome!.Kind,
+                            payload,
+                            structuredResult.Candidate!
+                        )
+                        : new PipelineStructuredOutputAccepted(
+                            message.Runtime.RunId,
+                            config.StepId,
+                            acceptedOutputId,
+                            structuredResult.Outcome!.Kind,
+                            structuredOutput.ValueType
+                                ?? structuredOutput.OutputType?.FullName
+                                ?? structuredOutput.OutputType?.Name,
+                            payload
+                        ),
+                    token
+                );
             }
-            var timedOutcome = outcome.LatestOutcome with { Duration = blockSw.Elapsed };
-            return FinalizeConversation(outcome with { LatestOutcome = timedOutcome });
+            token.ThrowIfCancellationRequested();
+            if (structuredOutput.Apply is { } apply && structuredResult.Candidate is { } candidate)
+            {
+                structuredResult = structuredResult with
+                {
+                    Outcome = structuredResult.Outcome! with
+                    {
+                        UpdatedState = apply(message.State, candidate),
+                    },
+                };
+            }
+            return true;
+        }
+
+        if (message.RunContext is { } structuredRunContext)
+        {
+            await structuredRunContext.ExecuteAsync(AcceptAsync, cancellationToken);
+        }
+        else
+        {
+            await AcceptAsync(cancellationToken);
+        }
+        return structuredResult;
+    }
+
+    // The accepted capability call terminates MAF's function loop. A plain ChatClientAgent
+    // records that result in its session, but the Harness agent does not, so the result is
+    // enqueued for the next request. It then arrives after the next user message; the
+    // ToolResultAdjacencyChatClient moves it back next to its call (LocalCapabilityTests
+    // *InTheMafSession prove both halves).
+    private static async ValueTask InjectAcceptedCapabilityResultAsync(
+        AIAgent agent,
+        AgentSession session,
+        CapabilityInvocationState<TState> capabilityInvocation,
+        CancellationToken cancellationToken
+    )
+    {
+        if (
+            capabilityInvocation.AcceptedCallId is { } acceptedCallId
+            && agent.GetService<MessageInjectingChatClient>() is { } injectingClient
+        )
+        {
+            await injectingClient.EnqueueMessagesAsync(
+                session,
+                [
+                    new ChatMessage(
+                        ChatRole.Tool,
+                        [
+                            new FunctionResultContent(
+                                acceptedCallId,
+                                capabilityInvocation.AcceptedResult
+                            ),
+                        ]
+                    ),
+                ],
+                cancellationToken
+            );
         }
     }
 
@@ -624,7 +605,10 @@ internal sealed class AgentBlock<TState>(
         {
             if (!runtime.IsGateLatched(config.StepId, gate.Id) && gate.Trigger(usage))
             {
-                runtime = runtime.WithGateLatch(config.StepId, gate.Id);
+                runtime = runtime.WithStep(
+                    config.StepId,
+                    step => step with { Latches = step.Latches.Add(gate.Id) }
+                );
             }
         }
         return runtime;
@@ -667,463 +651,328 @@ internal sealed class AgentBlock<TState>(
         agent
             .AsBuilder()
             .Use(
-                async (_, ficContext, next, ct) =>
-                {
-                    var reservation = collector.ReserveToolInvocation();
-                    var isLifecycle = boundCapabilityNames.Contains(ficContext.Function.Name);
-                    var classified = toolEffects.TryGet(
-                        ficContext.Function.Name,
-                        out var semantics
-                    );
-                    var effect = classified ? semantics.Effect.ToString() : "Unclassified";
-                    var actionInvocationId =
-                        $"{message.Runtime.NextInvocationId(config.StepId)}--action-{reservation.Ordinal + 1}";
-                    if (message.RunContext is { } actionRunContext)
-                    {
-                        await actionRunContext.ObserveAsync(
-                            new PipelineActionAttempted(
-                                message.Runtime.RunId,
-                                config.StepId,
-                                actionInvocationId,
-                                ficContext.Function.Name,
-                                effect
-                            ),
-                            ct
-                        );
-                    }
-
-                    JsonElement arguments;
-                    try
-                    {
-                        arguments = JsonSerializer.SerializeToElement(
-                            ficContext.Arguments,
-                            TandemJson.TypedContract
-                        );
-                    }
-                    catch
-                    {
-                        collector.CompleteToolInvocation(
-                            reservation,
-                            new ToolInvocationObservationDescriptor(
-                                ficContext.Function.Name,
-                                classified ? semantics : null,
-                                JsonSerializer.SerializeToElement(new { }),
-                                ToolInvocationStatus.Faulted,
-                                null
-                            )
-                        );
-                        collector.RecordFailedToolCall(reservation, ficContext.Function.Name);
-                        if (message.RunContext is { } serializationFailedRunContext)
-                        {
-                            await serializationFailedRunContext.ObserveAsync(
-                                new PipelineActionCompleted(
-                                    message.Runtime.RunId,
-                                    config.StepId,
-                                    actionInvocationId,
-                                    ficContext.Function.Name,
-                                    effect,
-                                    "Faulted"
-                                ),
-                                CancellationToken.None
-                            );
-                        }
-                        throw;
-                    }
-                    await PublishUpdateAsync(
+                (_, context, next, cancellationToken) =>
+                    InvokeToolAsync(
+                        context,
+                        next,
+                        collector,
                         message,
-                        new AgentUpdate.ToolStarted(
-                            actionInvocationId,
-                            ficContext.Function.Name,
-                            arguments
-                        )
-                        {
-                            WorkingDirectory = workingDirectory,
-                        },
-                        ct
-                    );
-
-                    var activeGates = ResolveActiveGates(message);
-                    var gate = activeGates.FirstOrDefault(active =>
-                        (!classified || active.BlockedEffects.Contains(semantics.Effect))
-                        && !string.Equals(
-                            active.ReleaseCapabilityName,
-                            ficContext.Function.Name,
-                            StringComparison.Ordinal
-                        )
-                    );
-                    if (gate is not null)
-                    {
-                        collector.CompleteToolInvocation(
-                            reservation,
-                            new ToolInvocationObservationDescriptor(
-                                ficContext.Function.Name,
-                                classified ? semantics : null,
-                                arguments,
-                                ToolInvocationStatus.Blocked,
-                                null
-                            )
-                        );
-                        collector.RecordFailedToolCall(reservation, ficContext.Function.Name);
-                        if (message.RunContext is { } gatedRunContext)
-                        {
-                            await gatedRunContext.ObserveAsync(
-                                new PipelineActionCompleted(
-                                    message.Runtime.RunId,
-                                    config.StepId,
-                                    actionInvocationId,
-                                    ficContext.Function.Name,
-                                    effect,
-                                    "Blocked"
-                                ),
-                                ct
-                            );
-                        }
-                        await PublishUpdateAsync(
-                            message,
-                            new AgentUpdate.ToolCompleted(
-                                actionInvocationId,
-                                null,
-                                "Action blocked by gate."
-                            ),
-                            ct
-                        );
-                        return JsonSerializer.SerializeToElement(
-                            new
-                            {
-                                isError = true,
-                                error = "action blocked by gate",
-                                problems = new[] { gate.Message },
-                            }
-                        );
-                    }
-
-                    if (toolInterceptor is not null)
-                    {
-                        string? blockedMessage;
-                        try
-                        {
-                            blockedMessage = await toolInterceptor(
-                                message,
-                                ficContext.Function.Name,
-                                classified ? semantics.Effect : null,
-                                arguments,
-                                ct
-                            );
-                        }
-                        catch
-                        {
-                            collector.CompleteToolInvocation(
-                                reservation,
-                                new ToolInvocationObservationDescriptor(
-                                    ficContext.Function.Name,
-                                    classified ? semantics : null,
-                                    arguments,
-                                    ToolInvocationStatus.Faulted,
-                                    null
-                                )
-                            );
-                            collector.RecordFailedToolCall(reservation, ficContext.Function.Name);
-                            if (message.RunContext is { } interceptorFailedRunContext)
-                            {
-                                await interceptorFailedRunContext.ObserveAsync(
-                                    new PipelineActionCompleted(
-                                        message.Runtime.RunId,
-                                        config.StepId,
-                                        actionInvocationId,
-                                        ficContext.Function.Name,
-                                        effect,
-                                        "Faulted"
-                                    ),
-                                    CancellationToken.None
-                                );
-                            }
-                            throw;
-                        }
-                        if (blockedMessage is not null)
-                        {
-                            collector.CompleteToolInvocation(
-                                reservation,
-                                new ToolInvocationObservationDescriptor(
-                                    ficContext.Function.Name,
-                                    classified ? semantics : null,
-                                    arguments,
-                                    ToolInvocationStatus.Blocked,
-                                    null
-                                )
-                            );
-                            collector.RecordFailedToolCall(reservation, ficContext.Function.Name);
-                            if (message.RunContext is { } blockedRunContext)
-                            {
-                                await blockedRunContext.ObserveAsync(
-                                    new PipelineActionCompleted(
-                                        message.Runtime.RunId,
-                                        config.StepId,
-                                        actionInvocationId,
-                                        ficContext.Function.Name,
-                                        effect,
-                                        "Blocked"
-                                    ),
-                                    ct
-                                );
-                            }
-                            await PublishUpdateAsync(
-                                message,
-                                new AgentUpdate.ToolCompleted(
-                                    actionInvocationId,
-                                    null,
-                                    blockedMessage
-                                ),
-                                ct
-                            );
-                            return blockedMessage;
-                        }
-                    }
-
-                    object? result;
-                    try
-                    {
-                        ToolInputValidation.ValidateArguments(
-                            ficContext.Function,
-                            ficContext.Arguments
-                        );
-                        result = await next(ficContext, ct);
-                    }
-                    catch (PaginationValidationException exception)
-                    {
-                        result = exception.ToolResult;
-                    }
-                    catch (Exception exception)
-                        when (ToolInputValidation.IsExpected(
-                                exception,
-                                classified ? semantics : null
-                            )
-                        )
-                    {
-                        result = ToolInputValidation.Error(exception.Message);
-                    }
-                    catch (Exception exception)
-                    {
-                        collector.CompleteToolInvocation(
-                            reservation,
-                            new ToolInvocationObservationDescriptor(
-                                ficContext.Function.Name,
-                                classified ? semantics : null,
-                                arguments,
-                                ToolInvocationStatus.Faulted,
-                                null
-                            )
-                        );
-                        collector.RecordFailedToolCall(reservation, ficContext.Function.Name);
-                        if (message.RunContext is { } failedRunContext)
-                        {
-                            await failedRunContext.ObserveAsync(
-                                new PipelineActionCompleted(
-                                    message.Runtime.RunId,
-                                    config.StepId,
-                                    actionInvocationId,
-                                    ficContext.Function.Name,
-                                    effect,
-                                    "Faulted"
-                                ),
-                                CancellationToken.None
-                            );
-                        }
-                        await PublishUpdateAsync(
-                            message,
-                            new AgentUpdate.ToolCompleted(
-                                actionInvocationId,
-                                null,
-                                exception.Message
-                            ),
-                            CancellationToken.None
-                        );
-                        throw;
-                    }
-                    var isToolError =
-                        IsToolError(result)
-                        || (
-                            classified
-                            && semantics.Effect == ToolEffect.ProcessExecution
-                            && IsFailedProcessExecution(result)
-                        );
-                    ToolResultEvidenceDescriptor? resultEvidence;
-                    try
-                    {
-                        resultEvidence = classified
-                            ? semantics.ResultEvidence?.Invoke(result)
-                            : null;
-                    }
-                    catch
-                    {
-                        collector.CompleteToolInvocation(
-                            reservation,
-                            new ToolInvocationObservationDescriptor(
-                                ficContext.Function.Name,
-                                classified ? semantics : null,
-                                arguments,
-                                ToolInvocationStatus.Faulted,
-                                null
-                            )
-                        );
-                        collector.RecordFailedToolCall(reservation, ficContext.Function.Name);
-                        if (message.RunContext is { } evidenceFailedRunContext)
-                        {
-                            await evidenceFailedRunContext.ObserveAsync(
-                                new PipelineActionCompleted(
-                                    message.Runtime.RunId,
-                                    config.StepId,
-                                    actionInvocationId,
-                                    ficContext.Function.Name,
-                                    effect,
-                                    "Faulted"
-                                ),
-                                CancellationToken.None
-                            );
-                        }
-                        throw;
-                    }
-                    collector.CompleteToolInvocation(
-                        reservation,
-                        new ToolInvocationObservationDescriptor(
-                            ficContext.Function.Name,
-                            classified ? semantics : null,
-                            arguments,
-                            isToolError
-                                ? ToolInvocationStatus.Failed
-                                : ToolInvocationStatus.Completed,
-                            resultEvidence is ToolResultEvidenceDescriptor.Process captured
-                                ? captured with
-                                {
-                                    Stdout = DiagnosticPreview(captured.Stdout),
-                                    Stderr = DiagnosticPreview(captured.Stderr),
-                                    Truncated =
-                                        captured.Truncated
-                                        || captured.Stdout.Length > 8000
-                                        || captured.Stderr.Length > 8000,
-                                }
-                                : resultEvidence
-                        )
-                    );
-                    if (message.RunContext is { } completedRunContext)
-                    {
-                        await completedRunContext.ObserveAsync(
-                            new PipelineActionCompleted(
-                                message.Runtime.RunId,
-                                config.StepId,
-                                actionInvocationId,
-                                ficContext.Function.Name,
-                                effect,
-                                isToolError ? "Failed" : "Completed",
-                                resultEvidence is ToolResultEvidenceDescriptor.Process process
-                                    ? new PipelineActionProcessPayload(
-                                        arguments,
-                                        process.ExitCode,
-                                        process.Stdout,
-                                        process.Stderr,
-                                        process.Duration,
-                                        process.TimedOut,
-                                        process.Truncated
-                                    )
-                                    : null
-                            ),
-                            ct
-                        );
-                    }
-                    if (resultEvidence is ToolResultEvidenceDescriptor.Process diagnostic)
-                    {
-                        var entryCursor = message.RunContext?.Ledger is { } outputLedger
-                            ? await outputLedger.FindActionEntryAsync(
-                                config.StepId,
-                                actionInvocationId,
-                                ct
-                            )
-                            : null;
-                        result = JsonSerializer.SerializeToElement(
-                            new
-                            {
-                                exitCode = diagnostic.ExitCode,
-                                stdout = DiagnosticPreview(diagnostic.Stdout),
-                                stderr = DiagnosticPreview(diagnostic.Stderr),
-                                diagnostic.Duration,
-                                timedOut = diagnostic.TimedOut,
-                                captureTruncated = diagnostic.Truncated,
-                                previewTruncated = diagnostic.Stdout.Length > 8000
-                                    || diagnostic.Stderr.Length > 8000,
-                                stdoutCapturedCharacters = diagnostic.Stdout.Length,
-                                stderrCapturedCharacters = diagnostic.Stderr.Length,
-                                diagnostics = entryCursor is { } reference
-                                    ? new
-                                    {
-                                        entryCursor = reference,
-                                        tool = "read_ledger_entry",
-                                        streams = new[] { "stdout", "stderr" },
-                                    }
-                                    : null,
-                                retrieval = entryCursor is null
-                                    ? "No durable diagnostic reference is available; this is a bounded inline preview."
-                                    : "Use read_ledger_entry with entryCursor and stream stdout or stderr; follow nextOffset.",
-                            }
-                        );
-                    }
-                    await PublishUpdateAsync(
-                        message,
-                        new AgentUpdate.ToolCompleted(
-                            actionInvocationId,
-                            isToolError ? null : result?.ToString(),
-                            isToolError ? result?.ToString() ?? "Tool failed." : null
-                        ),
-                        ct
-                    );
-                    if (isToolError)
-                    {
-                        collector.RecordFailedToolCall(reservation, ficContext.Function.Name);
-                        return result;
-                    }
-
-                    if (isLifecycle)
-                    {
-                        collector.RecordLifecycleCall(ficContext.Function.Name);
-                        capabilityInvocation.RecordResult(ficContext.CallContent.CallId, result);
-                        ficContext.Terminate = true;
-                    }
-                    else
-                    {
-                        collector.RecordSuccessfulToolCall(
-                            reservation,
-                            new ToolObservationDescriptor(
-                                ficContext.Function.Name,
-                                classified ? semantics : null
-                            )
-                        );
-                    }
-
-                    return result;
-                }
+                        capabilityInvocation,
+                        boundCapabilityNames,
+                        toolEffects,
+                        workingDirectory,
+                        cancellationToken
+                    )
             )
             .Build();
 
-    private static bool IsToolError(object? result) =>
+    private async ValueTask<object?> InvokeToolAsync(
+        FunctionInvocationContext context,
+        Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next,
+        ToolOutcomeCollector collector,
+        PipelineMessage<TState> message,
+        CapabilityInvocationState<TState> capabilityInvocation,
+        IReadOnlySet<string> boundCapabilityNames,
+        ToolEffectRegistry toolEffects,
+        string? workingDirectory,
+        CancellationToken ct
+    )
+    {
+        var name = context.Function.Name;
+        var reservation = collector.ReserveToolInvocation();
+        ToolSemantics? semantics = toolEffects.TryGet(name, out var classified) ? classified : null;
+        var effect = semantics?.Effect.ToString() ?? "Unclassified";
+        var actionInvocationId =
+            $"{message.Runtime.NextInvocationId(config.StepId)}--action-{reservation.Ordinal + 1}";
+        var arguments = TandemJson.EmptyObject;
+
+        async ValueTask RecordAsync(
+            ToolInvocationStatus status,
+            ToolResultEvidenceDescriptor? evidence,
+            CancellationToken token
+        )
+        {
+            var process = evidence as ToolResultEvidenceDescriptor.Process;
+            collector.CompleteToolInvocation(
+                reservation,
+                new ToolInvocationObservationDescriptor(
+                    name,
+                    semantics,
+                    arguments,
+                    status,
+                    process is null
+                        ? evidence
+                        : process with
+                        {
+                            Stdout = DiagnosticPreview(process.Stdout),
+                            Stderr = DiagnosticPreview(process.Stderr),
+                            Truncated = process.Truncated || IsPreviewTruncated(process),
+                        }
+                )
+            );
+            await ObserveAsync(
+                message,
+                new PipelineActionCompleted(
+                    message.Runtime.RunId,
+                    config.StepId,
+                    actionInvocationId,
+                    name,
+                    effect,
+                    status.ToString(),
+                    process is null
+                        ? null
+                        : new PipelineActionProcessPayload(
+                            arguments,
+                            process.ExitCode,
+                            process.Stdout,
+                            process.Stderr,
+                            process.Duration,
+                            process.TimedOut,
+                            process.Truncated
+                        )
+                ),
+                token
+            );
+        }
+
+        async ValueTask FinishAsync(ToolInvocationStatus status, string? updateText)
+        {
+            var token = status == ToolInvocationStatus.Faulted ? CancellationToken.None : ct;
+            await RecordAsync(status, null, token);
+            collector.RecordFailedToolCall(reservation, name);
+            if (updateText is not null)
+            {
+                await PublishUpdateAsync(
+                    message,
+                    new AgentUpdate.ToolCompleted(actionInvocationId, null, updateText),
+                    token
+                );
+            }
+        }
+
+        await ObserveAsync(
+            message,
+            new PipelineActionAttempted(
+                message.Runtime.RunId,
+                config.StepId,
+                actionInvocationId,
+                name,
+                effect
+            ),
+            ct
+        );
+
+        try
+        {
+            arguments = JsonSerializer.SerializeToElement(
+                context.Arguments,
+                TandemJson.TypedContract
+            );
+        }
+        catch
+        {
+            await FinishAsync(ToolInvocationStatus.Faulted, null);
+            throw;
+        }
+        await PublishUpdateAsync(
+            message,
+            new AgentUpdate.ToolStarted(actionInvocationId, name, arguments)
+            {
+                WorkingDirectory = workingDirectory,
+            },
+            ct
+        );
+
+        var gate = ResolveActiveGates(message)
+            .FirstOrDefault(active =>
+                (semantics is null || active.BlockedEffects.Contains(semantics.Effect))
+                && !string.Equals(active.ReleaseCapabilityName, name, StringComparison.Ordinal)
+            );
+        if (gate is not null)
+        {
+            await FinishAsync(ToolInvocationStatus.Blocked, "Action blocked by gate.");
+            return new ToolError(
+                "action_blocked",
+                "action blocked by gate",
+                [new ToolProblem(null, gate.Message)]
+            ).ToJson();
+        }
+
+        if (toolInterceptor is not null)
+        {
+            string? blockedMessage;
+            try
+            {
+                blockedMessage = await toolInterceptor(
+                    message,
+                    name,
+                    semantics?.Effect,
+                    arguments,
+                    ct
+                );
+            }
+            catch
+            {
+                await FinishAsync(ToolInvocationStatus.Faulted, null);
+                throw;
+            }
+            if (blockedMessage is not null)
+            {
+                await FinishAsync(ToolInvocationStatus.Blocked, blockedMessage);
+                return blockedMessage;
+            }
+        }
+
+        object? result;
+        try
+        {
+            ToolInputValidation.ValidateArguments(context.Function, context.Arguments);
+            result = await next(context, ct);
+        }
+        catch (PaginationValidationException exception)
+        {
+            result = exception.ToolResult;
+        }
+        catch (Exception exception) when (ToolInputValidation.IsExpected(exception, semantics))
+        {
+            result = ToolInputValidation.Error(exception.Message);
+        }
+        catch (Exception exception)
+        {
+            await FinishAsync(ToolInvocationStatus.Faulted, exception.Message);
+            throw;
+        }
+        var toolError = result as ToolError;
+        if (toolError is not null)
+        {
+            result = toolError.ToJson();
+        }
+        var isToolError =
+            toolError is not null
+            || IsUntypedToolError(result)
+            || (
+                semantics?.Effect == ToolEffect.ProcessExecution && IsFailedProcessExecution(result)
+            );
+        ToolResultEvidenceDescriptor? resultEvidence;
+        try
+        {
+            resultEvidence = semantics?.ResultEvidence?.Invoke(result);
+        }
+        catch
+        {
+            await FinishAsync(ToolInvocationStatus.Faulted, null);
+            throw;
+        }
+        await RecordAsync(
+            isToolError ? ToolInvocationStatus.Failed : ToolInvocationStatus.Completed,
+            resultEvidence,
+            ct
+        );
+        if (resultEvidence is ToolResultEvidenceDescriptor.Process diagnostic)
+        {
+            result = await DiagnosticResultAsync(message, actionInvocationId, diagnostic, ct);
+        }
+        await PublishUpdateAsync(
+            message,
+            new AgentUpdate.ToolCompleted(
+                actionInvocationId,
+                isToolError ? null : result?.ToString(),
+                isToolError ? result?.ToString() ?? "Tool failed." : null
+            ),
+            ct
+        );
+        if (isToolError)
+        {
+            collector.RecordFailedToolCall(reservation, name);
+            return result;
+        }
+
+        if (boundCapabilityNames.Contains(name))
+        {
+            collector.RecordLifecycleCall(name);
+            capabilityInvocation.RecordResult(context.CallContent.CallId, result);
+            context.Terminate = true;
+        }
+        else
+        {
+            collector.RecordSuccessfulToolCall(
+                reservation,
+                new ToolObservationDescriptor(name, semantics)
+            );
+        }
+
+        return result;
+    }
+
+    private async ValueTask<JsonElement> DiagnosticResultAsync(
+        PipelineMessage<TState> message,
+        string actionInvocationId,
+        ToolResultEvidenceDescriptor.Process diagnostic,
+        CancellationToken cancellationToken
+    )
+    {
+        var entryCursor = message.RunContext?.Ledger is { } outputLedger
+            ? await outputLedger.FindActionEntryAsync(
+                config.StepId,
+                actionInvocationId,
+                cancellationToken
+            )
+            : null;
+        return JsonSerializer.SerializeToElement(
+            new
+            {
+                exitCode = diagnostic.ExitCode,
+                stdout = DiagnosticPreview(diagnostic.Stdout),
+                stderr = DiagnosticPreview(diagnostic.Stderr),
+                diagnostic.Duration,
+                timedOut = diagnostic.TimedOut,
+                captureTruncated = diagnostic.Truncated,
+                previewTruncated = IsPreviewTruncated(diagnostic),
+                stdoutCapturedCharacters = diagnostic.Stdout.Length,
+                stderrCapturedCharacters = diagnostic.Stderr.Length,
+                diagnostics = entryCursor is { } reference
+                    ? new
+                    {
+                        entryCursor = reference,
+                        tool = BuiltInAgentTools.ReadLedgerEntry,
+                        streams = new[] { "stdout", "stderr" },
+                    }
+                    : null,
+                retrieval = entryCursor is null
+                    ? "No durable diagnostic reference is available; this is a bounded inline preview."
+                    : "Use read_ledger_entry with entryCursor and stream stdout or stderr; follow nextOffset.",
+            }
+        );
+    }
+
+    // Tandem's own tools return ToolError. Advanced's workspace tools and pagination failures
+    // still answer with JSON carrying isError, and MAF's file tools report failures as text.
+    private static bool IsUntypedToolError(object? result) =>
         result switch
         {
-            JsonElement element
-                when element.ValueKind == JsonValueKind.Object
-                    && element.TryGetProperty("isError", out var isError)
-                    && isError.ValueKind == JsonValueKind.True => true,
+            JsonElement { ValueKind: JsonValueKind.Object } element => element.TryGetProperty(
+                "isError",
+                out var isError
+            )
+                && isError.ValueKind == JsonValueKind.True,
             string text when text.StartsWith("Error", StringComparison.OrdinalIgnoreCase) => true,
-            string text
-                when text.StartsWith("File '", StringComparison.Ordinal)
-                    && text.EndsWith("' not found.", StringComparison.Ordinal) => true,
-            _ => IsFileNotFoundResult(result),
+            _ => result?.ToString() is { } text
+                && text.StartsWith("File '", StringComparison.Ordinal)
+                && text.EndsWith("' not found.", StringComparison.Ordinal),
         };
+
+    private static bool IsPreviewTruncated(ToolResultEvidenceDescriptor.Process process) =>
+        process.Stdout.Length > DiagnosticPreviewCharacters
+        || process.Stderr.Length > DiagnosticPreviewCharacters;
 
     private static string DiagnosticPreview(string text)
     {
-        if (text.Length <= 8000)
+        if (text.Length <= DiagnosticPreviewCharacters)
         {
             return text;
         }
 
-        var start = text.Length - 8000;
+        var start = text.Length - DiagnosticPreviewCharacters;
         if (char.IsLowSurrogate(text[start]) && char.IsHighSurrogate(text[start - 1]))
         {
             start++;
@@ -1141,15 +990,7 @@ internal sealed class AgentBlock<TState>(
         && exitCode.TryGetInt32(out var value)
         && value != 0;
 
-    private static bool IsFileNotFoundResult(object? result)
-    {
-        var text = result?.ToString();
-        return text is not null
-            && text.StartsWith("File '", StringComparison.Ordinal)
-            && text.EndsWith("' not found.", StringComparison.Ordinal);
-    }
-
-    private Task<PipelineMessage<TState>> ResolveOutcomeAsync(
+    private PipelineMessage<TState> ResolveOutcome(
         AgentStructuredOutputResult<TState>? structuredResult,
         PipelineRuntime runtime,
         CapabilityInvocationState<TState> capabilityInvocation,
@@ -1159,117 +1000,85 @@ internal sealed class AgentBlock<TState>(
         PipelineRunContext? runContext
     )
     {
+        PipelineMessage<TState> Outcome(
+            TState state,
+            string kind,
+            string summary,
+            JsonElement payload
+        ) =>
+            new(
+                runtime.IncrementInvocations(config.StepId),
+                state,
+                new BlockOutcome(kind, config.StepId, summary, payload)
+            )
+            {
+                RunContext = runContext,
+            };
+
         var state = capabilityInvocation.State;
-        if (requiresCheckpointRelease)
+        if (capabilityInvocation.Accepted is { } accepted)
         {
-            return Task.FromResult(
-                capabilityInvocation.Accepted is { } checkpoint
-                    ? ApplyAcceptedCapability(
-                        runtime,
-                        checkpoint,
-                        resetSession: config.Checkpoint?.ResetSessionAfterRelease ?? true,
-                        runContext
-                    )
-                    : new PipelineMessage<TState>(
-                        runtime.IncrementInvocations(config.StepId),
-                        state,
-                        new BlockOutcome(
-                            "agent.failed",
-                            config.StepId,
-                            $"Checkpoint-only mode: model did not call {config.Checkpoint!.Capability.ToolName}.",
-                            EmptyPayload()
-                        )
-                    )
-                    {
-                        RunContext = runContext,
-                    }
+            return ApplyAcceptedCapability(
+                runtime,
+                accepted,
+                resetSession: requiresCheckpointRelease
+                    && (config.Checkpoint?.ResetSessionAfterRelease ?? true),
+                runContext
             );
         }
 
-        if (capabilityInvocation.Accepted is null)
+        if (requiresCheckpointRelease)
         {
-            if (config.StructuredOutput is not null)
+            return Outcome(
+                state,
+                "agent.failed",
+                $"Checkpoint-only mode: model did not call {config.Checkpoint!.Capability.ToolName}.",
+                TandemJson.EmptyObject
+            );
+        }
+
+        if (config.StructuredOutput is not null)
+        {
+            if (structuredResult is null)
             {
-                if (structuredResult is null)
-                {
-                    throw new InvalidOperationException("Structured output was not evaluated.");
-                }
+                throw new InvalidOperationException("Structured output was not evaluated.");
+            }
 
-                if (!structuredResult.Success)
-                {
-                    return Task.FromResult(
-                        new PipelineMessage<TState>(
-                            runtime.IncrementInvocations(config.StepId),
-                            state,
-                            new BlockOutcome(
-                                "agent.failed",
-                                config.StepId,
-                                "Structured output remained invalid after its corrective response.",
-                                JsonSerializer.SerializeToElement(
-                                    new
-                                    {
-                                        problems = structuredResult.Problems,
-                                        rawResponse = structuredResult.RawResponse,
-                                    }
-                                )
-                            )
-                        )
+            if (!structuredResult.Success)
+            {
+                return Outcome(
+                    state,
+                    "agent.failed",
+                    "Structured output remained invalid after its corrective response.",
+                    JsonSerializer.SerializeToElement(
+                        new
                         {
-                            RunContext = runContext,
+                            problems = structuredResult.Problems,
+                            rawResponse = structuredResult.RawResponse,
                         }
-                    );
-                }
-
-                var structured = structuredResult.Outcome!;
-                var outcomeState = structured.UpdatedState is null
-                    ? state
-                    : structured.UpdatedState;
-                return Task.FromResult(
-                    new PipelineMessage<TState>(
-                        runtime.IncrementInvocations(config.StepId),
-                        outcomeState,
-                        new BlockOutcome(
-                            structured.Kind,
-                            config.StepId,
-                            structured.Summary,
-                            structured.Payload
-                        )
                     )
-                    {
-                        RunContext = runContext,
-                    }
                 );
             }
 
-            var kind = policyExhausted ? "agent.failed" : "agent.completed";
-            var summary = policyExhausted
-                ? $"No lifecycle outcome after {continuationAttempt + 1} model turn(s)."
-                : "(no lifecycle call)";
-            var payload = policyExhausted
-                ? JsonSerializer.SerializeToElement(
-                    new { continuationAttempts = continuationAttempt }
-                )
-                : EmptyPayload();
-            return Task.FromResult(
-                new PipelineMessage<TState>(
-                    runtime.IncrementInvocations(config.StepId),
-                    state,
-                    new BlockOutcome(kind, config.StepId, summary, payload)
-                )
-                {
-                    RunContext = runContext,
-                }
+            var structured = structuredResult.Outcome!;
+            return Outcome(
+                structured.UpdatedState ?? state,
+                structured.Kind,
+                structured.Summary,
+                structured.Payload
             );
         }
 
-        return Task.FromResult(
-            ApplyAcceptedCapability(
-                runtime,
-                capabilityInvocation.Accepted,
-                resetSession: false,
-                runContext
+        return policyExhausted
+            ? Outcome(
+                state,
+                "agent.failed",
+                $"No lifecycle outcome after {continuationAttempt + 1} model turn(s).",
+                JsonSerializer.SerializeToElement(
+                    new { continuationAttempts = continuationAttempt }
+                )
             )
-        );
+            : Outcome(state, "agent.completed", "(no lifecycle call)", TandemJson.EmptyObject);
     }
 
     private PipelineMessage<TState> ApplyAcceptedCapability(
@@ -1287,7 +1096,10 @@ internal sealed class AgentBlock<TState>(
             )
         )
         {
-            updatedRuntime = updatedRuntime.WithoutGateLatch(config.StepId, gate.Id);
+            updatedRuntime = updatedRuntime.WithStep(
+                config.StepId,
+                step => step with { Latches = step.Latches.Remove(gate.Id) }
+            );
             if (gate.ResetSessionAfterRelease)
             {
                 resetSession = true;
@@ -1295,9 +1107,10 @@ internal sealed class AgentBlock<TState>(
         }
         if (resetSession)
         {
-            updatedRuntime = updatedRuntime
-                .WithoutSession(config.StepId)
-                .WithoutUsage(config.StepId);
+            updatedRuntime = updatedRuntime.WithStep(
+                config.StepId,
+                step => step with { Session = null, Usage = null }
+            );
         }
         return new PipelineMessage<TState>(
             updatedRuntime.IncrementInvocations(config.StepId),
@@ -1326,63 +1139,10 @@ internal sealed class AgentBlock<TState>(
         bool configureStructuredOutput = true
     )
     {
-        var chatOptions = new ChatOptions { Instructions = instructions, Tools = tools.ToList() };
-        configureModelRequestOptions?.Invoke(chatOptions);
-        if (message.RunContext?.Ledger is { } ledger)
-        {
-            chatOptions.Tools.Add(
-                AIFunctionFactory.Create(
-                    (
-                        long entryCursor,
-                        int offset = 0,
-                        int limit = 16000,
-                        string? stream = null,
-                        CancellationToken cancellationToken = default
-                    ) =>
-                        stream is null
-                            ? ledger.ReadEntryAsync(entryCursor, offset, limit, cancellationToken)
-                            : ledger.ReadDiagnosticAsync(
-                                entryCursor,
-                                stream,
-                                offset,
-                                limit,
-                                cancellationToken
-                            ),
-                    "read_ledger_entry",
-                    "Read a durable entry using entryCursor from a command result or ledger listing. For readable command output specify stream stdout or stderr, then follow nextOffset until hasMore is false. Omit stream to read the raw record. Offsets are UTF-16 code units; captureTruncated indicates output lost at the hard capture limit."
-                )
-            );
-            chatOptions.Tools.Add(
-                AIFunctionFactory.Create(
-                    (
-                        [System.ComponentModel.Description("Cursor returned by the previous page.")]
-                            long? cursor = null,
-                        [System.ComponentModel.Description("Page size from 1 to 50.")]
-                            int limit = 20,
-                        CancellationToken cancellationToken = default
-                    ) => ledger.ReadAsync(cursor, limit, cancellationToken),
-                    "read_ledger",
-                    "Read accepted durable lifecycle history in order: claims, decisions, findings, checkpoints, state, and transitions. Repository and implementation claims in those records must be verified against the current repository before reliance."
-                )
-            );
-            chatOptions.Tools.Add(
-                AIFunctionFactory.Create(
-                    (
-                        [System.ComponentModel.Description(
-                            "Case-insensitive text to find in accepted durable records."
-                        )]
-                            string query,
-                        [System.ComponentModel.Description("Cursor returned by the previous page.")]
-                            long? cursor = null,
-                        [System.ComponentModel.Description("Page size from 1 to 50.")]
-                            int limit = 20,
-                        CancellationToken cancellationToken = default
-                    ) => ledger.SearchAsync(query, cursor, limit, cancellationToken),
-                    "search_ledger",
-                    "Search accepted durable lifecycle history for relevant prior claims, decisions, findings, constraints, checkpoints, and state, then use read_ledger to inspect surrounding records. A match does not establish current repository or implementation state."
-                )
-            );
-        }
+        var chatOptions = CreateChatOptions(
+            instructions,
+            message.RunContext?.Ledger is { } ledger ? [.. tools, .. LedgerTools(ledger)] : tools
+        );
         if (!string.IsNullOrWhiteSpace(requiredToolName))
         {
             chatOptions.ToolMode = ChatToolMode.RequireSpecific(requiredToolName);
@@ -1399,13 +1159,11 @@ internal sealed class AgentBlock<TState>(
         }
         if (config.Skills is { Count: > 0 })
         {
-            AgentSkillRuntime.RegisterToolEffects(toolEffects);
+            BuiltInAgentTools.Register(toolEffects, BuiltInAgentTools.Skills);
         }
         if (message.RunContext?.Ledger is not null)
         {
-            toolEffects.Add("read_ledger_entry", ToolEffect.Read);
-            toolEffects.Add("read_ledger", ToolEffect.Read);
-            toolEffects.Add("search_ledger", ToolEffect.Read);
+            BuiltInAgentTools.Register(toolEffects, BuiltInAgentTools.Ledger);
         }
         var hasGates =
             (config.StateGuards?.Count ?? 0) > 0 || (config.LatchedGates?.Count ?? 0) > 0;
@@ -1459,6 +1217,84 @@ internal sealed class AgentBlock<TState>(
         );
     }
 
+    private static IEnumerable<AITool> LedgerTools(IPipelineLedgerReader ledger)
+    {
+        yield return AIFunctionFactory.Create(
+            (
+                long entryCursor,
+                int offset = 0,
+                int limit = 16000,
+                string? stream = null,
+                CancellationToken cancellationToken = default
+            ) =>
+                stream is null
+                    ? ledger.ReadEntryAsync(entryCursor, offset, limit, cancellationToken)
+                    : ledger.ReadDiagnosticAsync(
+                        entryCursor,
+                        stream,
+                        offset,
+                        limit,
+                        cancellationToken
+                    ),
+            BuiltInAgentTools.ReadLedgerEntry,
+            "Read a durable entry using entryCursor from a command result or ledger listing. For readable command output specify stream stdout or stderr, then follow nextOffset until hasMore is false. Omit stream to read the raw record. Offsets are UTF-16 code units; captureTruncated indicates output lost at the hard capture limit."
+        );
+        yield return AIFunctionFactory.Create(
+            (
+                [System.ComponentModel.Description("Cursor returned by the previous page.")]
+                    long? cursor = null,
+                [System.ComponentModel.Description("Page size from 1 to 50.")] int limit = 20,
+                CancellationToken cancellationToken = default
+            ) => ledger.ReadAsync(cursor, limit, cancellationToken),
+            BuiltInAgentTools.ReadLedger,
+            "Read accepted durable lifecycle history in order: claims, decisions, findings, checkpoints, state, and transitions. Repository and implementation claims in those records must be verified against the current repository before reliance."
+        );
+        yield return AIFunctionFactory.Create(
+            (
+                [System.ComponentModel.Description(
+                    "Case-insensitive text to find in accepted durable records."
+                )]
+                    string query,
+                [System.ComponentModel.Description("Cursor returned by the previous page.")]
+                    long? cursor = null,
+                [System.ComponentModel.Description("Page size from 1 to 50.")] int limit = 20,
+                CancellationToken cancellationToken = default
+            ) => ledger.SearchAsync(query, cursor, limit, cancellationToken),
+            BuiltInAgentTools.SearchLedger,
+            "Search accepted durable lifecycle history for relevant prior claims, decisions, findings, constraints, checkpoints, and state, then use read_ledger to inspect surrounding records. A match does not establish current repository or implementation state."
+        );
+    }
+
+    private ChatOptions CreateChatOptions(string instructions, IReadOnlyList<AITool> tools)
+    {
+        var options = new ChatOptions { Instructions = instructions, Tools = tools.ToList() };
+        if (config.ModelRequestOptions is not { } request)
+        {
+            return options;
+        }
+
+        options.Reasoning = request.ReasoningEffort is { } effort
+            ? new ReasoningOptions
+            {
+                Effort = effort switch
+                {
+                    AgentReasoningEffort.None => ReasoningEffort.None,
+                    AgentReasoningEffort.Low => ReasoningEffort.Low,
+                    AgentReasoningEffort.Medium => ReasoningEffort.Medium,
+                    AgentReasoningEffort.High => ReasoningEffort.High,
+                    _ => throw new InvalidOperationException("Unknown reasoning effort."),
+                },
+            }
+            : null;
+        if (request.ReasoningMaxTokens is { } reasoningMaxTokens)
+        {
+            options.AdditionalProperties = new() { ["reasoningMaxTokens"] = reasoningMaxTokens };
+        }
+        options.Temperature = request.Temperature;
+        options.MaxOutputTokens = request.MaxOutputTokens;
+        return options;
+    }
+
     private ResolvedAgentWorkspace? ResolveWorkspace(
         TState state,
         IReadOnlySet<string> capabilityNames
@@ -1504,7 +1340,7 @@ internal sealed class AgentBlock<TState>(
             .ToArray();
         var selectedCommands = includeCommands ? commands : [];
         var reservedNames = new HashSet<string>(
-            _reservedWorkspaceToolNames,
+            BuiltInAgentTools.ReservedWorkspaceNames,
             StringComparer.Ordinal
         );
         foreach (var command in selectedCommands)
@@ -1536,11 +1372,11 @@ internal sealed class AgentBlock<TState>(
         var fileTools = new HashSet<WorkspaceToolKind>();
         foreach (var name in selectedNames)
         {
-            if (_fileToolKinds.TryGetValue(name, out var kind))
+            if (BuiltInAgentTools.FileSelections.TryGetValue(name, out var kind))
             {
                 fileTools.Add(kind);
             }
-            else if (!_workspaceToolGroups.Contains(name))
+            else if (!BuiltInAgentTools.Groups.ContainsKey(name))
             {
                 throw new InvalidOperationException($"Unknown workspace tool '{name}'.");
             }
@@ -1548,10 +1384,10 @@ internal sealed class AgentBlock<TState>(
         return new ResolvedAgentWorkspace(
             Path.GetFullPath(path),
             fileTools,
-            selectedNames.Contains("git:ro"),
-            selectedNames.Contains("shell"),
-            selectedNames.Contains("web_search"),
-            selectedNames.Contains("web_fetch"),
+            selectedNames.Contains(BuiltInAgentTools.GitReadOnlyGroup),
+            selectedNames.Contains(BuiltInAgentTools.ShellGroup),
+            selectedNames.Contains(BuiltInAgentTools.WebSearchGroup),
+            selectedNames.Contains(BuiltInAgentTools.WebFetchGroup),
             selectedCommands,
             selectedRegisteredTools
         );
@@ -1583,8 +1419,6 @@ internal sealed class AgentBlock<TState>(
         return active;
     }
 
-    private static JsonElement EmptyPayload() => JsonSerializer.SerializeToElement(new { });
-
     private sealed record ActiveAgentGate(
         string Id,
         IReadOnlySet<ToolEffect> BlockedEffects,
@@ -1594,7 +1428,6 @@ internal sealed class AgentBlock<TState>(
 
     private async ValueTask PublishUpdatesAsync(
         PipelineMessage<TState> message,
-        Guid runId,
         AgentResponseUpdate update,
         CancellationToken cancellationToken
     )
@@ -1612,31 +1445,9 @@ internal sealed class AgentBlock<TState>(
                 ),
                 _ => null,
             };
-
-            if (content is FunctionResultContent result)
-            {
-                onUpdate?.Invoke(
-                    config.StepId,
-                    runId,
-                    new AgentUpdate.ToolCompleted(
-                        result.CallId,
-                        result.Result?.ToString(),
-                        result.Exception?.Message
-                    )
-                );
-                continue;
-            }
-
             if (semantic is not null)
             {
-                onUpdate?.Invoke(config.StepId, runId, semantic);
-                if (message.RunContext is not null)
-                {
-                    await message.RunContext.ObserveAsync(
-                        new PipelineAgentUpdated(runId, config.StepId, semantic),
-                        cancellationToken
-                    );
-                }
+                await PublishUpdateAsync(message, semantic, cancellationToken);
             }
         }
     }
@@ -1646,8 +1457,7 @@ internal sealed class AgentBlock<TState>(
             chatClientFactory is null
                 ? chatClient
                 : chatClientFactory(
-                    message.Runtime.AgentProfiles.GetValueOrDefault(config.StepId)?.ProfileName
-                        ?? config.ProfileName
+                    message.Runtime.Step(config.StepId).Profile?.ProfileName ?? config.ProfileName
                 )
         );
 
@@ -1674,15 +1484,22 @@ internal sealed class AgentBlock<TState>(
         PipelineMessage<TState> message,
         AgentUpdate update,
         CancellationToken cancellationToken
+    ) =>
+        await ObserveAsync(
+            message,
+            new PipelineAgentUpdated(message.Runtime.RunId, config.StepId, update),
+            cancellationToken
+        );
+
+    private static async ValueTask ObserveAsync(
+        PipelineMessage<TState> message,
+        PipelineObservation observation,
+        CancellationToken cancellationToken
     )
     {
-        onUpdate?.Invoke(config.StepId, message.Runtime.RunId, update);
-        if (message.RunContext is not null)
+        if (message.RunContext is { } runContext)
         {
-            await message.RunContext.ObserveAsync(
-                new PipelineAgentUpdated(message.Runtime.RunId, config.StepId, update),
-                cancellationToken
-            );
+            await runContext.ObserveAsync(observation, cancellationToken);
         }
     }
 
@@ -1699,43 +1516,39 @@ internal sealed class AgentBlock<TState>(
 
         return message with
         {
-            Runtime = message
-                .Runtime.WithoutSession(config.StepId)
-                .WithoutToolInvocations(config.StepId)
-                .WithoutUsage(config.StepId)
-                .WithoutProfile(config.StepId),
+            Runtime = message.Runtime.WithStep(
+                config.StepId,
+                step => step.WithoutConversation() with { Profile = null }
+            ),
         };
     }
 
     private PipelineRuntime ApplyPreInvocationPolicies(PipelineMessage<TState> message)
     {
         var runtime = message.Runtime;
-        if (!config.ContinueSession)
-        {
-            runtime = runtime
-                .WithoutSession(config.StepId)
-                .WithoutToolInvocations(config.StepId)
-                .WithoutUsage(config.StepId);
-        }
-
         var profile =
             config.ProfilePolicy?.Invoke(message.State)
             ?? new AgentProfileSelection(config.ProfileName, "Configured agent profile.");
-        if (
-            runtime.AgentProfiles.TryGetValue(config.StepId, out var currentProfile)
-            && !string.Equals(
-                currentProfile.ProfileName,
-                profile.ProfileName,
-                StringComparison.Ordinal
-            )
-        )
-        {
-            runtime = runtime
-                .WithoutSession(config.StepId)
-                .WithoutToolInvocations(config.StepId)
-                .WithoutUsage(config.StepId);
-        }
-        return runtime.WithProfile(config.StepId, profile);
+        return runtime.WithStep(
+            config.StepId,
+            step =>
+                (
+                    !config.ContinueSession
+                    || (
+                        step.Profile is { } current
+                        && !string.Equals(
+                            current.ProfileName,
+                            profile.ProfileName,
+                            StringComparison.Ordinal
+                        )
+                    )
+                        ? step.WithoutConversation()
+                        : step
+                ) with
+                {
+                    Profile = profile,
+                }
+        );
     }
 
     private async Task<PipelineRuntime> CaptureSessionAsync(
@@ -1746,28 +1559,16 @@ internal sealed class AgentBlock<TState>(
     )
     {
         var serialized = await agent.SerializeSessionAsync(session, cancellationToken: ct);
-        return runtime.WithSession(config.StepId, serialized);
+        return runtime.WithStep(config.StepId, step => step with { Session = serialized });
     }
-
-    private IReadOnlyList<ToolInvocationObservationDescriptor> RestoreToolInvocations(
-        PipelineRuntime runtime
-    ) =>
-        runtime.AgentToolInvocations.TryGetValue(config.StepId, out var serialized)
-            ? serialized
-                .Deserialize<PersistedToolInvocation[]>()!
-                .Select(invocation => invocation.ToDescriptor())
-                .ToArray()
-            : [];
 
     private PipelineRuntime CaptureToolInvocations(
         PipelineRuntime runtime,
         ToolOutcomeCollector collector
     ) =>
-        runtime.WithToolInvocations(
+        runtime.WithStep(
             config.StepId,
-            JsonSerializer.SerializeToElement(
-                collector.ToolInvocations.Select(PersistedToolInvocation.FromDescriptor).ToArray()
-            )
+            step => step with { ToolInvocations = collector.ToolInvocations }
         );
 
     private async Task<AgentSession> RestoreOrCreateSessionAsync(
@@ -1776,196 +1577,12 @@ internal sealed class AgentBlock<TState>(
         CancellationToken ct
     )
     {
-        if (runtime.AgentSessions.TryGetValue(config.StepId, out var serialized))
+        if (runtime.Step(config.StepId).Session is { } serialized)
         {
             return await agent.DeserializeSessionAsync(serialized, cancellationToken: ct);
         }
 
         return await agent.CreateSessionAsync(ct);
-    }
-}
-
-internal sealed record PersistedToolInvocation(
-    string Name,
-    ToolEffect? Effect,
-    ToolEvidence? Evidence,
-    JsonElement Arguments,
-    ToolInvocationStatus Status,
-    PersistedProcessEvidence? Process
-)
-{
-    internal static PersistedToolInvocation FromDescriptor(
-        ToolInvocationObservationDescriptor invocation
-    ) =>
-        new(
-            invocation.Name,
-            invocation.Semantics?.Effect,
-            invocation.Semantics?.Evidence,
-            invocation.Arguments,
-            invocation.Status,
-            invocation.Result is ToolResultEvidenceDescriptor.Process process
-                ? new PersistedProcessEvidence(
-                    process.ExitCode,
-                    process.Stdout,
-                    process.Stderr,
-                    process.Duration,
-                    process.TimedOut,
-                    process.Truncated
-                )
-                : null
-        );
-
-    internal ToolInvocationObservationDescriptor ToDescriptor() =>
-        new(
-            Name,
-            Effect is { } effect ? new ToolSemantics(effect, Evidence ?? ToolEvidence.None) : null,
-            Arguments,
-            Status,
-            Process is { } process
-                ? new ToolResultEvidenceDescriptor.Process(
-                    process.ExitCode,
-                    process.Stdout,
-                    process.Stderr,
-                    process.Duration,
-                    process.TimedOut,
-                    process.Truncated
-                )
-                : null
-        );
-}
-
-internal sealed record PersistedProcessEvidence(
-    int ExitCode,
-    string Stdout,
-    string Stderr,
-    TimeSpan Duration,
-    bool TimedOut,
-    bool Truncated
-);
-
-internal sealed class ToolOutcomeCollector
-{
-    internal readonly record struct ToolInvocationReservation(int Ordinal);
-
-    private readonly object _sync = new();
-    private string? _lifecycleToolName;
-    private readonly Dictionary<
-        string,
-        (int Ordinal, ToolObservationDescriptor? Observation)
-    > _latestToolOutcomes = [];
-    private readonly List<ToolInvocationObservationDescriptor?> _toolInvocations = [];
-
-    public ToolOutcomeCollector(
-        IReadOnlyList<ToolInvocationObservationDescriptor>? priorInvocations = null
-    )
-    {
-        if (priorInvocations is not null)
-        {
-            _toolInvocations.AddRange(priorInvocations);
-        }
-    }
-
-    public bool HasLifecycleCall
-    {
-        get
-        {
-            lock (_sync)
-            {
-                return _lifecycleToolName is not null;
-            }
-        }
-    }
-
-    public void RecordLifecycleCall(string toolName)
-    {
-        lock (_sync)
-        {
-            _lifecycleToolName ??= toolName;
-        }
-    }
-
-    public void RecordSuccessfulToolCall(
-        ToolInvocationReservation reservation,
-        ToolObservationDescriptor observation
-    )
-    {
-        lock (_sync)
-        {
-            RecordToolOutcome(reservation, observation.Name, observation);
-        }
-    }
-
-    public void RecordFailedToolCall(ToolInvocationReservation reservation, string toolName)
-    {
-        lock (_sync)
-        {
-            RecordToolOutcome(reservation, toolName, null);
-        }
-    }
-
-    private void RecordToolOutcome(
-        ToolInvocationReservation reservation,
-        string toolName,
-        ToolObservationDescriptor? observation
-    )
-    {
-        if (
-            !_latestToolOutcomes.TryGetValue(toolName, out var latest)
-            || reservation.Ordinal > latest.Ordinal
-        )
-        {
-            _latestToolOutcomes[toolName] = (reservation.Ordinal, observation);
-        }
-    }
-
-    public ToolInvocationReservation ReserveToolInvocation()
-    {
-        lock (_sync)
-        {
-            var reservation = new ToolInvocationReservation(_toolInvocations.Count);
-            _toolInvocations.Add(null);
-            return reservation;
-        }
-    }
-
-    public void CompleteToolInvocation(
-        ToolInvocationReservation reservation,
-        ToolInvocationObservationDescriptor observation
-    )
-    {
-        lock (_sync)
-        {
-            _toolInvocations[reservation.Ordinal] = observation;
-        }
-    }
-
-    public IReadOnlySet<ToolObservationDescriptor> SuccessfulTools
-    {
-        get
-        {
-            lock (_sync)
-            {
-                return _latestToolOutcomes
-                    .Values.Select(value => value.Observation)
-                    .Where(observation => observation is not null)
-                    .Select(observation => observation!)
-                    .ToHashSet();
-            }
-        }
-    }
-
-    public IReadOnlyList<ToolInvocationObservationDescriptor> ToolInvocations
-    {
-        get
-        {
-            lock (_sync)
-            {
-                return _toolInvocations
-                    .Where(observation => observation is not null)
-                    .Select(observation => observation!)
-                    .ToArray();
-            }
-        }
     }
 }
 

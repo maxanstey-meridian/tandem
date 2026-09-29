@@ -28,12 +28,7 @@ public sealed class InProcessPipelineRunnerTests
         var pipeline = Pipeline.Start(increment, "in-process-completion").Build(increment);
         var runId = Guid.CreateVersion7();
 
-        var output = await new InProcessPipelineRunner().RunAsync(
-            pipeline,
-            runId,
-            new RunnerState(1),
-            CancellationToken.None
-        );
+        var output = await InProcessPipelineRunner.RunAsync(pipeline, runId, new RunnerState(1));
 
         output.State.Count.Should().Be(2);
         output.Runtime.RunId.Should().Be(runId);
@@ -163,11 +158,10 @@ public sealed class InProcessPipelineRunnerTests
         var failure = new DeclaredFailureStage();
         var pipeline = Pipeline.Start(failure, "in-process-declared-failure").Build(failure);
 
-        var output = await new InProcessPipelineRunner().RunAsync(
+        var output = await InProcessPipelineRunner.RunAsync(
             pipeline,
             Guid.CreateVersion7(),
-            new RunnerState(1),
-            CancellationToken.None
+            new RunnerState(1)
         );
 
         output.Status.Should().Be(PipelineRunStatus.Failed);
@@ -379,12 +373,7 @@ public sealed class InProcessPipelineRunnerTests
         var pipeline = Pipeline.Start(fault, "in-process-fault").Build(fault);
 
         var act = () =>
-            new InProcessPipelineRunner().RunAsync(
-                pipeline,
-                Guid.CreateVersion7(),
-                new RunnerState(0),
-                CancellationToken.None
-            );
+            InProcessPipelineRunner.RunAsync(pipeline, Guid.CreateVersion7(), new RunnerState(0));
 
         var exception = await act.Should().ThrowAsync<PipelineRunException>();
         exception.Which.InnerException.Should().BeOfType<ProbeException>();
@@ -404,12 +393,11 @@ public sealed class InProcessPipelineRunnerTests
         });
 
         var act = () =>
-            new InProcessPipelineRunner().RunAsync(
+            InProcessPipelineRunner.RunAsync(
                 pipeline,
                 Guid.CreateVersion7(),
                 new RunnerState(0),
-                observer,
-                CancellationToken.None
+                observer: observer
             );
 
         var exception = await act.Should().ThrowAsync<PipelineRunException>();
@@ -430,12 +418,11 @@ public sealed class InProcessPipelineRunnerTests
         });
 
         var act = () =>
-            new InProcessPipelineRunner().RunAsync(
+            InProcessPipelineRunner.RunAsync(
                 pipeline,
                 Guid.CreateVersion7(),
                 new RunnerState(0),
-                observer,
-                CancellationToken.None
+                observer: observer
             );
 
         var exception = await act.Should().ThrowAsync<PipelineRunException>();
@@ -452,12 +439,12 @@ public sealed class InProcessPipelineRunnerTests
         var observer = new InlineObserver(observation => observations.Add(observation));
 
         var act = () =>
-            new InProcessPipelineRunner().RunAsync(
+            InProcessPipelineRunner.RunAsync(
                 pipeline,
                 Guid.CreateVersion7(),
                 new RunnerState(0),
-                observer,
-                cancellation.Token
+                observer: observer,
+                cancellationToken: cancellation.Token
             );
 
         await act.Should().ThrowAsync<OperationCanceledException>();
@@ -484,12 +471,12 @@ public sealed class InProcessPipelineRunnerTests
         });
 
         var act = () =>
-            new InProcessPipelineRunner().RunAsync(
+            InProcessPipelineRunner.RunAsync(
                 pipeline,
                 Guid.CreateVersion7(),
                 new RunnerState(0),
-                observer,
-                cancellation.Token
+                observer: observer,
+                cancellationToken: cancellation.Token
             );
 
         await act.Should().ThrowAsync<OperationCanceledException>();
@@ -506,13 +493,12 @@ public sealed class InProcessPipelineRunnerTests
         var observer = new InlineObserver(observation => observations.Add(observation));
 
         var act = () =>
-            new InProcessPipelineRunner().RunAsync(
+            InProcessPipelineRunner.RunAsync(
                 pipeline,
                 Guid.CreateVersion7(),
                 new RunnerState(0),
-                handler,
-                observer,
-                CancellationToken.None
+                requests: handler,
+                observer: observer
             );
 
         await act.Should().ThrowAsync<IOException>().WithMessage("handler failed");
@@ -547,13 +533,12 @@ public sealed class InProcessPipelineRunnerTests
             new ProbeAnswer("accepted")
         ));
 
-        var result = await new InProcessPipelineRunner().RunAsync(
+        var result = await InProcessPipelineRunner.RunAsync(
             pipeline,
             Guid.CreateVersion7(),
             new RunnerState(0),
-            handler,
-            observer,
-            CancellationToken.None
+            requests: handler,
+            observer: observer
         );
 
         result.State.Answer.Should().Be("accepted");
@@ -591,13 +576,12 @@ public sealed class InProcessPipelineRunnerTests
         var observer = new FailingPersistenceObserver<PipelineInteractionRequestedObservation>();
 
         var run = async () =>
-            await new InProcessPipelineRunner().RunAsync(
+            await InProcessPipelineRunner.RunAsync(
                 pipeline,
                 Guid.CreateVersion7(),
                 new RunnerState(0),
-                handler,
-                observer,
-                CancellationToken.None
+                requests: handler,
+                observer: observer
             );
 
         await run.Should().ThrowAsync<IOException>().WithMessage("persistence failed");
@@ -618,13 +602,12 @@ public sealed class InProcessPipelineRunnerTests
         var observer = new FailingPersistenceObserver<PipelineInteractionAnsweredObservation>();
 
         var run = async () =>
-            await new InProcessPipelineRunner().RunAsync(
+            await InProcessPipelineRunner.RunAsync(
                 pipeline,
                 Guid.CreateVersion7(),
                 new RunnerState(0),
-                handler,
-                observer,
-                CancellationToken.None
+                requests: handler,
+                observer: observer
             );
 
         await run.Should().ThrowAsync<IOException>().WithMessage("persistence failed");
@@ -656,13 +639,12 @@ public sealed class InProcessPipelineRunnerTests
             new ProbeAnswer("accepted")
         ));
 
-        var result = await new InProcessPipelineRunner().RunAsync(
+        var result = await InProcessPipelineRunner.RunAsync(
             pipeline,
             Guid.CreateVersion7(),
             new RunnerState(0),
-            handler,
-            new InlinePersistenceObserver(observations.Add),
-            CancellationToken.None
+            requests: handler,
+            observer: new InlinePersistenceObserver(observations.Add)
         );
 
         result.State.Answer.Should().Be("accepted");
@@ -707,12 +689,11 @@ public sealed class InProcessPipelineRunnerTests
             );
         });
 
-        var output = await new InProcessPipelineRunner().RunAsync(
+        var output = await InProcessPipelineRunner.RunAsync(
             pipeline,
             Guid.CreateVersion7(),
             new RunnerState(3),
-            handler,
-            CancellationToken.None
+            requests: handler
         );
 
         observed.Should().NotBeNull();
@@ -748,13 +729,12 @@ public sealed class InProcessPipelineRunnerTests
         var observer = new InlineObserver(observation => observations.Add(observation));
 
         var act = () =>
-            new InProcessPipelineRunner().RunAsync(
+            InProcessPipelineRunner.RunAsync(
                 pipeline,
                 Guid.CreateVersion7(),
                 new RunnerState(3),
-                handler,
-                observer,
-                CancellationToken.None
+                requests: handler,
+                observer: observer
             );
 
         await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*another-request*");
@@ -772,12 +752,11 @@ public sealed class InProcessPipelineRunnerTests
     public async Task WaitingRun_DoesNotPreventAnotherRunFromCompleting()
     {
         await using var broker = new InMemoryExternalRequestBroker();
-        var waitingRun = new InProcessPipelineRunner().RunAsync(
+        var waitingRun = InProcessPipelineRunner.RunAsync(
             BuildInteractionPipeline("in-process-waiting-run"),
             Guid.CreateVersion7(),
             new RunnerState(4),
-            broker,
-            CancellationToken.None
+            requests: broker
         );
         var pending = await WaitForPendingAsync(broker);
         var increment = new IncrementStage();
@@ -785,11 +764,10 @@ public sealed class InProcessPipelineRunnerTests
             .Start(increment, "in-process-independent-run")
             .Build(increment);
 
-        var independentOutput = await new InProcessPipelineRunner().RunAsync(
+        var independentOutput = await InProcessPipelineRunner.RunAsync(
             independentPipeline,
             Guid.CreateVersion7(),
-            new RunnerState(10),
-            CancellationToken.None
+            new RunnerState(10)
         );
 
         independentOutput.State.Count.Should().Be(11);
@@ -810,29 +788,27 @@ public sealed class InProcessPipelineRunnerTests
     public async Task ConcurrentRuns_UsingSameInteractivePipelineRemainIsolated()
     {
         var pipeline = BuildInteractionPipeline("same-pipeline-concurrent-runs");
-        var firstRun = new InProcessPipelineRunner().RunAsync(
+        var firstRun = InProcessPipelineRunner.RunAsync(
             pipeline,
             Guid.CreateVersion7(),
             new RunnerState(1),
-            new InlineExternalRequestHandler(request => new ExternalRequestAnswer(
+            requests: new InlineExternalRequestHandler(request => new ExternalRequestAnswer(
                 request.RunId,
                 request.RequestId,
                 typeof(ProbeAnswer),
                 new ProbeAnswer("first")
-            )),
-            CancellationToken.None
+            ))
         );
-        var secondRun = new InProcessPipelineRunner().RunAsync(
+        var secondRun = InProcessPipelineRunner.RunAsync(
             pipeline,
             Guid.CreateVersion7(),
             new RunnerState(2),
-            new InlineExternalRequestHandler(request => new ExternalRequestAnswer(
+            requests: new InlineExternalRequestHandler(request => new ExternalRequestAnswer(
                 request.RunId,
                 request.RequestId,
                 typeof(ProbeAnswer),
                 new ProbeAnswer("second")
-            )),
-            CancellationToken.None
+            ))
         );
 
         var outputs = await Task.WhenAll(firstRun, secondRun);
@@ -847,12 +823,12 @@ public sealed class InProcessPipelineRunnerTests
         var pipeline = BuildInteractionPipeline("cancel-pending-interaction");
         await using var broker = new InMemoryExternalRequestBroker();
         using var cancellation = new CancellationTokenSource();
-        var run = new InProcessPipelineRunner().RunAsync(
+        var run = InProcessPipelineRunner.RunAsync(
             pipeline,
             Guid.CreateVersion7(),
             new RunnerState(1),
-            broker,
-            cancellation.Token
+            requests: broker,
+            cancellationToken: cancellation.Token
         );
         await WaitForPendingAsync(broker);
 
@@ -939,13 +915,7 @@ public sealed class InProcessPipelineRunnerTests
             };
         });
 
-        await new InProcessPipelineRunner().RunAsync(
-            pipeline,
-            runId,
-            initial.State,
-            handler,
-            CancellationToken.None
-        );
+        await InProcessPipelineRunner.RunAsync(pipeline, runId, initial.State, requests: handler);
 
         invocationCount.Should().Be(2);
 

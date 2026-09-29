@@ -29,114 +29,22 @@ internal interface IExternalRequestHandler
     );
 }
 
-internal sealed class InProcessPipelineRunner
+internal static class InProcessPipelineRunner
 {
-    public Task<PipelineMessage<TState>> RunAsync<TState>(
+    public static async Task<PipelineMessage<TState>> RunAsync<TState>(
         Pipeline<TState> pipeline,
         Guid runId,
         TState initialState,
-        CancellationToken cancellationToken
-    ) =>
-        RunAsync(
-            pipeline,
-            runId,
-            initialState,
-            RejectExternalRequests.Instance,
-            observer: null,
-            unitOfWork: null,
-            ledger: null,
-            cancellationToken
-        );
-
-    public Task<PipelineMessage<TState>> RunAsync<TState>(
-        Pipeline<TState> pipeline,
-        Guid runId,
-        TState initialState,
-        IPipelineObserver? observer,
-        CancellationToken cancellationToken
-    ) =>
-        RunAsync(
-            pipeline,
-            runId,
-            initialState,
-            RejectExternalRequests.Instance,
-            observer,
-            unitOfWork: null,
-            ledger: null,
-            cancellationToken
-        );
-
-    public Task<PipelineMessage<TState>> RunAsync<TState>(
-        Pipeline<TState> pipeline,
-        Guid runId,
-        TState initialState,
-        IPipelineObserver? observer,
-        IPipelineAcceptanceUnitOfWork? unitOfWork,
-        IPipelineLedgerReader? ledger,
-        CancellationToken cancellationToken
-    ) =>
-        RunAsync(
-            pipeline,
-            runId,
-            initialState,
-            RejectExternalRequests.Instance,
-            observer,
-            unitOfWork,
-            ledger,
-            cancellationToken
-        );
-
-    public async Task<PipelineMessage<TState>> RunAsync<TState>(
-        Pipeline<TState> pipeline,
-        Guid runId,
-        TState initialState,
-        IExternalRequestHandler requests,
-        CancellationToken cancellationToken
-    ) =>
-        await RunAsync(
-            pipeline,
-            runId,
-            initialState,
-            requests,
-            observer: null,
-            unitOfWork: null,
-            ledger: null,
-            cancellationToken
-        );
-
-    public async Task<PipelineMessage<TState>> RunAsync<TState>(
-        Pipeline<TState> pipeline,
-        Guid runId,
-        TState initialState,
-        IExternalRequestHandler requests,
-        IPipelineObserver? observer,
-        CancellationToken cancellationToken
-    ) =>
-        await RunAsync(
-            pipeline,
-            runId,
-            initialState,
-            requests,
-            observer,
-            unitOfWork: null,
-            ledger: null,
-            cancellationToken
-        );
-
-    public async Task<PipelineMessage<TState>> RunAsync<TState>(
-        Pipeline<TState> pipeline,
-        Guid runId,
-        TState initialState,
-        IExternalRequestHandler requests,
-        IPipelineObserver? observer,
-        IPipelineAcceptanceUnitOfWork? unitOfWork,
-        IPipelineLedgerReader? ledger,
-        CancellationToken cancellationToken
+        IExternalRequestHandler? requests = null,
+        IPipelineObserver? observer = null,
+        IPipelineAcceptanceUnitOfWork? unitOfWork = null,
+        IPipelineLedgerReader? ledger = null,
+        CancellationToken cancellationToken = default
     )
     {
         ArgumentNullException.ThrowIfNull(pipeline);
         ArgumentNullException.ThrowIfNull(initialState);
-        ArgumentNullException.ThrowIfNull(requests);
+        requests ??= RejectExternalRequests.Instance;
 
         var initialMessage = new PipelineMessage<TState>(
             PipelineRuntime.Create(runId),
@@ -267,13 +175,9 @@ internal sealed class InProcessPipelineRunner
         {
             await Task.WhenAll(pendingResponses);
         }
-        catch (Exception ex) when (failure is not null)
-        {
-            _ = ex;
-        }
         catch (Exception ex)
         {
-            failure = ex;
+            failure ??= ex;
         }
         runCancellation.Cancel();
         if (handlerFailure.Task.IsCompletedSuccessfully)

@@ -393,24 +393,12 @@ internal static class PipelineObservationPublisher
             var output = await execute();
             if (mode is PipelineObservationMode.Full or PipelineObservationMode.CompleteOnly)
             {
-                var outcome = ToOutcome(
+                await ObserveCompletedAsync(
+                    runContext,
                     stepId,
                     output,
-                    TimeProvider.System.GetElapsedTime(started)
-                );
-                PipelineAcceptedValue? accepted = null;
-                if (runContext.ShouldPersist(stepId))
-                {
-                    accepted = acceptedValue?.Invoke(output);
-                    if (accepted is null && outcome.Kind == StandardOutcomeKinds.Failed)
-                    {
-                        accepted = PipelineAcceptedValue.FromPayload<FailureEvidence>(
-                            outcome.Payload
-                        );
-                    }
-                }
-                await runContext.ObserveAsync(
-                    new PipelineStepCompleted(runContext.RunId, stepId, outcome, accepted),
+                    TimeProvider.System.GetElapsedTime(started),
+                    acceptedValue,
                     cancellationToken
                 );
             }
@@ -432,6 +420,30 @@ internal static class PipelineObservationPublisher
             );
             throw;
         }
+    }
+
+    public static async ValueTask ObserveCompletedAsync<TOutput>(
+        PipelineRunContext runContext,
+        string stepId,
+        TOutput output,
+        TimeSpan elapsed,
+        Func<TOutput, PipelineAcceptedValue?>? acceptedValue,
+        CancellationToken cancellationToken
+    )
+    {
+        var outcome = ToOutcome(stepId, output, elapsed);
+        var accepted = runContext.ShouldPersist(stepId)
+            ? acceptedValue?.Invoke(output)
+                ?? (
+                    outcome.Kind == StandardOutcomeKinds.Failed
+                        ? PipelineAcceptedValue.FromPayload<FailureEvidence>(outcome.Payload)
+                        : null
+                )
+            : null;
+        await runContext.ObserveAsync(
+            new PipelineStepCompleted(runContext.RunId, stepId, outcome, accepted),
+            cancellationToken
+        );
     }
 
     private static async ValueTask ObserveTerminalFailureAsync(

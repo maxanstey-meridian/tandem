@@ -355,19 +355,11 @@ public sealed class AgentBuilder<TState>
         ArgumentException.ThrowIfNullOrWhiteSpace(output.ValueType);
         ArgumentNullException.ThrowIfNull(output.Validate);
         ArgumentNullException.ThrowIfNull(apply);
-        if (
-            output.JsonSchema.ValueKind is not JsonValueKind.Object
-            || !output.JsonSchema.TryGetProperty("type", out var rootType)
-            || rootType.ValueKind is not JsonValueKind.String
-            || rootType.GetString() != "object"
-        )
-        {
-            throw new ArgumentException(
-                "Output JSON schema must declare an object root with type 'object'.",
-                nameof(output)
-            );
-        }
-        var jsonSchema = output.JsonSchema.Clone();
+        var jsonSchema = CapabilityContract.RequireObjectRoot(
+            output.JsonSchema,
+            "Output",
+            nameof(output)
+        );
 
         _structuredOutput = new AgentStructuredOutputDescriptor<TState>(
             (response, state) => ParseJsonOutput(response, state, output),
@@ -391,9 +383,7 @@ public sealed class AgentBuilder<TState>
         JsonElement candidate;
         try
         {
-            var json = AgentStructuredJsonExtractor.Extract(response);
-            using var document = JsonDocument.Parse(json);
-            candidate = document.RootElement.Clone();
+            candidate = AgentStructuredJsonExtractor.Extract(response);
         }
         catch (Exception exception) when (exception is InvalidOperationException or JsonException)
         {
@@ -401,15 +391,6 @@ public sealed class AgentBuilder<TState>
                 null,
                 [new AgentStructuredOutputProblem("$", exception.Message)],
                 response
-            );
-        }
-        if (candidate.ValueKind is not JsonValueKind.Object)
-        {
-            return new AgentStructuredOutputResult<TState>(
-                null,
-                [new AgentStructuredOutputProblem("$", "Response must contain a JSON object.")],
-                response,
-                candidate
             );
         }
 
@@ -682,7 +663,8 @@ public sealed class AgentBuilder<TState>
             _stateGuards,
             _latchedGates,
             _skills,
-            _contextBudget
+            _contextBudget,
+            _modelRequestOptions
         );
 
         return new AgentDefinition<TState>(
@@ -694,42 +676,11 @@ public sealed class AgentBuilder<TState>
                         StepId = id,
                     },
                     _chatClient,
-                    onUpdate: null,
                     _toolInterceptor,
                     _configureChatOptions,
-                    _chatClientFactory,
-                    ConfigureModelRequestOptions
+                    _chatClientFactory
                 )
             )
         );
-    }
-
-    private void ConfigureModelRequestOptions(ChatOptions options)
-    {
-        if (_modelRequestOptions is not { } request)
-        {
-            return;
-        }
-
-        options.Reasoning = request.ReasoningEffort is { } effort
-            ? new ReasoningOptions
-            {
-                Effort = effort switch
-                {
-                    AgentReasoningEffort.None => ReasoningEffort.None,
-                    AgentReasoningEffort.Low => ReasoningEffort.Low,
-                    AgentReasoningEffort.Medium => ReasoningEffort.Medium,
-                    AgentReasoningEffort.High => ReasoningEffort.High,
-                    _ => throw new InvalidOperationException("Unknown reasoning effort."),
-                },
-            }
-            : null;
-        if (request.ReasoningMaxTokens is { } reasoningMaxTokens)
-        {
-            options.AdditionalProperties ??= [];
-            options.AdditionalProperties["reasoningMaxTokens"] = reasoningMaxTokens;
-        }
-        options.Temperature = request.Temperature;
-        options.MaxOutputTokens = request.MaxOutputTokens;
     }
 }

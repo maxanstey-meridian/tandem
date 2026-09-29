@@ -12,7 +12,7 @@ public sealed class AgentSkillTests
     {
         var effects = new ToolEffectRegistry();
 
-        AgentSkillRuntime.RegisterToolEffects(effects);
+        BuiltInAgentTools.Register(effects, BuiltInAgentTools.Skills);
 
         var foundLoad = effects.TryGet(AgentSkillsProvider.LoadSkillToolName, out var load);
         foundLoad.Should().BeTrue();

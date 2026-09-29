@@ -87,7 +87,7 @@ internal sealed class CollectionDescriptor<TState, TItem, TResult>(
     public int Max => max;
 
     internal override ExecutorBinding Bind() =>
-        new GeneratedStateStepExecutor<TState>(id, ExecuteAsync).Bind();
+        new GeneratedStateStepDescriptor<TState>(id, ExecuteAsync).Bind();
 
     private async ValueTask<TState> ExecuteAsync(TState state, CancellationToken cancellationToken)
     {

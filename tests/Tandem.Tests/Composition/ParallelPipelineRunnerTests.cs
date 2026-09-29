@@ -370,8 +370,7 @@ public sealed class ParallelPipelineRunnerTests
                 new PipelineParallelBranchInspection("one", 0, "first"),
                 new PipelineParallelBranchInspection("two", 1, "second")
             );
-        inspection.Mermaid.Should().Contain("|\"one\"|").And.Contain("|\"two\"|");
-        inspection.Dot.Should().Contain("label=\"one\"").And.Contain("label=\"two\"");
+        inspection.ToMermaid().Should().Contain("|\"one\"|").And.Contain("|\"two\"|");
     }
 
     [Fact]
@@ -745,6 +744,25 @@ public sealed class ParallelPipelineRunnerTests
             .Should()
             .Throw<InvalidOperationException>()
             .WithMessage("*conflicting changes*shared*");
+    }
+
+    [Fact]
+    public void RuntimeMergeKeepsEachBranchsOwnStepAndAgreeingSessions()
+    {
+        using var session = JsonDocument.Parse("""{"history":[]}""");
+        var baseline = PipelineRuntime.Create(Guid.CreateVersion7());
+        var left = baseline
+            .IncrementInvocations("left")
+            .WithStep("shared", step => step with { Session = session.RootElement.Clone() });
+        var right = baseline
+            .IncrementInvocations("right")
+            .WithStep("shared", step => step with { Session = session.RootElement.Clone() });
+
+        var merged = PipelineRuntime.Merge(baseline, [left, right]);
+
+        merged.Step("left").Count.Should().Be(1);
+        merged.Step("right").Count.Should().Be(1);
+        merged.Step("shared").Session.Should().NotBeNull();
     }
 
     public sealed record ParallelState(List<string> Values);

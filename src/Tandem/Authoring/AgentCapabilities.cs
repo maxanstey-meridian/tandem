@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FluentValidation;
 using Microsoft.Extensions.AI;
+using Tandem.Infrastructure;
 
 namespace Tandem;
 
@@ -84,21 +85,54 @@ public sealed class AgentCapability<TState, TRequest> : AgentCapability<TState>
         Func<CapabilityAcceptanceContext<TState, TRequest>, CancellationToken, ValueTask>? accept
     )
     {
-        var capabilityId = $"capability:{typeof(TState).FullName}:{name}";
-        return new AgentCapabilityDescriptor<TState>(
-            capabilityId,
+        var contract = new CapabilityContract<TState, TRequest>(
+            CapabilityContract.IdFor<TState>(name),
             name,
-            invocation => new CapabilityFunction<TState, TRequest>(
-                capabilityId,
-                name,
-                description,
-                validator,
-                contextualValidator,
-                summarize,
-                apply,
-                accept,
-                invocation
-            )
+            description,
+            AIJsonUtilities.CreateJsonSchema(
+                typeof(TRequest),
+                serializerOptions: TandemJson.TypedContract
+            ),
+            typeof(TRequest).FullName ?? typeof(TRequest).Name,
+            async (payload, state, cancellationToken) =>
+            {
+                TRequest request;
+                try
+                {
+                    request =
+                        payload.Deserialize<TRequest>(TandemJson.TypedContract)
+                        ?? throw new JsonException("Request was null.");
+                }
+                catch (Exception ex) when (ex is JsonException or NotSupportedException)
+                {
+                    return new(
+                        null,
+                        [
+                            new ToolProblem(null, ex.Message),
+                            new ToolProblem(null, $"Received arguments: {payload.GetRawText()}"),
+                        ]
+                    );
+                }
+
+                var problems = ToolProblem.From(
+                    await validator.ValidateAsync(request, cancellationToken)
+                );
+                if (problems.Count == 0 && contextualValidator(state) is { } contextual)
+                {
+                    problems = ToolProblem.From(
+                        await contextual.ValidateAsync(request, cancellationToken)
+                    );
+                }
+                return new(request, problems);
+            },
+            summarize,
+            apply,
+            ObserveTypedRequest: true
+        );
+        return new AgentCapabilityDescriptor<TState>(
+            contract.CapabilityId,
+            name,
+            invocation => new CapabilityFunction<TState, TRequest>(contract, accept, invocation)
         );
     }
 }
@@ -136,163 +170,134 @@ internal sealed record CapabilityAcceptanceContext<TState, TRequest>(
     TRequest Request
 )
 {
-    internal IReadOnlyList<Infrastructure.ToolInvocationObservationDescriptor> ToolInvocations { get; init; } =
-    [];
+    internal IReadOnlyList<ToolInvocationObservationDescriptor> ToolInvocations { get; init; } = [];
     internal string AcceptedCallId => $"{RunId:N}:{StepId}:{InvocationId}:{CapabilityId}";
 }
 
-internal sealed class CapabilityFunction<TState, TRequest> : AIFunction
-    where TRequest : class
+internal static class CapabilityContract
 {
-    private static readonly JsonSerializerOptions _jsonOptions = TandemJson.TypedContract;
-    private readonly string _capabilityId;
-    private readonly string _name;
-    private readonly string _description;
-    private readonly IValidator<TRequest> _validator;
-    private readonly Func<TState, IValidator<TRequest>?> _contextualValidator;
-    private readonly Func<TRequest, string> _summarize;
-    private readonly Func<TState, TRequest, TState> _apply;
-    private readonly Func<
-        CapabilityAcceptanceContext<TState, TRequest>,
-        CancellationToken,
-        ValueTask
-    >? _accept;
-    private readonly CapabilityInvocationState<TState> _invocation;
-    private readonly JsonElement _schema;
+    public static string IdFor<TState>(string toolName) =>
+        $"capability:{typeof(TState).FullName}:{toolName}";
 
-    internal CapabilityFunction(
-        string capabilityId,
-        string name,
-        string description,
-        IValidator<TRequest> validator,
-        Func<TState, IValidator<TRequest>?> contextualValidator,
-        Func<TRequest, string> summarize,
-        Func<TState, TRequest, TState> apply,
-        Func<CapabilityAcceptanceContext<TState, TRequest>, CancellationToken, ValueTask>? accept,
-        CapabilityInvocationState<TState> invocation
+    public static JsonElement RequireObjectRoot(
+        JsonElement schema,
+        string contract,
+        string parameter
     )
     {
-        _capabilityId = capabilityId;
-        _name = name;
-        _description = description;
-        _validator = validator;
-        _contextualValidator = contextualValidator;
-        _summarize = summarize;
-        _apply = apply;
-        _accept = accept;
-        _invocation = invocation;
-        _schema = CreateInputSchema();
+        if (
+            schema.ValueKind is not JsonValueKind.Object
+            || !schema.TryGetProperty("type", out var rootType)
+            || rootType.ValueKind is not JsonValueKind.String
+            || rootType.GetString() != "object"
+        )
+        {
+            throw new ArgumentException(
+                $"{contract} JSON schema must declare an object root with type 'object'.",
+                parameter
+            );
+        }
+        return schema.Clone();
     }
+}
 
-    public override string Name => _name;
-    public override string Description => _description;
-    public override JsonElement JsonSchema => _schema;
-    public override JsonSerializerOptions JsonSerializerOptions => _jsonOptions;
+internal sealed record CapabilityRequest<TRequest>(
+    TRequest? Request,
+    IReadOnlyList<ToolProblem> Problems
+);
+
+/// <summary>
+/// One capability contract for typed and JSON capabilities: parse (deserialise and validate,
+/// or validate raw JSON), summarise, then accept and apply.
+/// </summary>
+internal sealed record CapabilityContract<TState, TRequest>(
+    string CapabilityId,
+    string Name,
+    string Description,
+    JsonElement Schema,
+    string RequestType,
+    Func<JsonElement, TState, CancellationToken, ValueTask<CapabilityRequest<TRequest>>> Parse,
+    Func<TRequest, string> Summarize,
+    Func<TState, TRequest, TState> Apply,
+    bool ObserveTypedRequest
+);
+
+internal sealed class CapabilityFunction<TState, TRequest>(
+    CapabilityContract<TState, TRequest> contract,
+    Func<CapabilityAcceptanceContext<TState, TRequest>, CancellationToken, ValueTask>? accept,
+    CapabilityInvocationState<TState> invocation
+) : AIFunction
+{
+    public override string Name => contract.Name;
+    public override string Description => contract.Description;
+    public override JsonElement JsonSchema => contract.Schema;
+    public override JsonSerializerOptions JsonSerializerOptions => TandemJson.TypedContract;
 
     protected override async ValueTask<object?> InvokeCoreAsync(
         AIFunctionArguments arguments,
         CancellationToken cancellationToken
     )
     {
-        var payload = JsonSerializer.SerializeToElement(arguments, _jsonOptions);
-        TRequest request;
-        try
+        var payload = JsonSerializer.SerializeToElement(arguments, TandemJson.TypedContract);
+        var parsed = await contract.Parse(payload, invocation.State, cancellationToken);
+        if (parsed.Problems.Count > 0)
         {
-            request =
-                payload.Deserialize<TRequest>(_jsonOptions)
-                ?? throw new JsonException("Request was null.");
+            return ToolError.InvalidCall(contract.Name, parsed.Problems);
         }
-        catch (Exception ex) when (ex is JsonException or NotSupportedException)
-        {
-            return Error(
-                $"invalid {_name} call",
-                [ex.Message, $"Received arguments: {payload.GetRawText()}"]
-            );
-        }
-
-        var validation = await _validator.ValidateAsync(request, cancellationToken);
-        if (!validation.IsValid)
-        {
-            return Error(
-                $"invalid {_name} call",
-                validation.Errors.Select(error => error.ErrorMessage)
-            );
-        }
-        if (_contextualValidator(_invocation.State) is { } contextualValidator)
-        {
-            validation = await contextualValidator.ValidateAsync(request, cancellationToken);
-            if (!validation.IsValid)
-            {
-                return Error(
-                    $"invalid {_name} call",
-                    validation.Errors.Select(error => error.ErrorMessage)
-                );
-            }
-        }
+        var request = parsed.Request!;
 
         string summary;
         try
         {
-            summary = _summarize(request);
+            summary = contract.Summarize(request);
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException)
         {
-            return Error($"invalid {_name} call", [ex.Message]);
+            return ToolError.InvalidCall(contract.Name, [new ToolProblem(null, ex.Message)]);
         }
 
         var context = new CapabilityAcceptanceContext<TState, TRequest>(
-            _invocation.RunId,
-            _invocation.StepId,
-            _invocation.InvocationId,
-            _capabilityId,
-            _invocation.State,
+            invocation.RunId,
+            invocation.StepId,
+            invocation.InvocationId,
+            contract.CapabilityId,
+            invocation.State,
             request
         )
         {
-            ToolInvocations = _invocation.ToolInvocations,
+            ToolInvocations = invocation.ToolInvocations,
         };
         return await CapabilityAcceptanceRuntime.AcceptAsync(
-            _invocation,
-            _capabilityId,
-            _name,
-            typeof(TRequest).FullName ?? typeof(TRequest).Name,
-            payload,
-            summary,
-            acceptedPayload => new CapabilityAccepted<TRequest>(
-                _invocation.RunId,
-                _invocation.StepId,
-                _invocation.InvocationId,
-                _capabilityId,
-                _name,
-                $"{_invocation.RunId:N}:{_invocation.StepId}:{_invocation.InvocationId}:{_capabilityId}",
+            invocation,
+            new PipelineCapabilityAccepted(
+                invocation.RunId,
+                invocation.StepId,
+                invocation.InvocationId,
+                contract.CapabilityId,
+                contract.Name,
+                context.AcceptedCallId,
                 summary,
-                typeof(TRequest).FullName ?? typeof(TRequest).Name,
-                acceptedPayload,
-                request
+                contract.RequestType,
+                payload
             ),
-            _accept is null ? null : ct => _accept(context, ct),
-            state => _apply(state, request),
+            accepted =>
+                contract.ObserveTypedRequest
+                    ? new CapabilityAccepted<TRequest>(
+                        accepted.RunId,
+                        accepted.StepId,
+                        accepted.InvocationId,
+                        accepted.CapabilityId,
+                        accepted.CapabilityName,
+                        accepted.AcceptedCallId,
+                        accepted.Summary,
+                        accepted.RequestType,
+                        accepted.Payload,
+                        request
+                    )
+                    : accepted,
+            accept is null ? null : ct => accept(context, ct),
+            state => contract.Apply(state, request),
             cancellationToken
         );
     }
-
-    private static JsonElement Error(string error, IEnumerable<string> problems) =>
-        JsonSerializer.SerializeToElement(
-            new
-            {
-                isError = true,
-                error,
-                problems = problems.ToArray(),
-            },
-            _jsonOptions
-        );
-
-    private static JsonElement CreateInputSchema() =>
-        AIJsonUtilities.CreateJsonSchema(
-            typeof(TRequest),
-            description: null,
-            hasDefaultValue: false,
-            defaultValue: null,
-            _jsonOptions
-        );
 }
