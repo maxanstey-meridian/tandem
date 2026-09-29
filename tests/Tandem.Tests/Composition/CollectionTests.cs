@@ -15,7 +15,16 @@ public sealed class CollectionTests
         var active = 0;
         var peak = 0;
         var applied = 0;
+        var completed = 0;
         var sync = new object();
+        // Every item waits until the limit is saturated, and item 0 finishes last, so both the
+        // bound and the result ordering are exercised without relying on timing.
+        var saturated = Gate();
+        var othersDone = Gate();
+        if (count <= 1)
+        {
+            othersDone.TrySetResult();
+        }
         var collect = PipelineCollection.Create<int[], int, int>(
             "collect",
             state => state,
@@ -25,10 +34,18 @@ public sealed class CollectionTests
                 lock (sync)
                 {
                     peak = Math.Max(peak, ++active);
+                    if (active == Math.Min(count, 3))
+                    {
+                        saturated.TrySetResult();
+                    }
                 }
                 try
                 {
-                    await Task.Delay(value == 0 ? 60 : 5, token);
+                    await saturated.Task.WaitAsync(token);
+                    if (value == 0)
+                    {
+                        await othersDone.Task.WaitAsync(token);
+                    }
                     return value * 2;
                 }
                 finally
@@ -36,6 +53,10 @@ public sealed class CollectionTests
                     lock (sync)
                     {
                         active--;
+                        if (value != 0 && ++completed == count - 1)
+                        {
+                            othersDone.TrySetResult();
+                        }
                     }
                 }
             },
@@ -264,4 +285,7 @@ public sealed class CollectionTests
                     )
                 ),
         };
+
+    private static TaskCompletionSource Gate() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 }

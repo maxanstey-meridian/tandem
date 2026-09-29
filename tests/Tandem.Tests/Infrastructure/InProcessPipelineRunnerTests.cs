@@ -977,18 +977,9 @@ public sealed class InProcessPipelineRunnerTests
             .Build(complete);
     }
 
-    private static async Task<PendingExternalRequest> WaitForPendingAsync(
+    private static Task<PendingExternalRequest> WaitForPendingAsync(
         InMemoryExternalRequestBroker broker
-    )
-    {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (broker.PendingCount == 0)
-        {
-            await Task.Delay(10, timeout.Token);
-        }
-
-        return broker.PendingRequests.Single();
-    }
+    ) => broker.FirstPending.WaitAsync(TimeSpan.FromSeconds(5));
 
     private static Pipeline<RunnerState> BuildPersistentInteractionPipeline(
         Action<RunnerState> apply

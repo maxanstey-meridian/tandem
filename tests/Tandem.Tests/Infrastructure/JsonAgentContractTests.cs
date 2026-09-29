@@ -134,96 +134,52 @@ public sealed class JsonAgentContractTests
         client.CallCount.Should().Be(2);
     }
 
-    [Fact]
-    public async Task JsonOutput_CallbackFailuresAndCancellationFaultTheRun()
+    [Theory]
+    [InlineData(JsonContract.Output)]
+    [InlineData(JsonContract.Capability)]
+    public async Task JsonContract_ValidatorFailuresAndCancellationPropagate(JsonContract contract)
     {
-        var client = new TestChatClient(Response("{\"value\":1}"));
-        var agent = Agent
-            .Create<JsonState>("agent", "Decide.", client)
-            .WithMessage(_ => "Return a value.")
-            .WithJsonOutput(
-                JsonOutput(_ => throw new InvalidOperationException("Validator unavailable.")),
-                (state, output) => state with { Value = output.GetProperty("value").GetInt32() }
+        (
+            await FaultAsync(
+                contract,
+                validate: _ => throw new InvalidOperationException("Validator unavailable.")
             )
-            .Build();
-
-        var failed = async () =>
-            await new PipelineRunner().RunAsync(
-                Pipeline.Start(agent, "callback-failure").Build(agent),
-                new JsonState(0, 5)
-            );
-
-        var failure = await failed.Should().ThrowAsync<PipelineRunException>();
-        failure.Which.InnerException.Should().BeOfType<InvalidOperationException>();
-        client.CallCount.Should().Be(1);
-
-        var cancelledAgent = Agent
-            .Create<JsonState>(
-                "cancelled",
-                "Decide.",
-                new TestChatClient(Response("{\"value\":1}"))
+        )
+            .Should()
+            .BeOfType<InvalidOperationException>();
+        (
+            await FaultAsync(
+                contract,
+                validate: _ => throw new OperationCanceledException("Validation cancelled.")
             )
-            .WithMessage(_ => "Return a value.")
-            .WithJsonOutput(
-                JsonOutput(_ => throw new OperationCanceledException("Validation cancelled.")),
-                (state, _) => state
-            )
-            .Build();
-        var run = async () =>
-            await new PipelineRunner().RunAsync(
-                Pipeline.Start(cancelledAgent, "callback-cancellation").Build(cancelledAgent),
-                new JsonState(0, 5)
-            );
-
-        var exception = await run.Should().ThrowAsync<PipelineRunException>();
-        exception.Which.InnerException.Should().BeOfType<OperationCanceledException>();
+        )
+            .Should()
+            .BeOfType<OperationCanceledException>();
     }
 
-    [Fact]
-    public async Task JsonOutput_ContextualValidationAndApplyFailuresFaultTheRun()
+    [Theory]
+    [InlineData(JsonContract.Output)]
+    [InlineData(JsonContract.Capability)]
+    public async Task JsonContract_ContextualValidationAndApplyFailuresPropagate(
+        JsonContract contract
+    )
     {
-        using var schema = JsonDocument.Parse("{\"type\":\"object\"}");
-        var contextual = new AgentJsonOutputDefinition<JsonState>(
-            schema.RootElement,
-            "Return JSON.",
-            _ => [],
-            "test.dynamic-value",
-            (_, _) => throw new InvalidOperationException("Context unavailable.")
-        );
-        var contextualAgent = Agent
-            .Create<JsonState>(
-                "contextual",
-                "Decide.",
-                new TestChatClient(Response("{\"value\":1}"))
+        (
+            await FaultAsync(
+                contract,
+                validateFor: (_, _) => throw new InvalidOperationException("Context unavailable.")
             )
-            .WithMessage(_ => "Return a value.")
-            .WithJsonOutput(contextual, (state, _) => state)
-            .Build();
-        var contextualRun = async () =>
-            await new PipelineRunner().RunAsync(
-                Pipeline.Start(contextualAgent, "contextual-failure").Build(contextualAgent),
-                new JsonState(0, 5)
-            );
-
-        var contextualFailure = await contextualRun.Should().ThrowAsync<PipelineRunException>();
-        contextualFailure.Which.InnerException.Should().BeOfType<InvalidOperationException>();
-
-        var applyAgent = Agent
-            .Create<JsonState>("apply", "Decide.", new TestChatClient(Response("{\"value\":1}")))
-            .WithMessage(_ => "Return a value.")
-            .WithJsonOutput(
-                JsonOutput(_ => []),
-                (_, _) => throw new InvalidOperationException("Apply failed.")
+        )
+            .Should()
+            .BeOfType<InvalidOperationException>();
+        (
+            await FaultAsync(
+                contract,
+                apply: (_, _) => throw new InvalidOperationException("Apply failed.")
             )
-            .Build();
-        var applyRun = async () =>
-            await new PipelineRunner().RunAsync(
-                Pipeline.Start(applyAgent, "apply-failure").Build(applyAgent),
-                new JsonState(0, 5)
-            );
-
-        var applyFailure = await applyRun.Should().ThrowAsync<PipelineRunException>();
-        applyFailure.Which.InnerException.Should().BeOfType<InvalidOperationException>();
+        )
+            .Should()
+            .BeOfType<InvalidOperationException>();
     }
 
     [Fact]
@@ -290,22 +246,8 @@ public sealed class JsonAgentContractTests
     }
 
     [Fact]
-    public async Task JsonCapability_CallbackFailuresAndCancellationPropagate_AndCallsConflict()
+    public async Task JsonCapability_ConcurrentCallsConflict()
     {
-        var callbackFailure = JsonCapability(
-            _ => throw new InvalidOperationException("Validator unavailable."),
-            _ => "unused"
-        );
-        var fail = async () => await callbackFailure.Bind(Invocation()).InvokeAsync(Arguments(1));
-        await fail.Should().ThrowAsync<InvalidOperationException>();
-
-        var cancellation = JsonCapability(
-            _ => throw new OperationCanceledException("Validation cancelled."),
-            _ => "unused"
-        );
-        var cancel = async () => await cancellation.Bind(Invocation()).InvokeAsync(Arguments(1));
-        await cancel.Should().ThrowAsync<OperationCanceledException>();
-
         using var entered = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
         var mappings = 0;
@@ -333,20 +275,8 @@ public sealed class JsonAgentContractTests
     }
 
     [Fact]
-    public async Task JsonCapability_ContextualValidationSummaryAndApplyFailuresPropagate()
+    public async Task JsonCapability_SummaryFailurePropagatesAndApplyFailureAllowsRetry()
     {
-        var contextual = AgentCapabilities.CreateJson(
-            JsonCapabilityDefinition(
-                _ => [],
-                _ => "unused",
-                (_, _) => throw new InvalidOperationException("Context unavailable.")
-            ),
-            (state, _) => state
-        );
-        var contextualCall = async () =>
-            await contextual.Bind(Invocation()).InvokeAsync(Arguments(1));
-        await contextualCall.Should().ThrowAsync<InvalidOperationException>();
-
         var summary = JsonCapability(
             _ => [],
             _ => throw new InvalidOperationException("Summary unavailable.")
@@ -519,6 +449,53 @@ public sealed class JsonAgentContractTests
 
         acceptedRequest.GetProperty("value").GetInt32().Should().Be(3);
         invocation.Accepted!.State.Value.Should().Be(3);
+    }
+
+    public enum JsonContract
+    {
+        Output,
+        Capability,
+    }
+
+    private static async Task<Exception> FaultAsync(
+        JsonContract contract,
+        Func<JsonElement, IReadOnlyList<AgentJsonValidationProblem>>? validate = null,
+        Func<JsonState, JsonElement, IReadOnlyList<AgentJsonValidationProblem>>? validateFor = null,
+        Func<JsonState, JsonElement, JsonState>? apply = null
+    )
+    {
+        validate ??= _ => [];
+        apply ??= (state, _) => state;
+        if (contract == JsonContract.Capability)
+        {
+            var capability = AgentCapabilities.CreateJson(
+                JsonCapabilityDefinition(validate, _ => "accepted", validateFor),
+                apply
+            );
+            var invoke = async () => await capability.Bind(Invocation()).InvokeAsync(Arguments(1));
+            return (await invoke.Should().ThrowAsync<Exception>()).Which;
+        }
+        var client = new TestChatClient(Response("{\"value\":1}"));
+        var output = new AgentJsonOutputDefinition<JsonState>(
+            JsonDocument.Parse("{\"type\":\"object\"}").RootElement.Clone(),
+            "Return JSON.",
+            validate,
+            "test.dynamic-value",
+            validateFor
+        );
+        var agent = Agent
+            .Create<JsonState>("agent", "Decide.", client)
+            .WithMessage(_ => "Return a value.")
+            .WithJsonOutput(output, apply)
+            .Build();
+        var run = async () =>
+            await new PipelineRunner().RunAsync(
+                Pipeline.Start(agent, "json-output-fault").Build(agent),
+                new JsonState(0, 5)
+            );
+        var failure = await run.Should().ThrowAsync<PipelineRunException>();
+        client.CallCount.Should().Be(1);
+        return failure.Which.InnerException!;
     }
 
     private static AgentJsonOutputDefinition<JsonState> JsonOutput(

@@ -265,7 +265,7 @@ public sealed class AgentCommandObservationTests
         var invocation = observation.ToolInvocations.Should().ContainSingle().Subject;
         invocation.Arguments.ValueKind.Should().Be(JsonValueKind.Object);
         invocation.Arguments.EnumerateObject().Should().BeEmpty();
-        intercepted.GetRawText().Should().Be(invocation.Arguments.GetRawText());
+        JsonElement.DeepEquals(intercepted, invocation.Arguments).Should().BeTrue();
         invocation.Arguments.GetRawText().Should().Be("{}");
     }
 

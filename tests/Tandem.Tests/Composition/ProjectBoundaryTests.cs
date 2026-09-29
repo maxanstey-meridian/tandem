@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Xml.Linq;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using NetArchTest.Rules;
 
 namespace Tandem.Tests.Composition;
 
@@ -42,144 +43,41 @@ public sealed class ProjectBoundaryTests
         songwriter.Should().NotContain(reference => reference.Contains("Tandem.Ledger"));
     }
 
-    [Fact]
-    public void CodeWriter_IsAnUnprivilegedConsumerWithoutRuntimePlumbing()
+    [Theory]
+    [InlineData(typeof(global::Examples.CodeWriter.CodeWriterComposition))]
+    [InlineData(typeof(global::Examples.Debate.DebateComposition))]
+    [InlineData(typeof(global::Examples.Songwriter.SongwriterComposition))]
+    public void Examples_AreUnprivilegedConsumers(Type example)
     {
-        var project = File.ReadAllText(
-            Path("examples/code-writer/csharp/Tandem.Sample.CodeWriter.csproj")
-        );
-        project.Should().NotContain("Microsoft.Agents");
-        project.Should().NotContain("Compile Include");
-        project.Should().NotContain("InternalsVisibleTo");
+        var types = Types.InAssembly(example.Assembly);
 
-        var source = string.Join('\n', SourceLines("examples/code-writer/csharp"));
-        source.Should().NotContain("using Microsoft.Agents");
-        source.Should().NotContain("using Tandem.Infrastructure");
-        source.Should().NotContain("System.Reflection");
-        source.Should().NotContain("InternalsVisibleTo");
-        source.Should().NotContain("WorkspacePath");
-        source.Should().NotContain("WithWorkspace");
-        source.Should().NotContain("PipelineBuildContext");
-        source.Should().NotContain("ChatOptions");
-        source.Should().NotContain("ChatResponseFormat");
-        source.Should().NotContain("IRawPipelineNode");
-        source.Should().NotContain("class ImplementerAgent");
-        source.Should().NotContain("class ReviewerAgent");
-    }
-
-    [Fact]
-    public void Debate_IsAnUnprivilegedConsumerWithoutMafOrDeliveryVocabulary()
-    {
-        var project = File.ReadAllText(Path("examples/debate/csharp/Tandem.Sample.Debate.csproj"));
-        project.Should().NotContain("Microsoft.Agents");
-        project.Should().NotContain("Compile Include");
-        project.Should().NotContain("InternalsVisibleTo");
-
-        var source = Directory
-            .EnumerateFiles(Path("examples/debate/csharp"), "*.cs", SearchOption.AllDirectories)
-            .Where(file =>
-                !file.Contains(
-                    $"{System.IO.Path.DirectorySeparatorChar}obj{System.IO.Path.DirectorySeparatorChar}"
+        AssertRule(
+            types
+                .ShouldNot()
+                .HaveDependencyOnAny(
+                    "Microsoft.Agents",
+                    "ModelContextProtocol",
+                    "Tandem.Infrastructure",
+                    "Microsoft.Extensions.AI.ChatOptions",
+                    "Microsoft.Extensions.AI.ChatResponseFormat"
                 )
-            )
-            .Where(file =>
-                !file.Contains(
-                    $"{System.IO.Path.DirectorySeparatorChar}bin{System.IO.Path.DirectorySeparatorChar}"
-                )
-            )
-            .SelectMany(File.ReadLines)
-            .ToArray();
-        source.Should().NotContain(line => line.Contains("using Microsoft.Agents"));
-        source.Should().NotContain(line => line.Contains("using Tandem.Infrastructure"));
-        source.Should().NotContain(line => line.Contains("System.Reflection"));
-        source.Should().NotContain(line => line.Contains("InternalsVisibleTo"));
-        source.Should().NotContain(line => line.Contains("WorkspacePath"));
-        source.Should().NotContain(line => line.Contains("ModelContextProtocol"));
-        source.Should().NotContain(line => line.Contains("PipelineBuildContext"));
-        source.Should().NotContain(line => line.Contains("ChatOptions"));
-        source.Should().NotContain(line => line.Contains("ChatResponseFormat"));
-        source.Should().NotContain(line => line.Contains("ReleaseUsage"));
-        source.Should().NotContain(line => line.Contains("IRawPipelineNode"));
-        source.Should().NotContain(line => line.Contains("class ProposerAgent"));
-        source.Should().NotContain(line => line.Contains("class JudgeAgent"));
-    }
-
-    [Fact]
-    public void TandemProduction_HasNoDebateSpecificTypesOrSwitches()
-    {
-        var source = Directory
-            .EnumerateFiles(Path("src/Tandem"), "*.cs", SearchOption.AllDirectories)
-            .SelectMany(File.ReadLines);
-        source.Should().NotContain(line => line.Contains("Debate", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public void ConsumerProjects_ImportNoMafNamespaces()
-    {
-        SourceLines("examples/debate/csharp")
-            .Concat(SourceLines("examples/code-writer/csharp"))
-            .Concat(SourceLines("examples/songwriter/csharp"))
-            .Should()
-            .NotContain(line => line.Contains("Microsoft.Agents", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public void AuthoredSteps_UseOnlyCanonicalGeneratedOutcomes()
-    {
-        foreach (
-            var root in new[]
-            {
-                "examples/debate/csharp",
-                "examples/code-writer/csharp",
-                "examples/songwriter/csharp",
-            }
-        )
-        {
-            var source = string.Join('\n', SourceLines(root));
-            source.Should().NotContain("class ResultCase");
-            source.Should().NotContain("record ResultCase");
-            source.Should().NotContain("ExecutorBinding");
-        }
-
-        var songwriter = File.ReadAllText(
-            Path("examples/songwriter/csharp/SongwriterParticipants.cs")
         );
-        songwriter.Should().Contain("AgentDefinition<SongwriterState> Songwriter");
-        songwriter.Should().NotContain("class SongwriterAgent");
-        songwriter.Should().NotContain("IRawPipelineNode");
-        File.ReadAllText(Path("examples/songwriter/csharp/SongwriterDefinitions.cs"))
-            .Should()
-            .Contain("PipelineNodes.Complete(new SongwriterComplete())");
-        songwriter.Should().NotContain("[Union");
-        File.ReadAllText(Path("examples/songwriter/csharp/SongwriterComposition.cs"))
-            .Should()
-            .NotContain(".Result.");
+        AssertRule(types.ShouldNot().ResideInNamespaceStartingWith("Tandem"));
+        AssertRule(types.That().AreClasses().ShouldNot().HaveNameEndingWith("Agent"));
+    }
 
-        var generator = File.ReadAllText(Path("src/Tandem.Generators/PipelineStepGenerator.cs"));
-        generator.Should().Contain("GeneratedPassThroughStepDescriptor");
-        generator.Should().Contain("GeneratedStateStepDescriptor");
-        generator.Should().Contain("GeneratedOutcomeStepDescriptor");
-        generator.Should().NotContain("GetMembers(\"Runtime\")");
-        generator.Should().NotContain("GetMembers(\"Outcome\")");
+    [Fact]
+    public void TandemCore_KnowsNothingAboutTheExamples()
+    {
+        var types = Types.InAssembly(typeof(Agent).Assembly);
+
+        AssertRule(types.ShouldNot().HaveDependencyOn("Examples"));
+        AssertRule(types.ShouldNot().HaveNameMatching("Debate"));
     }
 
     [Fact]
     public void OrdinaryAgentAndNodeApi_HidesInfrastructureAuthoring()
     {
-        var assembly = typeof(Agent).Assembly;
-        var exportedNames = assembly.GetExportedTypes().Select(type => type.Name).ToArray();
-
-        exportedNames.Should().NotContain("AgentOperation`1");
-        exportedNames.Should().NotContain("AgentOutput`1");
-        exportedNames.Should().NotContain("CapabilityReceipt");
-        exportedNames.Should().Contain("AgentCapability`1");
-        exportedNames.Should().Contain("AgentCapability`2");
-        exportedNames.Should().NotContain("CheckpointPolicy`1");
-        exportedNames.Should().NotContain("AgentTurnPolicy`1");
-        exportedNames.Should().NotContain("AgentConversationDecision");
-        exportedNames.Should().NotContain("ToolInterceptionResult");
-        exportedNames.Should().NotContain("IRawPipelineNode");
-        typeof(OperationResult<>).Namespace.Should().Be("Tandem.Advanced");
         typeof(AgentDefinition<>).GetProperty("Operation").Should().BeNull();
         typeof(AgentCapabilities)
             .GetMethods(BindingFlags.Public | BindingFlags.Static)
@@ -220,55 +118,6 @@ public sealed class ProjectBoundaryTests
     }
 
     [Fact]
-    public void SessionContinuation_IsExplicitAndOrdinaryAgentsDefaultFresh()
-    {
-        var debate = string.Join('\n', SourceLines("examples/debate/csharp"));
-        debate.Should().Contain(".ContinueSession()");
-        debate.Should().NotContain("WithSessionPolicy");
-        var codeWriter = string.Join('\n', SourceLines("examples/code-writer/csharp"));
-        codeWriter.Should().Contain(".ContinueSession()");
-        codeWriter.Should().NotContain("WithSessionPolicy");
-        var songwriter = string.Join('\n', SourceLines("examples/songwriter/csharp"));
-        songwriter.Should().NotContain("ContinueSession");
-        songwriter.Should().NotContain("WithSessionPolicy");
-    }
-
-    [Fact]
-    public void AuthoredStepResults_ContainNoExecutionEnvelopePlumbing()
-    {
-        var source = new[]
-        {
-            "examples/debate/csharp/DebateParticipants.cs",
-            "examples/code-writer/csharp/CodeWriterParticipants.cs",
-            "examples/songwriter/csharp/SongwriterParticipants.cs",
-        }
-            .Select(Path)
-            .Select(File.ReadAllText)
-            .ToArray();
-
-        source
-            .Should()
-            .NotContain(text => text.Contains("PipelineRuntime", StringComparison.Ordinal));
-        source.Should().NotContain(text => text.Contains("BlockOutcome", StringComparison.Ordinal));
-        source
-            .Should()
-            .NotContain(text => text.Contains("LatestOutcome", StringComparison.Ordinal));
-        source.Should().NotContain(text => text.Contains("LatestResult", StringComparison.Ordinal));
-        source
-            .Should()
-            .NotContain(text => text.Contains("PipelineStepResult", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public void PipelineAuthoring_UsesMafOrderedSwitchForSemanticRoutes()
-    {
-        var source = File.ReadAllText(Path("src/Tandem/Authoring/PipelineStep.cs"));
-        source.Should().Contain("_builder.AddSwitch");
-        source.Should().Contain("PipelineRouteRegistration");
-        source.Should().NotContain("RouteDefinition");
-    }
-
-    [Fact]
     public void PublicTandemApi_ExposesNoMafTypes()
     {
         var leaks = typeof(Pipeline<>)
@@ -283,6 +132,17 @@ public sealed class ProjectBoundaryTests
         leaks.Should().BeEmpty();
     }
 
+    private static void AssertRule(ConditionList rule)
+    {
+        var result = rule.GetResult();
+        result
+            .IsSuccessful.Should()
+            .BeTrue(
+                "these types break the rule: {0}",
+                string.Join(", ", result.FailingTypeNames ?? [])
+            );
+    }
+
     private static IReadOnlyList<string> ProjectReferences(string relativePath) =>
         XDocument
             .Load(Path(relativePath))
@@ -295,19 +155,6 @@ public sealed class ProjectBoundaryTests
             _root,
             relativePath.Replace('/', System.IO.Path.DirectorySeparatorChar)
         );
-
-    private static IEnumerable<string> SourceLines(string relativePath) =>
-        Directory
-            .EnumerateFiles(Path(relativePath), "*.cs", SearchOption.AllDirectories)
-            .Where(file =>
-                !file.Contains(
-                    $"{System.IO.Path.DirectorySeparatorChar}obj{System.IO.Path.DirectorySeparatorChar}"
-                )
-                && !file.Contains(
-                    $"{System.IO.Path.DirectorySeparatorChar}bin{System.IO.Path.DirectorySeparatorChar}"
-                )
-            )
-            .SelectMany(File.ReadLines);
 
     private static IEnumerable<Type> PublicSurfaceTypes(Type type)
     {

@@ -19,6 +19,12 @@
     </ItemGroup>
 
     <ItemGroup>
+        <!-- Consumer sources compiled against packed packages at test time, not by this project. -->
+        <Compile Remove="Fixtures/**" />
+        <None Include="Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <ItemGroup>
         <!-- Only the test runner uses LocalProcess; the consumers it builds reference packed packages. -->
         <ProjectReference Include="..\..\src\Tandem.Advanced\Tandem.Advanced.csproj" />
     </ItemGroup>

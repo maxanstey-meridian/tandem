@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using FluentAssertions;
 
 namespace Tandem.Tests.Infrastructure;
@@ -74,7 +75,7 @@ public sealed class LocalProcessTests
 
         result.ExitCode.Should().Be(-1);
         result.TimedOut.Should().BeTrue();
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await WaitForExitAsync(int.Parse(result.Stdout.Trim()));
         File.Exists(marker).Should().BeFalse();
     }
 
@@ -202,6 +203,19 @@ public sealed class LocalProcessTests
 
     private static string ChildAssemblyPath() =>
         Path.Combine(AppContext.BaseDirectory, "Tandem.Process.TestChild.dll");
+
+    private static async Task WaitForExitAsync(int processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (ArgumentException)
+        {
+            // GetProcessById throws once the process has exited.
+        }
+    }
 
     private static string MissingExecutable() => $"tandem-missing-{Guid.NewGuid():N}";
 
