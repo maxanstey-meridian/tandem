@@ -16,14 +16,21 @@ tasks:
     cmds:
       - dotnet test {{.ROOT_DIR}}/tests/Tandem.PackageConsumer.Tests/Tandem.PackageConsumer.Tests.csproj --configuration Release
 
+  # The analyzer pass loads the source generator from its build output, so build it first.
+  generator:
+    cmds:
+      - dotnet build {{.ROOT_DIR}}/src/Tandem.Generators/Tandem.Generators.csproj
+
   format:
     cmds:
+      - task: generator
       - dotnet tool restore
       - dotnet csharpier format .
       - dotnet format {{.SOLUTION}} analyzers --severity warn
 
   format:check:
     cmds:
+      - task: generator
       - dotnet tool restore
       - dotnet csharpier check .
       - dotnet format {{.SOLUTION}} analyzers --severity warn --verify-no-changes --verbosity minimal
@@ -32,4 +39,3 @@ tasks:
     cmds:
       - task: format:check
       - task: test
-      - task: build
