@@ -41,7 +41,10 @@ public sealed class LedgerEntryPageTests
             offset = next;
         } while (true);
         JsonSerializer
-            .Deserialize<RuntimeJournalRecord>(content.ToString(), TandemJson.CreateTypedContract())!
+            .Deserialize<RuntimeJournalRecord>(
+                content.ToString(),
+                TandemJson.CreateTypedContract()
+            )!
             .Payload!.Value.GetString()
             .Should()
             .Be(original);

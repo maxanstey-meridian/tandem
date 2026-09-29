@@ -161,6 +161,6 @@ public sealed class AgentToolSurfaceTests
         var stderr = JsonSerializer.SerializeToElement(
             await reader.ReadDiagnosticAsync(cursor, "stderr")
         );
-            stderr.GetProperty("content").GetString().Should().Be("stderr evidence\n");
+        stderr.GetProperty("content").GetString().Should().Be("stderr evidence\n");
     }
 }

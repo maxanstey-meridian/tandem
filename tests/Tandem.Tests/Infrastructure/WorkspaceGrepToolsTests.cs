@@ -346,13 +346,7 @@ public sealed class WorkspaceGrepToolsTests
         await Git(root, "add", "-f", "bin/Tracked.cs");
 
         var page = await WorkspaceGrepTools.SearchAsync(root, "", "MATCH", null, true);
-        var named = await WorkspaceGrepTools.SearchAsync(
-            root,
-            "generated",
-            "MATCH",
-            null,
-            true
-        );
+        var named = await WorkspaceGrepTools.SearchAsync(root, "generated", "MATCH", null, true);
         var prefixed = await WorkspaceGrepTools.SearchAsync(
             root,
             "",
@@ -376,14 +370,8 @@ public sealed class WorkspaceGrepToolsTests
         using var outsideDirectory = new TempDirectory();
         var outside = outsideDirectory.Path;
         Directory.CreateDirectory(Path.Combine(root, "node_modules", "pkg"));
-        await File.WriteAllTextAsync(
-            Path.Combine(root, "node_modules", "pkg", "a.js"),
-            "MATCH"
-        );
-        Directory.CreateSymbolicLink(
-            Path.Combine(root, "node_modules", "pkg", "link"),
-            outside
-        );
+        await File.WriteAllTextAsync(Path.Combine(root, "node_modules", "pkg", "a.js"), "MATCH");
+        Directory.CreateSymbolicLink(Path.Combine(root, "node_modules", "pkg", "link"), outside);
         await File.WriteAllTextAsync(Path.Combine(root, "kept.txt"), "MATCH");
 
         var pruned = await WorkspaceGrepTools.SearchAsync(root, "", "MATCH", null, true);
@@ -398,10 +386,7 @@ public sealed class WorkspaceGrepToolsTests
 
         pruned.Matches.Select(m => m.Path).Should().Equal("kept.txt");
         pruned.SkippedCount.Should().Be(0, "the pruned directory's link is never visited");
-        included
-            .Matches.Select(m => m.Path)
-            .Should()
-            .Equal("kept.txt", "node_modules/pkg/a.js");
+        included.Matches.Select(m => m.Path).Should().Equal("kept.txt", "node_modules/pkg/a.js");
         included.Skipped.Should().Equal("node_modules/pkg/link: symbolic link");
     }
 
@@ -419,14 +404,7 @@ public sealed class WorkspaceGrepToolsTests
         await File.WriteAllTextAsync(Path.Combine(root, "a.txt"), "MATCH\nMATCH\n");
         await File.WriteAllBytesAsync(Path.Combine(root, "z.txt"), [0xff, 0xfe, 0xfd]);
 
-        var first = await WorkspaceGrepTools.SearchAsync(
-            root,
-            "",
-            "MATCH",
-            null,
-            true,
-            limit: 1
-        );
+        var first = await WorkspaceGrepTools.SearchAsync(root, "", "MATCH", null, true, limit: 1);
         var complete = await WorkspaceGrepTools.SearchAsync(root, "", "MATCH", null, true);
 
         first.NextOffset.Should().Be(1);
