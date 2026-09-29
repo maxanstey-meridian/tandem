@@ -1,0 +1,397 @@
+#nullable enable
+abstract Tandem.Advanced.ToolInterceptionResult.<Clone>$() -> Tandem.Advanced.ToolInterceptionResult!
+override sealed Tandem.Advanced.ToolInterceptionResult.Blocked.Equals(Tandem.Advanced.ToolInterceptionResult? other) -> bool
+override Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.Equals(object? obj) -> bool
+override Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.GetHashCode() -> int
+override Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.ToString() -> string!
+override Tandem.Advanced.AgentCheckpointContext<TState>.Equals(object? obj) -> bool
+override Tandem.Advanced.AgentCheckpointContext<TState>.GetHashCode() -> int
+override Tandem.Advanced.AgentCheckpointContext<TState>.ToString() -> string!
+override Tandem.Advanced.AgentCommand.Equals(object? obj) -> bool
+override Tandem.Advanced.AgentCommand.GetHashCode() -> int
+override Tandem.Advanced.AgentCommand.ToString() -> string!
+override Tandem.Advanced.AgentConversationDecision.Equals(object? obj) -> bool
+override Tandem.Advanced.AgentConversationDecision.GetHashCode() -> int
+override Tandem.Advanced.AgentConversationDecision.ToString() -> string!
+override Tandem.Advanced.AgentMessageContext<TState>.Equals(object? obj) -> bool
+override Tandem.Advanced.AgentMessageContext<TState>.GetHashCode() -> int
+override Tandem.Advanced.AgentMessageContext<TState>.ToString() -> string!
+override Tandem.Advanced.AgentProfileDecision.Equals(object? obj) -> bool
+override Tandem.Advanced.AgentProfileDecision.GetHashCode() -> int
+override Tandem.Advanced.AgentProfileDecision.ToString() -> string!
+override Tandem.Advanced.AgentStateGuard<TState>.Equals(object? obj) -> bool
+override Tandem.Advanced.AgentStateGuard<TState>.GetHashCode() -> int
+override Tandem.Advanced.AgentStateGuard<TState>.ToString() -> string!
+override Tandem.Advanced.AgentTurnDirective.Equals(object? obj) -> bool
+override Tandem.Advanced.AgentTurnDirective.GetHashCode() -> int
+override Tandem.Advanced.AgentTurnDirective.ToString() -> string!
+override Tandem.Advanced.AgentTurnObservation<TState>.Equals(object? obj) -> bool
+override Tandem.Advanced.AgentTurnObservation<TState>.GetHashCode() -> int
+override Tandem.Advanced.AgentTurnObservation<TState>.ToString() -> string!
+override Tandem.Advanced.AgentTurnPolicy<TState>.Equals(object? obj) -> bool
+override Tandem.Advanced.AgentTurnPolicy<TState>.GetHashCode() -> int
+override Tandem.Advanced.AgentTurnPolicy<TState>.ToString() -> string!
+override Tandem.Advanced.CheckpointPolicy<TState>.Equals(object? obj) -> bool
+override Tandem.Advanced.CheckpointPolicy<TState>.GetHashCode() -> int
+override Tandem.Advanced.CheckpointPolicy<TState>.ToString() -> string!
+override Tandem.Advanced.LocalProcessRequest.Equals(object? obj) -> bool
+override Tandem.Advanced.LocalProcessRequest.GetHashCode() -> int
+override Tandem.Advanced.LocalProcessRequest.ToString() -> string!
+override Tandem.Advanced.LocalProcessResult.Equals(object? obj) -> bool
+override Tandem.Advanced.LocalProcessResult.GetHashCode() -> int
+override Tandem.Advanced.LocalProcessResult.ToString() -> string!
+override Tandem.Advanced.OperationOutcome.Equals(object? obj) -> bool
+override Tandem.Advanced.OperationOutcome.GetHashCode() -> int
+override Tandem.Advanced.OperationOutcome.ToString() -> string!
+override Tandem.Advanced.OperationResult<TState>.Equals(object? obj) -> bool
+override Tandem.Advanced.OperationResult<TState>.GetHashCode() -> int
+override Tandem.Advanced.OperationResult<TState>.ToString() -> string!
+override Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.Equals(object? obj) -> bool
+override Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.GetHashCode() -> int
+override Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.ToString() -> string!
+override Tandem.Advanced.ToolInterceptionResult.Blocked.<Clone>$() -> Tandem.Advanced.ToolInterceptionResult.Blocked!
+override Tandem.Advanced.ToolInterceptionResult.Blocked.Equals(object? obj) -> bool
+override Tandem.Advanced.ToolInterceptionResult.Blocked.GetHashCode() -> int
+override Tandem.Advanced.ToolInterceptionResult.Blocked.ToString() -> string!
+override Tandem.Advanced.ToolInterceptionResult.Equals(object? obj) -> bool
+override Tandem.Advanced.ToolInterceptionResult.GetHashCode() -> int
+override Tandem.Advanced.ToolInterceptionResult.ToString() -> string!
+override Tandem.Advanced.ToolInvocation.Equals(object? obj) -> bool
+override Tandem.Advanced.ToolInvocation.GetHashCode() -> int
+override Tandem.Advanced.ToolInvocation.ToString() -> string!
+static Tandem.Advanced.AdvancedAgentBuilderExtensions.RequireOutputAcceptance<TState, TOutput>(this Tandem.AgentBuilder<TState>! builder, Tandem.Advanced.OutputAcceptancePolicy<TState, TOutput>! acceptance) -> Tandem.AgentBuilder<TState>!
+static Tandem.Advanced.AdvancedAgentBuilderExtensions.UseHarness<TState>(this Tandem.AgentBuilder<TState>! builder, string! harnessInstructions) -> Tandem.AgentBuilder<TState>!
+static Tandem.Advanced.AdvancedAgentBuilderExtensions.UseHarness<TState>(this Tandem.AgentBuilder<TState>! builder, string! harnessInstructions, int maxContextWindowTokens, int maxOutputTokens, bool disableCompaction = false) -> Tandem.AgentBuilder<TState>!
+static Tandem.Advanced.AdvancedAgentBuilderExtensions.WithCheckpoint<TState>(this Tandem.AgentBuilder<TState>! builder, Tandem.Advanced.CheckpointPolicy<TState>! policy) -> Tandem.AgentBuilder<TState>!
+static Tandem.Advanced.AdvancedAgentBuilderExtensions.WithContinuationPolicy<TState>(this Tandem.AgentBuilder<TState>! builder, Tandem.Advanced.AgentTurnPolicy<TState>! policy) -> Tandem.AgentBuilder<TState>!
+static Tandem.Advanced.AdvancedAgentBuilderExtensions.WithConversationPolicy<TState>(this Tandem.AgentBuilder<TState>! builder, Tandem.Advanced.AgentConversationPolicy<TState>! policy) -> Tandem.AgentBuilder<TState>!
+static Tandem.Advanced.AdvancedAgentBuilderExtensions.WithMessageAugmentation<TState>(this Tandem.AgentBuilder<TState>! builder, Tandem.Advanced.MessageAugmentation<TState>! augmentation) -> Tandem.AgentBuilder<TState>!
+static Tandem.Advanced.AdvancedAgentBuilderExtensions.WithOutputAcceptance<TState, TOutput>(this Tandem.AgentBuilder<TState>! builder, Tandem.Advanced.OutputAcceptance<TState, TOutput>! acceptance) -> Tandem.AgentBuilder<TState>!
+static Tandem.Advanced.AdvancedAgentBuilderExtensions.WithProfilePolicy<TState>(this Tandem.AgentBuilder<TState>! builder, Tandem.Advanced.AgentProfilePolicy<TState>! policy) -> Tandem.AgentBuilder<TState>!
+static Tandem.Advanced.AdvancedAgentBuilderExtensions.WithStateGuard<TState>(this Tandem.AgentBuilder<TState>! builder, Tandem.Advanced.AgentStateGuard<TState>! guard) -> Tandem.AgentBuilder<TState>!
+static Tandem.Advanced.AdvancedAgentBuilderExtensions.WithWorkspace<TState>(this Tandem.AgentBuilder<TState>! builder, Tandem.Advanced.AgentWorkspace<TState>! workspace, System.Collections.Generic.IReadOnlyList<Tandem.Advanced.AgentToolGroup<TState>!>! tools, Tandem.Advanced.ToolInterceptor<TState>? toolInterceptor = null) -> Tandem.AgentBuilder<TState>!
+static Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.operator !=(Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>? left, Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>? right) -> bool
+static Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.operator ==(Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>? left, Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>? right) -> bool
+static Tandem.Advanced.AgentCapabilityAcceptanceExtensions.WithAcceptance<TState, TRequest>(this Tandem.AgentCapability<TState, TRequest!>! capability, System.Func<Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest!>!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! accept) -> Tandem.AgentCapability<TState, TRequest!>!
+static Tandem.Advanced.AgentCapabilityAcceptanceExtensions.WithAcceptance<TState>(this Tandem.AgentCapability<TState>! capability, System.Func<Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, System.Text.Json.JsonElement>!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! accept) -> Tandem.AgentCapability<TState>!
+static Tandem.Advanced.AgentCheckpointContext<TState>.operator !=(Tandem.Advanced.AgentCheckpointContext<TState>? left, Tandem.Advanced.AgentCheckpointContext<TState>? right) -> bool
+static Tandem.Advanced.AgentCheckpointContext<TState>.operator ==(Tandem.Advanced.AgentCheckpointContext<TState>? left, Tandem.Advanced.AgentCheckpointContext<TState>? right) -> bool
+static Tandem.Advanced.AgentCommand.Define(string! name, string! description, string! command) -> Tandem.Advanced.AgentCommand!
+static Tandem.Advanced.AgentCommand.Define(string! name, string! description, string! command, System.Collections.Generic.IReadOnlyList<string!>? arguments) -> Tandem.Advanced.AgentCommand!
+static Tandem.Advanced.AgentCommand.operator !=(Tandem.Advanced.AgentCommand? left, Tandem.Advanced.AgentCommand? right) -> bool
+static Tandem.Advanced.AgentCommand.operator ==(Tandem.Advanced.AgentCommand? left, Tandem.Advanced.AgentCommand? right) -> bool
+static Tandem.Advanced.AgentConversationDecision.operator !=(Tandem.Advanced.AgentConversationDecision? left, Tandem.Advanced.AgentConversationDecision? right) -> bool
+static Tandem.Advanced.AgentConversationDecision.operator ==(Tandem.Advanced.AgentConversationDecision? left, Tandem.Advanced.AgentConversationDecision? right) -> bool
+static Tandem.Advanced.AgentMessageContext<TState>.operator !=(Tandem.Advanced.AgentMessageContext<TState>? left, Tandem.Advanced.AgentMessageContext<TState>? right) -> bool
+static Tandem.Advanced.AgentMessageContext<TState>.operator ==(Tandem.Advanced.AgentMessageContext<TState>? left, Tandem.Advanced.AgentMessageContext<TState>? right) -> bool
+static Tandem.Advanced.AgentProfileDecision.operator !=(Tandem.Advanced.AgentProfileDecision? left, Tandem.Advanced.AgentProfileDecision? right) -> bool
+static Tandem.Advanced.AgentProfileDecision.operator ==(Tandem.Advanced.AgentProfileDecision? left, Tandem.Advanced.AgentProfileDecision? right) -> bool
+static Tandem.Advanced.AgentProfiles.Create<TState>(string! id, string! profile, string! instructions, Microsoft.Extensions.AI.IChatClient! chatClient, System.Func<string!, Microsoft.Extensions.AI.IChatClient!>! profileChatClients) -> Tandem.AgentBuilder<TState>!
+static Tandem.Advanced.AgentStateGuard<TState>.operator !=(Tandem.Advanced.AgentStateGuard<TState>? left, Tandem.Advanced.AgentStateGuard<TState>? right) -> bool
+static Tandem.Advanced.AgentStateGuard<TState>.operator ==(Tandem.Advanced.AgentStateGuard<TState>? left, Tandem.Advanced.AgentStateGuard<TState>? right) -> bool
+static Tandem.Advanced.AgentTools.Always<TState>(params Tandem.Advanced.AgentToolSelection![]! tools) -> Tandem.Advanced.AgentToolGroup<TState>!
+static Tandem.Advanced.AgentTools.When<TState>(System.Func<TState, bool>! predicate, params Tandem.Advanced.AgentToolSelection![]! tools) -> Tandem.Advanced.AgentToolGroup<TState>!
+static Tandem.Advanced.AgentToolSelection.implicit operator Tandem.Advanced.AgentToolSelection!(string! name) -> Tandem.Advanced.AgentToolSelection!
+static Tandem.Advanced.AgentTurnDirective.operator !=(Tandem.Advanced.AgentTurnDirective? left, Tandem.Advanced.AgentTurnDirective? right) -> bool
+static Tandem.Advanced.AgentTurnDirective.operator ==(Tandem.Advanced.AgentTurnDirective? left, Tandem.Advanced.AgentTurnDirective? right) -> bool
+static Tandem.Advanced.AgentTurnObservation<TState>.operator !=(Tandem.Advanced.AgentTurnObservation<TState>? left, Tandem.Advanced.AgentTurnObservation<TState>? right) -> bool
+static Tandem.Advanced.AgentTurnObservation<TState>.operator ==(Tandem.Advanced.AgentTurnObservation<TState>? left, Tandem.Advanced.AgentTurnObservation<TState>? right) -> bool
+static Tandem.Advanced.AgentTurnPolicy<TState>.operator !=(Tandem.Advanced.AgentTurnPolicy<TState>? left, Tandem.Advanced.AgentTurnPolicy<TState>? right) -> bool
+static Tandem.Advanced.AgentTurnPolicy<TState>.operator ==(Tandem.Advanced.AgentTurnPolicy<TState>? left, Tandem.Advanced.AgentTurnPolicy<TState>? right) -> bool
+static Tandem.Advanced.AgentWorkspace<TState>.Define(System.Func<TState, string!>! path, System.Collections.Generic.IReadOnlyList<Tandem.Advanced.AgentCommand!>! commands) -> Tandem.Advanced.AgentWorkspace<TState>!
+static Tandem.Advanced.AgentWorkspace<TState>.Define(System.Func<TState, string!>! path, System.Func<TState, System.Collections.Generic.IReadOnlyList<Tandem.Advanced.AgentCommand!>!>! commands) -> Tandem.Advanced.AgentWorkspace<TState>!
+static Tandem.Advanced.AgentWorkspaceTool.Define(string! name, System.Func<string!, Microsoft.Extensions.AI.AIFunction!>! create, Tandem.ToolEffect effect, Tandem.ToolEvidence evidence = Tandem.ToolEvidence.None) -> Tandem.Advanced.AgentWorkspaceTool!
+static Tandem.Advanced.CheckpointPolicy<TState>.operator !=(Tandem.Advanced.CheckpointPolicy<TState>? left, Tandem.Advanced.CheckpointPolicy<TState>? right) -> bool
+static Tandem.Advanced.CheckpointPolicy<TState>.operator ==(Tandem.Advanced.CheckpointPolicy<TState>? left, Tandem.Advanced.CheckpointPolicy<TState>? right) -> bool
+static Tandem.Advanced.LocalProcess.RunAsync(Tandem.Advanced.LocalProcessRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Tandem.Advanced.LocalProcessResult!>!
+static Tandem.Advanced.LocalProcessRequest.operator !=(Tandem.Advanced.LocalProcessRequest? left, Tandem.Advanced.LocalProcessRequest? right) -> bool
+static Tandem.Advanced.LocalProcessRequest.operator ==(Tandem.Advanced.LocalProcessRequest? left, Tandem.Advanced.LocalProcessRequest? right) -> bool
+static Tandem.Advanced.LocalProcessResult.operator !=(Tandem.Advanced.LocalProcessResult? left, Tandem.Advanced.LocalProcessResult? right) -> bool
+static Tandem.Advanced.LocalProcessResult.operator ==(Tandem.Advanced.LocalProcessResult? left, Tandem.Advanced.LocalProcessResult? right) -> bool
+static Tandem.Advanced.OperationOutcome.operator !=(Tandem.Advanced.OperationOutcome? left, Tandem.Advanced.OperationOutcome? right) -> bool
+static Tandem.Advanced.OperationOutcome.operator ==(Tandem.Advanced.OperationOutcome? left, Tandem.Advanced.OperationOutcome? right) -> bool
+static Tandem.Advanced.OperationResult<TState>.operator !=(Tandem.Advanced.OperationResult<TState>? left, Tandem.Advanced.OperationResult<TState>? right) -> bool
+static Tandem.Advanced.OperationResult<TState>.operator ==(Tandem.Advanced.OperationResult<TState>? left, Tandem.Advanced.OperationResult<TState>? right) -> bool
+static Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.operator !=(Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>? left, Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>? right) -> bool
+static Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.operator ==(Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>? left, Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>? right) -> bool
+static Tandem.Advanced.PipelineOperation.RunOutcomeAsync<TState>(TState state, System.Func<Tandem.Advanced.PipelineOperationContext<TState>!, System.Threading.Tasks.ValueTask<Tandem.Advanced.OperationResult<TState>!>>! execute, System.Func<Tandem.Advanced.OperationResult<TState>!, Tandem.Outcome<TState>!>! map) -> System.Threading.Tasks.ValueTask<Tandem.Outcome<TState>!>
+static Tandem.Advanced.RawOutputExtensions.WithRawOutput<TState, TOutput>(this Tandem.AgentBuilder<TState>! builder, Tandem.Advanced.IAgentRawOutputDefinition<TState, TOutput>! output, System.Func<TState, TOutput, TState>! apply, string? valueType = null) -> Tandem.AgentBuilder<TState>!
+static Tandem.Advanced.ToolInterceptionResult.Blocked.operator !=(Tandem.Advanced.ToolInterceptionResult.Blocked? left, Tandem.Advanced.ToolInterceptionResult.Blocked? right) -> bool
+static Tandem.Advanced.ToolInterceptionResult.Blocked.operator ==(Tandem.Advanced.ToolInterceptionResult.Blocked? left, Tandem.Advanced.ToolInterceptionResult.Blocked? right) -> bool
+static Tandem.Advanced.ToolInterceptionResult.operator !=(Tandem.Advanced.ToolInterceptionResult? left, Tandem.Advanced.ToolInterceptionResult? right) -> bool
+static Tandem.Advanced.ToolInterceptionResult.operator ==(Tandem.Advanced.ToolInterceptionResult? left, Tandem.Advanced.ToolInterceptionResult? right) -> bool
+static Tandem.Advanced.ToolInvocation.operator !=(Tandem.Advanced.ToolInvocation? left, Tandem.Advanced.ToolInvocation? right) -> bool
+static Tandem.Advanced.ToolInvocation.operator ==(Tandem.Advanced.ToolInvocation? left, Tandem.Advanced.ToolInvocation? right) -> bool
+Tandem.Advanced.AdvancedAgentBuilderExtensions
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.<Clone>$() -> Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>!
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.AcceptedCallId.get -> string!
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.AcceptedCallId.init -> void
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.AgentCapabilityAcceptanceContext(System.Guid RunId, string! StepId, string! InvocationId, string! CapabilityId, string! AcceptedCallId, TState State, TRequest Request) -> void
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.CapabilityId.get -> string!
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.CapabilityId.init -> void
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.Deconstruct(out System.Guid RunId, out string! StepId, out string! InvocationId, out string! CapabilityId, out string! AcceptedCallId, out TState State, out TRequest Request) -> void
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.Equals(Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>? other) -> bool
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.InvocationId.get -> string!
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.InvocationId.init -> void
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.Request.get -> TRequest
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.Request.init -> void
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.RunId.get -> System.Guid
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.RunId.init -> void
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.State.get -> TState
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.State.init -> void
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.StepId.get -> string!
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.StepId.init -> void
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.ToolInvocations.get -> System.Collections.Generic.IReadOnlyList<Tandem.ToolInvocationObservation!>!
+Tandem.Advanced.AgentCapabilityAcceptanceContext<TState, TRequest>.ToolInvocations.init -> void
+Tandem.Advanced.AgentCapabilityAcceptanceExtensions
+Tandem.Advanced.AgentCheckpointContext<TState>
+Tandem.Advanced.AgentCheckpointContext<TState>.<Clone>$() -> Tandem.Advanced.AgentCheckpointContext<TState>!
+Tandem.Advanced.AgentCheckpointContext<TState>.AgentCheckpointContext(TState State, int CurrentContextTokens) -> void
+Tandem.Advanced.AgentCheckpointContext<TState>.CurrentContextTokens.get -> int
+Tandem.Advanced.AgentCheckpointContext<TState>.CurrentContextTokens.init -> void
+Tandem.Advanced.AgentCheckpointContext<TState>.Deconstruct(out TState State, out int CurrentContextTokens) -> void
+Tandem.Advanced.AgentCheckpointContext<TState>.Equals(Tandem.Advanced.AgentCheckpointContext<TState>? other) -> bool
+Tandem.Advanced.AgentCheckpointContext<TState>.State.get -> TState
+Tandem.Advanced.AgentCheckpointContext<TState>.State.init -> void
+Tandem.Advanced.AgentCommand
+Tandem.Advanced.AgentCommand.<Clone>$() -> Tandem.Advanced.AgentCommand!
+Tandem.Advanced.AgentCommand.Arguments.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Tandem.Advanced.AgentCommand.Command.get -> string!
+Tandem.Advanced.AgentCommand.Description.get -> string!
+Tandem.Advanced.AgentCommand.Equals(Tandem.Advanced.AgentCommand? other) -> bool
+Tandem.Advanced.AgentCommand.Name.get -> string!
+Tandem.Advanced.AgentConversationDecision
+Tandem.Advanced.AgentConversationDecision.<Clone>$() -> Tandem.Advanced.AgentConversationDecision!
+Tandem.Advanced.AgentConversationDecision.AgentConversationDecision(Tandem.Advanced.AgentConversationRetention Retention) -> void
+Tandem.Advanced.AgentConversationDecision.Deconstruct(out Tandem.Advanced.AgentConversationRetention Retention) -> void
+Tandem.Advanced.AgentConversationDecision.Equals(Tandem.Advanced.AgentConversationDecision? other) -> bool
+Tandem.Advanced.AgentConversationDecision.Retention.get -> Tandem.Advanced.AgentConversationRetention
+Tandem.Advanced.AgentConversationDecision.Retention.init -> void
+Tandem.Advanced.AgentConversationPolicy<TState>
+Tandem.Advanced.AgentConversationRetention
+Tandem.Advanced.AgentConversationRetention.Discard = 1 -> Tandem.Advanced.AgentConversationRetention
+Tandem.Advanced.AgentConversationRetention.Retain = 0 -> Tandem.Advanced.AgentConversationRetention
+Tandem.Advanced.AgentMessageContext<TState>
+Tandem.Advanced.AgentMessageContext<TState>.<Clone>$() -> Tandem.Advanced.AgentMessageContext<TState>!
+Tandem.Advanced.AgentMessageContext<TState>.AgentMessageContext(System.Guid RunId, TState State, Tandem.Advanced.OperationOutcome? LatestOutcome) -> void
+Tandem.Advanced.AgentMessageContext<TState>.Deconstruct(out System.Guid RunId, out TState State, out Tandem.Advanced.OperationOutcome? LatestOutcome) -> void
+Tandem.Advanced.AgentMessageContext<TState>.Equals(Tandem.Advanced.AgentMessageContext<TState>? other) -> bool
+Tandem.Advanced.AgentMessageContext<TState>.LatestOutcome.get -> Tandem.Advanced.OperationOutcome?
+Tandem.Advanced.AgentMessageContext<TState>.LatestOutcome.init -> void
+Tandem.Advanced.AgentMessageContext<TState>.RunId.get -> System.Guid
+Tandem.Advanced.AgentMessageContext<TState>.RunId.init -> void
+Tandem.Advanced.AgentMessageContext<TState>.State.get -> TState
+Tandem.Advanced.AgentMessageContext<TState>.State.init -> void
+Tandem.Advanced.AgentProfileDecision
+Tandem.Advanced.AgentProfileDecision.<Clone>$() -> Tandem.Advanced.AgentProfileDecision!
+Tandem.Advanced.AgentProfileDecision.AgentProfileDecision(string! ProfileName, string! Reason) -> void
+Tandem.Advanced.AgentProfileDecision.Deconstruct(out string! ProfileName, out string! Reason) -> void
+Tandem.Advanced.AgentProfileDecision.Equals(Tandem.Advanced.AgentProfileDecision? other) -> bool
+Tandem.Advanced.AgentProfileDecision.ProfileName.get -> string!
+Tandem.Advanced.AgentProfileDecision.ProfileName.init -> void
+Tandem.Advanced.AgentProfileDecision.Reason.get -> string!
+Tandem.Advanced.AgentProfileDecision.Reason.init -> void
+Tandem.Advanced.AgentProfilePolicy<TState>
+Tandem.Advanced.AgentProfiles
+Tandem.Advanced.AgentStateGuard<TState>
+Tandem.Advanced.AgentStateGuard<TState>.<Clone>$() -> Tandem.Advanced.AgentStateGuard<TState>!
+Tandem.Advanced.AgentStateGuard<TState>.AgentStateGuard(string! Id, System.Func<TState, bool>! IsActive, System.Collections.Generic.IReadOnlySet<Tandem.ToolEffect>! Blocks, string! Message, Tandem.AgentCapability<TState>? Remediation = null) -> void
+Tandem.Advanced.AgentStateGuard<TState>.Blocks.get -> System.Collections.Generic.IReadOnlySet<Tandem.ToolEffect>!
+Tandem.Advanced.AgentStateGuard<TState>.Blocks.init -> void
+Tandem.Advanced.AgentStateGuard<TState>.Deconstruct(out string! Id, out System.Func<TState, bool>! IsActive, out System.Collections.Generic.IReadOnlySet<Tandem.ToolEffect>! Blocks, out string! Message, out Tandem.AgentCapability<TState>? Remediation) -> void
+Tandem.Advanced.AgentStateGuard<TState>.Equals(Tandem.Advanced.AgentStateGuard<TState>? other) -> bool
+Tandem.Advanced.AgentStateGuard<TState>.Id.get -> string!
+Tandem.Advanced.AgentStateGuard<TState>.Id.init -> void
+Tandem.Advanced.AgentStateGuard<TState>.IsActive.get -> System.Func<TState, bool>!
+Tandem.Advanced.AgentStateGuard<TState>.IsActive.init -> void
+Tandem.Advanced.AgentStateGuard<TState>.Message.get -> string!
+Tandem.Advanced.AgentStateGuard<TState>.Message.init -> void
+Tandem.Advanced.AgentStateGuard<TState>.Remediation.get -> Tandem.AgentCapability<TState>?
+Tandem.Advanced.AgentStateGuard<TState>.Remediation.init -> void
+Tandem.Advanced.AgentToolGroup<TState>
+Tandem.Advanced.AgentTools
+Tandem.Advanced.AgentToolSelection
+Tandem.Advanced.AgentTurnContinuationPolicy<TState>
+Tandem.Advanced.AgentTurnDirective
+Tandem.Advanced.AgentTurnDirective.<Clone>$() -> Tandem.Advanced.AgentTurnDirective!
+Tandem.Advanced.AgentTurnDirective.AgentTurnDirective(string! Prompt, string? RequiredToolName = null) -> void
+Tandem.Advanced.AgentTurnDirective.Deconstruct(out string! Prompt, out string? RequiredToolName) -> void
+Tandem.Advanced.AgentTurnDirective.Equals(Tandem.Advanced.AgentTurnDirective? other) -> bool
+Tandem.Advanced.AgentTurnDirective.Prompt.get -> string!
+Tandem.Advanced.AgentTurnDirective.Prompt.init -> void
+Tandem.Advanced.AgentTurnDirective.RequiredToolName.get -> string?
+Tandem.Advanced.AgentTurnDirective.RequiredToolName.init -> void
+Tandem.Advanced.AgentTurnObservation<TState>
+Tandem.Advanced.AgentTurnObservation<TState>.<Clone>$() -> Tandem.Advanced.AgentTurnObservation<TState>!
+Tandem.Advanced.AgentTurnObservation<TState>.AgentTurnObservation(Tandem.Advanced.AgentMessageContext<TState>! Context, string! AssistantText, System.Collections.Generic.IReadOnlyList<string!>! ToolNames, bool HasAcceptedLifecycleOutcome, int ContinuationAttempt) -> void
+Tandem.Advanced.AgentTurnObservation<TState>.AssistantText.get -> string!
+Tandem.Advanced.AgentTurnObservation<TState>.AssistantText.init -> void
+Tandem.Advanced.AgentTurnObservation<TState>.Context.get -> Tandem.Advanced.AgentMessageContext<TState>!
+Tandem.Advanced.AgentTurnObservation<TState>.Context.init -> void
+Tandem.Advanced.AgentTurnObservation<TState>.ContinuationAttempt.get -> int
+Tandem.Advanced.AgentTurnObservation<TState>.ContinuationAttempt.init -> void
+Tandem.Advanced.AgentTurnObservation<TState>.Deconstruct(out Tandem.Advanced.AgentMessageContext<TState>! Context, out string! AssistantText, out System.Collections.Generic.IReadOnlyList<string!>! ToolNames, out bool HasAcceptedLifecycleOutcome, out int ContinuationAttempt) -> void
+Tandem.Advanced.AgentTurnObservation<TState>.Equals(Tandem.Advanced.AgentTurnObservation<TState>? other) -> bool
+Tandem.Advanced.AgentTurnObservation<TState>.HasAcceptedLifecycleOutcome.get -> bool
+Tandem.Advanced.AgentTurnObservation<TState>.HasAcceptedLifecycleOutcome.init -> void
+Tandem.Advanced.AgentTurnObservation<TState>.ToolNames.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Tandem.Advanced.AgentTurnObservation<TState>.ToolNames.init -> void
+Tandem.Advanced.AgentTurnPolicy<TState>
+Tandem.Advanced.AgentTurnPolicy<TState>.<Clone>$() -> Tandem.Advanced.AgentTurnPolicy<TState>!
+Tandem.Advanced.AgentTurnPolicy<TState>.AgentTurnPolicy(int maxContinuationAttempts, Tandem.Advanced.AgentTurnContinuationPolicy<TState>! continue) -> void
+Tandem.Advanced.AgentTurnPolicy<TState>.Continue.get -> Tandem.Advanced.AgentTurnContinuationPolicy<TState>!
+Tandem.Advanced.AgentTurnPolicy<TState>.Equals(Tandem.Advanced.AgentTurnPolicy<TState>? other) -> bool
+Tandem.Advanced.AgentTurnPolicy<TState>.MaxContinuationAttempts.get -> int
+Tandem.Advanced.AgentWorkspace<TState>
+Tandem.Advanced.AgentWorkspace<TState>.Commands.get -> Tandem.Advanced.AgentToolSelection!
+Tandem.Advanced.AgentWorkspace<TState>.Register(Tandem.Advanced.AgentWorkspaceTool! tool) -> Tandem.Advanced.AgentToolSelection!
+Tandem.Advanced.AgentWorkspaceTool
+Tandem.Advanced.CheckpointPolicy<TState>
+Tandem.Advanced.CheckpointPolicy<TState>.<Clone>$() -> Tandem.Advanced.CheckpointPolicy<TState>!
+Tandem.Advanced.CheckpointPolicy<TState>.Capability.get -> Tandem.AgentCapability<TState>!
+Tandem.Advanced.CheckpointPolicy<TState>.Capability.init -> void
+Tandem.Advanced.CheckpointPolicy<TState>.CheckpointAtPercent.get -> int
+Tandem.Advanced.CheckpointPolicy<TState>.CheckpointAtPercent.init -> void
+Tandem.Advanced.CheckpointPolicy<TState>.CheckpointPolicy(int ContextWindowTokens, int MaxOutputTokens, int CheckpointAtPercent, Tandem.AgentCapability<TState>! Capability, string! Instructions, System.Func<Tandem.Advanced.AgentCheckpointContext<TState>!, string!>! UserMessage, Tandem.Advanced.CheckpointSessionBehavior SessionBehavior = Tandem.Advanced.CheckpointSessionBehavior.Reset) -> void
+Tandem.Advanced.CheckpointPolicy<TState>.ContextWindowTokens.get -> int
+Tandem.Advanced.CheckpointPolicy<TState>.ContextWindowTokens.init -> void
+Tandem.Advanced.CheckpointPolicy<TState>.Deconstruct(out int ContextWindowTokens, out int MaxOutputTokens, out int CheckpointAtPercent, out Tandem.AgentCapability<TState>! Capability, out string! Instructions, out System.Func<Tandem.Advanced.AgentCheckpointContext<TState>!, string!>! UserMessage, out Tandem.Advanced.CheckpointSessionBehavior SessionBehavior) -> void
+Tandem.Advanced.CheckpointPolicy<TState>.DisableCompaction.get -> bool
+Tandem.Advanced.CheckpointPolicy<TState>.DisableCompaction.init -> void
+Tandem.Advanced.CheckpointPolicy<TState>.Equals(Tandem.Advanced.CheckpointPolicy<TState>? other) -> bool
+Tandem.Advanced.CheckpointPolicy<TState>.Instructions.get -> string!
+Tandem.Advanced.CheckpointPolicy<TState>.Instructions.init -> void
+Tandem.Advanced.CheckpointPolicy<TState>.MaxOutputTokens.get -> int
+Tandem.Advanced.CheckpointPolicy<TState>.MaxOutputTokens.init -> void
+Tandem.Advanced.CheckpointPolicy<TState>.SessionBehavior.get -> Tandem.Advanced.CheckpointSessionBehavior
+Tandem.Advanced.CheckpointPolicy<TState>.SessionBehavior.init -> void
+Tandem.Advanced.CheckpointPolicy<TState>.UserMessage.get -> System.Func<Tandem.Advanced.AgentCheckpointContext<TState>!, string!>!
+Tandem.Advanced.CheckpointPolicy<TState>.UserMessage.init -> void
+Tandem.Advanced.CheckpointSessionBehavior
+Tandem.Advanced.CheckpointSessionBehavior.Reset = 1 -> Tandem.Advanced.CheckpointSessionBehavior
+Tandem.Advanced.CheckpointSessionBehavior.Retain = 0 -> Tandem.Advanced.CheckpointSessionBehavior
+Tandem.Advanced.IAgentRawOutputDefinition<TState, TOutput>
+Tandem.Advanced.IAgentRawOutputDefinition<TState, TOutput>.Instructions.get -> string!
+Tandem.Advanced.IAgentRawOutputDefinition<TState, TOutput>.Parse(string! response) -> TOutput
+Tandem.Advanced.IAgentRawOutputDefinition<TState, TOutput>.Validator.get -> FluentValidation.IValidator<TOutput>!
+Tandem.Advanced.IAgentRawOutputDefinition<TState, TOutput>.ValidatorFor(TState state) -> FluentValidation.IValidator<TOutput>?
+Tandem.Advanced.LocalProcess
+Tandem.Advanced.LocalProcessRequest
+Tandem.Advanced.LocalProcessRequest.<Clone>$() -> Tandem.Advanced.LocalProcessRequest!
+Tandem.Advanced.LocalProcessRequest.Arguments.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Tandem.Advanced.LocalProcessRequest.Arguments.init -> void
+Tandem.Advanced.LocalProcessRequest.Deconstruct(out string! FileName, out System.Collections.Generic.IReadOnlyList<string!>! Arguments, out string? WorkingDirectory, out System.TimeSpan? Timeout, out int MaximumOutputBytesPerStream, out System.Collections.Generic.IReadOnlyDictionary<string!, string!>? Environment) -> void
+Tandem.Advanced.LocalProcessRequest.Environment.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>?
+Tandem.Advanced.LocalProcessRequest.Environment.init -> void
+Tandem.Advanced.LocalProcessRequest.Equals(Tandem.Advanced.LocalProcessRequest? other) -> bool
+Tandem.Advanced.LocalProcessRequest.FileName.get -> string!
+Tandem.Advanced.LocalProcessRequest.FileName.init -> void
+Tandem.Advanced.LocalProcessRequest.LocalProcessRequest(string! FileName, System.Collections.Generic.IReadOnlyList<string!>! Arguments, string? WorkingDirectory = null, System.TimeSpan? Timeout = null, int MaximumOutputBytesPerStream = 65536, System.Collections.Generic.IReadOnlyDictionary<string!, string!>? Environment = null) -> void
+Tandem.Advanced.LocalProcessRequest.MaximumOutputBytesPerStream.get -> int
+Tandem.Advanced.LocalProcessRequest.MaximumOutputBytesPerStream.init -> void
+Tandem.Advanced.LocalProcessRequest.Timeout.get -> System.TimeSpan?
+Tandem.Advanced.LocalProcessRequest.Timeout.init -> void
+Tandem.Advanced.LocalProcessRequest.WorkingDirectory.get -> string?
+Tandem.Advanced.LocalProcessRequest.WorkingDirectory.init -> void
+Tandem.Advanced.LocalProcessResult
+Tandem.Advanced.LocalProcessResult.<Clone>$() -> Tandem.Advanced.LocalProcessResult!
+Tandem.Advanced.LocalProcessResult.Deconstruct(out int ExitCode, out string! Stdout, out string! Stderr, out System.TimeSpan Duration, out bool TimedOut, out bool StdoutTruncated, out bool StderrTruncated) -> void
+Tandem.Advanced.LocalProcessResult.Duration.get -> System.TimeSpan
+Tandem.Advanced.LocalProcessResult.Duration.init -> void
+Tandem.Advanced.LocalProcessResult.Equals(Tandem.Advanced.LocalProcessResult? other) -> bool
+Tandem.Advanced.LocalProcessResult.ExitCode.get -> int
+Tandem.Advanced.LocalProcessResult.ExitCode.init -> void
+Tandem.Advanced.LocalProcessResult.LocalProcessResult(int ExitCode, string! Stdout, string! Stderr, System.TimeSpan Duration, bool TimedOut, bool StdoutTruncated, bool StderrTruncated) -> void
+Tandem.Advanced.LocalProcessResult.Stderr.get -> string!
+Tandem.Advanced.LocalProcessResult.Stderr.init -> void
+Tandem.Advanced.LocalProcessResult.StderrTruncated.get -> bool
+Tandem.Advanced.LocalProcessResult.StderrTruncated.init -> void
+Tandem.Advanced.LocalProcessResult.Stdout.get -> string!
+Tandem.Advanced.LocalProcessResult.Stdout.init -> void
+Tandem.Advanced.LocalProcessResult.StdoutTruncated.get -> bool
+Tandem.Advanced.LocalProcessResult.StdoutTruncated.init -> void
+Tandem.Advanced.LocalProcessResult.TimedOut.get -> bool
+Tandem.Advanced.LocalProcessResult.TimedOut.init -> void
+Tandem.Advanced.MessageAugmentation<TState>
+Tandem.Advanced.OperationOutcome
+Tandem.Advanced.OperationOutcome.<Clone>$() -> Tandem.Advanced.OperationOutcome!
+Tandem.Advanced.OperationOutcome.Deconstruct(out string! Kind, out string! StepId, out string! Summary, out System.Text.Json.JsonElement Payload, out System.TimeSpan Duration) -> void
+Tandem.Advanced.OperationOutcome.Duration.get -> System.TimeSpan
+Tandem.Advanced.OperationOutcome.Duration.init -> void
+Tandem.Advanced.OperationOutcome.Equals(Tandem.Advanced.OperationOutcome? other) -> bool
+Tandem.Advanced.OperationOutcome.Kind.get -> string!
+Tandem.Advanced.OperationOutcome.Kind.init -> void
+Tandem.Advanced.OperationOutcome.OperationOutcome(string! Kind, string! StepId, string! Summary, System.Text.Json.JsonElement Payload = default(System.Text.Json.JsonElement), System.TimeSpan Duration = default(System.TimeSpan)) -> void
+Tandem.Advanced.OperationOutcome.Payload.get -> System.Text.Json.JsonElement
+Tandem.Advanced.OperationOutcome.Payload.init -> void
+Tandem.Advanced.OperationOutcome.StepId.get -> string!
+Tandem.Advanced.OperationOutcome.StepId.init -> void
+Tandem.Advanced.OperationOutcome.Summary.get -> string!
+Tandem.Advanced.OperationOutcome.Summary.init -> void
+Tandem.Advanced.OperationResult<TState>
+Tandem.Advanced.OperationResult<TState>.<Clone>$() -> Tandem.Advanced.OperationResult<TState>!
+Tandem.Advanced.OperationResult<TState>.Deconstruct(out TState State, out Tandem.Advanced.OperationOutcome! Outcome) -> void
+Tandem.Advanced.OperationResult<TState>.Equals(Tandem.Advanced.OperationResult<TState>? other) -> bool
+Tandem.Advanced.OperationResult<TState>.OperationResult(TState State, Tandem.Advanced.OperationOutcome! Outcome) -> void
+Tandem.Advanced.OperationResult<TState>.Outcome.get -> Tandem.Advanced.OperationOutcome!
+Tandem.Advanced.OperationResult<TState>.Outcome.init -> void
+Tandem.Advanced.OperationResult<TState>.State.get -> TState
+Tandem.Advanced.OperationResult<TState>.State.init -> void
+Tandem.Advanced.OutputAcceptance<TState, TOutput>
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.<Clone>$() -> Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>!
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.AcceptedOutputId.get -> string!
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.AcceptedOutputId.init -> void
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.Attempt.get -> int
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.Attempt.init -> void
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.Context.get -> Tandem.Advanced.AgentMessageContext<TState>!
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.Context.init -> void
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.Deconstruct(out Tandem.Advanced.AgentMessageContext<TState>! Context, out string! AcceptedOutputId, out TOutput Output, out System.Collections.Generic.IReadOnlySet<Tandem.ToolObservation!>! Tools, out System.Collections.Generic.IReadOnlyList<Tandem.ToolInvocationObservation!>! ToolInvocations, out int Attempt) -> void
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.Equals(Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>? other) -> bool
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.Output.get -> TOutput
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.Output.init -> void
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.OutputAcceptanceObservation(Tandem.Advanced.AgentMessageContext<TState>! Context, string! AcceptedOutputId, TOutput Output, System.Collections.Generic.IReadOnlySet<Tandem.ToolObservation!>! Tools, System.Collections.Generic.IReadOnlyList<Tandem.ToolInvocationObservation!>! ToolInvocations, int Attempt) -> void
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.ToolInvocations.get -> System.Collections.Generic.IReadOnlyList<Tandem.ToolInvocationObservation!>!
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.ToolInvocations.init -> void
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.Tools.get -> System.Collections.Generic.IReadOnlySet<Tandem.ToolObservation!>!
+Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>.Tools.init -> void
+Tandem.Advanced.OutputAcceptancePolicy<TState, TOutput>
+Tandem.Advanced.PipelineOperation
+Tandem.Advanced.PipelineOperationContext<TState>
+Tandem.Advanced.PipelineOperationContext<TState>.LatestOutcome.get -> Tandem.Advanced.OperationOutcome?
+Tandem.Advanced.PipelineOperationContext<TState>.ObserveCommandOutputAsync(string! stepId, string! command, string! output, int exitCode, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask
+Tandem.Advanced.PipelineOperationContext<TState>.RunId.get -> System.Guid
+Tandem.Advanced.PipelineOperationContext<TState>.State.get -> TState
+Tandem.Advanced.RawOutputExtensions
+Tandem.Advanced.ToolInterceptionResult
+Tandem.Advanced.ToolInterceptionResult.Blocked
+Tandem.Advanced.ToolInterceptionResult.Blocked.Blocked(string! Message) -> void
+Tandem.Advanced.ToolInterceptionResult.Blocked.Deconstruct(out string! Message) -> void
+Tandem.Advanced.ToolInterceptionResult.Blocked.Equals(Tandem.Advanced.ToolInterceptionResult.Blocked? other) -> bool
+Tandem.Advanced.ToolInterceptionResult.Blocked.Message.get -> string!
+Tandem.Advanced.ToolInterceptionResult.Blocked.Message.init -> void
+Tandem.Advanced.ToolInterceptionResult.ToolInterceptionResult() -> void
+Tandem.Advanced.ToolInterceptionResult.ToolInterceptionResult(Tandem.Advanced.ToolInterceptionResult! original) -> void
+Tandem.Advanced.ToolInterceptor<TState>
+Tandem.Advanced.ToolInvocation
+Tandem.Advanced.ToolInvocation.<Clone>$() -> Tandem.Advanced.ToolInvocation!
+Tandem.Advanced.ToolInvocation.Arguments.get -> System.Text.Json.JsonElement
+Tandem.Advanced.ToolInvocation.Arguments.init -> void
+Tandem.Advanced.ToolInvocation.Deconstruct(out string! Name, out Tandem.ToolEffect Effect, out System.Text.Json.JsonElement Arguments) -> void
+Tandem.Advanced.ToolInvocation.Effect.get -> Tandem.ToolEffect
+Tandem.Advanced.ToolInvocation.Effect.init -> void
+Tandem.Advanced.ToolInvocation.Equals(Tandem.Advanced.ToolInvocation? other) -> bool
+Tandem.Advanced.ToolInvocation.Name.get -> string!
+Tandem.Advanced.ToolInvocation.Name.init -> void
+Tandem.Advanced.ToolInvocation.ToolInvocation(string! Name, Tandem.ToolEffect Effect, System.Text.Json.JsonElement Arguments) -> void
+virtual Tandem.Advanced.AgentConversationPolicy<TState>.Invoke(Tandem.Advanced.AgentMessageContext<TState>! context, Tandem.Advanced.OperationOutcome! outcome) -> Tandem.Advanced.AgentConversationDecision!
+virtual Tandem.Advanced.AgentProfilePolicy<TState>.Invoke(TState state) -> Tandem.Advanced.AgentProfileDecision!
+virtual Tandem.Advanced.AgentTurnContinuationPolicy<TState>.Invoke(Tandem.Advanced.AgentTurnObservation<TState>! observation, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Tandem.Advanced.AgentTurnDirective?>
+virtual Tandem.Advanced.MessageAugmentation<TState>.Invoke(Tandem.Advanced.AgentMessageContext<TState>! context, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string?>
+virtual Tandem.Advanced.OutputAcceptance<TState, TOutput>.Invoke(Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>! observation, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask
+virtual Tandem.Advanced.OutputAcceptancePolicy<TState, TOutput>.Invoke(Tandem.Advanced.OutputAcceptanceObservation<TState, TOutput>! observation) -> System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>!
+virtual Tandem.Advanced.ToolInterceptionResult.EqualityContract.get -> System.Type!
+virtual Tandem.Advanced.ToolInterceptionResult.Equals(Tandem.Advanced.ToolInterceptionResult? other) -> bool
+virtual Tandem.Advanced.ToolInterceptionResult.PrintMembers(System.Text.StringBuilder! builder) -> bool
+virtual Tandem.Advanced.ToolInterceptor<TState>.Invoke(Tandem.Advanced.AgentMessageContext<TState>! context, Tandem.Advanced.ToolInvocation! invocation, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Tandem.Advanced.ToolInterceptionResult?>

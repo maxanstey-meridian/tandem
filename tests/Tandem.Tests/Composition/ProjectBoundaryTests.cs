@@ -117,21 +117,6 @@ public sealed class ProjectBoundaryTests
             ]);
     }
 
-    [Fact]
-    public void PublicTandemApi_ExposesNoMafTypes()
-    {
-        var leaks = typeof(Pipeline<>)
-            .Assembly.GetExportedTypes()
-            .SelectMany(PublicSurfaceTypes)
-            .Where(type => type.Assembly.GetName().Name?.StartsWith("Microsoft.Agents") == true)
-            .Select(type => type.FullName)
-            .Distinct(StringComparer.Ordinal)
-            .Order(StringComparer.Ordinal)
-            .ToArray();
-
-        leaks.Should().BeEmpty();
-    }
-
     private static void AssertRule(ConditionList rule)
     {
         var result = rule.GetResult();
@@ -155,102 +140,6 @@ public sealed class ProjectBoundaryTests
             _root,
             relativePath.Replace('/', System.IO.Path.DirectorySeparatorChar)
         );
-
-    private static IEnumerable<Type> PublicSurfaceTypes(Type type)
-    {
-        yield return type;
-
-        if (type.BaseType is { } baseType)
-        {
-            foreach (var candidate in Expand(baseType))
-            {
-                yield return candidate;
-            }
-        }
-
-        foreach (var contract in type.GetInterfaces())
-        {
-            foreach (var candidate in Expand(contract))
-            {
-                yield return candidate;
-            }
-        }
-
-        foreach (
-            var parameter in type.GetGenericArguments()
-                .Where(argument => argument.IsGenericParameter)
-        )
-        {
-            foreach (var constraint in parameter.GetGenericParameterConstraints())
-            {
-                foreach (var candidate in Expand(constraint))
-                {
-                    yield return candidate;
-                }
-            }
-        }
-
-        foreach (
-            var memberType in type.GetConstructors()
-                .SelectMany(constructor =>
-                    constructor.GetParameters().Select(parameter => parameter.ParameterType)
-                )
-                .Concat(type.GetMethods().Select(method => method.ReturnType))
-                .Concat(
-                    type.GetMethods()
-                        .SelectMany(method =>
-                            method.GetParameters().Select(parameter => parameter.ParameterType)
-                        )
-                )
-                .Concat(type.GetProperties().Select(property => property.PropertyType))
-                .Concat(type.GetEvents().Select(@event => @event.EventHandlerType!))
-                .Concat(type.GetFields().Select(field => field.FieldType))
-                .Where(candidate => candidate is not null)
-        )
-        {
-            foreach (var candidate in Expand(memberType))
-            {
-                yield return candidate;
-            }
-        }
-
-        foreach (var method in type.GetMethods())
-        {
-            foreach (
-                var parameter in method
-                    .GetGenericArguments()
-                    .Where(argument => argument.IsGenericParameter)
-            )
-            {
-                foreach (var constraint in parameter.GetGenericParameterConstraints())
-                {
-                    foreach (var candidate in Expand(constraint))
-                    {
-                        yield return candidate;
-                    }
-                }
-            }
-        }
-    }
-
-    private static IEnumerable<Type> Expand(Type type)
-    {
-        yield return type;
-        if (type.HasElementType && type.GetElementType() is { } element)
-        {
-            foreach (var candidate in Expand(element))
-            {
-                yield return candidate;
-            }
-        }
-        foreach (var argument in type.GetGenericArguments())
-        {
-            foreach (var candidate in Expand(argument))
-            {
-                yield return candidate;
-            }
-        }
-    }
 
     private sealed record BoundaryState(string Value);
 }

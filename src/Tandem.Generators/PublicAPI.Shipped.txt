@@ -1,0 +1,4 @@
+#nullable enable
+Tandem.Generators.PipelineStepGenerator
+Tandem.Generators.PipelineStepGenerator.Initialize(Microsoft.CodeAnalysis.IncrementalGeneratorInitializationContext context) -> void
+Tandem.Generators.PipelineStepGenerator.PipelineStepGenerator() -> void

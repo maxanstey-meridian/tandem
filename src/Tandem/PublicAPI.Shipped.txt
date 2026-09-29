@@ -1,0 +1,1012 @@
+#nullable enable
+abstract Tandem.AgentUpdate.<Clone>$() -> Tandem.AgentUpdate!
+abstract Tandem.Outcome<TState>.<Clone>$() -> Tandem.Outcome<TState>!
+abstract Tandem.PipelineObservation.<Clone>$() -> Tandem.PipelineObservation!
+abstract Tandem.ToolResultEvidence.<Clone>$() -> Tandem.ToolResultEvidence!
+const Tandem.StandardOutcomeKinds.Failed = "tandem.failed" -> string!
+const Tandem.StandardOutcomeKinds.Success = "tandem.success" -> string!
+override abstract Tandem.PipelineInteractionAnsweredObservation.<Clone>$() -> Tandem.PipelineInteractionAnsweredObservation!
+override abstract Tandem.PipelineInteractionRequestedObservation.<Clone>$() -> Tandem.PipelineInteractionRequestedObservation!
+override sealed Tandem.AgentUpdate.ModelSelected.Equals(Tandem.AgentUpdate? other) -> bool
+override sealed Tandem.AgentUpdate.Reasoning.Equals(Tandem.AgentUpdate? other) -> bool
+override sealed Tandem.AgentUpdate.Text.Equals(Tandem.AgentUpdate? other) -> bool
+override sealed Tandem.AgentUpdate.ToolCompleted.Equals(Tandem.AgentUpdate? other) -> bool
+override sealed Tandem.AgentUpdate.ToolStarted.Equals(Tandem.AgentUpdate? other) -> bool
+override sealed Tandem.AgentUpdate.Usage.Equals(Tandem.AgentUpdate? other) -> bool
+override sealed Tandem.CapabilityAccepted<T>.Equals(Tandem.PipelineCapabilityAccepted? other) -> bool
+override sealed Tandem.Outcome<TState>.Failed.Equals(Tandem.Outcome<TState>? other) -> bool
+override sealed Tandem.Outcome<TState>.Success.Equals(Tandem.Outcome<TState>? other) -> bool
+override sealed Tandem.OutputAccepted<T>.Equals(Tandem.PipelineStructuredOutputAccepted? other) -> bool
+override sealed Tandem.PipelineActionAttempted.Equals(Tandem.PipelineObservation? other) -> bool
+override sealed Tandem.PipelineActionCompleted.Equals(Tandem.PipelineObservation? other) -> bool
+override sealed Tandem.PipelineAgentUpdated.Equals(Tandem.PipelineObservation? other) -> bool
+override sealed Tandem.PipelineAgentUsage.Equals(Tandem.PipelineObservation? other) -> bool
+override sealed Tandem.PipelineCapabilityAccepted.Equals(Tandem.PipelineObservation? other) -> bool
+override sealed Tandem.PipelineCommandOutput.Equals(Tandem.PipelineObservation? other) -> bool
+override sealed Tandem.PipelineInteractionAnswered<TResponse>.Equals(Tandem.PipelineInteractionAnsweredObservation? other) -> bool
+override sealed Tandem.PipelineInteractionAnsweredObservation.Equals(Tandem.PipelineObservation? other) -> bool
+override sealed Tandem.PipelineInteractionRequested<TRequest>.Equals(Tandem.PipelineInteractionRequestedObservation? other) -> bool
+override sealed Tandem.PipelineInteractionRequestedObservation.Equals(Tandem.PipelineObservation? other) -> bool
+override sealed Tandem.PipelineStepCancelled.Equals(Tandem.PipelineObservation? other) -> bool
+override sealed Tandem.PipelineStepCompleted.Equals(Tandem.PipelineObservation? other) -> bool
+override sealed Tandem.PipelineStepFaulted.Equals(Tandem.PipelineObservation? other) -> bool
+override sealed Tandem.PipelineStepStarted.Equals(Tandem.PipelineObservation? other) -> bool
+override sealed Tandem.PipelineStructuredOutputAccepted.Equals(Tandem.PipelineObservation? other) -> bool
+override sealed Tandem.PipelineStructuredOutputRejected.Equals(Tandem.PipelineObservation? other) -> bool
+override sealed Tandem.ToolResultEvidence.Process.Equals(Tandem.ToolResultEvidence? other) -> bool
+override Tandem.AgentJsonCapabilityDefinition<TState>.Equals(object? obj) -> bool
+override Tandem.AgentJsonCapabilityDefinition<TState>.GetHashCode() -> int
+override Tandem.AgentJsonCapabilityDefinition<TState>.ToString() -> string!
+override Tandem.AgentJsonOutputDefinition<TState>.Equals(object? obj) -> bool
+override Tandem.AgentJsonOutputDefinition<TState>.GetHashCode() -> int
+override Tandem.AgentJsonOutputDefinition<TState>.ToString() -> string!
+override Tandem.AgentOutputExample<TOutput>.Equals(object? obj) -> bool
+override Tandem.AgentOutputExample<TOutput>.GetHashCode() -> int
+override Tandem.AgentOutputExample<TOutput>.ToString() -> string!
+override Tandem.AgentUpdate.Equals(object? obj) -> bool
+override Tandem.AgentUpdate.GetHashCode() -> int
+override Tandem.AgentUpdate.ModelSelected.<Clone>$() -> Tandem.AgentUpdate.ModelSelected!
+override Tandem.AgentUpdate.ModelSelected.Equals(object? obj) -> bool
+override Tandem.AgentUpdate.ModelSelected.GetHashCode() -> int
+override Tandem.AgentUpdate.ModelSelected.ToString() -> string!
+override Tandem.AgentUpdate.Reasoning.<Clone>$() -> Tandem.AgentUpdate.Reasoning!
+override Tandem.AgentUpdate.Reasoning.Equals(object? obj) -> bool
+override Tandem.AgentUpdate.Reasoning.GetHashCode() -> int
+override Tandem.AgentUpdate.Reasoning.ToString() -> string!
+override Tandem.AgentUpdate.Text.<Clone>$() -> Tandem.AgentUpdate.Text!
+override Tandem.AgentUpdate.Text.Equals(object? obj) -> bool
+override Tandem.AgentUpdate.Text.GetHashCode() -> int
+override Tandem.AgentUpdate.Text.ToString() -> string!
+override Tandem.AgentUpdate.ToolCompleted.<Clone>$() -> Tandem.AgentUpdate.ToolCompleted!
+override Tandem.AgentUpdate.ToolCompleted.Equals(object? obj) -> bool
+override Tandem.AgentUpdate.ToolCompleted.GetHashCode() -> int
+override Tandem.AgentUpdate.ToolCompleted.ToString() -> string!
+override Tandem.AgentUpdate.ToolStarted.<Clone>$() -> Tandem.AgentUpdate.ToolStarted!
+override Tandem.AgentUpdate.ToolStarted.Equals(object? obj) -> bool
+override Tandem.AgentUpdate.ToolStarted.GetHashCode() -> int
+override Tandem.AgentUpdate.ToolStarted.ToString() -> string!
+override Tandem.AgentUpdate.ToString() -> string!
+override Tandem.AgentUpdate.Usage.<Clone>$() -> Tandem.AgentUpdate.Usage!
+override Tandem.AgentUpdate.Usage.Equals(object? obj) -> bool
+override Tandem.AgentUpdate.Usage.GetHashCode() -> int
+override Tandem.AgentUpdate.Usage.ToString() -> string!
+override Tandem.CapabilityAccepted<T>.<Clone>$() -> Tandem.CapabilityAccepted<T>!
+override Tandem.CapabilityAccepted<T>.Equals(object? obj) -> bool
+override Tandem.CapabilityAccepted<T>.GetHashCode() -> int
+override Tandem.CapabilityAccepted<T>.ToString() -> string!
+override Tandem.FailureEvidence.Equals(object? obj) -> bool
+override Tandem.FailureEvidence.GetHashCode() -> int
+override Tandem.FailureEvidence.ToString() -> string!
+override Tandem.Outcome<TState>.Equals(object? obj) -> bool
+override Tandem.Outcome<TState>.Failed.<Clone>$() -> Tandem.Outcome<TState>.Failed!
+override Tandem.Outcome<TState>.Failed.Equals(object? obj) -> bool
+override Tandem.Outcome<TState>.Failed.GetHashCode() -> int
+override Tandem.Outcome<TState>.Failed.ToString() -> string!
+override Tandem.Outcome<TState>.GetHashCode() -> int
+override Tandem.Outcome<TState>.Success.<Clone>$() -> Tandem.Outcome<TState>.Success!
+override Tandem.Outcome<TState>.Success.Equals(object? obj) -> bool
+override Tandem.Outcome<TState>.Success.GetHashCode() -> int
+override Tandem.Outcome<TState>.Success.ToString() -> string!
+override Tandem.Outcome<TState>.ToString() -> string!
+override Tandem.OutputAccepted<T>.<Clone>$() -> Tandem.OutputAccepted<T>!
+override Tandem.OutputAccepted<T>.Equals(object? obj) -> bool
+override Tandem.OutputAccepted<T>.GetHashCode() -> int
+override Tandem.OutputAccepted<T>.ToString() -> string!
+override Tandem.PipelineAcceptedValue.Equals(object? obj) -> bool
+override Tandem.PipelineAcceptedValue.GetHashCode() -> int
+override Tandem.PipelineAcceptedValue.ToString() -> string!
+override Tandem.PipelineActionAttempted.<Clone>$() -> Tandem.PipelineActionAttempted!
+override Tandem.PipelineActionAttempted.Equals(object? obj) -> bool
+override Tandem.PipelineActionAttempted.GetHashCode() -> int
+override Tandem.PipelineActionAttempted.ToString() -> string!
+override Tandem.PipelineActionCompleted.<Clone>$() -> Tandem.PipelineActionCompleted!
+override Tandem.PipelineActionCompleted.Equals(object? obj) -> bool
+override Tandem.PipelineActionCompleted.GetHashCode() -> int
+override Tandem.PipelineActionCompleted.ToString() -> string!
+override Tandem.PipelineActionProcessPayload.Equals(object? obj) -> bool
+override Tandem.PipelineActionProcessPayload.GetHashCode() -> int
+override Tandem.PipelineActionProcessPayload.ToString() -> string!
+override Tandem.PipelineAgentUpdated.<Clone>$() -> Tandem.PipelineAgentUpdated!
+override Tandem.PipelineAgentUpdated.Equals(object? obj) -> bool
+override Tandem.PipelineAgentUpdated.GetHashCode() -> int
+override Tandem.PipelineAgentUpdated.ToString() -> string!
+override Tandem.PipelineAgentUsage.<Clone>$() -> Tandem.PipelineAgentUsage!
+override Tandem.PipelineAgentUsage.Equals(object? obj) -> bool
+override Tandem.PipelineAgentUsage.GetHashCode() -> int
+override Tandem.PipelineAgentUsage.ToString() -> string!
+override Tandem.PipelineCapabilityAccepted.<Clone>$() -> Tandem.PipelineCapabilityAccepted!
+override Tandem.PipelineCapabilityAccepted.EqualityContract.get -> System.Type!
+override Tandem.PipelineCapabilityAccepted.Equals(object? obj) -> bool
+override Tandem.PipelineCapabilityAccepted.GetHashCode() -> int
+override Tandem.PipelineCapabilityAccepted.PrintMembers(System.Text.StringBuilder! builder) -> bool
+override Tandem.PipelineCapabilityAccepted.ToString() -> string!
+override Tandem.PipelineCollectionInspection.Equals(object? obj) -> bool
+override Tandem.PipelineCollectionInspection.GetHashCode() -> int
+override Tandem.PipelineCollectionInspection.ToString() -> string!
+override Tandem.PipelineCommandOutput.<Clone>$() -> Tandem.PipelineCommandOutput!
+override Tandem.PipelineCommandOutput.Equals(object? obj) -> bool
+override Tandem.PipelineCommandOutput.GetHashCode() -> int
+override Tandem.PipelineCommandOutput.ToString() -> string!
+override Tandem.PipelineInspection.Equals(object? obj) -> bool
+override Tandem.PipelineInspection.GetHashCode() -> int
+override Tandem.PipelineInspection.ToString() -> string!
+override Tandem.PipelineInteractionAnswered<TResponse>.<Clone>$() -> Tandem.PipelineInteractionAnswered<TResponse>!
+override Tandem.PipelineInteractionAnswered<TResponse>.Equals(object? obj) -> bool
+override Tandem.PipelineInteractionAnswered<TResponse>.GetHashCode() -> int
+override Tandem.PipelineInteractionAnswered<TResponse>.ToString() -> string!
+override Tandem.PipelineInteractionAnsweredObservation.EqualityContract.get -> System.Type!
+override Tandem.PipelineInteractionAnsweredObservation.Equals(object? obj) -> bool
+override Tandem.PipelineInteractionAnsweredObservation.GetHashCode() -> int
+override Tandem.PipelineInteractionAnsweredObservation.PrintMembers(System.Text.StringBuilder! builder) -> bool
+override Tandem.PipelineInteractionAnsweredObservation.ToString() -> string!
+override Tandem.PipelineInteractionContext<TRequest, TResponse>.Equals(object? obj) -> bool
+override Tandem.PipelineInteractionContext<TRequest, TResponse>.GetHashCode() -> int
+override Tandem.PipelineInteractionContext<TRequest, TResponse>.ToString() -> string!
+override Tandem.PipelineInteractionInspection.Equals(object? obj) -> bool
+override Tandem.PipelineInteractionInspection.GetHashCode() -> int
+override Tandem.PipelineInteractionInspection.ToString() -> string!
+override Tandem.PipelineInteractionRequested<TRequest>.<Clone>$() -> Tandem.PipelineInteractionRequested<TRequest>!
+override Tandem.PipelineInteractionRequested<TRequest>.Equals(object? obj) -> bool
+override Tandem.PipelineInteractionRequested<TRequest>.GetHashCode() -> int
+override Tandem.PipelineInteractionRequested<TRequest>.ToString() -> string!
+override Tandem.PipelineInteractionRequestedObservation.EqualityContract.get -> System.Type!
+override Tandem.PipelineInteractionRequestedObservation.Equals(object? obj) -> bool
+override Tandem.PipelineInteractionRequestedObservation.GetHashCode() -> int
+override Tandem.PipelineInteractionRequestedObservation.PrintMembers(System.Text.StringBuilder! builder) -> bool
+override Tandem.PipelineInteractionRequestedObservation.ToString() -> string!
+override Tandem.PipelineObservation.Equals(object? obj) -> bool
+override Tandem.PipelineObservation.GetHashCode() -> int
+override Tandem.PipelineObservation.ToString() -> string!
+override Tandem.PipelineParallelBranchInspection.Equals(object? obj) -> bool
+override Tandem.PipelineParallelBranchInspection.GetHashCode() -> int
+override Tandem.PipelineParallelBranchInspection.ToString() -> string!
+override Tandem.PipelineParallelInspection.Equals(object? obj) -> bool
+override Tandem.PipelineParallelInspection.GetHashCode() -> int
+override Tandem.PipelineParallelInspection.ToString() -> string!
+override Tandem.PipelineRouteInspection.Equals(object? obj) -> bool
+override Tandem.PipelineRouteInspection.GetHashCode() -> int
+override Tandem.PipelineRouteInspection.ToString() -> string!
+override Tandem.PipelineRunOptions.Equals(object? obj) -> bool
+override Tandem.PipelineRunOptions.GetHashCode() -> int
+override Tandem.PipelineRunOptions.ToString() -> string!
+override Tandem.PipelineRunOutcome.Equals(object? obj) -> bool
+override Tandem.PipelineRunOutcome.GetHashCode() -> int
+override Tandem.PipelineRunOutcome.ToString() -> string!
+override Tandem.PipelineRunResult<TState>.Equals(object? obj) -> bool
+override Tandem.PipelineRunResult<TState>.GetHashCode() -> int
+override Tandem.PipelineRunResult<TState>.ToString() -> string!
+override Tandem.PipelineStepCancelled.<Clone>$() -> Tandem.PipelineStepCancelled!
+override Tandem.PipelineStepCancelled.Equals(object? obj) -> bool
+override Tandem.PipelineStepCancelled.GetHashCode() -> int
+override Tandem.PipelineStepCancelled.ToString() -> string!
+override Tandem.PipelineStepCompleted.<Clone>$() -> Tandem.PipelineStepCompleted!
+override Tandem.PipelineStepCompleted.Equals(object? obj) -> bool
+override Tandem.PipelineStepCompleted.GetHashCode() -> int
+override Tandem.PipelineStepCompleted.ToString() -> string!
+override Tandem.PipelineStepFaulted.<Clone>$() -> Tandem.PipelineStepFaulted!
+override Tandem.PipelineStepFaulted.Equals(object? obj) -> bool
+override Tandem.PipelineStepFaulted.GetHashCode() -> int
+override Tandem.PipelineStepFaulted.ToString() -> string!
+override Tandem.PipelineStepStarted.<Clone>$() -> Tandem.PipelineStepStarted!
+override Tandem.PipelineStepStarted.Equals(object? obj) -> bool
+override Tandem.PipelineStepStarted.GetHashCode() -> int
+override Tandem.PipelineStepStarted.ToString() -> string!
+override Tandem.PipelineStructuredOutputAccepted.<Clone>$() -> Tandem.PipelineStructuredOutputAccepted!
+override Tandem.PipelineStructuredOutputAccepted.EqualityContract.get -> System.Type!
+override Tandem.PipelineStructuredOutputAccepted.Equals(object? obj) -> bool
+override Tandem.PipelineStructuredOutputAccepted.GetHashCode() -> int
+override Tandem.PipelineStructuredOutputAccepted.PrintMembers(System.Text.StringBuilder! builder) -> bool
+override Tandem.PipelineStructuredOutputAccepted.ToString() -> string!
+override Tandem.PipelineStructuredOutputRejected.<Clone>$() -> Tandem.PipelineStructuredOutputRejected!
+override Tandem.PipelineStructuredOutputRejected.Equals(object? obj) -> bool
+override Tandem.PipelineStructuredOutputRejected.GetHashCode() -> int
+override Tandem.PipelineStructuredOutputRejected.ToString() -> string!
+override Tandem.ToolInvocationObservation.Equals(object? obj) -> bool
+override Tandem.ToolInvocationObservation.GetHashCode() -> int
+override Tandem.ToolInvocationObservation.ToString() -> string!
+override Tandem.ToolObservation.Equals(object? obj) -> bool
+override Tandem.ToolObservation.GetHashCode() -> int
+override Tandem.ToolObservation.ToString() -> string!
+override Tandem.ToolResultEvidence.Equals(object? obj) -> bool
+override Tandem.ToolResultEvidence.GetHashCode() -> int
+override Tandem.ToolResultEvidence.Process.<Clone>$() -> Tandem.ToolResultEvidence.Process!
+override Tandem.ToolResultEvidence.Process.Equals(object? obj) -> bool
+override Tandem.ToolResultEvidence.Process.GetHashCode() -> int
+override Tandem.ToolResultEvidence.Process.ToString() -> string!
+override Tandem.ToolResultEvidence.ToString() -> string!
+override Tandem.ValidationProblem.Equals(object? obj) -> bool
+override Tandem.ValidationProblem.GetHashCode() -> int
+override Tandem.ValidationProblem.ToString() -> string!
+static Tandem.Agent.Create<TState>(string! id, string! instructions, Microsoft.Extensions.AI.IChatClient! chatClient) -> Tandem.AgentBuilder<TState>!
+static Tandem.AgentCapabilities.Create<TState, TRequest>(Tandem.IAgentCapabilityDefinition<TState, TRequest!>! capability, System.Func<TState, TRequest!, TState>! apply) -> Tandem.AgentCapability<TState, TRequest!>!
+static Tandem.AgentCapabilities.CreateJson<TState>(Tandem.AgentJsonCapabilityDefinition<TState>! capability, System.Func<TState, System.Text.Json.JsonElement, TState>! apply) -> Tandem.AgentCapability<TState>!
+static Tandem.AgentJsonCapabilityDefinition<TState>.operator !=(Tandem.AgentJsonCapabilityDefinition<TState>? left, Tandem.AgentJsonCapabilityDefinition<TState>? right) -> bool
+static Tandem.AgentJsonCapabilityDefinition<TState>.operator ==(Tandem.AgentJsonCapabilityDefinition<TState>? left, Tandem.AgentJsonCapabilityDefinition<TState>? right) -> bool
+static Tandem.AgentJsonOutputDefinition<TState>.operator !=(Tandem.AgentJsonOutputDefinition<TState>? left, Tandem.AgentJsonOutputDefinition<TState>? right) -> bool
+static Tandem.AgentJsonOutputDefinition<TState>.operator ==(Tandem.AgentJsonOutputDefinition<TState>? left, Tandem.AgentJsonOutputDefinition<TState>? right) -> bool
+static Tandem.AgentOutputExample<TOutput>.operator !=(Tandem.AgentOutputExample<TOutput>? left, Tandem.AgentOutputExample<TOutput>? right) -> bool
+static Tandem.AgentOutputExample<TOutput>.operator ==(Tandem.AgentOutputExample<TOutput>? left, Tandem.AgentOutputExample<TOutput>? right) -> bool
+static Tandem.AgentSkill.FromDirectory(string! directoryPath) -> Tandem.AgentSkill!
+static Tandem.AgentUpdate.ModelSelected.operator !=(Tandem.AgentUpdate.ModelSelected? left, Tandem.AgentUpdate.ModelSelected? right) -> bool
+static Tandem.AgentUpdate.ModelSelected.operator ==(Tandem.AgentUpdate.ModelSelected? left, Tandem.AgentUpdate.ModelSelected? right) -> bool
+static Tandem.AgentUpdate.operator !=(Tandem.AgentUpdate? left, Tandem.AgentUpdate? right) -> bool
+static Tandem.AgentUpdate.operator ==(Tandem.AgentUpdate? left, Tandem.AgentUpdate? right) -> bool
+static Tandem.AgentUpdate.Reasoning.operator !=(Tandem.AgentUpdate.Reasoning? left, Tandem.AgentUpdate.Reasoning? right) -> bool
+static Tandem.AgentUpdate.Reasoning.operator ==(Tandem.AgentUpdate.Reasoning? left, Tandem.AgentUpdate.Reasoning? right) -> bool
+static Tandem.AgentUpdate.Text.operator !=(Tandem.AgentUpdate.Text? left, Tandem.AgentUpdate.Text? right) -> bool
+static Tandem.AgentUpdate.Text.operator ==(Tandem.AgentUpdate.Text? left, Tandem.AgentUpdate.Text? right) -> bool
+static Tandem.AgentUpdate.ToolCompleted.operator !=(Tandem.AgentUpdate.ToolCompleted? left, Tandem.AgentUpdate.ToolCompleted? right) -> bool
+static Tandem.AgentUpdate.ToolCompleted.operator ==(Tandem.AgentUpdate.ToolCompleted? left, Tandem.AgentUpdate.ToolCompleted? right) -> bool
+static Tandem.AgentUpdate.ToolStarted.operator !=(Tandem.AgentUpdate.ToolStarted? left, Tandem.AgentUpdate.ToolStarted? right) -> bool
+static Tandem.AgentUpdate.ToolStarted.operator ==(Tandem.AgentUpdate.ToolStarted? left, Tandem.AgentUpdate.ToolStarted? right) -> bool
+static Tandem.AgentUpdate.Usage.operator !=(Tandem.AgentUpdate.Usage? left, Tandem.AgentUpdate.Usage? right) -> bool
+static Tandem.AgentUpdate.Usage.operator ==(Tandem.AgentUpdate.Usage? left, Tandem.AgentUpdate.Usage? right) -> bool
+static Tandem.CapabilityAccepted<T>.operator !=(Tandem.CapabilityAccepted<T>? left, Tandem.CapabilityAccepted<T>? right) -> bool
+static Tandem.CapabilityAccepted<T>.operator ==(Tandem.CapabilityAccepted<T>? left, Tandem.CapabilityAccepted<T>? right) -> bool
+static Tandem.FailureEvidence.operator !=(Tandem.FailureEvidence? left, Tandem.FailureEvidence? right) -> bool
+static Tandem.FailureEvidence.operator ==(Tandem.FailureEvidence? left, Tandem.FailureEvidence? right) -> bool
+static Tandem.Outcome<TState>.Failed.operator !=(Tandem.Outcome<TState>.Failed? left, Tandem.Outcome<TState>.Failed? right) -> bool
+static Tandem.Outcome<TState>.Failed.operator ==(Tandem.Outcome<TState>.Failed? left, Tandem.Outcome<TState>.Failed? right) -> bool
+static Tandem.Outcome<TState>.operator !=(Tandem.Outcome<TState>? left, Tandem.Outcome<TState>? right) -> bool
+static Tandem.Outcome<TState>.operator ==(Tandem.Outcome<TState>? left, Tandem.Outcome<TState>? right) -> bool
+static Tandem.Outcome<TState>.Success.operator !=(Tandem.Outcome<TState>.Success? left, Tandem.Outcome<TState>.Success? right) -> bool
+static Tandem.Outcome<TState>.Success.operator ==(Tandem.Outcome<TState>.Success? left, Tandem.Outcome<TState>.Success? right) -> bool
+static Tandem.OutputAccepted<T>.operator !=(Tandem.OutputAccepted<T>? left, Tandem.OutputAccepted<T>? right) -> bool
+static Tandem.OutputAccepted<T>.operator ==(Tandem.OutputAccepted<T>? left, Tandem.OutputAccepted<T>? right) -> bool
+static Tandem.Pipeline.Start<TState, TRequest, TResponse>(Tandem.PipelineInteraction<TState, TRequest, TResponse>! at, string! name, string? description = null) -> Tandem.PipelineBuilder<TState>!
+static Tandem.Pipeline.Start<TState, TResult>(Tandem.IGeneratedPipelineStep<TState, TResult>! at, string! name, string? description = null) -> Tandem.PipelineBuilder<TState>!
+static Tandem.PipelineAcceptedValue.operator !=(Tandem.PipelineAcceptedValue? left, Tandem.PipelineAcceptedValue? right) -> bool
+static Tandem.PipelineAcceptedValue.operator ==(Tandem.PipelineAcceptedValue? left, Tandem.PipelineAcceptedValue? right) -> bool
+static Tandem.PipelineActionAttempted.operator !=(Tandem.PipelineActionAttempted? left, Tandem.PipelineActionAttempted? right) -> bool
+static Tandem.PipelineActionAttempted.operator ==(Tandem.PipelineActionAttempted? left, Tandem.PipelineActionAttempted? right) -> bool
+static Tandem.PipelineActionCompleted.operator !=(Tandem.PipelineActionCompleted? left, Tandem.PipelineActionCompleted? right) -> bool
+static Tandem.PipelineActionCompleted.operator ==(Tandem.PipelineActionCompleted? left, Tandem.PipelineActionCompleted? right) -> bool
+static Tandem.PipelineActionProcessPayload.operator !=(Tandem.PipelineActionProcessPayload? left, Tandem.PipelineActionProcessPayload? right) -> bool
+static Tandem.PipelineActionProcessPayload.operator ==(Tandem.PipelineActionProcessPayload? left, Tandem.PipelineActionProcessPayload? right) -> bool
+static Tandem.PipelineAgentUpdated.operator !=(Tandem.PipelineAgentUpdated? left, Tandem.PipelineAgentUpdated? right) -> bool
+static Tandem.PipelineAgentUpdated.operator ==(Tandem.PipelineAgentUpdated? left, Tandem.PipelineAgentUpdated? right) -> bool
+static Tandem.PipelineAgentUsage.operator !=(Tandem.PipelineAgentUsage? left, Tandem.PipelineAgentUsage? right) -> bool
+static Tandem.PipelineAgentUsage.operator ==(Tandem.PipelineAgentUsage? left, Tandem.PipelineAgentUsage? right) -> bool
+static Tandem.PipelineBranch.Create<TState, TResult>(string! id, Tandem.IGeneratedPipelineStep<TState, TResult>! participant) -> Tandem.PipelineBranch<TState>!
+static Tandem.PipelineCapabilityAccepted.operator !=(Tandem.PipelineCapabilityAccepted? left, Tandem.PipelineCapabilityAccepted? right) -> bool
+static Tandem.PipelineCapabilityAccepted.operator ==(Tandem.PipelineCapabilityAccepted? left, Tandem.PipelineCapabilityAccepted? right) -> bool
+static Tandem.PipelineCollection.Create<TState, TItem, TResult>(string! id, System.Func<TState, System.Collections.Generic.IReadOnlyList<TItem>!>! items, System.Collections.Generic.IReadOnlyList<Tandem.ICollectionAgent!>! agents, System.Func<TItem, Tandem.CollectionContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<TResult>>! execute, System.Func<TState, System.Collections.Generic.IReadOnlyList<TResult>!, TState>! apply, int max) -> Tandem.PipelineCollection<TState, TItem, TResult>!
+static Tandem.PipelineCollectionInspection.operator !=(Tandem.PipelineCollectionInspection? left, Tandem.PipelineCollectionInspection? right) -> bool
+static Tandem.PipelineCollectionInspection.operator ==(Tandem.PipelineCollectionInspection? left, Tandem.PipelineCollectionInspection? right) -> bool
+static Tandem.PipelineCommandOutput.operator !=(Tandem.PipelineCommandOutput? left, Tandem.PipelineCommandOutput? right) -> bool
+static Tandem.PipelineCommandOutput.operator ==(Tandem.PipelineCommandOutput? left, Tandem.PipelineCommandOutput? right) -> bool
+static Tandem.PipelineInspection.operator !=(Tandem.PipelineInspection? left, Tandem.PipelineInspection? right) -> bool
+static Tandem.PipelineInspection.operator ==(Tandem.PipelineInspection? left, Tandem.PipelineInspection? right) -> bool
+static Tandem.PipelineInteractionAnswered<TResponse>.operator !=(Tandem.PipelineInteractionAnswered<TResponse>? left, Tandem.PipelineInteractionAnswered<TResponse>? right) -> bool
+static Tandem.PipelineInteractionAnswered<TResponse>.operator ==(Tandem.PipelineInteractionAnswered<TResponse>? left, Tandem.PipelineInteractionAnswered<TResponse>? right) -> bool
+static Tandem.PipelineInteractionAnsweredObservation.operator !=(Tandem.PipelineInteractionAnsweredObservation? left, Tandem.PipelineInteractionAnsweredObservation? right) -> bool
+static Tandem.PipelineInteractionAnsweredObservation.operator ==(Tandem.PipelineInteractionAnsweredObservation? left, Tandem.PipelineInteractionAnsweredObservation? right) -> bool
+static Tandem.PipelineInteractionContext<TRequest, TResponse>.operator !=(Tandem.PipelineInteractionContext<TRequest, TResponse>? left, Tandem.PipelineInteractionContext<TRequest, TResponse>? right) -> bool
+static Tandem.PipelineInteractionContext<TRequest, TResponse>.operator ==(Tandem.PipelineInteractionContext<TRequest, TResponse>? left, Tandem.PipelineInteractionContext<TRequest, TResponse>? right) -> bool
+static Tandem.PipelineInteractionInspection.operator !=(Tandem.PipelineInteractionInspection? left, Tandem.PipelineInteractionInspection? right) -> bool
+static Tandem.PipelineInteractionInspection.operator ==(Tandem.PipelineInteractionInspection? left, Tandem.PipelineInteractionInspection? right) -> bool
+static Tandem.PipelineInteractionRequested<TRequest>.operator !=(Tandem.PipelineInteractionRequested<TRequest>? left, Tandem.PipelineInteractionRequested<TRequest>? right) -> bool
+static Tandem.PipelineInteractionRequested<TRequest>.operator ==(Tandem.PipelineInteractionRequested<TRequest>? left, Tandem.PipelineInteractionRequested<TRequest>? right) -> bool
+static Tandem.PipelineInteractionRequestedObservation.operator !=(Tandem.PipelineInteractionRequestedObservation? left, Tandem.PipelineInteractionRequestedObservation? right) -> bool
+static Tandem.PipelineInteractionRequestedObservation.operator ==(Tandem.PipelineInteractionRequestedObservation? left, Tandem.PipelineInteractionRequestedObservation? right) -> bool
+static Tandem.PipelineNodes.Complete<TState>(Tandem.IPipelineCompletion<TState>! completion) -> Tandem.IPipelineNode<TState>!
+static Tandem.PipelineNodes.Failed<TState>(Tandem.IPipelineFailure<TState>! failure) -> Tandem.IPipelineNode<TState>!
+static Tandem.PipelineNodes.Parallel<TState>(string! id, System.Func<TState, TState>! clone, System.Collections.Generic.IReadOnlyList<Tandem.PipelineBranch<TState>!>! branches, System.Func<Tandem.PipelineParallelMerge<TState>!, TState>! merge) -> Tandem.PipelineParallel<TState>!
+static Tandem.PipelineNodes.Parallel<TState>(string! id, System.Func<TState, TState>! clone, System.Collections.Generic.IReadOnlyList<Tandem.PipelineBranch<TState>!>! branches, System.Func<Tandem.PipelineParallelMerge<TState>!, TState>! merge, int? max) -> Tandem.PipelineParallel<TState>!
+static Tandem.PipelineNodes.Stage<TState>(string! id, System.Func<TState, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<TState>>! execute) -> Tandem.IGeneratedPipelineStep<TState, Tandem.GeneratedStepCompletion>!
+static Tandem.PipelineNodes.WaitFor<TState, TRequest, TResponse>(string! id, System.Func<TState, TRequest>! createRequest, System.Func<TState, TResponse, TState>! applyResponse) -> Tandem.PipelineInteraction<TState, TRequest, TResponse>!
+static Tandem.PipelineObservation.operator !=(Tandem.PipelineObservation? left, Tandem.PipelineObservation? right) -> bool
+static Tandem.PipelineObservation.operator ==(Tandem.PipelineObservation? left, Tandem.PipelineObservation? right) -> bool
+static Tandem.PipelineObservers.Compose(params System.Collections.Generic.IReadOnlyList<Tandem.IPipelineObserver?>! observers) -> Tandem.IPipelineObserver?
+static Tandem.PipelineParallelBranchInspection.operator !=(Tandem.PipelineParallelBranchInspection? left, Tandem.PipelineParallelBranchInspection? right) -> bool
+static Tandem.PipelineParallelBranchInspection.operator ==(Tandem.PipelineParallelBranchInspection? left, Tandem.PipelineParallelBranchInspection? right) -> bool
+static Tandem.PipelineParallelInspection.operator !=(Tandem.PipelineParallelInspection? left, Tandem.PipelineParallelInspection? right) -> bool
+static Tandem.PipelineParallelInspection.operator ==(Tandem.PipelineParallelInspection? left, Tandem.PipelineParallelInspection? right) -> bool
+static Tandem.PipelineRouteInspection.operator !=(Tandem.PipelineRouteInspection? left, Tandem.PipelineRouteInspection? right) -> bool
+static Tandem.PipelineRouteInspection.operator ==(Tandem.PipelineRouteInspection? left, Tandem.PipelineRouteInspection? right) -> bool
+static Tandem.PipelineRunOptions.operator !=(Tandem.PipelineRunOptions? left, Tandem.PipelineRunOptions? right) -> bool
+static Tandem.PipelineRunOptions.operator ==(Tandem.PipelineRunOptions? left, Tandem.PipelineRunOptions? right) -> bool
+static Tandem.PipelineRunOutcome.operator !=(Tandem.PipelineRunOutcome? left, Tandem.PipelineRunOutcome? right) -> bool
+static Tandem.PipelineRunOutcome.operator ==(Tandem.PipelineRunOutcome? left, Tandem.PipelineRunOutcome? right) -> bool
+static Tandem.PipelineRunResult<TState>.operator !=(Tandem.PipelineRunResult<TState>? left, Tandem.PipelineRunResult<TState>? right) -> bool
+static Tandem.PipelineRunResult<TState>.operator ==(Tandem.PipelineRunResult<TState>? left, Tandem.PipelineRunResult<TState>? right) -> bool
+static Tandem.PipelineStepCancelled.operator !=(Tandem.PipelineStepCancelled? left, Tandem.PipelineStepCancelled? right) -> bool
+static Tandem.PipelineStepCancelled.operator ==(Tandem.PipelineStepCancelled? left, Tandem.PipelineStepCancelled? right) -> bool
+static Tandem.PipelineStepCompleted.operator !=(Tandem.PipelineStepCompleted? left, Tandem.PipelineStepCompleted? right) -> bool
+static Tandem.PipelineStepCompleted.operator ==(Tandem.PipelineStepCompleted? left, Tandem.PipelineStepCompleted? right) -> bool
+static Tandem.PipelineStepFaulted.operator !=(Tandem.PipelineStepFaulted? left, Tandem.PipelineStepFaulted? right) -> bool
+static Tandem.PipelineStepFaulted.operator ==(Tandem.PipelineStepFaulted? left, Tandem.PipelineStepFaulted? right) -> bool
+static Tandem.PipelineStepStarted.operator !=(Tandem.PipelineStepStarted? left, Tandem.PipelineStepStarted? right) -> bool
+static Tandem.PipelineStepStarted.operator ==(Tandem.PipelineStepStarted? left, Tandem.PipelineStepStarted? right) -> bool
+static Tandem.PipelineStructuredOutputAccepted.operator !=(Tandem.PipelineStructuredOutputAccepted? left, Tandem.PipelineStructuredOutputAccepted? right) -> bool
+static Tandem.PipelineStructuredOutputAccepted.operator ==(Tandem.PipelineStructuredOutputAccepted? left, Tandem.PipelineStructuredOutputAccepted? right) -> bool
+static Tandem.PipelineStructuredOutputRejected.operator !=(Tandem.PipelineStructuredOutputRejected? left, Tandem.PipelineStructuredOutputRejected? right) -> bool
+static Tandem.PipelineStructuredOutputRejected.operator ==(Tandem.PipelineStructuredOutputRejected? left, Tandem.PipelineStructuredOutputRejected? right) -> bool
+static Tandem.TandemJson.CreateTypedContract() -> System.Text.Json.JsonSerializerOptions!
+static Tandem.ToolInvocationObservation.operator !=(Tandem.ToolInvocationObservation? left, Tandem.ToolInvocationObservation? right) -> bool
+static Tandem.ToolInvocationObservation.operator ==(Tandem.ToolInvocationObservation? left, Tandem.ToolInvocationObservation? right) -> bool
+static Tandem.ToolObservation.operator !=(Tandem.ToolObservation? left, Tandem.ToolObservation? right) -> bool
+static Tandem.ToolObservation.operator ==(Tandem.ToolObservation? left, Tandem.ToolObservation? right) -> bool
+static Tandem.ToolResultEvidence.operator !=(Tandem.ToolResultEvidence? left, Tandem.ToolResultEvidence? right) -> bool
+static Tandem.ToolResultEvidence.operator ==(Tandem.ToolResultEvidence? left, Tandem.ToolResultEvidence? right) -> bool
+static Tandem.ToolResultEvidence.Process.operator !=(Tandem.ToolResultEvidence.Process? left, Tandem.ToolResultEvidence.Process? right) -> bool
+static Tandem.ToolResultEvidence.Process.operator ==(Tandem.ToolResultEvidence.Process? left, Tandem.ToolResultEvidence.Process? right) -> bool
+static Tandem.ValidationProblem.operator !=(Tandem.ValidationProblem? left, Tandem.ValidationProblem? right) -> bool
+static Tandem.ValidationProblem.operator ==(Tandem.ValidationProblem? left, Tandem.ValidationProblem? right) -> bool
+Tandem.Agent
+Tandem.AgentBuilder<TState>
+Tandem.AgentBuilder<TState>.Build() -> Tandem.AgentDefinition<TState>!
+Tandem.AgentBuilder<TState>.ContinueSession() -> Tandem.AgentBuilder<TState>!
+Tandem.AgentBuilder<TState>.WithCapability(Tandem.AgentCapability<TState>! capability) -> Tandem.AgentBuilder<TState>!
+Tandem.AgentBuilder<TState>.WithJsonOutput(Tandem.AgentJsonOutputDefinition<TState>! output, System.Func<TState, System.Text.Json.JsonElement, TState>! apply) -> Tandem.AgentBuilder<TState>!
+Tandem.AgentBuilder<TState>.WithMessage(System.Func<TState, string!>! message) -> Tandem.AgentBuilder<TState>!
+Tandem.AgentBuilder<TState>.WithModelRequestOptions(Tandem.AgentModelRequestOptions! options) -> Tandem.AgentBuilder<TState>!
+Tandem.AgentBuilder<TState>.WithOutput<TOutput>(Tandem.IAgentOutputDefinition<TState, TOutput>! output, System.Func<TState, TOutput, TState>! apply) -> Tandem.AgentBuilder<TState>!
+Tandem.AgentBuilder<TState>.WithSkill(Tandem.AgentSkill! skill) -> Tandem.AgentBuilder<TState>!
+Tandem.AgentBuilder<TState>.WithSkills(params Tandem.AgentSkill![]! skills) -> Tandem.AgentBuilder<TState>!
+Tandem.AgentBuilder<TState>.WithTimeout(System.TimeSpan timeout) -> Tandem.AgentBuilder<TState>!
+Tandem.AgentCapabilities
+Tandem.AgentCapability<TState, TRequest>
+Tandem.AgentCapability<TState>
+Tandem.AgentDefinition<TState>
+Tandem.AgentDefinition<TState>.Descriptor.get -> Tandem.PipelineNodeDescriptor!
+Tandem.AgentDefinition<TState>.Failed.get -> Tandem.PipelineOutcomeSelector<TState>
+Tandem.AgentDefinition<TState>.Id.get -> string!
+Tandem.AgentDefinition<TState>.Success.get -> Tandem.PipelineOutcomeSelector<TState>
+Tandem.AgentJsonCapabilityDefinition<TState>
+Tandem.AgentJsonCapabilityDefinition<TState>.<Clone>$() -> Tandem.AgentJsonCapabilityDefinition<TState>!
+Tandem.AgentJsonCapabilityDefinition<TState>.AgentJsonCapabilityDefinition(string! ToolName, string! Instructions, System.Text.Json.JsonElement JsonSchema, System.Func<System.Text.Json.JsonElement, System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>!>! Validate, System.Func<TState, System.Text.Json.JsonElement, System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>!>? ValidateFor, System.Func<System.Text.Json.JsonElement, string!>! Summarize, string! ValueType) -> void
+Tandem.AgentJsonCapabilityDefinition<TState>.Deconstruct(out string! ToolName, out string! Instructions, out System.Text.Json.JsonElement JsonSchema, out System.Func<System.Text.Json.JsonElement, System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>!>! Validate, out System.Func<TState, System.Text.Json.JsonElement, System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>!>? ValidateFor, out System.Func<System.Text.Json.JsonElement, string!>! Summarize, out string! ValueType) -> void
+Tandem.AgentJsonCapabilityDefinition<TState>.Equals(Tandem.AgentJsonCapabilityDefinition<TState>? other) -> bool
+Tandem.AgentJsonCapabilityDefinition<TState>.Instructions.get -> string!
+Tandem.AgentJsonCapabilityDefinition<TState>.Instructions.init -> void
+Tandem.AgentJsonCapabilityDefinition<TState>.JsonSchema.get -> System.Text.Json.JsonElement
+Tandem.AgentJsonCapabilityDefinition<TState>.JsonSchema.init -> void
+Tandem.AgentJsonCapabilityDefinition<TState>.Summarize.get -> System.Func<System.Text.Json.JsonElement, string!>!
+Tandem.AgentJsonCapabilityDefinition<TState>.Summarize.init -> void
+Tandem.AgentJsonCapabilityDefinition<TState>.ToolName.get -> string!
+Tandem.AgentJsonCapabilityDefinition<TState>.ToolName.init -> void
+Tandem.AgentJsonCapabilityDefinition<TState>.Validate.get -> System.Func<System.Text.Json.JsonElement, System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>!>!
+Tandem.AgentJsonCapabilityDefinition<TState>.Validate.init -> void
+Tandem.AgentJsonCapabilityDefinition<TState>.ValidateFor.get -> System.Func<TState, System.Text.Json.JsonElement, System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>!>?
+Tandem.AgentJsonCapabilityDefinition<TState>.ValidateFor.init -> void
+Tandem.AgentJsonCapabilityDefinition<TState>.ValueType.get -> string!
+Tandem.AgentJsonCapabilityDefinition<TState>.ValueType.init -> void
+Tandem.AgentJsonOutputDefinition<TState>
+Tandem.AgentJsonOutputDefinition<TState>.<Clone>$() -> Tandem.AgentJsonOutputDefinition<TState>!
+Tandem.AgentJsonOutputDefinition<TState>.AgentJsonOutputDefinition(System.Text.Json.JsonElement JsonSchema, string! Instructions, System.Func<System.Text.Json.JsonElement, System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>!>! Validate, string! ValueType, System.Func<TState, System.Text.Json.JsonElement, System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>!>? ValidateFor = null) -> void
+Tandem.AgentJsonOutputDefinition<TState>.Deconstruct(out System.Text.Json.JsonElement JsonSchema, out string! Instructions, out System.Func<System.Text.Json.JsonElement, System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>!>! Validate, out string! ValueType, out System.Func<TState, System.Text.Json.JsonElement, System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>!>? ValidateFor) -> void
+Tandem.AgentJsonOutputDefinition<TState>.Equals(Tandem.AgentJsonOutputDefinition<TState>? other) -> bool
+Tandem.AgentJsonOutputDefinition<TState>.Instructions.get -> string!
+Tandem.AgentJsonOutputDefinition<TState>.Instructions.init -> void
+Tandem.AgentJsonOutputDefinition<TState>.JsonSchema.get -> System.Text.Json.JsonElement
+Tandem.AgentJsonOutputDefinition<TState>.JsonSchema.init -> void
+Tandem.AgentJsonOutputDefinition<TState>.Validate.get -> System.Func<System.Text.Json.JsonElement, System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>!>!
+Tandem.AgentJsonOutputDefinition<TState>.Validate.init -> void
+Tandem.AgentJsonOutputDefinition<TState>.ValidateFor.get -> System.Func<TState, System.Text.Json.JsonElement, System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>!>?
+Tandem.AgentJsonOutputDefinition<TState>.ValidateFor.init -> void
+Tandem.AgentJsonOutputDefinition<TState>.ValueType.get -> string!
+Tandem.AgentJsonOutputDefinition<TState>.ValueType.init -> void
+Tandem.AgentModelRequestOptions
+Tandem.AgentModelRequestOptions.AgentModelRequestOptions(Tandem.AgentReasoningEffort? reasoningEffort = null, float? temperature = null, int? maxOutputTokens = null, int? reasoningMaxTokens = null) -> void
+Tandem.AgentModelRequestOptions.MaxOutputTokens.get -> int?
+Tandem.AgentModelRequestOptions.ReasoningEffort.get -> Tandem.AgentReasoningEffort?
+Tandem.AgentModelRequestOptions.ReasoningMaxTokens.get -> int?
+Tandem.AgentModelRequestOptions.Temperature.get -> float?
+Tandem.AgentOutputExample<TOutput>
+Tandem.AgentOutputExample<TOutput>.<Clone>$() -> Tandem.AgentOutputExample<TOutput>!
+Tandem.AgentOutputExample<TOutput>.AgentOutputExample(string! Input, TOutput Output) -> void
+Tandem.AgentOutputExample<TOutput>.Deconstruct(out string! Input, out TOutput Output) -> void
+Tandem.AgentOutputExample<TOutput>.Equals(Tandem.AgentOutputExample<TOutput>? other) -> bool
+Tandem.AgentOutputExample<TOutput>.Input.get -> string!
+Tandem.AgentOutputExample<TOutput>.Input.init -> void
+Tandem.AgentOutputExample<TOutput>.Output.get -> TOutput
+Tandem.AgentOutputExample<TOutput>.Output.init -> void
+Tandem.AgentReasoningEffort
+Tandem.AgentReasoningEffort.High = 3 -> Tandem.AgentReasoningEffort
+Tandem.AgentReasoningEffort.Low = 1 -> Tandem.AgentReasoningEffort
+Tandem.AgentReasoningEffort.Medium = 2 -> Tandem.AgentReasoningEffort
+Tandem.AgentReasoningEffort.None = 0 -> Tandem.AgentReasoningEffort
+Tandem.AgentSkill
+Tandem.AgentSkill.DirectoryPath.get -> string!
+Tandem.AgentUpdate
+Tandem.AgentUpdate.AgentUpdate(Tandem.AgentUpdate! original) -> void
+Tandem.AgentUpdate.ModelSelected
+Tandem.AgentUpdate.ModelSelected.Deconstruct(out string! ModelId) -> void
+Tandem.AgentUpdate.ModelSelected.Equals(Tandem.AgentUpdate.ModelSelected? other) -> bool
+Tandem.AgentUpdate.ModelSelected.ModelId.get -> string!
+Tandem.AgentUpdate.ModelSelected.ModelId.init -> void
+Tandem.AgentUpdate.ModelSelected.ModelSelected(string! ModelId) -> void
+Tandem.AgentUpdate.Reasoning
+Tandem.AgentUpdate.Reasoning.Deconstruct(out string! Value) -> void
+Tandem.AgentUpdate.Reasoning.Equals(Tandem.AgentUpdate.Reasoning? other) -> bool
+Tandem.AgentUpdate.Reasoning.Reasoning(string! Value) -> void
+Tandem.AgentUpdate.Reasoning.Value.get -> string!
+Tandem.AgentUpdate.Reasoning.Value.init -> void
+Tandem.AgentUpdate.Text
+Tandem.AgentUpdate.Text.Deconstruct(out string! Value) -> void
+Tandem.AgentUpdate.Text.Equals(Tandem.AgentUpdate.Text? other) -> bool
+Tandem.AgentUpdate.Text.Text(string! Value) -> void
+Tandem.AgentUpdate.Text.Value.get -> string!
+Tandem.AgentUpdate.Text.Value.init -> void
+Tandem.AgentUpdate.ToolCompleted
+Tandem.AgentUpdate.ToolCompleted.CallId.get -> string!
+Tandem.AgentUpdate.ToolCompleted.CallId.init -> void
+Tandem.AgentUpdate.ToolCompleted.Deconstruct(out string! CallId, out string? Result, out string? Error) -> void
+Tandem.AgentUpdate.ToolCompleted.Equals(Tandem.AgentUpdate.ToolCompleted? other) -> bool
+Tandem.AgentUpdate.ToolCompleted.Error.get -> string?
+Tandem.AgentUpdate.ToolCompleted.Error.init -> void
+Tandem.AgentUpdate.ToolCompleted.Result.get -> string?
+Tandem.AgentUpdate.ToolCompleted.Result.init -> void
+Tandem.AgentUpdate.ToolCompleted.Succeeded.get -> bool
+Tandem.AgentUpdate.ToolCompleted.ToolCompleted(string! CallId, string? Result, string? Error) -> void
+Tandem.AgentUpdate.ToolStarted
+Tandem.AgentUpdate.ToolStarted.Arguments.get -> System.Text.Json.JsonElement
+Tandem.AgentUpdate.ToolStarted.Arguments.init -> void
+Tandem.AgentUpdate.ToolStarted.CallId.get -> string!
+Tandem.AgentUpdate.ToolStarted.CallId.init -> void
+Tandem.AgentUpdate.ToolStarted.Deconstruct(out string! CallId, out string! Name, out System.Text.Json.JsonElement Arguments) -> void
+Tandem.AgentUpdate.ToolStarted.Equals(Tandem.AgentUpdate.ToolStarted? other) -> bool
+Tandem.AgentUpdate.ToolStarted.Name.get -> string!
+Tandem.AgentUpdate.ToolStarted.Name.init -> void
+Tandem.AgentUpdate.ToolStarted.ToolStarted(string! CallId, string! Name, System.Text.Json.JsonElement Arguments) -> void
+Tandem.AgentUpdate.ToolStarted.WorkingDirectory.get -> string?
+Tandem.AgentUpdate.ToolStarted.WorkingDirectory.init -> void
+Tandem.AgentUpdate.Usage
+Tandem.AgentUpdate.Usage.Deconstruct(out long? InputTokens, out long? OutputTokens, out long? ReasoningTokens) -> void
+Tandem.AgentUpdate.Usage.Equals(Tandem.AgentUpdate.Usage? other) -> bool
+Tandem.AgentUpdate.Usage.InputTokens.get -> long?
+Tandem.AgentUpdate.Usage.InputTokens.init -> void
+Tandem.AgentUpdate.Usage.OutputTokens.get -> long?
+Tandem.AgentUpdate.Usage.OutputTokens.init -> void
+Tandem.AgentUpdate.Usage.ReasoningTokens.get -> long?
+Tandem.AgentUpdate.Usage.ReasoningTokens.init -> void
+Tandem.AgentUpdate.Usage.Usage(long? InputTokens, long? OutputTokens, long? ReasoningTokens) -> void
+Tandem.CapabilityAccepted<T>
+Tandem.CapabilityAccepted<T>.AcceptedValue.get -> T
+Tandem.CapabilityAccepted<T>.AcceptedValue.init -> void
+Tandem.CapabilityAccepted<T>.CapabilityAccepted(System.Guid RunId, string! StepId, string! InvocationId, string! CapabilityId, string! CapabilityName, string! AcceptedCallId, string! Summary, string? RequestType, System.Text.Json.JsonElement? Payload, T AcceptedValue) -> void
+Tandem.CapabilityAccepted<T>.Deconstruct(out System.Guid RunId, out string! StepId, out string! InvocationId, out string! CapabilityId, out string! CapabilityName, out string! AcceptedCallId, out string! Summary, out string? RequestType, out System.Text.Json.JsonElement? Payload, out T AcceptedValue) -> void
+Tandem.CapabilityAccepted<T>.Equals(Tandem.CapabilityAccepted<T>? other) -> bool
+Tandem.CollectionContext
+Tandem.CollectionContext.RunAsync<TState>(Tandem.AgentDefinition<TState>! agent, TState state) -> System.Threading.Tasks.ValueTask<TState>
+Tandem.FailureEvidence
+Tandem.FailureEvidence.<Clone>$() -> Tandem.FailureEvidence!
+Tandem.FailureEvidence.Code.get -> string!
+Tandem.FailureEvidence.Code.init -> void
+Tandem.FailureEvidence.Deconstruct(out string! Code, out string! Summary, out string? Detail) -> void
+Tandem.FailureEvidence.Detail.get -> string?
+Tandem.FailureEvidence.Detail.init -> void
+Tandem.FailureEvidence.Equals(Tandem.FailureEvidence? other) -> bool
+Tandem.FailureEvidence.FailureEvidence(string! Code, string! Summary, string? Detail = null) -> void
+Tandem.FailureEvidence.Summary.get -> string!
+Tandem.FailureEvidence.Summary.init -> void
+Tandem.GeneratedOutcomeStepDescriptor<TState>
+Tandem.GeneratedOutcomeStepDescriptor<TState>.GeneratedOutcomeStepDescriptor(string! id, System.Func<TState, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<Tandem.Outcome<TState>!>>! execute) -> void
+Tandem.GeneratedPassThroughStepDescriptor<TState>
+Tandem.GeneratedPassThroughStepDescriptor<TState>.GeneratedPassThroughStepDescriptor(string! id, System.Func<TState, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! execute) -> void
+Tandem.GeneratedStateStepDescriptor<TState>
+Tandem.GeneratedStateStepDescriptor<TState>.GeneratedStateStepDescriptor(string! id, System.Func<TState, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<TState>>! execute) -> void
+Tandem.GeneratedStepCompletion
+Tandem.GeneratedStepCompletion.GeneratedStepCompletion() -> void
+Tandem.IAgentCapabilityDefinition<TState, TRequest>
+Tandem.IAgentCapabilityDefinition<TState, TRequest>.Instructions.get -> string!
+Tandem.IAgentCapabilityDefinition<TState, TRequest>.Summarize(TRequest! request) -> string!
+Tandem.IAgentCapabilityDefinition<TState, TRequest>.ToolName.get -> string!
+Tandem.IAgentCapabilityDefinition<TState, TRequest>.Validator.get -> FluentValidation.IValidator<TRequest!>!
+Tandem.IAgentCapabilityDefinition<TState, TRequest>.ValidatorFor(TState state) -> FluentValidation.IValidator<TRequest!>?
+Tandem.IAgentOutputDefinition<TState, TOutput>
+Tandem.IAgentOutputDefinition<TState, TOutput>.Examples(TState state) -> System.Collections.Generic.IReadOnlyList<Tandem.AgentOutputExample<TOutput>!>!
+Tandem.IAgentOutputDefinition<TState, TOutput>.Instructions.get -> string!
+Tandem.IAgentOutputDefinition<TState, TOutput>.Validator.get -> FluentValidation.IValidator<TOutput>!
+Tandem.IAgentOutputDefinition<TState, TOutput>.ValidatorFor(TState state) -> FluentValidation.IValidator<TOutput>?
+Tandem.ICollectionAgent
+Tandem.IGeneratedPipelineStep<TState, TResult>
+Tandem.IPipelineCompletion<TState>
+Tandem.IPipelineCompletion<TState>.Complete(TState state) -> TState
+Tandem.IPipelineCompletion<TState>.Id.get -> string!
+Tandem.IPipelineCompletion<TState>.Summarize(TState state) -> string!
+Tandem.IPipelineFailure<TState>
+Tandem.IPipelineFailure<TState>.Fail(TState state) -> TState
+Tandem.IPipelineFailure<TState>.Id.get -> string!
+Tandem.IPipelineFailure<TState>.Summarize(TState state) -> string!
+Tandem.IPipelineNode
+Tandem.IPipelineNode.Descriptor.get -> Tandem.PipelineNodeDescriptor!
+Tandem.IPipelineNode.Id.get -> string!
+Tandem.IPipelineNode<TState>
+Tandem.IPipelineObserver
+Tandem.IPipelineObserver.ObserveAsync(Tandem.PipelineObservation! observation, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask
+Tandem.IPipelinePersistenceObserver
+Tandem.IPipelineStep<TResult>
+Tandem.IStandardOutcomePipelineStep<TState>
+Tandem.Outcome<TState>
+Tandem.Outcome<TState>.Failed
+Tandem.Outcome<TState>.Failed.Deconstruct(out TState State, out Tandem.FailureEvidence! Failure) -> void
+Tandem.Outcome<TState>.Failed.Equals(Tandem.Outcome<TState>.Failed? other) -> bool
+Tandem.Outcome<TState>.Failed.Failed(TState State, Tandem.FailureEvidence! Failure) -> void
+Tandem.Outcome<TState>.Failed.Failure.get -> Tandem.FailureEvidence!
+Tandem.Outcome<TState>.Failed.Failure.init -> void
+Tandem.Outcome<TState>.Failed.State.get -> TState
+Tandem.Outcome<TState>.Failed.State.init -> void
+Tandem.Outcome<TState>.Outcome(Tandem.Outcome<TState>! original) -> void
+Tandem.Outcome<TState>.Success
+Tandem.Outcome<TState>.Success.Deconstruct(out TState State) -> void
+Tandem.Outcome<TState>.Success.Equals(Tandem.Outcome<TState>.Success? other) -> bool
+Tandem.Outcome<TState>.Success.State.get -> TState
+Tandem.Outcome<TState>.Success.State.init -> void
+Tandem.Outcome<TState>.Success.Success(TState State) -> void
+Tandem.OutputAccepted<T>
+Tandem.OutputAccepted<T>.AcceptedValue.get -> T
+Tandem.OutputAccepted<T>.AcceptedValue.init -> void
+Tandem.OutputAccepted<T>.Deconstruct(out System.Guid RunId, out string! StepId, out string! AcceptedOutputId, out string! OutcomeKind, out string? OutputType, out System.Text.Json.JsonElement? Payload, out T AcceptedValue) -> void
+Tandem.OutputAccepted<T>.Equals(Tandem.OutputAccepted<T>? other) -> bool
+Tandem.OutputAccepted<T>.OutputAccepted(System.Guid RunId, string! StepId, string! AcceptedOutputId, string! OutcomeKind, string? OutputType, System.Text.Json.JsonElement? Payload, T AcceptedValue) -> void
+Tandem.Pipeline
+Tandem.Pipeline<TState>
+Tandem.Pipeline<TState>.Inspect() -> Tandem.PipelineInspection!
+Tandem.PipelineAcceptedValue
+Tandem.PipelineAcceptedValue.<Clone>$() -> Tandem.PipelineAcceptedValue!
+Tandem.PipelineAcceptedValue.Deconstruct(out string! ValueType, out System.Text.Json.JsonElement Payload) -> void
+Tandem.PipelineAcceptedValue.Equals(Tandem.PipelineAcceptedValue? other) -> bool
+Tandem.PipelineAcceptedValue.Payload.get -> System.Text.Json.JsonElement
+Tandem.PipelineAcceptedValue.Payload.init -> void
+Tandem.PipelineAcceptedValue.PipelineAcceptedValue(string! ValueType, System.Text.Json.JsonElement Payload) -> void
+Tandem.PipelineAcceptedValue.ValueType.get -> string!
+Tandem.PipelineAcceptedValue.ValueType.init -> void
+Tandem.PipelineActionAttempted
+Tandem.PipelineActionAttempted.ActionName.get -> string!
+Tandem.PipelineActionAttempted.ActionName.init -> void
+Tandem.PipelineActionAttempted.Deconstruct(out System.Guid RunId, out string! StepId, out string! InvocationId, out string! ActionName, out Tandem.ToolEffect Effect) -> void
+Tandem.PipelineActionAttempted.Effect.get -> Tandem.ToolEffect
+Tandem.PipelineActionAttempted.Effect.init -> void
+Tandem.PipelineActionAttempted.Equals(Tandem.PipelineActionAttempted? other) -> bool
+Tandem.PipelineActionAttempted.InvocationId.get -> string!
+Tandem.PipelineActionAttempted.InvocationId.init -> void
+Tandem.PipelineActionAttempted.PipelineActionAttempted(System.Guid RunId, string! StepId, string! InvocationId, string! ActionName, Tandem.ToolEffect Effect) -> void
+Tandem.PipelineActionCompleted
+Tandem.PipelineActionCompleted.ActionName.get -> string!
+Tandem.PipelineActionCompleted.ActionName.init -> void
+Tandem.PipelineActionCompleted.Deconstruct(out System.Guid RunId, out string! StepId, out string! InvocationId, out string! ActionName, out Tandem.ToolEffect Effect, out Tandem.ToolInvocationStatus Result, out Tandem.PipelineActionProcessPayload? Process) -> void
+Tandem.PipelineActionCompleted.Effect.get -> Tandem.ToolEffect
+Tandem.PipelineActionCompleted.Effect.init -> void
+Tandem.PipelineActionCompleted.Equals(Tandem.PipelineActionCompleted? other) -> bool
+Tandem.PipelineActionCompleted.InvocationId.get -> string!
+Tandem.PipelineActionCompleted.InvocationId.init -> void
+Tandem.PipelineActionCompleted.PipelineActionCompleted(System.Guid RunId, string! StepId, string! InvocationId, string! ActionName, Tandem.ToolEffect Effect, Tandem.ToolInvocationStatus Result, Tandem.PipelineActionProcessPayload? Process = null) -> void
+Tandem.PipelineActionCompleted.Process.get -> Tandem.PipelineActionProcessPayload?
+Tandem.PipelineActionCompleted.Process.init -> void
+Tandem.PipelineActionCompleted.Result.get -> Tandem.ToolInvocationStatus
+Tandem.PipelineActionCompleted.Result.init -> void
+Tandem.PipelineActionProcessPayload
+Tandem.PipelineActionProcessPayload.<Clone>$() -> Tandem.PipelineActionProcessPayload!
+Tandem.PipelineActionProcessPayload.Arguments.get -> System.Text.Json.JsonElement
+Tandem.PipelineActionProcessPayload.Arguments.init -> void
+Tandem.PipelineActionProcessPayload.Deconstruct(out System.Text.Json.JsonElement Arguments, out int ExitCode, out string! Stdout, out string! Stderr, out System.TimeSpan Duration, out bool TimedOut, out bool Truncated) -> void
+Tandem.PipelineActionProcessPayload.Duration.get -> System.TimeSpan
+Tandem.PipelineActionProcessPayload.Duration.init -> void
+Tandem.PipelineActionProcessPayload.Equals(Tandem.PipelineActionProcessPayload? other) -> bool
+Tandem.PipelineActionProcessPayload.ExitCode.get -> int
+Tandem.PipelineActionProcessPayload.ExitCode.init -> void
+Tandem.PipelineActionProcessPayload.PipelineActionProcessPayload(System.Text.Json.JsonElement Arguments, int ExitCode, string! Stdout, string! Stderr, System.TimeSpan Duration, bool TimedOut, bool Truncated) -> void
+Tandem.PipelineActionProcessPayload.Stderr.get -> string!
+Tandem.PipelineActionProcessPayload.Stderr.init -> void
+Tandem.PipelineActionProcessPayload.Stdout.get -> string!
+Tandem.PipelineActionProcessPayload.Stdout.init -> void
+Tandem.PipelineActionProcessPayload.TimedOut.get -> bool
+Tandem.PipelineActionProcessPayload.TimedOut.init -> void
+Tandem.PipelineActionProcessPayload.Truncated.get -> bool
+Tandem.PipelineActionProcessPayload.Truncated.init -> void
+Tandem.PipelineAgentUpdated
+Tandem.PipelineAgentUpdated.Deconstruct(out System.Guid RunId, out string! StepId, out Tandem.AgentUpdate! Update) -> void
+Tandem.PipelineAgentUpdated.Equals(Tandem.PipelineAgentUpdated? other) -> bool
+Tandem.PipelineAgentUpdated.PipelineAgentUpdated(System.Guid RunId, string! StepId, Tandem.AgentUpdate! Update) -> void
+Tandem.PipelineAgentUpdated.Update.get -> Tandem.AgentUpdate!
+Tandem.PipelineAgentUpdated.Update.init -> void
+Tandem.PipelineAgentUsage
+Tandem.PipelineAgentUsage.ContextWindowTokens.get -> int
+Tandem.PipelineAgentUsage.ContextWindowTokens.init -> void
+Tandem.PipelineAgentUsage.CurrentContextTokens.get -> int
+Tandem.PipelineAgentUsage.CurrentContextTokens.init -> void
+Tandem.PipelineAgentUsage.Deconstruct(out System.Guid RunId, out string! StepId, out int InputTokens, out int OutputTokens, out int CurrentContextTokens, out int ContextWindowTokens, out int ReasoningTokens) -> void
+Tandem.PipelineAgentUsage.Equals(Tandem.PipelineAgentUsage? other) -> bool
+Tandem.PipelineAgentUsage.InputTokens.get -> int
+Tandem.PipelineAgentUsage.InputTokens.init -> void
+Tandem.PipelineAgentUsage.OutputTokens.get -> int
+Tandem.PipelineAgentUsage.OutputTokens.init -> void
+Tandem.PipelineAgentUsage.PipelineAgentUsage(System.Guid RunId, string! StepId, int InputTokens, int OutputTokens, int CurrentContextTokens, int ContextWindowTokens = 0, int ReasoningTokens = 0) -> void
+Tandem.PipelineAgentUsage.ReasoningTokens.get -> int
+Tandem.PipelineAgentUsage.ReasoningTokens.init -> void
+Tandem.PipelineBranch
+Tandem.PipelineBranch<TState>
+Tandem.PipelineBranch<TState>.Id.get -> string!
+Tandem.PipelineBranch<TState>.Participant.get -> Tandem.IPipelineNode<TState>!
+Tandem.PipelineBuilder<TState>
+Tandem.PipelineBuilder<TState>.Build(params Tandem.IPipelineNode<TState>![]! outputs) -> Tandem.Pipeline<TState>!
+Tandem.PipelineBuilder<TState>.DoNotPersist() -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.DoNotPersist(Tandem.IPipelineNode<TState>! step) -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.DoNotPersist<TRequest, TResponse>(Tandem.PipelineInteraction<TState, TRequest, TResponse>! interaction) -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.Persist() -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.Persist(Tandem.IPipelineNode<TState>! step) -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.Persist<TRequest, TResponse>(Tandem.PipelineInteraction<TState, TRequest, TResponse>! interaction) -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.Route(Tandem.PipelineOutcomeSelector<TState> on, System.Func<TState, bool>! when, Tandem.IPipelineNode<TState>! to, string! label) -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.Route(Tandem.PipelineOutcomeSelector<TState> on, Tandem.IPipelineNode<TState>! to, string! label) -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.Route<TRequest, TResponse>(System.Func<TState, bool>! when, Tandem.PipelineInteraction<TState, TRequest, TResponse>! from, Tandem.IPipelineNode<TState>! to, string! label) -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.Route<TRequest, TResponse>(Tandem.PipelineInteraction<TState, TRequest, TResponse>! from, Tandem.IPipelineNode<TState>! to, string! label) -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.Route<TRequest, TResponse>(Tandem.PipelineOutcomeSelector<TState> on, System.Func<TState, bool>! when, Tandem.PipelineInteraction<TState, TRequest, TResponse>! to, string! label) -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.Route<TRequest, TResponse>(Tandem.PipelineOutcomeSelector<TState> on, Tandem.PipelineInteraction<TState, TRequest, TResponse>! to, string! label) -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.Route<TSourceRequest, TSourceResponse, TTargetRequest, TTargetResponse>(System.Func<TState, bool>! when, Tandem.PipelineInteraction<TState, TSourceRequest, TSourceResponse>! from, Tandem.PipelineInteraction<TState, TTargetRequest, TTargetResponse>! to, string! label) -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.Route<TSourceRequest, TSourceResponse, TTargetRequest, TTargetResponse>(Tandem.PipelineInteraction<TState, TSourceRequest, TSourceResponse>! from, Tandem.PipelineInteraction<TState, TTargetRequest, TTargetResponse>! to, string! label) -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.Route<TSourceResult, TRequest, TResponse>(System.Func<TState, bool>! when, Tandem.IGeneratedPipelineStep<TState, TSourceResult>! from, Tandem.PipelineInteraction<TState, TRequest, TResponse>! to, string! label) -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.Route<TSourceResult, TRequest, TResponse>(Tandem.IGeneratedPipelineStep<TState, TSourceResult>! on, Tandem.PipelineInteraction<TState, TRequest, TResponse>! to, string! label) -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.Route<TSourceResult>(System.Func<TState, bool>! when, Tandem.IGeneratedPipelineStep<TState, TSourceResult>! from, Tandem.IPipelineNode<TState>! to, string! label) -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineBuilder<TState>.Route<TSourceResult>(Tandem.IGeneratedPipelineStep<TState, TSourceResult>! on, Tandem.IPipelineNode<TState>! to, string! label) -> Tandem.PipelineBuilder<TState>!
+Tandem.PipelineCapabilityAccepted
+Tandem.PipelineCapabilityAccepted.AcceptedCallId.get -> string!
+Tandem.PipelineCapabilityAccepted.AcceptedCallId.init -> void
+Tandem.PipelineCapabilityAccepted.CapabilityId.get -> string!
+Tandem.PipelineCapabilityAccepted.CapabilityId.init -> void
+Tandem.PipelineCapabilityAccepted.CapabilityName.get -> string!
+Tandem.PipelineCapabilityAccepted.CapabilityName.init -> void
+Tandem.PipelineCapabilityAccepted.Deconstruct(out System.Guid RunId, out string! StepId, out string! InvocationId, out string! CapabilityId, out string! CapabilityName, out string! AcceptedCallId, out string! Summary, out string? RequestType, out System.Text.Json.JsonElement? Payload) -> void
+Tandem.PipelineCapabilityAccepted.InvocationId.get -> string!
+Tandem.PipelineCapabilityAccepted.InvocationId.init -> void
+Tandem.PipelineCapabilityAccepted.Payload.get -> System.Text.Json.JsonElement?
+Tandem.PipelineCapabilityAccepted.Payload.init -> void
+Tandem.PipelineCapabilityAccepted.PipelineCapabilityAccepted(System.Guid RunId, string! StepId, string! InvocationId, string! CapabilityId, string! CapabilityName, string! AcceptedCallId, string! Summary, string? RequestType = null, System.Text.Json.JsonElement? Payload = null) -> void
+Tandem.PipelineCapabilityAccepted.PipelineCapabilityAccepted(Tandem.PipelineCapabilityAccepted! original) -> void
+Tandem.PipelineCapabilityAccepted.RequestType.get -> string?
+Tandem.PipelineCapabilityAccepted.RequestType.init -> void
+Tandem.PipelineCapabilityAccepted.Summary.get -> string!
+Tandem.PipelineCapabilityAccepted.Summary.init -> void
+Tandem.PipelineCollection
+Tandem.PipelineCollection<TState, TItem, TResult>
+Tandem.PipelineCollection<TState, TItem, TResult>.Descriptor.get -> Tandem.PipelineNodeDescriptor!
+Tandem.PipelineCollection<TState, TItem, TResult>.Id.get -> string!
+Tandem.PipelineCollectionInspection
+Tandem.PipelineCollectionInspection.<Clone>$() -> Tandem.PipelineCollectionInspection!
+Tandem.PipelineCollectionInspection.AgentIds.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Tandem.PipelineCollectionInspection.AgentIds.init -> void
+Tandem.PipelineCollectionInspection.Deconstruct(out string! Id, out int Max, out System.Collections.Generic.IReadOnlyList<string!>! AgentIds) -> void
+Tandem.PipelineCollectionInspection.Equals(Tandem.PipelineCollectionInspection? other) -> bool
+Tandem.PipelineCollectionInspection.Id.get -> string!
+Tandem.PipelineCollectionInspection.Id.init -> void
+Tandem.PipelineCollectionInspection.Max.get -> int
+Tandem.PipelineCollectionInspection.Max.init -> void
+Tandem.PipelineCollectionInspection.PipelineCollectionInspection(string! Id, int Max, System.Collections.Generic.IReadOnlyList<string!>! AgentIds) -> void
+Tandem.PipelineCommandOutput
+Tandem.PipelineCommandOutput.Command.get -> string!
+Tandem.PipelineCommandOutput.Command.init -> void
+Tandem.PipelineCommandOutput.Deconstruct(out System.Guid RunId, out string! StepId, out string! Command, out string! Output, out int ExitCode) -> void
+Tandem.PipelineCommandOutput.Equals(Tandem.PipelineCommandOutput? other) -> bool
+Tandem.PipelineCommandOutput.ExitCode.get -> int
+Tandem.PipelineCommandOutput.ExitCode.init -> void
+Tandem.PipelineCommandOutput.Output.get -> string!
+Tandem.PipelineCommandOutput.Output.init -> void
+Tandem.PipelineCommandOutput.PipelineCommandOutput(System.Guid RunId, string! StepId, string! Command, string! Output, int ExitCode) -> void
+Tandem.PipelineInspection
+Tandem.PipelineInspection.<Clone>$() -> Tandem.PipelineInspection!
+Tandem.PipelineInspection.Collections.get -> System.Collections.Generic.IReadOnlyList<Tandem.PipelineCollectionInspection!>!
+Tandem.PipelineInspection.Collections.init -> void
+Tandem.PipelineInspection.Deconstruct(out string! Name, out string? Description, out string! StartStepId, out System.Collections.Generic.IReadOnlyList<string!>! StepIds, out System.Collections.Generic.IReadOnlyList<Tandem.PipelineInteractionInspection!>! Interactions, out System.Collections.Generic.IReadOnlyList<Tandem.PipelineRouteInspection!>! Routes, out System.Collections.Generic.IReadOnlyList<string!>! OutputStepIds, out System.Collections.Generic.IReadOnlyList<string!>! PersistentStepIds) -> void
+Tandem.PipelineInspection.Description.get -> string?
+Tandem.PipelineInspection.Description.init -> void
+Tandem.PipelineInspection.Equals(Tandem.PipelineInspection? other) -> bool
+Tandem.PipelineInspection.Interactions.get -> System.Collections.Generic.IReadOnlyList<Tandem.PipelineInteractionInspection!>!
+Tandem.PipelineInspection.Interactions.init -> void
+Tandem.PipelineInspection.Name.get -> string!
+Tandem.PipelineInspection.Name.init -> void
+Tandem.PipelineInspection.OutputStepIds.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Tandem.PipelineInspection.OutputStepIds.init -> void
+Tandem.PipelineInspection.ParallelGroups.get -> System.Collections.Generic.IReadOnlyList<Tandem.PipelineParallelInspection!>!
+Tandem.PipelineInspection.ParallelGroups.init -> void
+Tandem.PipelineInspection.PersistentStepIds.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Tandem.PipelineInspection.PersistentStepIds.init -> void
+Tandem.PipelineInspection.PipelineInspection(string! Name, string? Description, string! StartStepId, System.Collections.Generic.IReadOnlyList<string!>! StepIds, System.Collections.Generic.IReadOnlyList<Tandem.PipelineInteractionInspection!>! Interactions, System.Collections.Generic.IReadOnlyList<Tandem.PipelineRouteInspection!>! Routes, System.Collections.Generic.IReadOnlyList<string!>! OutputStepIds, System.Collections.Generic.IReadOnlyList<string!>! PersistentStepIds) -> void
+Tandem.PipelineInspection.Routes.get -> System.Collections.Generic.IReadOnlyList<Tandem.PipelineRouteInspection!>!
+Tandem.PipelineInspection.Routes.init -> void
+Tandem.PipelineInspection.StartStepId.get -> string!
+Tandem.PipelineInspection.StartStepId.init -> void
+Tandem.PipelineInspection.StepIds.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Tandem.PipelineInspection.StepIds.init -> void
+Tandem.PipelineInspection.ToMermaid() -> string!
+Tandem.PipelineInteraction<TState, TRequest, TResponse>
+Tandem.PipelineInteraction<TState, TRequest, TResponse>.Id.get -> string!
+Tandem.PipelineInteractionAnswered<TResponse>
+Tandem.PipelineInteractionAnswered<TResponse>.Deconstruct(out System.Guid RunId, out string! StepId, out string! RequestId, out TResponse Response, out System.Text.Json.JsonElement? Payload) -> void
+Tandem.PipelineInteractionAnswered<TResponse>.Equals(Tandem.PipelineInteractionAnswered<TResponse>? other) -> bool
+Tandem.PipelineInteractionAnswered<TResponse>.PipelineInteractionAnswered(System.Guid RunId, string! StepId, string! RequestId, TResponse Response, System.Text.Json.JsonElement? Payload = null) -> void
+Tandem.PipelineInteractionAnswered<TResponse>.Response.get -> TResponse
+Tandem.PipelineInteractionAnswered<TResponse>.Response.init -> void
+Tandem.PipelineInteractionAnsweredObservation
+Tandem.PipelineInteractionAnsweredObservation.Deconstruct(out System.Guid RunId, out string! StepId, out string! RequestId, out string! ResponseType, out System.Text.Json.JsonElement? Payload) -> void
+Tandem.PipelineInteractionAnsweredObservation.Payload.get -> System.Text.Json.JsonElement?
+Tandem.PipelineInteractionAnsweredObservation.Payload.init -> void
+Tandem.PipelineInteractionAnsweredObservation.PipelineInteractionAnsweredObservation(System.Guid RunId, string! StepId, string! RequestId, string! ResponseType, System.Text.Json.JsonElement? Payload = null) -> void
+Tandem.PipelineInteractionAnsweredObservation.PipelineInteractionAnsweredObservation(Tandem.PipelineInteractionAnsweredObservation! original) -> void
+Tandem.PipelineInteractionAnsweredObservation.RequestId.get -> string!
+Tandem.PipelineInteractionAnsweredObservation.RequestId.init -> void
+Tandem.PipelineInteractionAnsweredObservation.ResponseType.get -> string!
+Tandem.PipelineInteractionAnsweredObservation.ResponseType.init -> void
+Tandem.PipelineInteractionContext<TRequest, TResponse>
+Tandem.PipelineInteractionContext<TRequest, TResponse>.<Clone>$() -> Tandem.PipelineInteractionContext<TRequest, TResponse>!
+Tandem.PipelineInteractionContext<TRequest, TResponse>.Deconstruct(out System.Guid RunId, out string! RequestId, out string! InteractionId, out TRequest Request) -> void
+Tandem.PipelineInteractionContext<TRequest, TResponse>.Equals(Tandem.PipelineInteractionContext<TRequest, TResponse>? other) -> bool
+Tandem.PipelineInteractionContext<TRequest, TResponse>.InteractionId.get -> string!
+Tandem.PipelineInteractionContext<TRequest, TResponse>.InteractionId.init -> void
+Tandem.PipelineInteractionContext<TRequest, TResponse>.PipelineInteractionContext(System.Guid RunId, string! RequestId, string! InteractionId, TRequest Request) -> void
+Tandem.PipelineInteractionContext<TRequest, TResponse>.Request.get -> TRequest
+Tandem.PipelineInteractionContext<TRequest, TResponse>.Request.init -> void
+Tandem.PipelineInteractionContext<TRequest, TResponse>.RequestId.get -> string!
+Tandem.PipelineInteractionContext<TRequest, TResponse>.RequestId.init -> void
+Tandem.PipelineInteractionContext<TRequest, TResponse>.RunId.get -> System.Guid
+Tandem.PipelineInteractionContext<TRequest, TResponse>.RunId.init -> void
+Tandem.PipelineInteractionHandlers
+Tandem.PipelineInteractionHandlers.Handle<TState, TRequest, TResponse>(Tandem.PipelineInteraction<TState, TRequest, TResponse>! interaction, System.Func<Tandem.PipelineInteractionContext<TRequest, TResponse>!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<TResponse>>! handler) -> Tandem.PipelineInteractionHandlers!
+Tandem.PipelineInteractionHandlers.PipelineInteractionHandlers() -> void
+Tandem.PipelineInteractionInspection
+Tandem.PipelineInteractionInspection.<Clone>$() -> Tandem.PipelineInteractionInspection!
+Tandem.PipelineInteractionInspection.Deconstruct(out string! Id, out string! RequestType, out string! ResponseType) -> void
+Tandem.PipelineInteractionInspection.Equals(Tandem.PipelineInteractionInspection? other) -> bool
+Tandem.PipelineInteractionInspection.Id.get -> string!
+Tandem.PipelineInteractionInspection.Id.init -> void
+Tandem.PipelineInteractionInspection.PipelineInteractionInspection(string! Id, string! RequestType, string! ResponseType) -> void
+Tandem.PipelineInteractionInspection.RequestType.get -> string!
+Tandem.PipelineInteractionInspection.RequestType.init -> void
+Tandem.PipelineInteractionInspection.ResponseType.get -> string!
+Tandem.PipelineInteractionInspection.ResponseType.init -> void
+Tandem.PipelineInteractionRequested<TRequest>
+Tandem.PipelineInteractionRequested<TRequest>.Deconstruct(out System.Guid RunId, out string! StepId, out string! RequestId, out TRequest Request, out System.Text.Json.JsonElement? Payload) -> void
+Tandem.PipelineInteractionRequested<TRequest>.Equals(Tandem.PipelineInteractionRequested<TRequest>? other) -> bool
+Tandem.PipelineInteractionRequested<TRequest>.PipelineInteractionRequested(System.Guid RunId, string! StepId, string! RequestId, TRequest Request, System.Text.Json.JsonElement? Payload = null) -> void
+Tandem.PipelineInteractionRequested<TRequest>.Request.get -> TRequest
+Tandem.PipelineInteractionRequested<TRequest>.Request.init -> void
+Tandem.PipelineInteractionRequestedObservation
+Tandem.PipelineInteractionRequestedObservation.Deconstruct(out System.Guid RunId, out string! StepId, out string! RequestId, out string! RequestType, out System.Text.Json.JsonElement? Payload) -> void
+Tandem.PipelineInteractionRequestedObservation.Payload.get -> System.Text.Json.JsonElement?
+Tandem.PipelineInteractionRequestedObservation.Payload.init -> void
+Tandem.PipelineInteractionRequestedObservation.PipelineInteractionRequestedObservation(System.Guid RunId, string! StepId, string! RequestId, string! RequestType, System.Text.Json.JsonElement? Payload = null) -> void
+Tandem.PipelineInteractionRequestedObservation.PipelineInteractionRequestedObservation(Tandem.PipelineInteractionRequestedObservation! original) -> void
+Tandem.PipelineInteractionRequestedObservation.RequestId.get -> string!
+Tandem.PipelineInteractionRequestedObservation.RequestId.init -> void
+Tandem.PipelineInteractionRequestedObservation.RequestType.get -> string!
+Tandem.PipelineInteractionRequestedObservation.RequestType.init -> void
+Tandem.PipelineNodeDescriptor
+Tandem.PipelineNodeDescriptor.PipelineNodeDescriptor() -> void
+Tandem.PipelineNodes
+Tandem.PipelineObservation
+Tandem.PipelineObservation.Deconstruct(out System.Guid RunId, out string! StepId) -> void
+Tandem.PipelineObservation.PipelineObservation(System.Guid RunId, string! StepId) -> void
+Tandem.PipelineObservation.PipelineObservation(Tandem.PipelineObservation! original) -> void
+Tandem.PipelineObservation.RunId.get -> System.Guid
+Tandem.PipelineObservation.RunId.init -> void
+Tandem.PipelineObservation.StepId.get -> string!
+Tandem.PipelineObservation.StepId.init -> void
+Tandem.PipelineObservation.VisitId.get -> string?
+Tandem.PipelineObservation.VisitId.init -> void
+Tandem.PipelineObservers
+Tandem.PipelineOutcomeSelector<TState>
+Tandem.PipelineOutcomeSelector<TState>.PipelineOutcomeSelector() -> void
+Tandem.PipelineOutcomeSelector<TState>.PipelineOutcomeSelector(Tandem.IStandardOutcomePipelineStep<TState>! source, bool failed) -> void
+Tandem.PipelineParallel<TState>
+Tandem.PipelineParallel<TState>.Descriptor.get -> Tandem.PipelineNodeDescriptor!
+Tandem.PipelineParallel<TState>.Failed.get -> Tandem.PipelineOutcomeSelector<TState>
+Tandem.PipelineParallel<TState>.Id.get -> string!
+Tandem.PipelineParallel<TState>.Success.get -> Tandem.PipelineOutcomeSelector<TState>
+Tandem.PipelineParallelBranchInspection
+Tandem.PipelineParallelBranchInspection.<Clone>$() -> Tandem.PipelineParallelBranchInspection!
+Tandem.PipelineParallelBranchInspection.Deconstruct(out string! Id, out int Index, out string! ParticipantId) -> void
+Tandem.PipelineParallelBranchInspection.Equals(Tandem.PipelineParallelBranchInspection? other) -> bool
+Tandem.PipelineParallelBranchInspection.Id.get -> string!
+Tandem.PipelineParallelBranchInspection.Id.init -> void
+Tandem.PipelineParallelBranchInspection.Index.get -> int
+Tandem.PipelineParallelBranchInspection.Index.init -> void
+Tandem.PipelineParallelBranchInspection.ParticipantId.get -> string!
+Tandem.PipelineParallelBranchInspection.ParticipantId.init -> void
+Tandem.PipelineParallelBranchInspection.PipelineParallelBranchInspection(string! Id, int Index, string! ParticipantId) -> void
+Tandem.PipelineParallelInspection
+Tandem.PipelineParallelInspection.<Clone>$() -> Tandem.PipelineParallelInspection!
+Tandem.PipelineParallelInspection.Branches.get -> System.Collections.Generic.IReadOnlyList<Tandem.PipelineParallelBranchInspection!>!
+Tandem.PipelineParallelInspection.Branches.init -> void
+Tandem.PipelineParallelInspection.Deconstruct(out string! Id, out System.Collections.Generic.IReadOnlyList<Tandem.PipelineParallelBranchInspection!>! Branches) -> void
+Tandem.PipelineParallelInspection.Equals(Tandem.PipelineParallelInspection? other) -> bool
+Tandem.PipelineParallelInspection.Id.get -> string!
+Tandem.PipelineParallelInspection.Id.init -> void
+Tandem.PipelineParallelInspection.PipelineParallelInspection(string! Id, System.Collections.Generic.IReadOnlyList<Tandem.PipelineParallelBranchInspection!>! Branches) -> void
+Tandem.PipelineParallelMerge<TState>
+Tandem.PipelineParallelMerge<TState>.Baseline.get -> TState
+Tandem.PipelineParallelMerge<TState>.BranchIds.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Tandem.PipelineParallelMerge<TState>.State(string! branchId) -> TState
+Tandem.PipelineRouteInspection
+Tandem.PipelineRouteInspection.<Clone>$() -> Tandem.PipelineRouteInspection!
+Tandem.PipelineRouteInspection.Conditional.get -> bool
+Tandem.PipelineRouteInspection.Conditional.init -> void
+Tandem.PipelineRouteInspection.Deconstruct(out string! SourceId, out string! TargetId, out bool Conditional, out string? Label) -> void
+Tandem.PipelineRouteInspection.Equals(Tandem.PipelineRouteInspection? other) -> bool
+Tandem.PipelineRouteInspection.Label.get -> string?
+Tandem.PipelineRouteInspection.Label.init -> void
+Tandem.PipelineRouteInspection.PipelineRouteInspection(string! SourceId, string! TargetId, bool Conditional, string? Label = null) -> void
+Tandem.PipelineRouteInspection.SourceId.get -> string!
+Tandem.PipelineRouteInspection.SourceId.init -> void
+Tandem.PipelineRouteInspection.TargetId.get -> string!
+Tandem.PipelineRouteInspection.TargetId.init -> void
+Tandem.PipelineRunException
+Tandem.PipelineRunException.PipelineRunException(string! message, System.Exception? inner = null) -> void
+Tandem.PipelineRunner
+Tandem.PipelineRunner.PipelineRunner() -> void
+Tandem.PipelineRunner.RunAsync<TState>(Tandem.Pipeline<TState>! pipeline, TState initialState, Tandem.PipelineRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Tandem.PipelineRunResult<TState>!>!
+Tandem.PipelineRunOptions
+Tandem.PipelineRunOptions.<Clone>$() -> Tandem.PipelineRunOptions!
+Tandem.PipelineRunOptions.Deconstruct(out System.Guid? RunId, out Tandem.PipelineInteractionHandlers? Interactions, out Tandem.IPipelineObserver? Observer) -> void
+Tandem.PipelineRunOptions.Equals(Tandem.PipelineRunOptions? other) -> bool
+Tandem.PipelineRunOptions.Interactions.get -> Tandem.PipelineInteractionHandlers?
+Tandem.PipelineRunOptions.Interactions.init -> void
+Tandem.PipelineRunOptions.Observer.get -> Tandem.IPipelineObserver?
+Tandem.PipelineRunOptions.Observer.init -> void
+Tandem.PipelineRunOptions.PipelineRunOptions(System.Guid? RunId = null, Tandem.PipelineInteractionHandlers? Interactions = null, Tandem.IPipelineObserver? Observer = null) -> void
+Tandem.PipelineRunOptions.RunId.get -> System.Guid?
+Tandem.PipelineRunOptions.RunId.init -> void
+Tandem.PipelineRunOutcome
+Tandem.PipelineRunOutcome.<Clone>$() -> Tandem.PipelineRunOutcome!
+Tandem.PipelineRunOutcome.Deconstruct(out string! Kind, out string! StepId, out string! Summary, out System.Text.Json.JsonElement Payload, out System.TimeSpan Duration) -> void
+Tandem.PipelineRunOutcome.Duration.get -> System.TimeSpan
+Tandem.PipelineRunOutcome.Duration.init -> void
+Tandem.PipelineRunOutcome.Equals(Tandem.PipelineRunOutcome? other) -> bool
+Tandem.PipelineRunOutcome.Kind.get -> string!
+Tandem.PipelineRunOutcome.Kind.init -> void
+Tandem.PipelineRunOutcome.Payload.get -> System.Text.Json.JsonElement
+Tandem.PipelineRunOutcome.Payload.init -> void
+Tandem.PipelineRunOutcome.PipelineRunOutcome(string! Kind, string! StepId, string! Summary, System.Text.Json.JsonElement Payload, System.TimeSpan Duration) -> void
+Tandem.PipelineRunOutcome.StepId.get -> string!
+Tandem.PipelineRunOutcome.StepId.init -> void
+Tandem.PipelineRunOutcome.Summary.get -> string!
+Tandem.PipelineRunOutcome.Summary.init -> void
+Tandem.PipelineRunResult<TState>
+Tandem.PipelineRunResult<TState>.<Clone>$() -> Tandem.PipelineRunResult<TState>!
+Tandem.PipelineRunResult<TState>.Deconstruct(out System.Guid RunId, out TState State, out Tandem.PipelineRunStatus Status, out Tandem.PipelineRunOutcome? Outcome) -> void
+Tandem.PipelineRunResult<TState>.Equals(Tandem.PipelineRunResult<TState>? other) -> bool
+Tandem.PipelineRunResult<TState>.Outcome.get -> Tandem.PipelineRunOutcome?
+Tandem.PipelineRunResult<TState>.Outcome.init -> void
+Tandem.PipelineRunResult<TState>.PipelineRunResult(System.Guid RunId, TState State, Tandem.PipelineRunStatus Status, Tandem.PipelineRunOutcome? Outcome) -> void
+Tandem.PipelineRunResult<TState>.RunId.get -> System.Guid
+Tandem.PipelineRunResult<TState>.RunId.init -> void
+Tandem.PipelineRunResult<TState>.State.get -> TState
+Tandem.PipelineRunResult<TState>.State.init -> void
+Tandem.PipelineRunResult<TState>.Status.get -> Tandem.PipelineRunStatus
+Tandem.PipelineRunResult<TState>.Status.init -> void
+Tandem.PipelineRunResult<TState>.Succeeded.get -> bool
+Tandem.PipelineRunStatus
+Tandem.PipelineRunStatus.Failed = 1 -> Tandem.PipelineRunStatus
+Tandem.PipelineRunStatus.Succeeded = 0 -> Tandem.PipelineRunStatus
+Tandem.PipelineStageAttribute
+Tandem.PipelineStageAttribute.Id.get -> string!
+Tandem.PipelineStageAttribute.PipelineStageAttribute(string! id) -> void
+Tandem.PipelineStepCancelled
+Tandem.PipelineStepCancelled.Deconstruct(out System.Guid RunId, out string! StepId) -> void
+Tandem.PipelineStepCancelled.Equals(Tandem.PipelineStepCancelled? other) -> bool
+Tandem.PipelineStepCancelled.PipelineStepCancelled(System.Guid RunId, string! StepId) -> void
+Tandem.PipelineStepCompleted
+Tandem.PipelineStepCompleted.AcceptedValue.get -> Tandem.PipelineAcceptedValue?
+Tandem.PipelineStepCompleted.AcceptedValue.init -> void
+Tandem.PipelineStepCompleted.Deconstruct(out System.Guid RunId, out string! StepId, out Tandem.PipelineRunOutcome! Outcome, out Tandem.PipelineAcceptedValue? AcceptedValue) -> void
+Tandem.PipelineStepCompleted.Equals(Tandem.PipelineStepCompleted? other) -> bool
+Tandem.PipelineStepCompleted.Outcome.get -> Tandem.PipelineRunOutcome!
+Tandem.PipelineStepCompleted.Outcome.init -> void
+Tandem.PipelineStepCompleted.PipelineStepCompleted(System.Guid RunId, string! StepId, Tandem.PipelineRunOutcome! Outcome, Tandem.PipelineAcceptedValue? AcceptedValue = null) -> void
+Tandem.PipelineStepFaulted
+Tandem.PipelineStepFaulted.Deconstruct(out System.Guid RunId, out string! StepId, out string! Error) -> void
+Tandem.PipelineStepFaulted.Equals(Tandem.PipelineStepFaulted? other) -> bool
+Tandem.PipelineStepFaulted.Error.get -> string!
+Tandem.PipelineStepFaulted.Error.init -> void
+Tandem.PipelineStepFaulted.PipelineStepFaulted(System.Guid RunId, string! StepId, string! Error) -> void
+Tandem.PipelineStepStarted
+Tandem.PipelineStepStarted.Deconstruct(out System.Guid RunId, out string! StepId) -> void
+Tandem.PipelineStepStarted.Equals(Tandem.PipelineStepStarted? other) -> bool
+Tandem.PipelineStepStarted.PipelineStepStarted(System.Guid RunId, string! StepId) -> void
+Tandem.PipelineStructuredOutputAccepted
+Tandem.PipelineStructuredOutputAccepted.AcceptedOutputId.get -> string!
+Tandem.PipelineStructuredOutputAccepted.AcceptedOutputId.init -> void
+Tandem.PipelineStructuredOutputAccepted.Deconstruct(out System.Guid RunId, out string! StepId, out string! AcceptedOutputId, out string! OutcomeKind, out string? OutputType, out System.Text.Json.JsonElement? Payload) -> void
+Tandem.PipelineStructuredOutputAccepted.OutcomeKind.get -> string!
+Tandem.PipelineStructuredOutputAccepted.OutcomeKind.init -> void
+Tandem.PipelineStructuredOutputAccepted.OutputType.get -> string?
+Tandem.PipelineStructuredOutputAccepted.OutputType.init -> void
+Tandem.PipelineStructuredOutputAccepted.Payload.get -> System.Text.Json.JsonElement?
+Tandem.PipelineStructuredOutputAccepted.Payload.init -> void
+Tandem.PipelineStructuredOutputAccepted.PipelineStructuredOutputAccepted(System.Guid RunId, string! StepId, string! AcceptedOutputId, string! OutcomeKind, string? OutputType = null, System.Text.Json.JsonElement? Payload = null) -> void
+Tandem.PipelineStructuredOutputAccepted.PipelineStructuredOutputAccepted(Tandem.PipelineStructuredOutputAccepted! original) -> void
+Tandem.PipelineStructuredOutputRejected
+Tandem.PipelineStructuredOutputRejected.Attempt.get -> int
+Tandem.PipelineStructuredOutputRejected.Attempt.init -> void
+Tandem.PipelineStructuredOutputRejected.Deconstruct(out System.Guid RunId, out string! StepId, out int Attempt, out System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>! Problems, out string! RawResponse) -> void
+Tandem.PipelineStructuredOutputRejected.Equals(Tandem.PipelineStructuredOutputRejected? other) -> bool
+Tandem.PipelineStructuredOutputRejected.PipelineStructuredOutputRejected(System.Guid RunId, string! StepId, int Attempt, System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>! Problems, string! RawResponse) -> void
+Tandem.PipelineStructuredOutputRejected.Problems.get -> System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>!
+Tandem.PipelineStructuredOutputRejected.Problems.init -> void
+Tandem.PipelineStructuredOutputRejected.RawResponse.get -> string!
+Tandem.PipelineStructuredOutputRejected.RawResponse.init -> void
+Tandem.StandardOutcomeKinds
+Tandem.TandemJson
+Tandem.ToolEffect
+Tandem.ToolEffect.LifecycleTransition = 3 -> Tandem.ToolEffect
+Tandem.ToolEffect.ProcessExecution = 2 -> Tandem.ToolEffect
+Tandem.ToolEffect.Read = 0 -> Tandem.ToolEffect
+Tandem.ToolEffect.Unclassified = 4 -> Tandem.ToolEffect
+Tandem.ToolEffect.WorkspaceMutation = 1 -> Tandem.ToolEffect
+Tandem.ToolEvidence
+Tandem.ToolEvidence.None = 0 -> Tandem.ToolEvidence
+Tandem.ToolEvidence.RepositoryInspection = 1 -> Tandem.ToolEvidence
+Tandem.ToolInvocationObservation
+Tandem.ToolInvocationObservation.<Clone>$() -> Tandem.ToolInvocationObservation!
+Tandem.ToolInvocationObservation.Arguments.get -> System.Text.Json.JsonElement
+Tandem.ToolInvocationObservation.Arguments.init -> void
+Tandem.ToolInvocationObservation.Deconstruct(out string! Name, out Tandem.ToolEffect Effect, out System.Text.Json.JsonElement Arguments, out Tandem.ToolInvocationStatus Status, out Tandem.ToolResultEvidence? Result) -> void
+Tandem.ToolInvocationObservation.Effect.get -> Tandem.ToolEffect
+Tandem.ToolInvocationObservation.Effect.init -> void
+Tandem.ToolInvocationObservation.Equals(Tandem.ToolInvocationObservation? other) -> bool
+Tandem.ToolInvocationObservation.Name.get -> string!
+Tandem.ToolInvocationObservation.Name.init -> void
+Tandem.ToolInvocationObservation.Result.get -> Tandem.ToolResultEvidence?
+Tandem.ToolInvocationObservation.Result.init -> void
+Tandem.ToolInvocationObservation.Status.get -> Tandem.ToolInvocationStatus
+Tandem.ToolInvocationObservation.Status.init -> void
+Tandem.ToolInvocationObservation.ToolInvocationObservation(string! Name, Tandem.ToolEffect Effect, System.Text.Json.JsonElement Arguments, Tandem.ToolInvocationStatus Status, Tandem.ToolResultEvidence? Result) -> void
+Tandem.ToolInvocationStatus
+Tandem.ToolInvocationStatus.Blocked = 2 -> Tandem.ToolInvocationStatus
+Tandem.ToolInvocationStatus.Completed = 0 -> Tandem.ToolInvocationStatus
+Tandem.ToolInvocationStatus.Failed = 1 -> Tandem.ToolInvocationStatus
+Tandem.ToolInvocationStatus.Faulted = 3 -> Tandem.ToolInvocationStatus
+Tandem.ToolObservation
+Tandem.ToolObservation.<Clone>$() -> Tandem.ToolObservation!
+Tandem.ToolObservation.Deconstruct(out string! Name, out Tandem.ToolEffect Effect, out Tandem.ToolEvidence Evidence) -> void
+Tandem.ToolObservation.Effect.get -> Tandem.ToolEffect
+Tandem.ToolObservation.Effect.init -> void
+Tandem.ToolObservation.Equals(Tandem.ToolObservation? other) -> bool
+Tandem.ToolObservation.Evidence.get -> Tandem.ToolEvidence
+Tandem.ToolObservation.Evidence.init -> void
+Tandem.ToolObservation.Name.get -> string!
+Tandem.ToolObservation.Name.init -> void
+Tandem.ToolObservation.ToolObservation(string! Name, Tandem.ToolEffect Effect, Tandem.ToolEvidence Evidence) -> void
+Tandem.ToolResultEvidence
+Tandem.ToolResultEvidence.Process
+Tandem.ToolResultEvidence.Process.Deconstruct(out int ExitCode, out string! Stdout, out string! Stderr, out System.TimeSpan Duration, out bool TimedOut, out bool Truncated) -> void
+Tandem.ToolResultEvidence.Process.Duration.get -> System.TimeSpan
+Tandem.ToolResultEvidence.Process.Duration.init -> void
+Tandem.ToolResultEvidence.Process.Equals(Tandem.ToolResultEvidence.Process? other) -> bool
+Tandem.ToolResultEvidence.Process.ExitCode.get -> int
+Tandem.ToolResultEvidence.Process.ExitCode.init -> void
+Tandem.ToolResultEvidence.Process.Process(int ExitCode, string! Stdout, string! Stderr, System.TimeSpan Duration, bool TimedOut, bool Truncated) -> void
+Tandem.ToolResultEvidence.Process.Stderr.get -> string!
+Tandem.ToolResultEvidence.Process.Stderr.init -> void
+Tandem.ToolResultEvidence.Process.Stdout.get -> string!
+Tandem.ToolResultEvidence.Process.Stdout.init -> void
+Tandem.ToolResultEvidence.Process.TimedOut.get -> bool
+Tandem.ToolResultEvidence.Process.TimedOut.init -> void
+Tandem.ToolResultEvidence.Process.Truncated.get -> bool
+Tandem.ToolResultEvidence.Process.Truncated.init -> void
+Tandem.ToolResultEvidence.ToolResultEvidence() -> void
+Tandem.ToolResultEvidence.ToolResultEvidence(Tandem.ToolResultEvidence! original) -> void
+Tandem.ValidationProblem
+Tandem.ValidationProblem.<Clone>$() -> Tandem.ValidationProblem!
+Tandem.ValidationProblem.Deconstruct(out string! Path, out string! Message) -> void
+Tandem.ValidationProblem.Equals(Tandem.ValidationProblem? other) -> bool
+Tandem.ValidationProblem.Message.get -> string!
+Tandem.ValidationProblem.Message.init -> void
+Tandem.ValidationProblem.Path.get -> string!
+Tandem.ValidationProblem.Path.init -> void
+Tandem.ValidationProblem.ValidationProblem(string! Path, string! Message) -> void
+virtual Tandem.AgentUpdate.EqualityContract.get -> System.Type!
+virtual Tandem.AgentUpdate.Equals(Tandem.AgentUpdate? other) -> bool
+virtual Tandem.AgentUpdate.PrintMembers(System.Text.StringBuilder! builder) -> bool
+virtual Tandem.Outcome<TState>.EqualityContract.get -> System.Type!
+virtual Tandem.Outcome<TState>.Equals(Tandem.Outcome<TState>? other) -> bool
+virtual Tandem.Outcome<TState>.PrintMembers(System.Text.StringBuilder! builder) -> bool
+virtual Tandem.PipelineCapabilityAccepted.Equals(Tandem.PipelineCapabilityAccepted? other) -> bool
+virtual Tandem.PipelineInteractionAnsweredObservation.Equals(Tandem.PipelineInteractionAnsweredObservation? other) -> bool
+virtual Tandem.PipelineInteractionRequestedObservation.Equals(Tandem.PipelineInteractionRequestedObservation? other) -> bool
+virtual Tandem.PipelineObservation.EqualityContract.get -> System.Type!
+virtual Tandem.PipelineObservation.Equals(Tandem.PipelineObservation? other) -> bool
+virtual Tandem.PipelineObservation.PrintMembers(System.Text.StringBuilder! builder) -> bool
+virtual Tandem.PipelineStructuredOutputAccepted.Equals(Tandem.PipelineStructuredOutputAccepted? other) -> bool
+virtual Tandem.ToolResultEvidence.EqualityContract.get -> System.Type!
+virtual Tandem.ToolResultEvidence.Equals(Tandem.ToolResultEvidence? other) -> bool
+virtual Tandem.ToolResultEvidence.PrintMembers(System.Text.StringBuilder! builder) -> bool

@@ -1,0 +1,59 @@
+#nullable enable
+override Tandem.Packets.PacketFile<T>.Equals(object? obj) -> bool
+override Tandem.Packets.PacketFile<T>.GetHashCode() -> int
+override Tandem.Packets.PacketFile<T>.ToString() -> string!
+override Tandem.Packets.PacketProblem.Equals(object? obj) -> bool
+override Tandem.Packets.PacketProblem.GetHashCode() -> int
+override Tandem.Packets.PacketProblem.ToString() -> string!
+override Tandem.Packets.PacketSource.Equals(object? obj) -> bool
+override Tandem.Packets.PacketSource.GetHashCode() -> int
+override Tandem.Packets.PacketSource.ToString() -> string!
+static Tandem.Packets.PacketFile.Parse<T>(string! content, FluentValidation.IValidator<T>? validator = null, string? sourceName = null) -> Tandem.Packets.PacketFile<T>!
+static Tandem.Packets.PacketFile.ReadAsync<T>(string! path, FluentValidation.IValidator<T>? validator = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Tandem.Packets.PacketFile<T>!>
+static Tandem.Packets.PacketFile<T>.operator !=(Tandem.Packets.PacketFile<T>? left, Tandem.Packets.PacketFile<T>? right) -> bool
+static Tandem.Packets.PacketFile<T>.operator ==(Tandem.Packets.PacketFile<T>? left, Tandem.Packets.PacketFile<T>? right) -> bool
+static Tandem.Packets.PacketProblem.operator !=(Tandem.Packets.PacketProblem? left, Tandem.Packets.PacketProblem? right) -> bool
+static Tandem.Packets.PacketProblem.operator ==(Tandem.Packets.PacketProblem? left, Tandem.Packets.PacketProblem? right) -> bool
+static Tandem.Packets.PacketSource.operator !=(Tandem.Packets.PacketSource? left, Tandem.Packets.PacketSource? right) -> bool
+static Tandem.Packets.PacketSource.operator ==(Tandem.Packets.PacketSource? left, Tandem.Packets.PacketSource? right) -> bool
+Tandem.Packets.PacketFile
+Tandem.Packets.PacketFile<T>
+Tandem.Packets.PacketFile<T>.<Clone>$() -> Tandem.Packets.PacketFile<T>!
+Tandem.Packets.PacketFile<T>.Context.get -> string!
+Tandem.Packets.PacketFile<T>.Context.init -> void
+Tandem.Packets.PacketFile<T>.Deconstruct(out T Value, out string! Context, out Tandem.Packets.PacketSource! Source) -> void
+Tandem.Packets.PacketFile<T>.Equals(Tandem.Packets.PacketFile<T>? other) -> bool
+Tandem.Packets.PacketFile<T>.PacketFile(T Value, string! Context, Tandem.Packets.PacketSource! Source) -> void
+Tandem.Packets.PacketFile<T>.Source.get -> Tandem.Packets.PacketSource!
+Tandem.Packets.PacketFile<T>.Source.init -> void
+Tandem.Packets.PacketFile<T>.Value.get -> T
+Tandem.Packets.PacketFile<T>.Value.init -> void
+Tandem.Packets.PacketFileException
+Tandem.Packets.PacketFileException.PacketFileException(string! message, string? sourceName, System.Collections.Generic.IReadOnlyList<Tandem.Packets.PacketProblem!>! problems, System.Exception? innerException = null) -> void
+Tandem.Packets.PacketFileException.Problems.get -> System.Collections.Generic.IReadOnlyList<Tandem.Packets.PacketProblem!>!
+Tandem.Packets.PacketFileException.SourceName.get -> string?
+Tandem.Packets.PacketProblem
+Tandem.Packets.PacketProblem.<Clone>$() -> Tandem.Packets.PacketProblem!
+Tandem.Packets.PacketProblem.Column.get -> int?
+Tandem.Packets.PacketProblem.Column.init -> void
+Tandem.Packets.PacketProblem.Deconstruct(out string! Path, out string! Message, out int? Line, out int? Column) -> void
+Tandem.Packets.PacketProblem.Equals(Tandem.Packets.PacketProblem? other) -> bool
+Tandem.Packets.PacketProblem.Line.get -> int?
+Tandem.Packets.PacketProblem.Line.init -> void
+Tandem.Packets.PacketProblem.Message.get -> string!
+Tandem.Packets.PacketProblem.Message.init -> void
+Tandem.Packets.PacketProblem.PacketProblem(string! Path, string! Message, int? Line = null, int? Column = null) -> void
+Tandem.Packets.PacketProblem.Path.get -> string!
+Tandem.Packets.PacketProblem.Path.init -> void
+Tandem.Packets.PacketSource
+Tandem.Packets.PacketSource.<Clone>$() -> Tandem.Packets.PacketSource!
+Tandem.Packets.PacketSource.Deconstruct(out string? Name, out string? FullPath, out string? Directory) -> void
+Tandem.Packets.PacketSource.Directory.get -> string?
+Tandem.Packets.PacketSource.Directory.init -> void
+Tandem.Packets.PacketSource.Equals(Tandem.Packets.PacketSource? other) -> bool
+Tandem.Packets.PacketSource.FullPath.get -> string?
+Tandem.Packets.PacketSource.FullPath.init -> void
+Tandem.Packets.PacketSource.Name.get -> string?
+Tandem.Packets.PacketSource.Name.init -> void
+Tandem.Packets.PacketSource.PacketSource(string? Name, string? FullPath, string? Directory) -> void
+Tandem.Packets.PacketSource.ResolvePath(string! path) -> string!

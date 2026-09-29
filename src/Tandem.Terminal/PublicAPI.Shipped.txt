@@ -1,0 +1,170 @@
+#nullable enable
+override Tandem.Terminal.TerminalCapabilities.Equals(object? obj) -> bool
+override Tandem.Terminal.TerminalCapabilities.GetHashCode() -> int
+override Tandem.Terminal.TerminalCapabilities.ToString() -> string!
+override Tandem.Terminal.TerminalDisplayOptions.Equals(object? obj) -> bool
+override Tandem.Terminal.TerminalDisplayOptions.GetHashCode() -> int
+override Tandem.Terminal.TerminalDisplayOptions.ToString() -> string!
+override Tandem.Terminal.TerminalInteractionPrompt.Equals(object? obj) -> bool
+override Tandem.Terminal.TerminalInteractionPrompt.GetHashCode() -> int
+override Tandem.Terminal.TerminalInteractionPrompt.ToString() -> string!
+override Tandem.Terminal.TerminalKeyAction.Equals(object? obj) -> bool
+override Tandem.Terminal.TerminalKeyAction.GetHashCode() -> int
+override Tandem.Terminal.TerminalKeyAction.ToString() -> string!
+override Tandem.Terminal.TerminalPipelineCompletion.Equals(object? obj) -> bool
+override Tandem.Terminal.TerminalPipelineCompletion.GetHashCode() -> int
+override Tandem.Terminal.TerminalPipelineCompletion.ToString() -> string!
+override Tandem.Terminal.TerminalPipelineEntry.Equals(object? obj) -> bool
+override Tandem.Terminal.TerminalPipelineEntry.GetHashCode() -> int
+override Tandem.Terminal.TerminalPipelineEntry.ToString() -> string!
+override Tandem.Terminal.TerminalPipelineRunOptions.Equals(object? obj) -> bool
+override Tandem.Terminal.TerminalPipelineRunOptions.GetHashCode() -> int
+override Tandem.Terminal.TerminalPipelineRunOptions.ToString() -> string!
+static Tandem.Terminal.TerminalCapabilities.Detect() -> Tandem.Terminal.TerminalCapabilities!
+static Tandem.Terminal.TerminalCapabilities.operator !=(Tandem.Terminal.TerminalCapabilities? left, Tandem.Terminal.TerminalCapabilities? right) -> bool
+static Tandem.Terminal.TerminalCapabilities.operator ==(Tandem.Terminal.TerminalCapabilities? left, Tandem.Terminal.TerminalCapabilities? right) -> bool
+static Tandem.Terminal.TerminalDisplayOptions.operator !=(Tandem.Terminal.TerminalDisplayOptions? left, Tandem.Terminal.TerminalDisplayOptions? right) -> bool
+static Tandem.Terminal.TerminalDisplayOptions.operator ==(Tandem.Terminal.TerminalDisplayOptions? left, Tandem.Terminal.TerminalDisplayOptions? right) -> bool
+static Tandem.Terminal.TerminalInteractionPrompt.operator !=(Tandem.Terminal.TerminalInteractionPrompt? left, Tandem.Terminal.TerminalInteractionPrompt? right) -> bool
+static Tandem.Terminal.TerminalInteractionPrompt.operator ==(Tandem.Terminal.TerminalInteractionPrompt? left, Tandem.Terminal.TerminalInteractionPrompt? right) -> bool
+static Tandem.Terminal.TerminalKeyAction.operator !=(Tandem.Terminal.TerminalKeyAction? left, Tandem.Terminal.TerminalKeyAction? right) -> bool
+static Tandem.Terminal.TerminalKeyAction.operator ==(Tandem.Terminal.TerminalKeyAction? left, Tandem.Terminal.TerminalKeyAction? right) -> bool
+static Tandem.Terminal.TerminalPipelineCompletion.operator !=(Tandem.Terminal.TerminalPipelineCompletion? left, Tandem.Terminal.TerminalPipelineCompletion? right) -> bool
+static Tandem.Terminal.TerminalPipelineCompletion.operator ==(Tandem.Terminal.TerminalPipelineCompletion? left, Tandem.Terminal.TerminalPipelineCompletion? right) -> bool
+static Tandem.Terminal.TerminalPipelineEntry.operator !=(Tandem.Terminal.TerminalPipelineEntry? left, Tandem.Terminal.TerminalPipelineEntry? right) -> bool
+static Tandem.Terminal.TerminalPipelineEntry.operator ==(Tandem.Terminal.TerminalPipelineEntry? left, Tandem.Terminal.TerminalPipelineEntry? right) -> bool
+static Tandem.Terminal.TerminalPipelineRunner.RunWithTerminalAsync<TState>(this Tandem.PipelineRunner! runner, Tandem.Pipeline<TState>! pipeline, TState initialState, Tandem.Terminal.TerminalPipelineRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Tandem.PipelineRunResult<TState>!>!
+static Tandem.Terminal.TerminalPipelineRunOptions.operator !=(Tandem.Terminal.TerminalPipelineRunOptions? left, Tandem.Terminal.TerminalPipelineRunOptions? right) -> bool
+static Tandem.Terminal.TerminalPipelineRunOptions.operator ==(Tandem.Terminal.TerminalPipelineRunOptions? left, Tandem.Terminal.TerminalPipelineRunOptions? right) -> bool
+Tandem.Terminal.ITerminalKeyInput
+Tandem.Terminal.ITerminalKeyInput.ReadAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<System.ConsoleKeyInfo?>
+Tandem.Terminal.TerminalCapabilities
+Tandem.Terminal.TerminalCapabilities.<Clone>$() -> Tandem.Terminal.TerminalCapabilities!
+Tandem.Terminal.TerminalCapabilities.Deconstruct(out bool IsInputTerminal, out bool IsOutputTerminal) -> void
+Tandem.Terminal.TerminalCapabilities.Equals(Tandem.Terminal.TerminalCapabilities? other) -> bool
+Tandem.Terminal.TerminalCapabilities.IsInputTerminal.get -> bool
+Tandem.Terminal.TerminalCapabilities.IsInputTerminal.init -> void
+Tandem.Terminal.TerminalCapabilities.IsInteractive.get -> bool
+Tandem.Terminal.TerminalCapabilities.IsOutputTerminal.get -> bool
+Tandem.Terminal.TerminalCapabilities.IsOutputTerminal.init -> void
+Tandem.Terminal.TerminalCapabilities.TerminalCapabilities(bool IsInputTerminal, bool IsOutputTerminal) -> void
+Tandem.Terminal.TerminalDisplayOptions
+Tandem.Terminal.TerminalDisplayOptions.<Clone>$() -> Tandem.Terminal.TerminalDisplayOptions!
+Tandem.Terminal.TerminalDisplayOptions.CancelAsync.get -> System.Func<System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>?
+Tandem.Terminal.TerminalDisplayOptions.CancelAsync.init -> void
+Tandem.Terminal.TerminalDisplayOptions.CanSubmitText.get -> System.Func<bool>?
+Tandem.Terminal.TerminalDisplayOptions.CanSubmitText.init -> void
+Tandem.Terminal.TerminalDisplayOptions.Capabilities.get -> Tandem.Terminal.TerminalCapabilities!
+Tandem.Terminal.TerminalDisplayOptions.Capabilities.init -> void
+Tandem.Terminal.TerminalDisplayOptions.Console.get -> Spectre.Console.IAnsiConsole?
+Tandem.Terminal.TerminalDisplayOptions.Console.init -> void
+Tandem.Terminal.TerminalDisplayOptions.Equals(Tandem.Terminal.TerminalDisplayOptions? other) -> bool
+Tandem.Terminal.TerminalDisplayOptions.FormatInteraction.get -> System.Func<Tandem.PipelineInteractionRequestedObservation!, Tandem.Terminal.TerminalInteractionPrompt?>?
+Tandem.Terminal.TerminalDisplayOptions.FormatInteraction.init -> void
+Tandem.Terminal.TerminalDisplayOptions.KeyActions.get -> System.Collections.Generic.IReadOnlyList<Tandem.Terminal.TerminalKeyAction!>!
+Tandem.Terminal.TerminalDisplayOptions.KeyActions.init -> void
+Tandem.Terminal.TerminalDisplayOptions.KeyInput.get -> Tandem.Terminal.ITerminalKeyInput?
+Tandem.Terminal.TerminalDisplayOptions.KeyInput.init -> void
+Tandem.Terminal.TerminalDisplayOptions.ReadPipelineEntriesAsync.get -> System.Func<System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Tandem.Terminal.TerminalPipelineEntry!>!>>?
+Tandem.Terminal.TerminalDisplayOptions.ReadPipelineEntriesAsync.init -> void
+Tandem.Terminal.TerminalDisplayOptions.RefreshInterval.get -> System.TimeSpan
+Tandem.Terminal.TerminalDisplayOptions.RefreshInterval.init -> void
+Tandem.Terminal.TerminalDisplayOptions.SubmitTextAsync.get -> System.Func<string!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>?
+Tandem.Terminal.TerminalDisplayOptions.SubmitTextAsync.init -> void
+Tandem.Terminal.TerminalDisplayOptions.TerminalDisplayOptions() -> void
+Tandem.Terminal.TerminalDisplayOptions.TimeProvider.get -> System.TimeProvider!
+Tandem.Terminal.TerminalDisplayOptions.TimeProvider.init -> void
+Tandem.Terminal.TerminalDisplayOptions.Title.get -> string?
+Tandem.Terminal.TerminalDisplayOptions.Title.init -> void
+Tandem.Terminal.TerminalDisplayOptions.TranscriptCharacterCapacity.get -> int
+Tandem.Terminal.TerminalDisplayOptions.TranscriptCharacterCapacity.init -> void
+Tandem.Terminal.TerminalDisplayOptions.TranscriptEntryCapacity.get -> int
+Tandem.Terminal.TerminalDisplayOptions.TranscriptEntryCapacity.init -> void
+Tandem.Terminal.TerminalDisplayOptions.TruncatedToolNames.get -> System.Collections.Generic.IReadOnlySet<string!>!
+Tandem.Terminal.TerminalDisplayOptions.TruncatedToolNames.init -> void
+Tandem.Terminal.TerminalDisplayOptions.WorkingDirectory.get -> string?
+Tandem.Terminal.TerminalDisplayOptions.WorkingDirectory.init -> void
+Tandem.Terminal.TerminalInteractionPrompt
+Tandem.Terminal.TerminalInteractionPrompt.<Clone>$() -> Tandem.Terminal.TerminalInteractionPrompt!
+Tandem.Terminal.TerminalInteractionPrompt.Deconstruct(out string! Prompt, out string? Detail) -> void
+Tandem.Terminal.TerminalInteractionPrompt.Detail.get -> string?
+Tandem.Terminal.TerminalInteractionPrompt.Detail.init -> void
+Tandem.Terminal.TerminalInteractionPrompt.Equals(Tandem.Terminal.TerminalInteractionPrompt? other) -> bool
+Tandem.Terminal.TerminalInteractionPrompt.Prompt.get -> string!
+Tandem.Terminal.TerminalInteractionPrompt.Prompt.init -> void
+Tandem.Terminal.TerminalInteractionPrompt.TerminalInteractionPrompt(string! Prompt, string? Detail = null) -> void
+Tandem.Terminal.TerminalKeyAction
+Tandem.Terminal.TerminalKeyAction.<Clone>$() -> Tandem.Terminal.TerminalKeyAction!
+Tandem.Terminal.TerminalKeyAction.Deconstruct(out System.ConsoleKey Key, out string! Label, out System.Func<System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! ExecuteAsync, out System.Func<bool>? IsAvailable) -> void
+Tandem.Terminal.TerminalKeyAction.Equals(Tandem.Terminal.TerminalKeyAction? other) -> bool
+Tandem.Terminal.TerminalKeyAction.ExecuteAsync.get -> System.Func<System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>!
+Tandem.Terminal.TerminalKeyAction.ExecuteAsync.init -> void
+Tandem.Terminal.TerminalKeyAction.IsAvailable.get -> System.Func<bool>?
+Tandem.Terminal.TerminalKeyAction.IsAvailable.init -> void
+Tandem.Terminal.TerminalKeyAction.Key.get -> System.ConsoleKey
+Tandem.Terminal.TerminalKeyAction.Key.init -> void
+Tandem.Terminal.TerminalKeyAction.Label.get -> string!
+Tandem.Terminal.TerminalKeyAction.Label.init -> void
+Tandem.Terminal.TerminalKeyAction.TerminalKeyAction(System.ConsoleKey Key, string! Label, System.Func<System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! ExecuteAsync, System.Func<bool>? IsAvailable = null) -> void
+Tandem.Terminal.TerminalPipelineCompletion
+Tandem.Terminal.TerminalPipelineCompletion.<Clone>$() -> Tandem.Terminal.TerminalPipelineCompletion!
+Tandem.Terminal.TerminalPipelineCompletion.Deconstruct(out Tandem.Terminal.TerminalPipelineStatus Status, out string! Summary, out System.Exception? Exception) -> void
+Tandem.Terminal.TerminalPipelineCompletion.Equals(Tandem.Terminal.TerminalPipelineCompletion? other) -> bool
+Tandem.Terminal.TerminalPipelineCompletion.Exception.get -> System.Exception?
+Tandem.Terminal.TerminalPipelineCompletion.Exception.init -> void
+Tandem.Terminal.TerminalPipelineCompletion.Status.get -> Tandem.Terminal.TerminalPipelineStatus
+Tandem.Terminal.TerminalPipelineCompletion.Status.init -> void
+Tandem.Terminal.TerminalPipelineCompletion.Summary.get -> string!
+Tandem.Terminal.TerminalPipelineCompletion.Summary.init -> void
+Tandem.Terminal.TerminalPipelineCompletion.TerminalPipelineCompletion(Tandem.Terminal.TerminalPipelineStatus Status, string! Summary, System.Exception? Exception = null) -> void
+Tandem.Terminal.TerminalPipelineDisplay
+Tandem.Terminal.TerminalPipelineDisplay.CancelledAsync(string! summary) -> System.Threading.Tasks.ValueTask
+Tandem.Terminal.TerminalPipelineDisplay.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Tandem.Terminal.TerminalPipelineDisplay.FailedAsync(string! summary) -> System.Threading.Tasks.ValueTask
+Tandem.Terminal.TerminalPipelineDisplay.FaultedAsync(string! summary) -> System.Threading.Tasks.ValueTask
+Tandem.Terminal.TerminalPipelineDisplay.IsInteractive.get -> bool
+Tandem.Terminal.TerminalPipelineDisplay.Observer.get -> Tandem.IPipelineObserver!
+Tandem.Terminal.TerminalPipelineDisplay.StartAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Tandem.Terminal.TerminalPipelineDisplay.SucceededAsync(string! summary) -> System.Threading.Tasks.ValueTask
+Tandem.Terminal.TerminalPipelineDisplay.TerminalPipelineDisplay(Tandem.PipelineInspection! pipeline, System.Guid runId, Tandem.Terminal.TerminalDisplayOptions? options = null) -> void
+Tandem.Terminal.TerminalPipelineDisplay.WaitForCleanupAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Tandem.Terminal.TerminalPipelineEntry
+Tandem.Terminal.TerminalPipelineEntry.<Clone>$() -> Tandem.Terminal.TerminalPipelineEntry!
+Tandem.Terminal.TerminalPipelineEntry.Deconstruct(out string! Label, out string! Kind, out string! Summary, out System.TimeSpan? Duration, out Tandem.Terminal.TerminalPipelineEntryStyle Style) -> void
+Tandem.Terminal.TerminalPipelineEntry.Duration.get -> System.TimeSpan?
+Tandem.Terminal.TerminalPipelineEntry.Duration.init -> void
+Tandem.Terminal.TerminalPipelineEntry.Equals(Tandem.Terminal.TerminalPipelineEntry? other) -> bool
+Tandem.Terminal.TerminalPipelineEntry.Kind.get -> string!
+Tandem.Terminal.TerminalPipelineEntry.Kind.init -> void
+Tandem.Terminal.TerminalPipelineEntry.Label.get -> string!
+Tandem.Terminal.TerminalPipelineEntry.Label.init -> void
+Tandem.Terminal.TerminalPipelineEntry.Style.get -> Tandem.Terminal.TerminalPipelineEntryStyle
+Tandem.Terminal.TerminalPipelineEntry.Style.init -> void
+Tandem.Terminal.TerminalPipelineEntry.Summary.get -> string!
+Tandem.Terminal.TerminalPipelineEntry.Summary.init -> void
+Tandem.Terminal.TerminalPipelineEntry.TerminalPipelineEntry(string! Label, string! Kind, string! Summary, System.TimeSpan? Duration = null, Tandem.Terminal.TerminalPipelineEntryStyle Style = Tandem.Terminal.TerminalPipelineEntryStyle.Information) -> void
+Tandem.Terminal.TerminalPipelineEntryStyle
+Tandem.Terminal.TerminalPipelineEntryStyle.Failure = 2 -> Tandem.Terminal.TerminalPipelineEntryStyle
+Tandem.Terminal.TerminalPipelineEntryStyle.Information = 0 -> Tandem.Terminal.TerminalPipelineEntryStyle
+Tandem.Terminal.TerminalPipelineEntryStyle.Interaction = 3 -> Tandem.Terminal.TerminalPipelineEntryStyle
+Tandem.Terminal.TerminalPipelineEntryStyle.Success = 1 -> Tandem.Terminal.TerminalPipelineEntryStyle
+Tandem.Terminal.TerminalPipelineRunner
+Tandem.Terminal.TerminalPipelineRunOptions
+Tandem.Terminal.TerminalPipelineRunOptions.<Clone>$() -> Tandem.Terminal.TerminalPipelineRunOptions!
+Tandem.Terminal.TerminalPipelineRunOptions.Display.get -> Tandem.Terminal.TerminalDisplayOptions?
+Tandem.Terminal.TerminalPipelineRunOptions.Display.init -> void
+Tandem.Terminal.TerminalPipelineRunOptions.Equals(Tandem.Terminal.TerminalPipelineRunOptions? other) -> bool
+Tandem.Terminal.TerminalPipelineRunOptions.Run.get -> Tandem.PipelineRunOptions!
+Tandem.Terminal.TerminalPipelineRunOptions.Run.init -> void
+Tandem.Terminal.TerminalPipelineRunOptions.RunCancellation.get -> System.Threading.CancellationTokenSource?
+Tandem.Terminal.TerminalPipelineRunOptions.RunCancellation.init -> void
+Tandem.Terminal.TerminalPipelineRunOptions.TerminalizingAsync.get -> System.Func<Tandem.Terminal.TerminalPipelineCompletion!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>?
+Tandem.Terminal.TerminalPipelineRunOptions.TerminalizingAsync.init -> void
+Tandem.Terminal.TerminalPipelineRunOptions.TerminalPipelineRunOptions() -> void
+Tandem.Terminal.TerminalPipelineStatus
+Tandem.Terminal.TerminalPipelineStatus.Cancelled = 5 -> Tandem.Terminal.TerminalPipelineStatus
+Tandem.Terminal.TerminalPipelineStatus.Failed = 3 -> Tandem.Terminal.TerminalPipelineStatus
+Tandem.Terminal.TerminalPipelineStatus.Faulted = 4 -> Tandem.Terminal.TerminalPipelineStatus
+Tandem.Terminal.TerminalPipelineStatus.Running = 0 -> Tandem.Terminal.TerminalPipelineStatus
+Tandem.Terminal.TerminalPipelineStatus.Succeeded = 2 -> Tandem.Terminal.TerminalPipelineStatus
+Tandem.Terminal.TerminalPipelineStatus.WaitingForInteraction = 1 -> Tandem.Terminal.TerminalPipelineStatus

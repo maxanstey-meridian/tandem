@@ -284,41 +284,6 @@ public sealed class PublicRuntimeTests
         result.State.Answer.Should().Be("continue");
     }
 
-    [Fact]
-    public void PublicRuntimeSurface_ExposesNoMafTypes()
-    {
-        var runtimeTypes = new[]
-        {
-            typeof(PipelineRunner),
-            typeof(PipelineRunOptions),
-            typeof(PipelineRunResult<>),
-            typeof(PipelineInteractionHandlers),
-            typeof(PipelineInteractionContext<,>),
-        };
-
-        runtimeTypes
-            .SelectMany(type => type.GetMembers().SelectMany(PublicMemberTypes))
-            .Where(type => type.Assembly.GetName().Name?.StartsWith("Microsoft.Agents") == true)
-            .Should()
-            .BeEmpty();
-    }
-
-    private static IEnumerable<Type> PublicMemberTypes(System.Reflection.MemberInfo member)
-    {
-        if (member is System.Reflection.MethodInfo method)
-        {
-            yield return method.ReturnType;
-            foreach (var parameter in method.GetParameters())
-            {
-                yield return parameter.ParameterType;
-            }
-        }
-        else if (member is System.Reflection.PropertyInfo property)
-        {
-            yield return property.PropertyType;
-        }
-    }
-
     private sealed class RecordingObserver : IPipelineObserver
     {
         public ConcurrentQueue<PipelineObservation> Observations { get; } = new();

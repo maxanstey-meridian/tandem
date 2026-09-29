@@ -1,0 +1,184 @@
+#nullable enable
+override Tandem.Ledger.AcceptedPipelineValue<TValue>.Equals(object? obj) -> bool
+override Tandem.Ledger.AcceptedPipelineValue<TValue>.GetHashCode() -> int
+override Tandem.Ledger.AcceptedPipelineValue<TValue>.ToString() -> string!
+override Tandem.Ledger.LedgerJournalEntry.Equals(object? obj) -> bool
+override Tandem.Ledger.LedgerJournalEntry.GetHashCode() -> int
+override Tandem.Ledger.LedgerJournalEntry.ToString() -> string!
+override Tandem.Ledger.LedgerRun.Equals(object? obj) -> bool
+override Tandem.Ledger.LedgerRun.GetHashCode() -> int
+override Tandem.Ledger.LedgerRun.ToString() -> string!
+override Tandem.Ledger.RuntimeJournalRecord.Equals(object? obj) -> bool
+override Tandem.Ledger.RuntimeJournalRecord.GetHashCode() -> int
+override Tandem.Ledger.RuntimeJournalRecord.ToString() -> string!
+override Tandem.Ledger.SqlitePipelineRunOptions.Equals(object? obj) -> bool
+override Tandem.Ledger.SqlitePipelineRunOptions.GetHashCode() -> int
+override Tandem.Ledger.SqlitePipelineRunOptions.ToString() -> string!
+override Tandem.Ledger.StructuredOutputRejectionEvidence.Equals(object? obj) -> bool
+override Tandem.Ledger.StructuredOutputRejectionEvidence.GetHashCode() -> int
+override Tandem.Ledger.StructuredOutputRejectionEvidence.ToString() -> string!
+static Tandem.Ledger.AcceptedPipelineValue<TValue>.operator !=(Tandem.Ledger.AcceptedPipelineValue<TValue>? left, Tandem.Ledger.AcceptedPipelineValue<TValue>? right) -> bool
+static Tandem.Ledger.AcceptedPipelineValue<TValue>.operator ==(Tandem.Ledger.AcceptedPipelineValue<TValue>? left, Tandem.Ledger.AcceptedPipelineValue<TValue>? right) -> bool
+static Tandem.Ledger.LedgerJournalEntry.operator !=(Tandem.Ledger.LedgerJournalEntry? left, Tandem.Ledger.LedgerJournalEntry? right) -> bool
+static Tandem.Ledger.LedgerJournalEntry.operator ==(Tandem.Ledger.LedgerJournalEntry? left, Tandem.Ledger.LedgerJournalEntry? right) -> bool
+static Tandem.Ledger.LedgerRun.operator !=(Tandem.Ledger.LedgerRun? left, Tandem.Ledger.LedgerRun? right) -> bool
+static Tandem.Ledger.LedgerRun.operator ==(Tandem.Ledger.LedgerRun? left, Tandem.Ledger.LedgerRun? right) -> bool
+static Tandem.Ledger.RuntimeJournalRecord.operator !=(Tandem.Ledger.RuntimeJournalRecord? left, Tandem.Ledger.RuntimeJournalRecord? right) -> bool
+static Tandem.Ledger.RuntimeJournalRecord.operator ==(Tandem.Ledger.RuntimeJournalRecord? left, Tandem.Ledger.RuntimeJournalRecord? right) -> bool
+static Tandem.Ledger.SqlitePipelineRunnerExtensions.RunAsync<TState>(this Tandem.PipelineRunner! runner, Tandem.Pipeline<TState>! pipeline, TState initialState, Tandem.Ledger.SqlitePipelineRunOptions! options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Tandem.PipelineRunResult<TState>!>!
+static Tandem.Ledger.SqlitePipelineRunnerExtensions.WithRunLedger(this Tandem.PipelineRunOptions! options, Tandem.Ledger.RunLedger! ledger) -> Tandem.PipelineRunOptions!
+static Tandem.Ledger.SqlitePipelineRunOptions.operator !=(Tandem.Ledger.SqlitePipelineRunOptions? left, Tandem.Ledger.SqlitePipelineRunOptions? right) -> bool
+static Tandem.Ledger.SqlitePipelineRunOptions.operator ==(Tandem.Ledger.SqlitePipelineRunOptions? left, Tandem.Ledger.SqlitePipelineRunOptions? right) -> bool
+static Tandem.Ledger.StructuredOutputRejectionEvidence.operator !=(Tandem.Ledger.StructuredOutputRejectionEvidence? left, Tandem.Ledger.StructuredOutputRejectionEvidence? right) -> bool
+static Tandem.Ledger.StructuredOutputRejectionEvidence.operator ==(Tandem.Ledger.StructuredOutputRejectionEvidence? left, Tandem.Ledger.StructuredOutputRejectionEvidence? right) -> bool
+Tandem.Ledger.AcceptedPipelineValue<TValue>
+Tandem.Ledger.AcceptedPipelineValue<TValue>.<Clone>$() -> Tandem.Ledger.AcceptedPipelineValue<TValue>!
+Tandem.Ledger.AcceptedPipelineValue<TValue>.AcceptedPipelineValue(long Sequence, string! StepId, string! ValueType, TValue Value, System.DateTimeOffset RecordedAt) -> void
+Tandem.Ledger.AcceptedPipelineValue<TValue>.Deconstruct(out long Sequence, out string! StepId, out string! ValueType, out TValue Value, out System.DateTimeOffset RecordedAt) -> void
+Tandem.Ledger.AcceptedPipelineValue<TValue>.Equals(Tandem.Ledger.AcceptedPipelineValue<TValue>? other) -> bool
+Tandem.Ledger.AcceptedPipelineValue<TValue>.RecordedAt.get -> System.DateTimeOffset
+Tandem.Ledger.AcceptedPipelineValue<TValue>.RecordedAt.init -> void
+Tandem.Ledger.AcceptedPipelineValue<TValue>.Sequence.get -> long
+Tandem.Ledger.AcceptedPipelineValue<TValue>.Sequence.init -> void
+Tandem.Ledger.AcceptedPipelineValue<TValue>.StepId.get -> string!
+Tandem.Ledger.AcceptedPipelineValue<TValue>.StepId.init -> void
+Tandem.Ledger.AcceptedPipelineValue<TValue>.Value.get -> TValue
+Tandem.Ledger.AcceptedPipelineValue<TValue>.Value.init -> void
+Tandem.Ledger.AcceptedPipelineValue<TValue>.ValueType.get -> string!
+Tandem.Ledger.AcceptedPipelineValue<TValue>.ValueType.init -> void
+Tandem.Ledger.LedgerConflictException
+Tandem.Ledger.LedgerConflictException.LedgerConflictException(string! message) -> void
+Tandem.Ledger.LedgerDataException
+Tandem.Ledger.LedgerDataException.LedgerDataException(string! message, System.Exception? innerException = null) -> void
+Tandem.Ledger.LedgerJournalEntry
+Tandem.Ledger.LedgerJournalEntry.<Clone>$() -> Tandem.Ledger.LedgerJournalEntry!
+Tandem.Ledger.LedgerJournalEntry.Deconstruct(out long Sequence, out Tandem.Ledger.RuntimeJournalRecord! Record, out System.DateTimeOffset RecordedAt) -> void
+Tandem.Ledger.LedgerJournalEntry.Equals(Tandem.Ledger.LedgerJournalEntry? other) -> bool
+Tandem.Ledger.LedgerJournalEntry.LedgerJournalEntry(long Sequence, Tandem.Ledger.RuntimeJournalRecord! Record, System.DateTimeOffset RecordedAt) -> void
+Tandem.Ledger.LedgerJournalEntry.Record.get -> Tandem.Ledger.RuntimeJournalRecord!
+Tandem.Ledger.LedgerJournalEntry.Record.init -> void
+Tandem.Ledger.LedgerJournalEntry.RecordedAt.get -> System.DateTimeOffset
+Tandem.Ledger.LedgerJournalEntry.RecordedAt.init -> void
+Tandem.Ledger.LedgerJournalEntry.Sequence.get -> long
+Tandem.Ledger.LedgerJournalEntry.Sequence.init -> void
+Tandem.Ledger.LedgerRun
+Tandem.Ledger.LedgerRun.<Clone>$() -> Tandem.Ledger.LedgerRun!
+Tandem.Ledger.LedgerRun.Composition.get -> string!
+Tandem.Ledger.LedgerRun.Composition.init -> void
+Tandem.Ledger.LedgerRun.Deconstruct(out System.Guid RunId, out string! Composition, out Tandem.Ledger.LedgerRunStatus Status, out System.DateTimeOffset StartedAt, out System.DateTimeOffset UpdatedAt, out System.DateTimeOffset? EndedAt) -> void
+Tandem.Ledger.LedgerRun.EndedAt.get -> System.DateTimeOffset?
+Tandem.Ledger.LedgerRun.EndedAt.init -> void
+Tandem.Ledger.LedgerRun.Equals(Tandem.Ledger.LedgerRun? other) -> bool
+Tandem.Ledger.LedgerRun.LedgerRun(System.Guid RunId, string! Composition, Tandem.Ledger.LedgerRunStatus Status, System.DateTimeOffset StartedAt, System.DateTimeOffset UpdatedAt, System.DateTimeOffset? EndedAt) -> void
+Tandem.Ledger.LedgerRun.RunId.get -> System.Guid
+Tandem.Ledger.LedgerRun.RunId.init -> void
+Tandem.Ledger.LedgerRun.StartedAt.get -> System.DateTimeOffset
+Tandem.Ledger.LedgerRun.StartedAt.init -> void
+Tandem.Ledger.LedgerRun.Status.get -> Tandem.Ledger.LedgerRunStatus
+Tandem.Ledger.LedgerRun.Status.init -> void
+Tandem.Ledger.LedgerRun.UpdatedAt.get -> System.DateTimeOffset
+Tandem.Ledger.LedgerRun.UpdatedAt.init -> void
+Tandem.Ledger.LedgerRunStatus
+Tandem.Ledger.LedgerRunStatus.Cancelled = 5 -> Tandem.Ledger.LedgerRunStatus
+Tandem.Ledger.LedgerRunStatus.Failed = 2 -> Tandem.Ledger.LedgerRunStatus
+Tandem.Ledger.LedgerRunStatus.Faulted = 3 -> Tandem.Ledger.LedgerRunStatus
+Tandem.Ledger.LedgerRunStatus.Interrupted = 4 -> Tandem.Ledger.LedgerRunStatus
+Tandem.Ledger.LedgerRunStatus.Ready = 1 -> Tandem.Ledger.LedgerRunStatus
+Tandem.Ledger.LedgerRunStatus.Running = 0 -> Tandem.Ledger.LedgerRunStatus
+Tandem.Ledger.LedgerValueTypeMismatchException
+Tandem.Ledger.LedgerValueTypeMismatchException.LedgerValueTypeMismatchException(string! message) -> void
+Tandem.Ledger.RunLedger
+Tandem.Ledger.RunLedger.RunId.get -> System.Guid
+Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalKind.ActionAttempted = 10 -> Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalKind.ActionCompleted = 11 -> Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalKind.CapabilityAccepted = 14 -> Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalKind.CommandCompleted = 8 -> Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalKind.InteractionAnswered = 7 -> Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalKind.InteractionRequested = 6 -> Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalKind.RunCompleted = 1 -> Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalKind.RunStarted = 0 -> Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalKind.StepCancelled = 5 -> Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalKind.StepCompleted = 3 -> Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalKind.StepFaulted = 4 -> Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalKind.StepStarted = 2 -> Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalKind.StructuredOutputAccepted = 13 -> Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalKind.StructuredOutputRejected = 12 -> Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalKind.UsageRecorded = 9 -> Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalRecord
+Tandem.Ledger.RuntimeJournalRecord.<Clone>$() -> Tandem.Ledger.RuntimeJournalRecord!
+Tandem.Ledger.RuntimeJournalRecord.ContextWindowTokens.get -> int?
+Tandem.Ledger.RuntimeJournalRecord.ContextWindowTokens.init -> void
+Tandem.Ledger.RuntimeJournalRecord.CurrentContextTokens.get -> int?
+Tandem.Ledger.RuntimeJournalRecord.CurrentContextTokens.init -> void
+Tandem.Ledger.RuntimeJournalRecord.Deconstruct(out Tandem.Ledger.RuntimeJournalKind Kind, out string! StepId, out string? Identity, out string? Name, out string? Effect, out string? Result, out string? OutcomeKind, out int? InputTokens, out int? OutputTokens, out int? CurrentContextTokens, out string? ValueType, out System.Text.Json.JsonElement? Payload, out int? ContextWindowTokens) -> void
+Tandem.Ledger.RuntimeJournalRecord.Effect.get -> string?
+Tandem.Ledger.RuntimeJournalRecord.Effect.init -> void
+Tandem.Ledger.RuntimeJournalRecord.Equals(Tandem.Ledger.RuntimeJournalRecord? other) -> bool
+Tandem.Ledger.RuntimeJournalRecord.Identity.get -> string?
+Tandem.Ledger.RuntimeJournalRecord.Identity.init -> void
+Tandem.Ledger.RuntimeJournalRecord.InputTokens.get -> int?
+Tandem.Ledger.RuntimeJournalRecord.InputTokens.init -> void
+Tandem.Ledger.RuntimeJournalRecord.Kind.get -> Tandem.Ledger.RuntimeJournalKind
+Tandem.Ledger.RuntimeJournalRecord.Kind.init -> void
+Tandem.Ledger.RuntimeJournalRecord.Name.get -> string?
+Tandem.Ledger.RuntimeJournalRecord.Name.init -> void
+Tandem.Ledger.RuntimeJournalRecord.OutcomeKind.get -> string?
+Tandem.Ledger.RuntimeJournalRecord.OutcomeKind.init -> void
+Tandem.Ledger.RuntimeJournalRecord.OutputTokens.get -> int?
+Tandem.Ledger.RuntimeJournalRecord.OutputTokens.init -> void
+Tandem.Ledger.RuntimeJournalRecord.Payload.get -> System.Text.Json.JsonElement?
+Tandem.Ledger.RuntimeJournalRecord.Payload.init -> void
+Tandem.Ledger.RuntimeJournalRecord.Result.get -> string?
+Tandem.Ledger.RuntimeJournalRecord.Result.init -> void
+Tandem.Ledger.RuntimeJournalRecord.RuntimeJournalRecord(Tandem.Ledger.RuntimeJournalKind Kind, string! StepId, string? Identity = null, string? Name = null, string? Effect = null, string? Result = null, string? OutcomeKind = null, int? InputTokens = null, int? OutputTokens = null, int? CurrentContextTokens = null, string? ValueType = null, System.Text.Json.JsonElement? Payload = null, int? ContextWindowTokens = null) -> void
+Tandem.Ledger.RuntimeJournalRecord.StepId.get -> string!
+Tandem.Ledger.RuntimeJournalRecord.StepId.init -> void
+Tandem.Ledger.RuntimeJournalRecord.ValueType.get -> string?
+Tandem.Ledger.RuntimeJournalRecord.ValueType.init -> void
+Tandem.Ledger.RuntimeJournalRecord.VisitId.get -> string?
+Tandem.Ledger.RuntimeJournalRecord.VisitId.init -> void
+Tandem.Ledger.SqliteLedgerStore
+Tandem.Ledger.SqliteLedgerStore.CompleteRunAsync(System.Guid runId, Tandem.Ledger.LedgerRunStatus status, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Tandem.Ledger.LedgerRun!>
+Tandem.Ledger.SqliteLedgerStore.CreateObserverAsync(System.Guid runId, string! composition, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Tandem.Ledger.SqlitePipelineObserver!>
+Tandem.Ledger.SqliteLedgerStore.CreateObserverAsync<TState>(System.Guid runId, Tandem.Pipeline<TState>! pipeline, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Tandem.Ledger.SqlitePipelineObserver!>
+Tandem.Ledger.SqliteLedgerStore.ForRun(System.Guid runId) -> Tandem.Ledger.RunLedger!
+Tandem.Ledger.SqliteLedgerStore.GetRunAsync(System.Guid runId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Tandem.Ledger.LedgerRun!>
+Tandem.Ledger.SqliteLedgerStore.InitializeAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Tandem.Ledger.SqliteLedgerStore.ReadAcceptedAsync(System.Guid runId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Tandem.Ledger.RuntimeJournalRecord!>!>
+Tandem.Ledger.SqliteLedgerStore.ReadJournalAsync(System.Guid runId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Tandem.Ledger.LedgerJournalEntry!>!>
+Tandem.Ledger.SqliteLedgerStore.ReadLatestAcceptedAsync<TValue>(System.Guid runId, string! stepId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Tandem.Ledger.AcceptedPipelineValue<TValue>?>
+Tandem.Ledger.SqliteLedgerStore.ReadLatestAcceptedAsync<TValue>(System.Guid runId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Tandem.Ledger.AcceptedPipelineValue<TValue>?>
+Tandem.Ledger.SqliteLedgerStore.RecordRunAsync<TState>(System.Guid runId, System.Func<System.Threading.Tasks.Task<Tandem.PipelineRunResult<TState>!>!>! run) -> System.Threading.Tasks.Task<Tandem.PipelineRunResult<TState>!>!
+Tandem.Ledger.SqliteLedgerStore.SqliteLedgerStore(string! databasePath) -> void
+Tandem.Ledger.SqlitePipelineObserver
+Tandem.Ledger.SqlitePipelineObserver.ObserveAsync(Tandem.PipelineObservation! observation, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask
+Tandem.Ledger.SqlitePipelineObserver.RecordRunCompletedAsync(string! result, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Tandem.Ledger.SqlitePipelineObserver.RecordRunStartedAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Tandem.Ledger.SqlitePipelineRunnerExtensions
+Tandem.Ledger.SqlitePipelineRunOptions
+Tandem.Ledger.SqlitePipelineRunOptions.<Clone>$() -> Tandem.Ledger.SqlitePipelineRunOptions!
+Tandem.Ledger.SqlitePipelineRunOptions.Deconstruct(out string! LedgerPath, out System.Guid? RunId, out Tandem.PipelineInteractionHandlers? Interactions, out Tandem.IPipelineObserver? Observer) -> void
+Tandem.Ledger.SqlitePipelineRunOptions.EnableLedgerTools.get -> bool
+Tandem.Ledger.SqlitePipelineRunOptions.EnableLedgerTools.init -> void
+Tandem.Ledger.SqlitePipelineRunOptions.Equals(Tandem.Ledger.SqlitePipelineRunOptions? other) -> bool
+Tandem.Ledger.SqlitePipelineRunOptions.Interactions.get -> Tandem.PipelineInteractionHandlers?
+Tandem.Ledger.SqlitePipelineRunOptions.Interactions.init -> void
+Tandem.Ledger.SqlitePipelineRunOptions.LedgerPath.get -> string!
+Tandem.Ledger.SqlitePipelineRunOptions.LedgerPath.init -> void
+Tandem.Ledger.SqlitePipelineRunOptions.Observer.get -> Tandem.IPipelineObserver?
+Tandem.Ledger.SqlitePipelineRunOptions.Observer.init -> void
+Tandem.Ledger.SqlitePipelineRunOptions.RunId.get -> System.Guid?
+Tandem.Ledger.SqlitePipelineRunOptions.RunId.init -> void
+Tandem.Ledger.SqlitePipelineRunOptions.SqlitePipelineRunOptions(string! LedgerPath, System.Guid? RunId = null, Tandem.PipelineInteractionHandlers? Interactions = null, Tandem.IPipelineObserver? Observer = null) -> void
+Tandem.Ledger.StructuredOutputRejectionEvidence
+Tandem.Ledger.StructuredOutputRejectionEvidence.<Clone>$() -> Tandem.Ledger.StructuredOutputRejectionEvidence!
+Tandem.Ledger.StructuredOutputRejectionEvidence.Attempt.get -> int
+Tandem.Ledger.StructuredOutputRejectionEvidence.Attempt.init -> void
+Tandem.Ledger.StructuredOutputRejectionEvidence.Deconstruct(out int Attempt, out System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>! Problems, out string! RawResponse) -> void
+Tandem.Ledger.StructuredOutputRejectionEvidence.Equals(Tandem.Ledger.StructuredOutputRejectionEvidence? other) -> bool
+Tandem.Ledger.StructuredOutputRejectionEvidence.Problems.get -> System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>!
+Tandem.Ledger.StructuredOutputRejectionEvidence.Problems.init -> void
+Tandem.Ledger.StructuredOutputRejectionEvidence.RawResponse.get -> string!
+Tandem.Ledger.StructuredOutputRejectionEvidence.RawResponse.init -> void
+Tandem.Ledger.StructuredOutputRejectionEvidence.StructuredOutputRejectionEvidence(int Attempt, System.Collections.Generic.IReadOnlyList<Tandem.ValidationProblem!>! Problems, string! RawResponse) -> void
