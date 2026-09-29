@@ -15,6 +15,10 @@
     <Folder Name="/examples/">
         <Project Path="examples/code-writer/csharp/Tandem.Sample.CodeWriter.csproj" />
         <Project Path="examples/debate/csharp/Tandem.Sample.Debate.csproj" />
+        <Project Path="examples/getting-started/csharp/01-single-pipeline/GettingStarted.SinglePipeline.csproj" />
+        <Project Path="examples/getting-started/csharp/02-routing/GettingStarted.Routing.csproj" />
+        <Project Path="examples/getting-started/csharp/03-stage/GettingStarted.Stage.csproj" />
+        <Project Path="examples/getting-started/csharp/04-persistence/GettingStarted.Persistence.csproj" />
         <Project Path="examples/songwriter/csharp/Tandem.Sample.Songwriter.csproj" />
     </Folder>
     <Folder Name="/tests/">

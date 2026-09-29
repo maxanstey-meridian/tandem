@@ -32,7 +32,7 @@ public static class Program
                 pipeline,
                 new CodeWriterState(_requirements),
                 result => $"Implementation:\n{result.State.Implementation?.Source}",
-                "code-writer-ledger.sqlite3"
+                Path.Combine(Path.GetTempPath(), "tandem-code-writer-ledger.sqlite3")
             );
         });
 }
