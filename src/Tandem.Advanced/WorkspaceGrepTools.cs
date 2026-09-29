@@ -1,9 +1,11 @@
 using System.ComponentModel;
+using System.IO.Enumeration;
 using System.Text;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.FileSystemGlobbing;
 
 #pragma warning disable MAAI001
 
@@ -56,8 +58,8 @@ internal static class WorkspaceGrepTools
                 ),
             FileAccessProvider.GrepToolName,
             "Search text files, returning path/line/text records. Continue with the returned nextOffset; there is no total count scan. "
-                + "By default skip binary files, symlinks and performance-excluded directories; skipped files are reported in the result. "
-                + "Explicit path prefixes override performance exclusions, never Git metadata or link boundaries. "
+                + "By default skip binary files, symlinks and Git-ignored files (outside a Git repository, common build and dependency directories); skipped files are reported in the result. "
+                + "An explicit directory or path prefix overrides those exclusions, never Git metadata or link boundaries. "
                 + "Incomplete oversized matches can be read with file_access_read at their line."
         );
 
@@ -83,7 +85,7 @@ internal static class WorkspaceGrepTools
             string.Concat(Matches.Select(m => $"{m.Path}:{m.Line}:{m.Text}\n"));
     }
 
-    internal static Task<GrepPage> SearchAsync(
+    internal static async Task<GrepPage> SearchAsync(
         string workspacePath,
         string directory,
         string regexPattern,
@@ -98,14 +100,13 @@ internal static class WorkspaceGrepTools
     )
     {
         var page = new RecordPage(offset, limit);
-
         var regex = new Regex(
             literal ? Regex.Escape(regexPattern) : regexPattern,
             RegexOptions.CultureInvariant
                 | (caseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase),
             _regexTimeout
         );
-        var glob = string.IsNullOrEmpty(globPattern) ? null : GlobRegex(globPattern);
+        var glob = string.IsNullOrEmpty(globPattern) ? null : CreateMatcher(globPattern);
         var workspace = Path.GetFullPath(workspacePath);
         var root = WorkspacePathAuthority.Resolve(
             workspace,
@@ -129,32 +130,40 @@ internal static class WorkspaceGrepTools
         }
         var matches = new List<Match>();
         var matchIndex = 0;
-        foreach (
-            var path in SearchFiles(
-                workspace,
-                root,
-                LiteralPathPrefix(globPattern),
-                recursive,
-                includeExcluded,
-                Skip,
-                cancellationToken
-            )
-        )
+        var candidates = await CandidatesAsync(
+            workspace,
+            root,
+            globPattern,
+            recursive,
+            includeExcluded,
+            cancellationToken
+        );
+        foreach (var relative in candidates)
         {
-            var relative = Path.GetRelativePath(workspace, path).Replace('\\', '/');
-            if (glob is not null && !glob.IsMatch(relative))
+            cancellationToken.ThrowIfCancellationRequested();
+            if (glob is not null && !glob.Match(relative).HasMatches)
             {
                 continue;
             }
-
-            if (WorkspaceSearchPolicy.HasBinaryExtension(relative))
-            {
-                Skip(relative, "binary extension");
-                continue;
-            }
+            var path = Path.Combine(workspace, relative);
             PositionedTextReader? reader = null;
             try
             {
+                var attributes = File.GetAttributes(path);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    Skip(relative, "symbolic link");
+                    continue;
+                }
+                if ((attributes & FileAttributes.Directory) != 0)
+                {
+                    continue;
+                }
+                if (WorkspaceSearchPolicy.HasBinaryExtension(relative))
+                {
+                    Skip(relative, "binary extension");
+                    continue;
+                }
                 reader = new PositionedTextReader(path, cancellationToken);
                 var line = 1;
                 while (!reader.End)
@@ -192,8 +201,11 @@ internal static class WorkspaceGrepTools
                             }
                             if (!page.TryAdd(relative.Length + excerpt.Length + 32))
                             {
-                                return Task.FromResult(
-                                    new GrepPage(matches, skippedCount, skipped, page.NextOffset)
+                                return new GrepPage(
+                                    matches,
+                                    skippedCount,
+                                    skipped,
+                                    page.NextOffset
                                 );
                             }
                             matches.Add(new Match(relative, line, excerpt));
@@ -203,12 +215,14 @@ internal static class WorkspaceGrepTools
                     line++;
                 }
             }
+            catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException)
+            {
+                // Tracked files deleted from the working tree are listed by Git but have nothing to search.
+            }
             catch (Exception e)
                 when (e
                         is DecoderFallbackException
                             or InvalidDataException
-                            or FileNotFoundException
-                            or DirectoryNotFoundException
                             or UnauthorizedAccessException
                 )
             {
@@ -219,174 +233,186 @@ internal static class WorkspaceGrepTools
                 reader?.Dispose();
             }
         }
-        return Task.FromResult(new GrepPage(matches, skippedCount, skipped, null));
+        return new GrepPage(matches, skippedCount, skipped, null);
     }
 
-    private static IEnumerable<string> SearchFiles(
+    // Candidate files in deterministic ordinal order. Inside a Git work tree the listing honours
+    // .gitignore; elsewhere, or when exclusions are lifted or an ignored path is named explicitly,
+    // the file system is walked with the performance prune list.
+    private static async Task<IReadOnlyList<string>> CandidatesAsync(
         string workspace,
-        string directory,
-        string[] prefix,
+        string root,
+        string? globPattern,
         bool recursive,
         bool includeExcluded,
-        Action<string, string> skip,
         CancellationToken cancellationToken
     )
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var relative = Path.GetRelativePath(workspace, directory).Replace('\\', '/');
-        var components = relative == "." ? [] : relative.Split('/');
-        for (var i = 0; i < Math.Min(components.Length, prefix.Length); i++)
-        {
-            if (!string.Equals(components[i], prefix[i], StringComparison.OrdinalIgnoreCase))
-            {
-                yield break;
-            }
-        }
-
-        string[] entries;
-        try
-        {
-            entries = Directory.GetFileSystemEntries(
-                directory,
-                components.Length < prefix.Length ? prefix[components.Length] : "*",
-                new EnumerationOptions
-                {
-                    MatchType = MatchType.Simple,
-                    MatchCasing = MatchCasing.CaseInsensitive,
-                    AttributesToSkip = 0,
-                    IgnoreInaccessible = false,
-                }
-            );
-            Array.Sort(entries, StringComparer.Ordinal);
-        }
-        catch (Exception e) when (e is UnauthorizedAccessException or DirectoryNotFoundException)
-        {
-            skip(relative, e.Message);
-            yield break;
-        }
-        foreach (var entry in entries)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var rel = Path.GetRelativePath(workspace, entry).Replace('\\', '/');
-            FileAttributes attributes;
-            try
-            {
-                attributes = File.GetAttributes(entry);
-            }
-            catch (Exception e)
-                when (e
-                        is FileNotFoundException
-                            or DirectoryNotFoundException
-                            or UnauthorizedAccessException
-                )
-            {
-                skip(rel, e.Message);
-                continue;
-            }
-            if (string.Equals(Path.GetFileName(entry), ".git", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if ((attributes & FileAttributes.ReparsePoint) != 0)
-            {
-                skip(rel, "symbolic link");
-                continue;
-            }
-            if ((attributes & FileAttributes.Directory) != 0)
-            {
-                if (
-                    recursive
-                    && (
-                        includeExcluded
-                        || components.Length < prefix.Length
-                        || !WorkspaceSearchPolicy.IsExcludedDirectory(Path.GetFileName(entry))
-                    )
-                )
-                {
-                    foreach (
-                        var file in SearchFiles(
-                            workspace,
-                            entry,
-                            prefix,
-                            true,
-                            includeExcluded,
-                            skip,
-                            cancellationToken
-                        )
-                    )
-                    {
-                        yield return file;
-                    }
-                }
-            }
-            else
-            {
-                yield return entry;
-            }
-        }
-    }
-
-    private static string[] LiteralPathPrefix(string? glob)
-    {
-        if (string.IsNullOrEmpty(glob) || (!glob.Contains('/') && !glob.Contains('\\')))
+        var rootRelative = Relative(workspace, root);
+        var rootSegments = Segments(rootRelative);
+        var prefix = LiteralPrefix(globPattern);
+        if (!Compatible(rootSegments, prefix))
         {
             return [];
         }
-        // Slashless globs match filenames at every depth. Path globs are repository-relative.
-        return glob.Replace('\\', '/')
-            .Split('/')
-            .TakeWhile(component =>
-                component.Length > 0
-                && component is not ("." or "..")
-                && component.IndexOfAny(['*', '?']) < 0
-            )
-            .ToArray();
+        var explicitPath =
+            recursive && prefix.Length > rootSegments.Length
+                ? string.Join('/', prefix)
+                : rootRelative;
+        if (!includeExcluded)
+        {
+            var listed = await GitListAsync(
+                workspace,
+                rootRelative,
+                explicitPath,
+                cancellationToken
+            );
+            if (listed is not null)
+            {
+                return recursive
+                    ? listed
+                    : [.. listed.Where(path => ParentOf(path) == rootRelative)];
+            }
+        }
+        return Walk(workspace, root, prefix, recursive, includeExcluded);
     }
 
-    private static Regex GlobRegex(string glob)
+    private static async Task<IReadOnlyList<string>?> GitListAsync(
+        string workspace,
+        string root,
+        string explicitPath,
+        CancellationToken cancellationToken
+    )
     {
-        var pattern = new StringBuilder("\\A");
-        if (!glob.Contains('/') && !glob.Contains('\\'))
-        {
-            pattern.Append("(?:.*/)?");
-        }
-        for (var i = 0; i < glob.Length; i++)
-        {
-            if (glob[i] == '*')
-            {
-                if (i + 1 < glob.Length && glob[i + 1] == '*')
-                {
-                    i++;
-                    if (i + 1 < glob.Length && glob[i + 1] == '/')
-                    {
-                        pattern.Append("(?:.*/)?");
-                        i++;
-                    }
-                    else
-                    {
-                        pattern.Append(".*");
-                    }
-                }
-                else
-                {
-                    pattern.Append("[^/]*");
-                }
-            }
-            else if (glob[i] == '?')
-            {
-                pattern.Append("[^/]");
-            }
-            else
-            {
-                pattern.Append(Regex.Escape(glob[i] == '\\' ? "/" : glob[i].ToString()));
-            }
-        }
-        pattern.Append("\\z");
-        return new Regex(
-            pattern.ToString(),
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
-            _regexTimeout
+        // Exit code 1 means inside a work tree and not ignored; 0 (explicitly named ignored path)
+        // and 128 (no work tree) fall back to the walk.
+        var ignored = await GitProcess.RunAsync(
+            workspace,
+            ["check-ignore", "-q", "--", explicitPath.Length == 0 ? "." : explicitPath],
+            64 * 1024,
+            cancellationToken
         );
+        if (ignored.ExitCode != 1)
+        {
+            return null;
+        }
+        var listed = await GitProcess.RunAsync(
+            workspace,
+            [
+                "--literal-pathspecs",
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "--",
+                root.Length == 0 ? "." : root,
+            ],
+            16 * 1024 * 1024,
+            cancellationToken
+        );
+        return listed.ExitCode != 0 || listed.TimedOut || listed.StdoutTruncated
+            ? null
+            :
+            [
+                .. listed
+                    .Stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+                    .Distinct(StringComparer.Ordinal)
+                    .Order(StringComparer.Ordinal),
+            ];
     }
+
+    private static string[] Walk(
+        string workspace,
+        string root,
+        string[] prefix,
+        bool recursive,
+        bool includeExcluded
+    ) =>
+        [
+            .. new FileSystemEnumerable<string>(
+                root,
+                (ref FileSystemEntry entry) => Relative(workspace, entry.ToFullPath()),
+                new EnumerationOptions
+                {
+                    RecurseSubdirectories = recursive,
+                    AttributesToSkip = 0,
+                    IgnoreInaccessible = true,
+                }
+            )
+            {
+                ShouldIncludePredicate = (ref FileSystemEntry entry) =>
+                    !IsGitMetadata(entry.FileName)
+                    && (
+                        !entry.IsDirectory || (entry.Attributes & FileAttributes.ReparsePoint) != 0
+                    ),
+                ShouldRecursePredicate = (ref FileSystemEntry entry) =>
+                {
+                    if (
+                        (entry.Attributes & FileAttributes.ReparsePoint) != 0
+                        || IsGitMetadata(entry.FileName)
+                    )
+                    {
+                        return false;
+                    }
+                    var segments = Segments(Relative(workspace, entry.ToFullPath()));
+                    return Compatible(segments, prefix)
+                        && (
+                            includeExcluded
+                            || segments.Length <= prefix.Length
+                            || !WorkspaceSearchPolicy.IsExcludedDirectory(entry.FileName.ToString())
+                        );
+                },
+            }.Order(StringComparer.Ordinal),
+        ];
+
+    private static Matcher CreateMatcher(string glob)
+    {
+        // Slashless globs match filenames at every depth; path globs are repository-relative.
+        var normalized = glob.Replace('\\', '/');
+        var matcher = new Matcher(StringComparison.OrdinalIgnoreCase);
+        matcher.AddInclude(normalized.Contains('/') ? normalized : "**/" + normalized);
+        return matcher;
+    }
+
+    // Literal leading directories of a path glob are an explicit selection: they bound the walk and
+    // override the performance prune list, never Git metadata or link boundaries.
+    private static string[] LiteralPrefix(string? glob) =>
+        glob is null || !glob.Replace('\\', '/').Contains('/')
+            ? []
+            :
+            [
+                .. glob.Replace('\\', '/')
+                    .Split('/')
+                    .TakeWhile(segment =>
+                        segment.Length > 0 && segment is not ("." or "..") && !segment.Contains('*')
+                    ),
+            ];
+
+    private static bool Compatible(string[] segments, string[] prefix)
+    {
+        for (var i = 0; i < Math.Min(segments.Length, prefix.Length); i++)
+        {
+            if (!string.Equals(segments[i], prefix[i], StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static bool IsGitMetadata(ReadOnlySpan<char> name) =>
+        name.Equals(".git", StringComparison.OrdinalIgnoreCase);
+
+    private static string Relative(string workspace, string path)
+    {
+        var relative = Path.GetRelativePath(workspace, path).Replace('\\', '/');
+        return relative == "." ? "" : relative;
+    }
+
+    private static string[] Segments(string relative) =>
+        relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+    private static string ParentOf(string relative) =>
+        relative.LastIndexOf('/') is var index and >= 0 ? relative[..index] : "";
 }

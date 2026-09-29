@@ -71,6 +71,36 @@ internal static class ReadOnlyGitTools
     }
 }
 
+// Repository-configured hooks such as core.fsmonitor must never run during read-only inspection.
+internal static class GitProcess
+{
+    private static readonly TimeSpan _timeout = TimeSpan.FromSeconds(30);
+    private static readonly Dictionary<string, string> _environment = new()
+    {
+        ["GIT_PAGER"] = "cat",
+        ["GIT_TERMINAL_PROMPT"] = "0",
+        ["GIT_OPTIONAL_LOCKS"] = "0",
+    };
+
+    internal static Task<LocalProcessResult> RunAsync(
+        string workingDirectory,
+        IReadOnlyList<string> arguments,
+        int maximumOutputBytes,
+        CancellationToken cancellationToken
+    ) =>
+        LocalProcess.RunAsync(
+            new LocalProcessRequest(
+                "git",
+                ["-c", "core.fsmonitor=false", .. arguments],
+                workingDirectory,
+                _timeout,
+                maximumOutputBytes,
+                _environment
+            ),
+            cancellationToken
+        );
+}
+
 internal sealed record GitStatusChange(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("path")] string Path,
@@ -85,17 +115,9 @@ internal sealed record GitStatusPage(
 
 internal sealed class ReadOnlyGitRepository(string workspacePath)
 {
-    private static readonly TimeSpan _timeout = TimeSpan.FromSeconds(30);
     private const int MaximumOutputBytesPerStream = 128 * 1024;
     private const int MaximumCapturedOutputBytes = 16 * 1024 * 1024;
     private readonly string _workspacePath = Path.GetFullPath(workspacePath);
-
-    private static readonly Dictionary<string, string> _gitEnvironment = new()
-    {
-        ["GIT_PAGER"] = "cat",
-        ["GIT_TERMINAL_PROMPT"] = "0",
-        ["GIT_OPTIONAL_LOCKS"] = "0",
-    };
 
     internal async Task<GitStatusPage> StatusAsync(
         CancellationToken cancellationToken = default,
@@ -415,15 +437,10 @@ internal sealed class ReadOnlyGitRepository(string workspacePath)
                 $"--output={outputPath}",
                 .. arguments.Skip(separator),
             ];
-        var result = await LocalProcess.RunAsync(
-            new LocalProcessRequest(
-                "git",
-                ["-c", "core.fsmonitor=false", .. command],
-                _workspacePath,
-                _timeout,
-                maximumOutputBytes,
-                _gitEnvironment
-            ),
+        var result = await GitProcess.RunAsync(
+            _workspacePath,
+            command,
+            maximumOutputBytes,
             cancellationToken
         );
         if (result.TimedOut)
