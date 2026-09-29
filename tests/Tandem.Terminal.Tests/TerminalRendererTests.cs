@@ -232,7 +232,7 @@ public sealed class TerminalRendererTests
         output.Split("[executor]", StringSplitOptions.None).Should().HaveCount(2);
         var brace = output.Split('\n').Single(line => line.Contains('{'));
         var verification = output.Split('\n').Single(line => line.Contains("\"verification\""));
-        verification.IndexOf('"').Should().Be(brace.IndexOf('{') + 2);
+        verification.IndexOf('"').Should().Be(brace.IndexOf('{') + 3);
     }
 
     [Fact]
@@ -656,24 +656,25 @@ public sealed class TerminalRendererTests
     }
 
     [Fact]
-    public void JsonWrappingPreservesEscapesAndStringStyleWithoutRecursiveParsing()
+    public void JsonStringsContainingJsonKeepStringStyleAndEscapesAcrossWrapping()
     {
         const string nested =
             """{"nested":"quote: \" and slash \\ and line \n and unicode \u263A"}""";
-        var line = $"  \"message\": {JsonSerializer.Serialize($"Received: {nested}")}";
+        var json = JsonSerializer.Serialize(new { message = $"Received → {nested}" });
+        var snapshot = Model(("executor", "working")) with
+        {
+            Transcript = [new TranscriptEntry("executor", TranscriptKind.Semantic, json)],
+        };
 
-        var fragments = TerminalRenderer.WrapJsonLine(line, 14);
-        var markup = string.Concat(fragments);
-        var reconstructed = System.Text.RegularExpressions.Regex.Replace(markup, "\\[[^]]+\\]", "");
+        var output = RenderAnsi(snapshot, width: 42);
 
-        reconstructed.Should().Be(line);
-        fragments
+        output
             .Should()
-            .OnlyContain(fragment => !fragment.Contains("[grey]nested", StringComparison.Ordinal));
-        fragments
-            .Should()
-            .OnlyContain(fragment => !fragment.EndsWith("[green]\\[/]", StringComparison.Ordinal));
-        markup.Should().Contain("[green]{[/]").And.NotContain("[cyan]nested[/]");
+            .Contain("\u001b[38;5;14m\"message\"\u001b[0m")
+            .And.NotContain("\u001b[38;5;14m\\\"nested")
+            .And.Contain("\\\"nested\\\"")
+            .And.Contain("→")
+            .And.NotContain("\\u0022");
     }
 
     [Fact]
@@ -836,7 +837,7 @@ public sealed class TerminalRendererTests
             .And.Contain("\u001b[38;5;2m\"value: text\"\u001b[0m")
             .And.Contain("\u001b[38;5;11mtrue\u001b[0m")
             .And.Contain("\u001b[38;5;69m12.5\u001b[0m")
-            .And.MatchRegex("\\u001b\\[38;5;8m +null");
+            .And.Contain("\u001b[38;5;8mnull");
         pretty.Should().Contain("value: text");
     }
 
