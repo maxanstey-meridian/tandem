@@ -155,27 +155,16 @@ public sealed class PipelineRunner
             );
         }
         var runId = options.RunId ?? Guid.CreateVersion7();
-        var runner = new InProcessPipelineRunner();
-        var output = options.Interactions is null
-            ? await runner.RunAsync(
-                pipeline,
-                runId,
-                initialState,
-                options.Observer,
-                options.AcceptanceUnitOfWork,
-                options.Ledger,
-                cancellationToken
-            )
-            : await runner.RunAsync(
-                pipeline,
-                runId,
-                initialState,
-                new TypedInteractionHandler(options.Interactions),
-                options.Observer,
-                options.AcceptanceUnitOfWork,
-                options.Ledger,
-                cancellationToken
-            );
+        var output = await InProcessPipelineRunner.RunAsync(
+            pipeline,
+            runId,
+            initialState,
+            options.Interactions is null ? null : new TypedInteractionHandler(options.Interactions),
+            options.Observer,
+            options.AcceptanceUnitOfWork,
+            options.Ledger,
+            cancellationToken
+        );
         var outcome = output.LatestOutcome is null
             ? null
             : new PipelineRunOutcome(

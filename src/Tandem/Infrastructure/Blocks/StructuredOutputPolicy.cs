@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using FluentValidation;
 using Tandem.Domain;
@@ -13,20 +14,14 @@ internal static class AgentStructuredOutputPolicy
         IValidator<T>? contextualValidator = null
     )
     {
-        string json;
+        T? value;
         try
         {
-            json = AgentStructuredJsonExtractor.Extract(response);
+            value = AgentStructuredJsonExtractor.Extract(response).Deserialize<T>(options);
         }
         catch (InvalidOperationException exception)
         {
             return Failure<TState>(response, "$", exception.Message);
-        }
-
-        T? value;
-        try
-        {
-            value = JsonSerializer.Deserialize<T>(json, options);
         }
         catch (JsonException exception)
         {
@@ -143,7 +138,7 @@ internal static class AgentStructuredOutputPolicy
 
 internal static class AgentStructuredJsonExtractor
 {
-    public static string Extract(string text)
+    public static JsonElement Extract(string text)
     {
         var start = text.IndexOf('{');
         if (start < 0)
@@ -151,43 +146,11 @@ internal static class AgentStructuredJsonExtractor
             throw new InvalidOperationException("Model response contains no JSON object.");
         }
 
-        var depth = 0;
-        var inString = false;
-        var escaped = false;
-        for (var index = start; index < text.Length; index++)
-        {
-            var character = text[index];
-            if (inString)
-            {
-                if (escaped)
-                {
-                    escaped = false;
-                }
-                else if (character == '\\')
-                {
-                    escaped = true;
-                }
-                else if (character == '"')
-                {
-                    inString = false;
-                }
-                continue;
-            }
-
-            if (character == '"')
-            {
-                inString = true;
-            }
-            else if (character == '{')
-            {
-                depth++;
-            }
-            else if (character == '}' && --depth == 0)
-            {
-                return text.Substring(start, index - start + 1);
-            }
-        }
-
-        throw new InvalidOperationException("Model response contains incomplete JSON object.");
+        var reader = new Utf8JsonReader(
+            Encoding.UTF8.GetBytes(text[start..]),
+            new JsonReaderOptions { AllowMultipleValues = true }
+        );
+        using var document = JsonDocument.ParseValue(ref reader);
+        return document.RootElement.Clone();
     }
 }

@@ -383,9 +383,7 @@ public sealed class AgentBuilder<TState>
         JsonElement candidate;
         try
         {
-            var json = AgentStructuredJsonExtractor.Extract(response);
-            using var document = JsonDocument.Parse(json);
-            candidate = document.RootElement.Clone();
+            candidate = AgentStructuredJsonExtractor.Extract(response);
         }
         catch (Exception exception) when (exception is InvalidOperationException or JsonException)
         {
@@ -393,15 +391,6 @@ public sealed class AgentBuilder<TState>
                 null,
                 [new AgentStructuredOutputProblem("$", exception.Message)],
                 response
-            );
-        }
-        if (candidate.ValueKind is not JsonValueKind.Object)
-        {
-            return new AgentStructuredOutputResult<TState>(
-                null,
-                [new AgentStructuredOutputProblem("$", "Response must contain a JSON object.")],
-                response,
-                candidate
             );
         }
 
