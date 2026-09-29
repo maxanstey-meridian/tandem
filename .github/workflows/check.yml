@@ -54,6 +54,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: maxanstey-meridian/tandem-ts
+          # The consumer of this bridge's run envelope and Tandem.Bridge runtime files.
+          # Switch to main once tandem-ts's slop/bridge-envelope branch has merged.
+          ref: slop/bridge-envelope
           path: tandem-ts
 
       - uses: actions/setup-dotnet@v4
