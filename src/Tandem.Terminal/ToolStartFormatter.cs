@@ -27,43 +27,29 @@ internal static class ToolStartFormatter
         return output.ToString();
     }
 
-    internal static string FormatMarkup(
-        string value,
-        bool includesToolName,
-        bool includesWorkingDirectory
-    )
+    internal static string FormatMarkup(string value, bool includesWorkingDirectory)
     {
         var output = new StringBuilder();
-        var argumentsStart = 0;
-        if (includesToolName)
+        var toolEnd = value.IndexOf(' ');
+        if (toolEnd < 0)
         {
-            var toolEnd = value.IndexOf(' ');
-            if (toolEnd < 0)
-            {
-                AppendStyled(output, value, "cornflowerblue");
-                return output.ToString();
-            }
-            AppendStyled(output, value[..toolEnd], "cornflowerblue");
-            argumentsStart = toolEnd;
+            AppendStyled(output, value, "cornflowerblue");
+            return output.ToString();
         }
+        AppendStyled(output, value[..toolEnd], "cornflowerblue");
 
         var directoryStart = includesWorkingDirectory
             ? value.LastIndexOf(" in ", StringComparison.Ordinal)
             : -1;
-        if (directoryStart >= argumentsStart)
+        if (directoryStart >= toolEnd)
         {
-            AppendArgumentsMarkup(output, value[argumentsStart..directoryStart]);
+            AppendArgumentsMarkup(output, value[toolEnd..directoryStart]);
             AppendStyled(output, " in ", "grey");
             AppendStyled(output, value[(directoryStart + 4)..], "mediumpurple1");
         }
-        else if (includesWorkingDirectory && value.StartsWith("in ", StringComparison.Ordinal))
-        {
-            AppendStyled(output, "in ", "grey");
-            AppendStyled(output, value[3..], "mediumpurple1");
-        }
         else
         {
-            AppendArgumentsMarkup(output, value[argumentsStart..]);
+            AppendArgumentsMarkup(output, value[toolEnd..]);
         }
         return output.ToString();
     }

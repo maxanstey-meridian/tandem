@@ -235,6 +235,28 @@ public sealed class TerminalRendererTests
         verification.IndexOf('"').Should().Be(brace.IndexOf('{') + 3);
     }
 
+    [Theory]
+    [InlineData("", "字")]
+    [InlineData("", "字 ")]
+    [InlineData("a", "🙂")]
+    public void WideCharactersWrapByDisplayWidthWithoutLosingText(string lead, string unit)
+    {
+        var text = lead + string.Concat(Enumerable.Repeat(unit, 30)) + "END";
+        var console = new TestConsole().Width(60).Height(24);
+
+        new TerminalRenderer(console).Render(Model(("executor", text)));
+
+        var output = console.Output;
+        output.Split(unit.Trim()).Length.Should().Be(31);
+        output.Should().Contain("END").And.NotContain("…").And.NotContain("\uFFFD");
+        output
+            .Split('\n')
+            .Where(line => line.Contains(unit.Trim(), StringComparison.Ordinal))
+            .Should()
+            .HaveCountGreaterThan(1)
+            .And.OnlyContain(line => new Spectre.Console.Rendering.Segment(line).CellCount() == 60);
+    }
+
     [Fact]
     public void ScrollHomeShowsOldestTranscriptAndFollowHint()
     {
@@ -401,7 +423,6 @@ public sealed class TerminalRendererTests
     {
         var markup = ToolStartFormatter.FormatMarkup(
             "file_access_read path=\"src/Case.cs\" staged=false in ~/work",
-            includesToolName: true,
             includesWorkingDirectory: true
         );
 
@@ -652,7 +673,7 @@ public sealed class TerminalRendererTests
             .Split('\n')
             .Should()
             .Contain(line => line.Contains("custom", StringComparison.Ordinal))
-            .And.Contain(line => line.Contains("value=\"entry-", StringComparison.Ordinal));
+            .And.Contain(line => line.Contains("\"entry-", StringComparison.Ordinal));
     }
 
     [Fact]

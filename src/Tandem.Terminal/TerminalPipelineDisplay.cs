@@ -191,7 +191,7 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
 
     private async Task RunInteractiveAsync(CancellationToken cancellationToken)
     {
-        _console.Write("\x1b[?25l");
+        _console.Cursor.Hide();
         try
         {
             using var registration = cancellationToken.Register(() => _finished.TrySetResult());
@@ -213,7 +213,7 @@ public sealed class TerminalPipelineDisplay : IAsyncDisposable
         }
         finally
         {
-            _console.Write("\x1b[?25h");
+            _console.Cursor.Show();
         }
     }
 
