@@ -21,6 +21,44 @@ public sealed class ExampleHostTests
     }
 
     [Fact]
+    public void LocalModel_WithoutBaseUrl_UsesOpenRouterDefault()
+    {
+        ExampleHost
+            .ResolveLocalModel(null, null)
+            .Should()
+            .Be(new ExampleLocalModel(null, ExampleHost.DefaultOpenRouterLocalModel));
+        ExampleHost
+            .ResolveLocalModel(" ", "openai/gpt-5.5")
+            .Should()
+            .Be(new ExampleLocalModel(null, "openai/gpt-5.5"));
+    }
+
+    [Fact]
+    public void LocalModel_WithBaseUrl_UsesLocalEndpointWithTrailingSlash()
+    {
+        ExampleHost
+            .ResolveLocalModel("http://127.0.0.1:10531/v1", null)
+            .Should()
+            .Be(
+                new ExampleLocalModel(
+                    new Uri("http://127.0.0.1:10531/v1/"),
+                    ExampleHost.DefaultLocalModel
+                )
+            );
+        ExampleHost
+            .ResolveLocalModel("http://localhost:8080/v1/", "local-model")!
+            .Model.Should()
+            .Be("local-model");
+    }
+
+    [Theory]
+    [InlineData("127.0.0.1:10531/v1")]
+    [InlineData("ftp://127.0.0.1/v1")]
+    [InlineData("not a url")]
+    public void LocalModel_WithInvalidBaseUrl_IsRejected(string baseUrl) =>
+        ExampleHost.ResolveLocalModel(baseUrl, null).Should().BeNull();
+
+    [Fact]
     public async Task NonpersistentRun_ObservesPipelineAndPrintsSemanticResultOnce()
     {
         var console = new TestConsole();

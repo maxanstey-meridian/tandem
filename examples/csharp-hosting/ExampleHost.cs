@@ -18,12 +18,20 @@ public sealed record ExampleRun<TState>(
     string? LedgerPath = null
 );
 
+/// <summary>
+/// Where the second model role runs: OpenRouter by default, or an OpenAI-compatible Responses
+/// endpoint such as a local openai-oauth proxy when <c>TANDEM_EXAMPLE_LOCAL_BASE_URL</c> is set.
+/// </summary>
+internal sealed record ExampleLocalModel(Uri? LocalEndpoint, string Model);
+
 public static class ExampleHost
 {
     public const string DeepSeekModel = "deepseek/deepseek-v4-flash-0731";
-    public const string SolModel = "gpt-5.6-sol";
+    internal const string LocalBaseUrlVariable = "TANDEM_EXAMPLE_LOCAL_BASE_URL";
+    internal const string LocalModelVariable = "TANDEM_EXAMPLE_LOCAL_MODEL";
+    internal const string DefaultLocalModel = "gpt-5.6-sol";
+    internal const string DefaultOpenRouterLocalModel = "openai/gpt-5.6-sol";
     private static readonly Uri _openRouterEndpoint = new("https://openrouter.ai/api/v1/");
-    private static readonly Uri _solEndpoint = new("http://127.0.0.1:10531/v1/");
     private static readonly TimeSpan _timeout = TimeSpan.FromMinutes(10);
 
     public static async Task<int> RunAsync<TState>(
@@ -46,17 +54,56 @@ public static class ExampleHost
             var apiKey = Environment.GetEnvironmentVariable("OPENROUTER_API_KEY");
             if (string.IsNullOrWhiteSpace(apiKey))
             {
-                Console.Error.WriteLine("OPENROUTER_API_KEY is required.");
+                Console.Error.WriteLine(
+                    "OPENROUTER_API_KEY is required. Create a key at https://openrouter.ai/keys."
+                );
                 return 2;
             }
 
-            await VerifySolAsync(hostCancellation.Token);
+            var localModel = ResolveLocalModel(
+                Environment.GetEnvironmentVariable(LocalBaseUrlVariable),
+                Environment.GetEnvironmentVariable(LocalModelVariable)
+            );
+            if (localModel is null)
+            {
+                Console.Error.WriteLine(
+                    $"{LocalBaseUrlVariable} must be an absolute http(s) URL, such as http://127.0.0.1:10531/v1."
+                );
+                return 2;
+            }
+
+            if (localModel.LocalEndpoint is { } localEndpoint)
+            {
+                try
+                {
+                    await VerifyLocalModelAsync(
+                        localEndpoint,
+                        localModel.Model,
+                        hostCancellation.Token
+                    );
+                }
+                catch (HttpRequestException exception)
+                    when (exception.HttpRequestError == HttpRequestError.ConnectionError)
+                {
+                    Console.Error.WriteLine(
+                        $"Cannot reach {LocalBaseUrlVariable}={localEndpoint} ({exception.Message}). "
+                            + "Start the openai-oauth proxy (`npx openai-oauth login`, then `npx openai-oauth`) "
+                            + $"or unset {LocalBaseUrlVariable} to use OpenRouter."
+                    );
+                    return 2;
+                }
+            }
+
             using var deepSeek = CreateCompletionsClient(
                 _openRouterEndpoint,
                 DeepSeekModel,
                 apiKey
             );
-            using var sol = CreateResponsesClient(_solEndpoint, SolModel);
+            using var sol = localModel.LocalEndpoint is { } endpoint
+                ? CreateResponsesClient(endpoint, localModel.Model)
+                : WithLowReasoning(
+                    CreateCompletionsClient(_openRouterEndpoint, localModel.Model, apiKey)
+                );
             return await RunPipelineAsync(
                 createRun(new ExampleClients(deepSeek, sol)),
                 TerminalCapabilities.Detect(),
@@ -81,6 +128,34 @@ public static class ExampleHost
         {
             Console.CancelKeyPress -= cancel;
         }
+    }
+
+    /// <summary>
+    /// Resolves the second model role from the example environment, or returns <see langword="null"/>
+    /// when the configured local base URL is not an absolute http(s) URL.
+    /// </summary>
+    internal static ExampleLocalModel? ResolveLocalModel(string? localBaseUrl, string? localModel)
+    {
+        var model = string.IsNullOrWhiteSpace(localModel) ? null : localModel.Trim();
+        if (string.IsNullOrWhiteSpace(localBaseUrl))
+        {
+            return new ExampleLocalModel(null, model ?? DefaultOpenRouterLocalModel);
+        }
+
+        var trimmed = localBaseUrl.Trim();
+        // A base URL without a trailing slash would drop its last segment when "models" is resolved.
+        if (
+            !Uri.TryCreate(
+                trimmed.EndsWith('/') ? trimmed : trimmed + "/",
+                UriKind.Absolute,
+                out var endpoint
+            ) || (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps)
+        )
+        {
+            return null;
+        }
+
+        return new ExampleLocalModel(endpoint, model ?? DefaultLocalModel);
     }
 
     internal static async Task<int> RunPipelineAsync<TState>(
@@ -230,28 +305,34 @@ public static class ExampleHost
             new ApiKeyCredential("local-proxy-placeholder"),
             new OpenAIClientOptions { Endpoint = endpoint }
         );
-        return client
-            .GetResponsesClient()
-            .AsIChatClient(model)
+        return WithLowReasoning(client.GetResponsesClient().AsIChatClient(model));
+    }
+#pragma warning restore OPENAI001
+
+    private static IChatClient WithLowReasoning(IChatClient client) =>
+        client
             .AsBuilder()
             .ConfigureOptions(options =>
                 options.Reasoning = new ReasoningOptions { Effort = ReasoningEffort.Low }
             )
             .Build();
-    }
-#pragma warning restore OPENAI001
 
-    private static async Task VerifySolAsync(CancellationToken cancellationToken)
+    private static async Task VerifyLocalModelAsync(
+        Uri endpoint,
+        string model,
+        CancellationToken cancellationToken
+    )
     {
-        using var http = new HttpClient { BaseAddress = _solEndpoint };
+        using var http = new HttpClient { BaseAddress = endpoint };
         var models = await http.GetFromJsonAsync<ModelsResponse>("models", cancellationToken);
         if (
-            models?.Data.Any(model => string.Equals(model.Id, SolModel, StringComparison.Ordinal))
-            != true
+            models?.Data.Any(candidate =>
+                string.Equals(candidate.Id, model, StringComparison.Ordinal)
+            ) != true
         )
         {
             throw new InvalidOperationException(
-                $"{_solEndpoint}models does not expose required model '{SolModel}'."
+                $"{endpoint}models does not expose required model '{model}'. Set {LocalModelVariable} to a model it serves."
             );
         }
     }

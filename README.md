@@ -1207,15 +1207,27 @@ See [`examples`](examples).
 
 ### Run the examples
 
-The current examples use DS4 through OpenRouter to create work and a local `gpt-5.6-sol` endpoint to review it.
+The examples use two model roles. DeepSeek (`deepseek/deepseek-v4-flash-0731`) through OpenRouter creates the work,
+and a second model reviews or judges it. By default the second role also runs through OpenRouter
+(`openai/gpt-5.6-sol`), so an [OpenRouter API key](https://openrouter.ai/keys) with credit is all you need.
 
-They require an `OPENROUTER_API_KEY` and a running [`openai-oauth`](https://github.com/EvanZhouDev/openai-oauth) proxy.
+| Variable                        | Required | Purpose                                                                                  |
+|---------------------------------|----------|------------------------------------------------------------------------------------------|
+| `OPENROUTER_API_KEY`            | Yes      | Authenticates every OpenRouter request.                                                  |
+| `TANDEM_EXAMPLE_LOCAL_BASE_URL` | No       | Runs the second role against an OpenAI-compatible Responses endpoint instead of OpenRouter. |
+| `TANDEM_EXAMPLE_LOCAL_MODEL`    | No       | Model for the second role: defaults to `openai/gpt-5.6-sol` on OpenRouter, `gpt-5.6-sol` locally. |
 
-Start and authenticate the local Sol endpoint:
+To run the second role on your own ChatGPT/OpenAI account instead, start the
+[`openai-oauth`](https://github.com/EvanZhouDev/openai-oauth) proxy. It needs a ChatGPT/OpenAI account: `login`
+authenticates once, then the second command serves `http://127.0.0.1:10531/v1`:
 
 ```sh
+npx --yes openai-oauth@latest login
 npx --yes openai-oauth@latest
 ```
+
+Then add `TANDEM_EXAMPLE_LOCAL_BASE_URL=http://127.0.0.1:10531/v1` to the commands below. If that URL cannot be
+reached, the example stops with a hint instead of running.
 
 The TypeScript SDK and example run instructions live in the
 [tandem-ts repository](https://github.com/maxanstey-meridian/tandem-ts).

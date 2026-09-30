@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The Songwriter, Debate and Code Writer examples need only `OPENROUTER_API_KEY`. The second model role now runs through OpenRouter (`openai/gpt-5.6-sol`) unless `TANDEM_EXAMPLE_LOCAL_BASE_URL` points it at an OpenAI-compatible Responses endpoint such as the `openai-oauth` proxy; `TANDEM_EXAMPLE_LOCAL_MODEL` overrides its model. An unreachable local URL stops the example with a hint naming the variable and the proxy's `login` step instead of `Connection refused`.
+
 ## 0.3.0 — breaking
 
 - Release bridge bundles are published for `linux-x64` as well as `osx-arm64`. The bundle's files are derived from the bridge publish's `deps.json` (`node scripts/stage-runtime.mjs <rid>`) instead of a hand-kept allowlist; `scripts/runtime-assets.mjs` is gone. Tag releases run `check.yml` (both platforms, plus the tandem-ts suite against the staged bundle) before publishing, and one `dotnet pack Tandem.slnx` produces the seven packages.
