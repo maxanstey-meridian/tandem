@@ -12,6 +12,7 @@
 - The README's "Agent access to the run ledger" section sits under Persistence instead of after the License.
 - The README's opening TypeScript example imports `pipeline` and `route` and says where its participants are defined.
 - The NuGet package READMEs no longer pin `--version 0.1.0`.
+- `task format:check` no longer reports "Warnings were encountered while loading the workspace": the packages listed their `PublicAPI.*.txt` files as AdditionalFiles a second time, after the analyzer package had already added them.
 
 ## 0.3.0 — breaking
 

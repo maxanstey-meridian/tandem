@@ -13,7 +13,6 @@
             Version="5.6.0"
             PrivateAssets="all"
         />
-        <AdditionalFiles Include="PublicAPI.Shipped.txt" />
-        <AdditionalFiles Include="PublicAPI.Unshipped.txt" />
+        <!-- The analyzer package adds PublicAPI.Shipped.txt and PublicAPI.Unshipped.txt as AdditionalFiles itself. -->
     </ItemGroup>
 </Project>
