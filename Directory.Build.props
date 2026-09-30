@@ -8,7 +8,7 @@
         <EmbedUntrackedSources>true</EmbedUntrackedSources>
         <IncludeSymbols>true</IncludeSymbols>
         <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-        <VersionPrefix>0.1.0</VersionPrefix>
+        <VersionPrefix>0.3.0</VersionPrefix>
         <VersionSuffix></VersionSuffix>
         <!-- Only the projects under src/ are packages (src/Directory.Build.props). -->
         <IsPackable>false</IsPackable>
