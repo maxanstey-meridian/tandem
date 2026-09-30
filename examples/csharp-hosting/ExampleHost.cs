@@ -55,7 +55,7 @@ public static class ExampleHost
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 Console.Error.WriteLine(
-                    "OPENROUTER_API_KEY is required. Create a key at https://openrouter.ai/keys."
+                    "OPENROUTER_API_KEY is required to run the examples. See \"Run the examples\" in README.md."
                 );
                 return 2;
             }
