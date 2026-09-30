@@ -7,6 +7,9 @@ Looking for a ready-to-run coding pipeline? [Cadence](https://github.com/maxanst
 plan, implement, verify, and review changes in an isolated workspace.
 
 ```typescript
+import { pipeline, route } from "@maxanstey-meridian/tandem";
+
+// State, the implementer and reviewer agents, and the done and failed outputs are defined in the sections below.
 const myPipeline = pipeline({
   // Give the complete lifecycle one name in logs and the ledger.
   name: "coder-pipeline",

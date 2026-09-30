@@ -10,6 +10,7 @@
 - `CONTRIBUTING.md` lists the prerequisites: .NET SDK 10.0.300 or later, go-task, and Node.js 22 for the Code Writer example and local bundle staging.
 - `AGENTS.md` no longer carries the GitNexus-generated block, which referenced files that are not in the repository; `.gitnexusrc` stops GitNexus writing it back.
 - The README's "Agent access to the run ledger" section sits under Persistence instead of after the License.
+- The README's opening TypeScript example imports `pipeline` and `route` and says where its participants are defined.
 
 ## 0.3.0 — breaking
 
