@@ -1171,6 +1171,10 @@ Install the TypeScript SDK from npm with `npm install @maxanstey-meridian/tandem
 
 The optional packet packages decode Markdown plus YAML frontmatter at the application boundary. The application owns the packet type, validation, and explicit conversion into state; reading a packet does not configure or start a pipeline.
 
+In C#, install `Meridian.Tandem.Packets`. The TypeScript package, `@maxanstey-meridian/tandem-packets`, is not yet
+published to npm; its source lives in the
+[`tandem-ts` repository](https://github.com/maxanstey-meridian/tandem-ts/tree/main/packets).
+
 ```csharp
 using Tandem.Packets;
 

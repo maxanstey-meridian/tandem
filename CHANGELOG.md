@@ -6,6 +6,7 @@
 - The C# quickstart no longer pins `Meridian.Tandem` and `Meridian.Tandem.Generators` to 0.1.0; `dotnet add package` installs the current release.
 - The README has an Install section naming the NuGet packages (`Meridian.Tandem`, `.Generators`, `.Ledger`, `.Packets` and the optional `.Advanced`, `.OpenAICompatible`, `.Terminal`), which snippets need which, and the npm install for TypeScript.
 - The README points TypeScript users at `npm install @maxanstey-meridian/tandem` and the TypeScript quickstart in this repository, instead of installing from a tandem-ts version tag.
+- The README states that the TypeScript packet package `@maxanstey-meridian/tandem-packets` is not yet published to npm; its TypeScript import example previously implied it could be installed.
 
 ## 0.3.0 — breaking
 
