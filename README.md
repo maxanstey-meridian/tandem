@@ -1096,6 +1096,22 @@ Applications read accepted values through `inspectAccepted` in TypeScript or
 `SqliteLedgerStore` in C#. The application owns the ledger path and any operator-facing
 inspection interface.
 
+### Agent access to the run ledger
+
+Persisting a run records history for inspection; it does not grant agents ledger tools.
+`read_ledger`, `search_ledger` and `read_ledger_entry` are disabled by default. Supply all required facts
+in each agent's message unless that agent needs historical retrieval.
+
+To explicitly grant ledger tools for a run, use `enableLedgerTools: true` alongside
+`ledgerPath` in TypeScript, or `EnableLedgerTools = true` on C#
+`SqlitePipelineRunOptions`. This grants access to all agents in that run. Native
+callers can also explicitly attach a reader with `WithRunLedger`. Logging and
+accepted-value inspection work independently of this option.
+
+`read_ledger` and `search_ledger` return bounded record excerpts. Use an entry's cursor with
+`read_ledger_entry` to retrieve the complete value; follow `nextOffset` until `hasMore` is false.
+Entry retrieval enforces the same run and readable-record restrictions as listing/search.
+
 ## Running a pipeline
 
 Your application owns the process and starts a pipeline with its initial state.
@@ -1298,19 +1314,3 @@ For more detail, see:
 ## License
 
 [MIT](LICENSE)
-
-### Agent access to the run ledger
-
-Persisting a run records history for inspection; it does not grant agents ledger tools.
-`read_ledger`, `search_ledger` and `read_ledger_entry` are disabled by default. Supply all required facts
-in each agent's message unless that agent needs historical retrieval.
-
-To explicitly grant ledger tools for a run, use `enableLedgerTools: true` alongside
-`ledgerPath` in TypeScript, or `EnableLedgerTools = true` on C#
-`SqlitePipelineRunOptions`. This grants access to all agents in that run. Native
-callers can also explicitly attach a reader with `WithRunLedger`. Logging and
-accepted-value inspection work independently of this option.
-
-`read_ledger` and `search_ledger` return bounded record excerpts. Use an entry's cursor with
-`read_ledger_entry` to retrieve the complete value; follow `nextOffset` until `hasMore` is false.
-Entry retrieval enforces the same run and readable-record restrictions as listing/search.
