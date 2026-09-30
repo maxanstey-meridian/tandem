@@ -4,7 +4,7 @@ An append-only SQLite run-history journal for Tandem pipelines: accepted values 
 for inspection. Runs themselves are process-owned; a ledger cannot resume them.
 
 ```sh
-dotnet add package Meridian.Tandem.Ledger --version 0.1.0
+dotnet add package Meridian.Tandem.Ledger
 ```
 
 ```csharp

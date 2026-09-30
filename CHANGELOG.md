@@ -11,6 +11,7 @@
 - `AGENTS.md` no longer carries the GitNexus-generated block, which referenced files that are not in the repository; `.gitnexusrc` stops GitNexus writing it back.
 - The README's "Agent access to the run ledger" section sits under Persistence instead of after the License.
 - The README's opening TypeScript example imports `pipeline` and `route` and says where its participants are defined.
+- The NuGet package READMEs no longer pin `--version 0.1.0`.
 
 ## 0.3.0 — breaking
 

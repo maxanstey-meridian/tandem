@@ -3,7 +3,7 @@
 Advanced execution-policy and workspace APIs for Tandem pipelines.
 
 ```sh
-dotnet add package Meridian.Tandem.Advanced --version 0.1.0
+dotnet add package Meridian.Tandem.Advanced
 ```
 
 Use this package only when an application deliberately participates in runtime mechanics such as

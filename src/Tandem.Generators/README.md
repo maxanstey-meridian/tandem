@@ -2,17 +2,14 @@
 
 The Roslyn source generator used by `Meridian.Tandem` for typed C# stages.
 
-Install this package alongside `Meridian.Tandem` when using generated C# stages. Keep the reference
-private so it does not become part of the application's published API:
+Install this package alongside `Meridian.Tandem` when using generated C# stages:
 
-```xml
-<PackageReference
-    Include="Meridian.Tandem.Generators"
-    Version="0.1.0"
-    PrivateAssets="all"
-    IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive"
-/>
+```sh
+dotnet add package Meridian.Tandem.Generators
 ```
+
+It is a development dependency, so `dotnet add package` marks the reference `PrivateAssets="all"` and it does not
+become part of the application's published API.
 
 Then annotate a partial class with `[PipelineStage("step-id")]`.
 
