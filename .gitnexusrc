@@ -1,4 +1,5 @@
 {
   "skipAgentsMd": true,
+  "skipSkills": true,
   "stats": false
 }

@@ -82,13 +82,17 @@ public static class ExampleHost
                         hostCancellation.Token
                     );
                 }
-                catch (HttpRequestException exception)
-                    when (exception.HttpRequestError == HttpRequestError.ConnectionError)
+                catch (Exception exception)
+                    when (exception is HttpRequestException { StatusCode: null }
+                        || (
+                            exception is TaskCanceledException
+                            && !hostCancellation.IsCancellationRequested
+                        )
+                    )
                 {
                     Console.Error.WriteLine(
-                        $"Cannot reach {LocalBaseUrlVariable}={localEndpoint} ({exception.Message}). "
-                            + "Start the openai-oauth proxy (`npx openai-oauth login`, then `npx openai-oauth`) "
-                            + $"or unset {LocalBaseUrlVariable} to use OpenRouter."
+                        $"Cannot reach {LocalBaseUrlVariable} ({localEndpoint}). Start that server, "
+                            + $"or unset {LocalBaseUrlVariable} to use OpenRouter for the second model."
                     );
                     return 2;
                 }
@@ -323,7 +327,11 @@ public static class ExampleHost
         CancellationToken cancellationToken
     )
     {
-        using var http = new HttpClient { BaseAddress = endpoint };
+        using var http = new HttpClient
+        {
+            BaseAddress = endpoint,
+            Timeout = TimeSpan.FromSeconds(5),
+        };
         var models = await http.GetFromJsonAsync<ModelsResponse>("models", cancellationToken);
         if (
             models?.Data.Any(candidate =>

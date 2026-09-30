@@ -8,6 +8,7 @@
         <EmbedUntrackedSources>true</EmbedUntrackedSources>
         <IncludeSymbols>true</IncludeSymbols>
         <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        <!-- Local builds only: the release and publish workflows pass the tag as -p:Version. -->
         <VersionPrefix>0.3.0</VersionPrefix>
         <VersionSuffix></VersionSuffix>
         <!-- Only the projects under src/ are packages (src/Directory.Build.props). -->

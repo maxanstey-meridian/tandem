@@ -1268,7 +1268,7 @@ and a second model reviews or judges it. By default the second role also runs th
 | Variable                        | Required | Purpose                                                                                  |
 |---------------------------------|----------|------------------------------------------------------------------------------------------|
 | `OPENROUTER_API_KEY`            | Yes      | Authenticates every OpenRouter request.                                                  |
-| `TANDEM_EXAMPLE_LOCAL_BASE_URL` | No       | Runs the second role against an OpenAI-compatible Responses endpoint instead of OpenRouter. |
+| `TANDEM_EXAMPLE_LOCAL_BASE_URL` | No       | Runs the second role against a keyless OpenAI-compatible Responses endpoint instead of OpenRouter. |
 | `TANDEM_EXAMPLE_LOCAL_MODEL`    | No       | Model for the second role: defaults to `openai/gpt-5.6-sol` on OpenRouter, `gpt-5.6-sol` locally. |
 
 To run the second role on your own ChatGPT/OpenAI account instead, start the

@@ -4,8 +4,8 @@
 
 - .NET SDK 10.0.300 or a later 10.0 feature band (`global.json` rolls forward to the latest feature band).
 - [go-task](https://taskfile.dev/installation/) for `task check` and the other `Taskfile.yml` tasks.
-- Node.js 22 or newer, only to run the Code Writer example (its JavaScript verifier) and to stage a local
-  bridge bundle with `scripts/stage-runtime.mjs`. `task check` does not need it.
+- Node.js 22 or newer. `task check` needs it: the Code Writer composition tests run that example's JavaScript
+  verifier. It also stages a local bridge bundle with `scripts/stage-runtime.mjs`.
 
 Then run `dotnet tool restore && task check` once to confirm the checkout builds and passes.
 

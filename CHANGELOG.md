@@ -3,12 +3,12 @@
 ## Unreleased
 
 - The published bridge no longer carries the build-time generator assemblies (`Microsoft.JavaScript.NodeApi.Generator`, `Microsoft.CodeAnalysis`, `Microsoft.CodeAnalysis.CSharp`, `System.Reflection.MetadataLoadContext` and Roslyn's satellite resource folders): `bridge/Tandem.Bridge.csproj` references the generator package for its build targets only. Each bridge bundle is about 9 MB smaller unpacked.
-- The Songwriter, Debate and Code Writer examples need only `OPENROUTER_API_KEY`. The second model role now runs through OpenRouter (`openai/gpt-5.6-sol`) unless `TANDEM_EXAMPLE_LOCAL_BASE_URL` points it at an OpenAI-compatible Responses endpoint such as the `openai-oauth` proxy; `TANDEM_EXAMPLE_LOCAL_MODEL` overrides its model. An unreachable local URL stops the example with a hint naming the variable and the proxy's `login` step instead of `Connection refused`.
+- The Songwriter, Debate and Code Writer examples need only `OPENROUTER_API_KEY`. The second model role now runs through OpenRouter (`openai/gpt-5.6-sol`) unless `TANDEM_EXAMPLE_LOCAL_BASE_URL` points it at an OpenAI-compatible Responses endpoint such as the `openai-oauth` proxy; `TANDEM_EXAMPLE_LOCAL_MODEL` overrides its model. An unreachable local URL (refused, unresolvable, or silent for 5 seconds) stops the example with one line naming the variable, the same line the tandem-ts examples print, instead of `Connection refused` or a 100-second hang.
 - The C# quickstart no longer pins `Meridian.Tandem` and `Meridian.Tandem.Generators` to 0.1.0; `dotnet add package` installs the current release.
 - The README has an Install section naming the NuGet packages (`Meridian.Tandem`, `.Generators`, `.Ledger`, `.Packets` and the optional `.Advanced`, `.OpenAICompatible`, `.Terminal`), which snippets need which, and the npm install for TypeScript.
 - The README points TypeScript users at `npm install @maxanstey-meridian/tandem` and the TypeScript quickstart in this repository, instead of installing from a tandem-ts version tag.
 - The README states that the TypeScript packet package `@maxanstey-meridian/tandem-packets` is not yet published to npm; its TypeScript import example previously implied it could be installed.
-- `CONTRIBUTING.md` lists the prerequisites: .NET SDK 10.0.300 or later, go-task, and Node.js 22 for the Code Writer example and local bundle staging.
+- `CONTRIBUTING.md` lists the prerequisites: .NET SDK 10.0.300 or later, go-task, and Node.js 22, which `task check` needs for the Code Writer tests.
 - `AGENTS.md` no longer carries the GitNexus-generated block, which referenced files that are not in the repository; `.gitnexusrc` stops GitNexus writing it back.
 - The README's "Agent access to the run ledger" section sits under Persistence instead of after the License.
 - The README's opening TypeScript example imports `pipeline` and `route` and says where its participants are defined.
