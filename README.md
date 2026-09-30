@@ -75,6 +75,35 @@ Tandem runs in-process on .NET. Use it directly from C#, or author the same
 pipeline with the TypeScript SDK. Microsoft Agent Framework owns live workflow execution, model loops,
 sessions, and tool dispatch underneath Tandem's typed application model.
 
+## Install
+
+C# applications need the .NET 10 SDK and install Tandem from NuGet:
+
+```sh
+dotnet add package Meridian.Tandem
+dotnet add package Meridian.Tandem.Generators
+```
+
+| Package                      | Provides                                                                              | Needed by                                              |
+|------------------------------|---------------------------------------------------------------------------------------|--------------------------------------------------------|
+| `Meridian.Tandem`            | State, agents, capabilities, interactions, parallel groups, routes and `PipelineRunner` | Every C# snippet                                       |
+| `Meridian.Tandem.Generators` | The source generator behind `[PipelineStage]` classes                                 | [Stages](#stages) and the C# quickstart               |
+| `Meridian.Tandem.Ledger`     | The SQLite run ledger: `SqlitePipelineRunOptions`, `SqliteLedgerStore`                | [Persistence](#persistence) and [Running a pipeline](#running-a-pipeline) |
+| `Meridian.Tandem.Packets`    | `PacketFile` for Markdown plus YAML frontmatter input                                 | [Packet files](#packet-files)                          |
+
+`Meridian.Tandem.Advanced` (`AgentWorkspace`, `AgentTools` and other execution-mechanics APIs used in
+[Workspace tools](#workspace-tools)), `Meridian.Tandem.OpenAICompatible` (provider normalization for OpenAI-compatible
+clients) and `Meridian.Tandem.Terminal` (the terminal view shown above) are optional.
+
+TypeScript applications need Node.js 22 or newer and the .NET 10 runtime on macOS (Apple silicon) or Linux x64:
+
+```sh
+npm install @maxanstey-meridian/tandem zod
+```
+
+Continue with the [C# quickstart](docs/quickstarts/csharp.md) or the
+[TypeScript quickstart](docs/quickstarts/typescript.md).
+
 ## The mental model
 
 A Tandem application is built from a small set of pieces:

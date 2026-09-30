@@ -4,6 +4,7 @@
 
 - The Songwriter, Debate and Code Writer examples need only `OPENROUTER_API_KEY`. The second model role now runs through OpenRouter (`openai/gpt-5.6-sol`) unless `TANDEM_EXAMPLE_LOCAL_BASE_URL` points it at an OpenAI-compatible Responses endpoint such as the `openai-oauth` proxy; `TANDEM_EXAMPLE_LOCAL_MODEL` overrides its model. An unreachable local URL stops the example with a hint naming the variable and the proxy's `login` step instead of `Connection refused`.
 - The C# quickstart no longer pins `Meridian.Tandem` and `Meridian.Tandem.Generators` to 0.1.0; `dotnet add package` installs the current release.
+- The README has an Install section naming the NuGet packages (`Meridian.Tandem`, `.Generators`, `.Ledger`, `.Packets` and the optional `.Advanced`, `.OpenAICompatible`, `.Terminal`), which snippets need which, and the npm install for TypeScript.
 
 ## 0.3.0 — breaking
 
