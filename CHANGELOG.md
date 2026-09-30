@@ -8,6 +8,7 @@
 - The README points TypeScript users at `npm install @maxanstey-meridian/tandem` and the TypeScript quickstart in this repository, instead of installing from a tandem-ts version tag.
 - The README states that the TypeScript packet package `@maxanstey-meridian/tandem-packets` is not yet published to npm; its TypeScript import example previously implied it could be installed.
 - `CONTRIBUTING.md` lists the prerequisites: .NET SDK 10.0.300 or later, go-task, and Node.js 22 for the Code Writer example and local bundle staging.
+- `AGENTS.md` no longer carries the GitNexus-generated block, which referenced files that are not in the repository; `.gitnexusrc` stops GitNexus writing it back.
 
 ## 0.3.0 — breaking
 
