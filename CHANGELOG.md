@@ -58,6 +58,9 @@
 
 ## Unreleased — fixes and additions
 
+- The documentation moved to a VitePress site at https://maxanstey-meridian.github.io/tandem/, with C# and TypeScript side by side. The README is now a short overview; the quickstarts became the site's Getting Started page. The site also documents collections, `web_search`/`web_fetch` (Tavily, `TAVILY_API_KEY`), C# interaction handlers, chat client setup and Tandem Studio's `tandem.config.ts`, which the README did not cover.
+- The README's TypeScript model-request example set `reasoningEffort` on the chat client, which `ChatClient` does not accept; the docs show the agent's `reasoning: { effort }` (or `reasoning: { maxTokens }`).
+- The examples' missing-key message links to the examples page of the docs site instead of a README section.
 - `PipelineObservers.Compose(params observers)` composes observers in order, skipping nulls; the result is a persistence observer when the first observer is one. It replaces the private composites in the ledger runner, the terminal runner, the Node bridge and the C# hosting example.
 - `SqliteLedgerStore.RecordRunAsync(runId, run)` runs a pipeline and completes the ledger run with the status its outcome implies (`Ready`/`Failed` from the result, `Cancelled`/`Faulted` from a failure, both failures in an `AggregateException` if completion also fails). `RunAsync(…, SqlitePipelineRunOptions)` and the Node bridge use it.
 - `SqliteLedgerStore.ReadAcceptedAsync(runId)` reads a run's accepted journal values on a read-only connection, filtered to the runtime journal and in insert order. The bridge's `InspectAcceptedAsync` uses it instead of its own SQL, so other streams' rows are no longer read as journal records.

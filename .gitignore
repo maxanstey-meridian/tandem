@@ -7,3 +7,9 @@ nupkgs/
 local-nupkgs/
 *.sqlite3*
 .idea/
+
+# Docs
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+.DS_Store
